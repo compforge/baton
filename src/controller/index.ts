@@ -9,6 +9,7 @@ import {
   type InteractionHandler,
   type ModelOption,
   type SteerReceipt,
+  type SteerResult,
 } from "../harness/adapter.ts";
 import { buildTargetCatchUpContext } from "../context/mention.ts";
 import {
@@ -69,10 +70,11 @@ export type Control = { kind: "interrupt" };
  * - `steer`：已注入当前 turn 的下一个安全边界，不产生新 turn；
  * - `follow_up`：不可 steer 或 harness 拒绝，已显式降级入队；outcome 与 submit
  *   的回执同语义（turn 完成/被撤回时 resolve），UI 不得把降级结果仍标成 steer。
+ *   reason 可选，当 adapter 不支持 steer 时说明原因。
  */
 export type SteerOutcome =
   | { effective: "steer" }
-  | { effective: "follow_up"; outcome: Promise<SubmitOutcome> };
+  | { effective: "follow_up"; outcome: Promise<SubmitOutcome>; reason?: string };
 
 /** Controller 注入给 Adapter 的宿主能力；Interaction 必须经可信边界打开。 */
 export interface InteractionHandlers {
@@ -266,9 +268,9 @@ export class Controller {
     }
     const target = activeInput.target;
     const messageId = newId("m");
-    let receipt: SteerReceipt;
+    let result: SteerResult;
     try {
-      receipt = await adapter.steer(
+      result = await adapter.steer(
         active.binding.ref,
         // steer 消息归属被注入的 turn；messageId 照常由 controller 分配（design §4.10.1）
         { turnId: active.turnId, messageId, blocks },
@@ -277,11 +279,26 @@ export class Controller {
     } catch {
       // wire 故障视同拒绝：降级路径会经 submit 的正常错误通道暴露 transport 问题，
       // 这里不吞掉输入本身
-      receipt = { effective: "rejected" };
+      result = { supported: true, value: { effective: "rejected" } };
     }
-    if (receipt.effective !== "steer") {
-      return { effective: "follow_up", outcome: this.submit(harnessTargetId, blocks) };
+
+    // 处理 unsupported 情况
+    if (!result.supported) {
+      return {
+        effective: "follow_up",
+        outcome: this.submit(harnessTargetId, blocks),
+        reason: result.reason,
+      };
     }
+
+    // 处理 rejected 情况
+    if (result.value.effective !== "steer") {
+      return {
+        effective: "follow_up",
+        outcome: this.submit(harnessTargetId, blocks),
+      };
+    }
+
     // 已接受的 steer 是一等 Input（不再"无独立队列实体"）：挂到当前 turn，供 cancel 时
     // 统一迁移 interrupted（S3：不静默丢、不自动重发）。fire-and-forget，无独立回执。
     // 身份即 steer user_message 的 messageId（adapter 成功路径已用它落 delivery:"steer" 消息）。

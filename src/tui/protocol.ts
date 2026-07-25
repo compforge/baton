@@ -340,7 +340,8 @@ export class BatonChatProtocol implements ChatProtocol {
         return;
       }
       // 降级如实提示（design §3.7：不能把 follow-up 仍标成 steer）
-      this.status = { text: `${target} steer rejected; queued as follow-up`, tone: "info" };
+      const reasonSuffix = steered.reason ? ` (${steered.reason})` : "";
+      this.status = { text: `${target} steer rejected${reasonSuffix}; queued as follow-up`, tone: "info" };
       this.changed();
       const outcome = await steered.outcome;
       if (outcome === "completed" && this.status?.tone !== "error") {

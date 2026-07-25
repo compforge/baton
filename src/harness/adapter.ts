@@ -8,6 +8,20 @@ import type {
   InteractionResolution,
 } from "../interaction/types.ts";
 
+/**
+ * 能力包装器：表达 adapter 是否支持某个可选能力。
+ *
+ * - `supported: true` - adapter 实现了该能力，返回实际结果
+ * - `supported: false` - adapter 不支持该能力，controller 应降级处理
+ *
+ * 使用场景：
+ * - steer: Claude 不支持 → controller 降级为 follow-up
+ * - 其他可选能力可以复用此模式
+ */
+export type Capability<T> =
+  | { supported: true; value: T }
+  | { supported: false; reason?: string };
+
 export interface HarnessSessionRef {
   harness: string;
   harnessSessionId: string;
@@ -222,8 +236,10 @@ export function isApprovalRoutable(adapter: HarnessAdapter): adapter is HarnessA
 }
 
 /**
- * steer 的回执：`rejected` 是正常返回值而非异常——expectedTurnId 已过期（race）、
- * harness 侧拒绝（review/compact 等特殊 turn）都归入 rejected，由 controller 决定降级；
+ * steer 的回执：成功注入或被拒绝。
+ * - `steer`: 成功注入当前 turn
+ * - `rejected`: turn 已过期或 harness 拒绝（controller 降级为 follow-up）
+ *
  * 只有 wire/transport 故障才 throw。
  */
 export interface SteerReceipt {
@@ -231,9 +247,16 @@ export interface SteerReceipt {
 }
 
 /**
+ * Steer 操作的完整返回类型，使用 Capability 包装。
+ * 如果 adapter 不支持 steer，返回 `supported: false`。
+ */
+export type SteerResult = Capability<SteerReceipt>;
+
+/**
  * 可选能力（design §4.3）：把输入注入当前活跃 turn 的下一个安全边界，不新开 turn。
  *
  * 契约：
+ * - 返回 `supported: false` 表示 adapter 不支持 steer，controller 会自动降级为 follow-up
  * - `expectedTurnId` 恒为 baton turn id；到 harness turn id 的映射留在 adapter 内部，
  *   不进 controller 词汇。expectedTurnId 与 adapter 当前 active turn 不符必须返回 rejected
  *   （防 race：用户提交时看到的 turn 已结束，不能把输入注入新 turn）。
@@ -242,7 +265,7 @@ export interface SteerReceipt {
  * - 声明 capabilities.steer 才可被 controller 调用；契约测试钉住"声明即实现"。
  */
 export interface Steerable {
-  steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<SteerReceipt>;
+  steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<SteerResult>;
 }
 
 export function isSteerable(adapter: HarnessAdapter): adapter is HarnessAdapter & Steerable {
