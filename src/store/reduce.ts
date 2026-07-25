@@ -81,9 +81,9 @@ export interface HarnessTargetState {
   configOptions: SessionConfigOption[];
 }
 
-/** TUI 时间线条目：message / tool_call / plan / notice 按首次出现排序 */
+/** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
 export interface TimelineItem {
-  type: "message" | "tool_call" | "plan" | "notice" | "approval_review";
+  type: "message" | "tool_call" | "plan" | "notice" | "approval_review" | "error";
   id: string;
 }
 
@@ -147,6 +147,11 @@ export interface SessionState {
   /** 最近一次结构化错误；willRetry 时 runState 仍应为 running（由事件源保证） */
   lastError?: ErrorUpdate & { seq: number };
   /**
+   * 错误历史（append-only），同时进 timeline（id 为 `err_<seq>`）：
+   * 启动失败、admission 错误、quota 耗尽等属于会话流的一部分，要按发生位置内联展示。
+   */
+  errors: Map<string, ErrorUpdate & { seq: number }>;
+  /**
    * 提示历史（append-only），同时进 timeline（id 为 `n_<seq>`）：打断标记、
    * harness warning 等属于会话流的一部分，要按发生位置内联展示。
    */
@@ -175,6 +180,7 @@ export function emptySessionState(): SessionState {
       hasEstimated: false,
     },
     perTarget: new Map(),
+    errors: new Map(),
     notices: [],
     turnSummaries: [],
     lastSeq: 0,
@@ -445,9 +451,15 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       if (target) target.contextUsage = { ...ev.payload };
       break;
     }
-    case "_baton_error_update":
-      state.lastError = { ...ev.payload, seq: ev.seq };
+    case "_baton_error_update": {
+      const errorEntry = { ...ev.payload, seq: ev.seq };
+      state.lastError = errorEntry;
+      // 将错误加入 timeline 和 errors map
+      const errorId = `err_${ev.seq}`;
+      state.errors.set(errorId, errorEntry);
+      state.timeline.push({ type: "error", id: errorId });
       break;
+    }
     case "_baton_run_status": {
       const p = ev.payload;
       // per-turn 运行阶段；无 turnId 或未命中活跃 turn 时丢弃——phase 是短寿命
