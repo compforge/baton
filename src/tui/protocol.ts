@@ -693,9 +693,9 @@ export class BatonChatProtocol implements ChatProtocol {
             );
             const userText = turnResource.data.userText;
             if (userText) {
-              // 截取前 50 个字符作为摘要
+              // 截取前 30 个字符作为摘要，避免状态栏过长
               const summary =
-                userText.length > 50 ? `${userText.slice(0, 50)}...` : userText;
+                userText.length > 30 ? `${userText.slice(0, 30)}...` : userText;
               resourceLabel = `turn "${summary}"`;
             }
           } catch {
