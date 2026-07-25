@@ -38,7 +38,7 @@
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
     "bun": "^1.3.14",
-    "chat-tui": "github:qiankunli/chat-tui#965d015",
+    "chat-tui": "github:qiankunli/chat-tui#961f556",
     "react": "^19.2.7",
     "yaml": "^2.9.0"
   }
