@@ -683,8 +683,27 @@ export class BatonChatProtocol implements ChatProtocol {
         this.changed();
       },
       onReconcileError: ({ key, error }) => {
+        let resourceLabel = `${key.resourceKind}/${key.resourceId}`;
+        // 为 baton.turn 提供更友好的展示信息
+        if (key.resourceKind === "baton.turn") {
+          try {
+            const turnResource = this.plugins.getBuiltinResource(
+              "baton.turn",
+              key.resourceId,
+            );
+            const userText = turnResource.data.userText;
+            if (userText) {
+              // 截取前 50 个字符作为摘要
+              const summary =
+                userText.length > 50 ? `${userText.slice(0, 50)}...` : userText;
+              resourceLabel = `turn "${summary}"`;
+            }
+          } catch {
+            // 如果获取失败，使用默认的 resourceId
+          }
+        }
         this.status = {
-          text: `Plugin reconcile failed for ${key.resourceKind}/${key.resourceId}: ${
+          text: `Plugin reconcile failed for ${resourceLabel}: ${
             error instanceof Error ? error.message : String(error)
           }`,
           tone: "error",
