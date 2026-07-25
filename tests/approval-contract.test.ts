@@ -75,15 +75,28 @@ describe("approval loop closes through the host (all adapters)", () => {
       const result = await (
         adapter as unknown as {
           handleCanUseTool: (
+            runtime: { capturedProposedPlanKeys: Set<string> },
             emit: (ev: AnyEventDraft) => void,
+            turnId: () => string,
             name: string,
             input: Record<string, unknown>,
             meta: Record<string, unknown>,
           ) => Promise<{ behavior: string }>;
         }
-      ).handleCanUseTool((ev) => events.push(ev), "Bash", { command: "bun install" }, {});
+      ).handleCanUseTool(
+        { capturedProposedPlanKeys: new Set() },
+        (ev) => events.push(ev),
+        () => "t1",
+        "Bash",
+        { command: "bun install" },
+        { toolUseID: "tu-bash" },
+      );
       expect(events).toEqual([]);
-      expect(interactions[0]).toMatchObject({ kind: "permission", title: "Bash: bun install" });
+      expect(interactions[0]).toMatchObject({
+        kind: "permission",
+        title: "Bash: bun install",
+        toolCallId: "tu-bash",
+      });
       expect(result.behavior).toBe(behavior);
     }
   });

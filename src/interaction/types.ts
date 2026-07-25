@@ -49,6 +49,8 @@ export interface QuestionPrompt {
 
 export interface QuestionInteraction {
   kind: "question";
+  /** Harness 原生 tool/request id；用于把回答与原请求关联，不参与 Interaction identity。 */
+  toolCallId?: string;
   questions: QuestionPrompt[];
 }
 

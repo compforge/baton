@@ -163,6 +163,40 @@ describe("BatonChatProtocol status command", () => {
   });
 });
 
+describe("BatonChatProtocol proposed plan", () => {
+  test("renders a completed proposal as history, not as the live plan pin", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-proposed-plan-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.append({
+        source: { type: "harness", harnessTargetId: "claude" },
+        harness: "claude-code",
+        harnessTargetId: "claude",
+        turnId: "t1",
+        kind: "proposed_plan",
+        payload: { planId: "pl-proposed", content: "# Proposal\n\nReview before implementation." },
+      });
+      const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
+
+      expect(protocol.getView().plan).toBeUndefined();
+      expect(protocol.getView().transcript).toContainEqual({
+        type: "block",
+        id: "pl-proposed",
+        kind: "proposed_plan",
+        status: "completed",
+        author: "claude",
+        title: "Proposed plan",
+        content: { type: "text", text: "# Proposal\n\nReview before implementation." },
+      });
+
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("BatonChatProtocol plugins command", () => {
   test("opens the client Plugin manager without changing session state", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-plugins-"));

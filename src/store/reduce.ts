@@ -12,6 +12,7 @@ import type {
   MessageRole,
   Notice,
   PlanUpdate,
+  ProposedPlan,
   SessionConfigOption,
   SessionRunState,
   StopReason,
@@ -63,6 +64,12 @@ export interface PlanState extends PlanUpdate {
   harnessTargetId?: string;
 }
 
+export interface ProposedPlanState extends ProposedPlan {
+  harness?: string;
+  harnessTargetId?: string;
+  turnId?: string;
+}
+
 /**
  * HarnessTarget-scoped 会话状态的统一槽位，键 = 事件信封 `harnessTargetId`。
  * `harness` 只描述协议/Adapter 类型，不能作为状态实例的查询键：同一种 Harness
@@ -83,7 +90,7 @@ export interface HarnessTargetState {
 
 /** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
 export interface TimelineItem {
-  type: "message" | "tool_call" | "plan" | "notice" | "approval_review" | "error";
+  type: "message" | "tool_call" | "plan" | "proposed_plan" | "notice" | "approval_review" | "error";
   id: string;
 }
 
@@ -133,6 +140,8 @@ export interface SessionState {
   messages: Map<string, MessageState>;
   toolCalls: Map<string, ToolCallState>;
   plans: Map<string, PlanState>;
+  /** 已完成、尚未表示执行授权的计划提案；按 planId 首写即定。 */
+  proposedPlans: Map<string, ProposedPlanState>;
   /** Interaction 是统一持久对象；是否 pending 由 resolution 是否存在派生。 */
   interactions: Map<string, InteractionState>;
   /**
@@ -169,6 +178,7 @@ export function emptySessionState(): SessionState {
     messages: new Map(),
     toolCalls: new Map(),
     plans: new Map(),
+    proposedPlans: new Map(),
     interactions: new Map(),
     approvalReviews: new Map(),
     usage: {
@@ -396,6 +406,19 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       });
       const target = targetScoped(state, ev);
       if (target) target.lastPlanId = p.planId;
+      break;
+    }
+    case "proposed_plan": {
+      const p = ev.payload;
+      // 提案是完成态产物，不做原地更新；重复事件不能改写用户已经看到的内容。
+      if (state.proposedPlans.has(p.planId)) break;
+      state.timeline.push({ type: "proposed_plan", id: p.planId });
+      state.proposedPlans.set(p.planId, {
+        ...p,
+        harness: ev.harness,
+        harnessTargetId: eventTargetId(ev),
+        turnId: ev.turnId,
+      });
       break;
     }
     // Interaction opened/resolved 驱动 per-turn requires_action ↔ running：不变量收在 reducer，

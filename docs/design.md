@@ -25,7 +25,7 @@ baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在 
 
 - **@ 引用**：用户 @ 的对象**永远是 baton 侧对象**（session / turn / 产物）；换算成什么形式喂给目标 agent 是 baton 内部实现（见 5.6）。
 - **子 agent 归属**：Claude 的 Task 子会话、Codex 的子 agent 通过 `parentSessionId` / `agentId` 挂回父会话（借鉴 ai_code_report 模型，见 5.8）。
-- **Message / ToolCall / Plan**：turn 内的产出，按 ID upsert（对齐 ACP v2 语义）。
+- **Message / ToolCall / Plan / ProposedPlan**：turn 内的产出；执行中计划按 ID upsert，完成的计划提案作为不可变产物留痕，不能暗含执行授权。
 
 ## 3. 问题域总览
 
@@ -64,6 +64,7 @@ baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在 
 | 文件改动 | tool content 的 `diff` block | Edit/Write 入参合成 | fileChange `changes[].diff` | 两者已支持；Claude 为合成结果 |
 | 命令实时输出 | `tool_call_content_chunk` | 无对应实时流 | command output delta | Codex 已支持；Claude 结束后一次性返回 |
 | 计划 | `plan_update` | `TodoWrite` 归一 | `turn/plan/updated` | 两者已支持 |
+| 计划提案 | `proposed_plan`（与执行中计划、permission 正交） | `ExitPlanMode` | 后续映射 | Claude 已支持 |
 | token usage | `usage_update` | SDK result usage | token usage 通知差分 | 两者已支持 |
 | Harness 原始输出保真 | 已映射事件的 envelope `raw` | 已支持 | 已支持 | 已映射事件保留原消息；完全未识别的通知当前会忽略 |
 

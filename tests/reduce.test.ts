@@ -238,6 +238,25 @@ describe("state / permission / plan / usage", () => {
     expect(state.timeline.filter((t) => t.type === "plan")).toHaveLength(1);
   });
 
+  test("proposed plan is immutable and distinct from an executing plan", () => {
+    const state = reduceEvents([
+      ev("proposed_plan", { planId: "pl-proposed", content: "# Proposal\n\nReview first" }, "t1"),
+      ev("proposed_plan", { planId: "pl-proposed", content: "rewritten" }, "t1"),
+      ev("plan_update", {
+        planId: "pl-running",
+        entries: [{ content: "implementation", priority: "medium", status: "in_progress" }],
+      }),
+    ]);
+    expect(state.proposedPlans.get("pl-proposed")).toMatchObject({
+      content: "# Proposal\n\nReview first",
+      turnId: "t1",
+      harness: "test",
+    });
+    expect(state.plans.has("pl-proposed")).toBe(false);
+    expect(state.timeline).toContainEqual({ type: "proposed_plan", id: "pl-proposed" });
+    expect(state.timeline).toContainEqual({ type: "plan", id: "pl-running" });
+  });
+
   test("usage accumulates as deltas", () => {
     const state = reduceEvents([
       ev("usage_update", { inputTokens: 100, outputTokens: 10 }),
