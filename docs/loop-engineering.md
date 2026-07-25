@@ -347,6 +347,11 @@ Schedule；无法表达成 desired state 的独立命令出现后再增加 Actio
 `BoardState`。Board 不只是 UI，也不是某个 Plugin 的私有状态；它是 Baton、Plugin 与多个
 Harness 交换协作信息的公共平面：
 
+当前最小切片由 Resource Contribution 的 `BoardProjector` 落地：Plugin 把每份
+PluginResource 派生为零到多个带稳定局部 key 的条目，Baton 补齐 owner、Resource reference
+和最终身份，再投影到 chat-tui 的可选右侧 Sidecar。无条目时不渲染 Sidecar；这条链路没有另建
+可写 BoardState，仍以 PluginResource 为事实来源。
+
 > 可以把 Board 理解成办案团队的“案件板”：不同参与者把线索、进展、结论、待核实项和关系放到
 > 同一个可见空间，其他参与者据此整理认知并决定下一步。它是一种信息交互、整理和展示方式，
 > 但不是系统唯一的通信或存储方式。

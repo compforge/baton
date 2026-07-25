@@ -1,6 +1,6 @@
 {
   "name": "@qiankun01/baton-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Public protocol and authoring types for Baton plugins.",
   "type": "module",
   "license": "Apache-2.0",

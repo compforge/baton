@@ -63,7 +63,7 @@ baton/
 │   │   ├── attempt.ts       # Controller 内部的 Harness 投递 Attempt 状态机与重放索引
 │   │   ├── turn.ts          # driven / observed Turn ledger 与幂等终态记账
 │   │   └── interaction.ts   # Interaction waiter 的 opened / resolved / cancel 生命周期
-│   ├── plugin/              # Plugin 宿主 runtime：Binding、Manager、Resource/Controller、Marketplace 与 Proposal
+│   ├── plugin/              # Plugin 宿主 runtime：Binding、Manager、Resource/Controller、Board、Marketplace 与 Proposal
 │   ├── session/
 │   │   └── open.ts          # BatonSession 打开的唯一入口：新建/继续/指定 + 会话锁 + crash recovery
 │   ├── commands/
@@ -98,6 +98,7 @@ baton/
 - **事件流是统一历史的合并真相源，UI 是投影**：每条 Event 必须有稳定 `eventId`、单一 `scope` 和显式事实 `source`；归属、来源与 `harness*` / `turnId` 等执行坐标正交。Adapter 只提交事实内容，`source`、Harness 与 HarnessTarget 由绑定它的宿主入口统一补齐，不能由 Adapter 自报。`session.jsonl` 记录可重放事件，TUI 状态由 reduce 重建——live 投影经 `SessionHandle.subscribe` 订阅事件流，与 resume 同一条 reduce 路径，不允许旁路投影通道（曾因 per-turn 回调这条第二通道静默丢掉 observed turn 的回复）；`meta.json` 保存定位与恢复元数据，不替代事件历史。HarnessSession 原生 resume 是加速路径，不是正确性的前提。
 - **Plugin 通过只读 Builtin Resource 感知 Baton 内部事实**：Builtin Resource 是 Event Ledger 的 replay/live 投影，不另建真相也不允许 Plugin patch；Manager 以变化的 Resource 唤醒 reconcile，并同时提供冻结的 `BatonSnapshot` 当前态。需要 desired/observed state 时使用 Plugin 自有的 `spec/status` Resource；Plugin 不必先创建 Resource、更不必是 loop。
 - **三方 Plugin 只依赖公共类型包**：`packages/plugin` 不包含 Manager、Binding、Controller、Store、Marketplace 或 Harness runtime；Baton 宿主也消费同一份契约，避免内外两套 API 漂移。领域 Plugin 独立版本化并通过 Marketplace 交付。
+- **Board 是带归属的派生读模型**：Plugin 只通过 Resource Contribution 的 `BoardProjector` 派生条目，Baton 补齐 owner 与 Resource 身份；无数据时 UI 完全隐藏，Board 不成为 PluginResource 或外部系统之外的新真相源。整体边界见 `docs/loop-engineering.md` §6。
 - **用户输入的 owner 是 Controller，harness 执行的 owner 是 Adapter**：driven turn 出队即由 controller 落 `user_message`/`running`（原始输入进正典历史，harness 冷启动不阻塞 Transcript，preparing 可取消）；Adapter 只报告执行过程与终态，steer 成功时补 `delivery:"steer"` 的用户消息。用户输入专项语义及其 Adapter 行为契约见 `docs/user-input-lifecycle.md`；完整交互面的总体结构见 `docs/harness-interaction-design.md`。
 - **Harness 投递先记账再执行**：当前用户驱动 turn 以已持久化 Input 作为上游，Controller 在 submit 前持久化带不可变 launch snapshot 的 Delivery Attempt；Adapter resolve 只确认接受投递责任，Harness idle 才给出最终 outcome。Baton 无法证明 Harness 是否接收或结束时必须保留 `uncertain`，不能猜成失败后重投；幂等重试仍是长期模型，见 `docs/baton-v2.md` §1.5。
 - **上下文交付以 Receipt 推进基线**：不同来源收束为 `ContextSource(kind + owner + key)`；Snapshot 只说明准备送什么，transport 接受后持久化的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch。`meta.syncedSeq` 是兼容缓存，不替代事件历史；当前首个 source kind 是 BatonSession `session_history`，见 `docs/kernel.md` §3 与 `docs/baton-v2.md` §1.6。

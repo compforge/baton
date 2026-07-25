@@ -1,6 +1,9 @@
 import type {
   BuiltinResourceContribution,
   BuiltinResourceKind,
+  BoardItemDraft,
+  BoardItemTone,
+  BoardProjector,
   PluginActivationContext,
   PluginPackage,
   PluginSessionContext,
@@ -10,6 +13,9 @@ import type { PluginInstance } from "./instance.ts";
 import type { PluginResourceClient } from "./resource-client.ts";
 
 export type {
+  BoardItemDraft,
+  BoardItemTone,
+  BoardProjector,
   BuiltinResourceContribution,
   PluginActivationContext,
   PluginPackage,

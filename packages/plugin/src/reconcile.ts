@@ -4,6 +4,7 @@ import type {
   PluginResource,
 } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
+import type { BoardProjector } from "./board.ts";
 
 export type PluginOutput = {
   readonly kind: "proposed-input";
@@ -32,6 +33,8 @@ export type BuiltinReconciler<K extends BuiltinResourceKind> =
 export interface ResourceContribution<TSpec, TStatus> {
   readonly resourceKind: string;
   readonly reconciler: Reconciler<TSpec, TStatus>;
+  /** Optional derived read model for Baton's shared Board. */
+  readonly board?: BoardProjector<TSpec, TStatus>;
   readonly maxConcurrency?: number;
 }
 

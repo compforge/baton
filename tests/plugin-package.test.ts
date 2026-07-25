@@ -71,6 +71,85 @@ afterEach(() => {
 });
 
 describe("Plugin Package lifecycle", () => {
+  test("projects active PluginResources into Board items and invalidates on status changes", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    resourceStore(root, "reqloop_default").create({
+      kind: "ReqLoopRun",
+      resourceId: "run_1",
+      spec: { requirement: "ship it" },
+      status: { phase: "pending" },
+    });
+    let context: PluginActivationContext | undefined;
+    let boardChanges = 0;
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((activation) => {
+          context = activation;
+          activation.registerResource<
+            { requirement: string },
+            { phase: string }
+          >({
+            resourceKind: "ReqLoopRun",
+            reconciler: { async reconcile() {} },
+            board: {
+              project(resource) {
+                return [
+                  {
+                    key: "summary",
+                    title: resource.spec.requirement,
+                    status: resource.status.phase,
+                  },
+                ];
+              },
+            },
+          });
+        }),
+      ],
+      onProposal() {},
+      onBoardChanged() {
+        boardChanges += 1;
+      },
+    });
+
+    await manager.start();
+    expect(manager.listBoardItems()).toEqual([
+      {
+        id: JSON.stringify([
+          "reqloop_default",
+          "ReqLoopRun",
+          "run_1",
+          "summary",
+        ]),
+        pluginId: "qiankun/reqloop",
+        pluginInstanceId: "reqloop_default",
+        resourceKind: "ReqLoopRun",
+        resourceId: "run_1",
+        title: "ship it",
+        status: "pending",
+      },
+    ]);
+
+    const resource = context!.resources.get<
+      { requirement: string },
+      { phase: string }
+    >("ReqLoopRun", "run_1");
+    context!.resources.patchStatus(resource, { phase: "ready" });
+    expect(manager.listBoardItems()[0]?.status).toBe("ready");
+    expect(boardChanges).toBeGreaterThanOrEqual(2);
+
+    await manager.deactivateInstance("reqloop_default");
+    expect(manager.listBoardItems()).toEqual([]);
+    await manager.close();
+  });
+
   test("exposes a frozen, Instance-scoped Resource client to reconcile code", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);

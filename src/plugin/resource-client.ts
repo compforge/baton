@@ -49,7 +49,15 @@ function deepFreeze<T>(value: T): T {
 /** Restricts Resource reads and status writes to one PluginInstance-owned store. */
 export function createPluginResourceClient(
   store: PluginResourceStore,
+  onChange?: () => void,
 ): PluginResourceClient {
+  const changed = (): void => {
+    try {
+      onChange?.();
+    } catch {
+      // Resource mutation has already committed; a UI invalidation must not turn it into failure.
+    }
+  };
   const assertOwned = (resource: {
     kind: string;
     metadata: {
@@ -85,25 +93,28 @@ export function createPluginResourceClient(
         spec: TSpec;
       },
     ) {
-      return deepFreeze(
+      const created = deepFreeze(
         store.create<TSpec, TStatus>({
           kind: resourceKind,
           resourceId: init.resourceId,
           spec: init.spec,
         }),
       );
+      changed();
+      return created;
     },
     delete(resourceKind: string, resourceId: string) {
       const resource = store.get(resourceKind, resourceId);
       assertOwned(resource);
       store.delete(resourceKind, resourceId);
+      changed();
     },
     patchStatus<TSpec, TStatus>(
       resource: Parameters<PluginResourceClient["patchStatus"]>[0],
       patch: Partial<TStatus>,
     ) {
       assertOwned(resource);
-      return deepFreeze(
+      const patched = deepFreeze(
         store.patchStatus<TSpec, TStatus>(
           resource.kind,
           resource.metadata.resourceId,
@@ -113,6 +124,13 @@ export function createPluginResourceClient(
           },
         ),
       );
+      if (
+        patched.metadata.resourceVersion !==
+        resource.metadata.resourceVersion
+      ) {
+        changed();
+      }
+      return patched;
     },
   });
 }
