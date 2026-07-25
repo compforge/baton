@@ -1,0 +1,25 @@
+src/plugin/baton-snapshot.ts
+  s_dae84d55fcb64d::t_b10860a59b5f13 71,126-130,154
+src/plugin/resource-client.ts
+  s_dae84d55fcb64d::t_c3cfaab0f1d10b 12-25,71-103
+src/plugin/resource.ts
+  s_dae84d55fcb64d::t_6db4b0c9fd0e00 228-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f1e014a680a2f38f0b876fbc05a57a3f575353c6",
+  "prompts": {},
+  "sessions": {
+    "s_dae84d55fcb64d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68408228-f83d-4421-94e6-d02b0e140f74",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
