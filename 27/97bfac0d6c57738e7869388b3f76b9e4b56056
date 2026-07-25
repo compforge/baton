@@ -1,0 +1,21 @@
+src/harness/codex/adapter.ts
+  s_1732ff951c99d0::t_0b4a35e8ff0c13 67,964
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2797bfac0d6c57738e7869388b3f76b9e4b56056",
+  "prompts": {},
+  "sessions": {
+    "s_1732ff951c99d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10d58710-f6ed-4855-8f55-c4d9a23f2506",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
