@@ -1,0 +1,21 @@
+src/harness/adapter.ts
+  s_bc30a8dc154d4c::t_dd7d82c835cbf5 12,19,21,250,253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0c731e2cf471ccb5bd32ad5093cce6f744afb325",
+  "prompts": {},
+  "sessions": {
+    "s_bc30a8dc154d4c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9705-6348-7691-8e99-ea76d356fa81",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
