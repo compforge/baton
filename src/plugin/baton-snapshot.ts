@@ -68,6 +68,7 @@ export interface BatonSnapshot {
   readonly harnessTargets: readonly BatonHarnessTargetSnapshot[];
   readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
   readonly latestTurn?: SnapshotReadonly<TurnSummary>;
+  readonly turns: readonly SnapshotReadonly<TurnSummary>[];
 }
 
 interface CreateBatonSnapshotOptions {
@@ -122,6 +123,11 @@ export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonS
         requester: { ...entry.interaction.requester },
         ...(entry.turnId === undefined ? {} : { turnId: entry.turnId }),
       })),
+    turns: options.state.turnSummaries.map((turn) => ({
+      ...turn,
+      toolCalls: turn.toolCalls.map((toolCall) => ({ ...toolCall })),
+      ...(turn.usage === undefined ? {} : { usage: { ...turn.usage } }),
+    })),
     ...(latestTurn === undefined
       ? {}
       : {
@@ -145,5 +151,6 @@ export function emptyBatonSnapshot(batonSessionId: string): BatonSnapshot {
     inputs: [],
     harnessTargets: [],
     pendingInteractions: [],
+    turns: [],
   });
 }

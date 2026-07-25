@@ -170,6 +170,90 @@ activate(context) {
 因为 Pod 是实际干活的核心对象；Baton 的内部事实已经存在于 Event Ledger，所以不要求为了
 Plugin 再定义一套可写 API 对象。Builtin Resource 只是稳定 Plugin API 上的只读投影。
 
+#### PluginResourceClient API 设计
+
+`PluginResourceClient` 提供 Plugin 操作自己 PluginResource 的接口，设计时参考了 Kubernetes 
+controller-runtime，但根据 Baton Plugin 的实际场景做了调整。
+
+**核心方法**：
+
+```typescript
+interface PluginResourceClient {
+  // 读取操作
+  get<TSpec, TStatus>(kind: string, id: string): PluginResource<TSpec, TStatus>;
+  list<TSpec, TStatus>(kind?: string): PluginResource<TSpec, TStatus>[];
+  
+  // 创建资源（spec 固定，status 初始化为空对象）
+  create<TSpec, TStatus>(kind: string, init: {
+    resourceId: string;
+    spec: TSpec;
+  }): PluginResource<TSpec, TStatus>;
+  
+  // 删除资源
+  delete(kind: string, id: string): void;
+  
+  // 更新状态（唯一的状态更新方式）
+  patchStatus<TSpec, TStatus>(
+    resource: PluginResource<TSpec, TStatus>,
+    patch: Partial<TStatus>
+  ): PluginResource<TSpec, TStatus>;
+}
+```
+
+**与 Kubernetes 的差异**：
+
+在 Kubernetes 中：
+- 用户/管理员修改 `spec`，表达期望状态
+- Controller 读取 `spec` 并更新 `status`，报告观测状态
+- `client.Update()` 修改 spec，`client.Status().Update()` 修改 status
+- 严格的权限分离（通过 RBAC）
+
+在 Baton Plugin 中：
+- Plugin 既是 Resource 的创建者，也是唯一的管理者
+- 没有外部用户来修改 spec
+- spec 通常是 Plugin 的内部配置（如 `enabled: boolean`），相对稳定
+- status 是 Plugin 的运行时状态，频繁更新
+
+**为什么没有 `update()` / `replaceSpec()` 方法**：
+
+1. **避免无限循环风险**：如果允许在 reconcile 中修改 spec，会导致 `generation++` → 触发新的 
+   reconcile → 可能再次修改 spec → 无限循环。
+   
+2. **语义清晰**：Plugin 的 spec 应该在创建时确定，之后只通过 `patchStatus()` 更新运行时状态。
+   如果真的需要改变配置，应该删除旧 Resource 并创建新的。
+
+3. **对齐最佳实践**：即使在 Kubernetes 中，controller 也不应该修改自己管理的 CR 的 spec。
+
+**推荐使用模式**：
+
+```typescript
+// 1. 创建资源（spec 固定）
+const resource = await context.resources.create('CounterState', {
+  resourceId: 'main',
+  spec: { enabled: true }
+});
+
+// 2. 初始化 status（首次）
+let counter = await context.resources.patchStatus(resource, {
+  count: 0,
+  observedGeneration: resource.metadata.generation
+});
+
+// 3. 后续更新（只更新 status）
+counter = await context.resources.patchStatus(counter, {
+  count: counter.status.count + 1,
+  lastUpdated: new Date().toISOString()
+});
+```
+
+**metadata 字段的语义**：
+
+- `generation`：spec 变化时递增，由于不允许修改 spec，在 create 后保持为 1
+- `resourceVersion`：任何修改（spec 或 status）时递增，用于乐观锁
+- `observedGeneration`：status 中记录，表示当前状态基于哪个版本的 spec
+
+这个设计简化了 API，明确了 spec（配置）与 status（状态）的边界，避免了常见的误用模式。
+
 #### PluginContribution
 
 Plugin 的扩展点收束为少量明确能力：

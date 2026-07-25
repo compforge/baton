@@ -225,6 +225,18 @@ export class PluginResourceStore {
     });
   }
 
+  delete(kind: string, resourceId: string): void {
+    assertPathSegment("kind", kind);
+    assertPathSegment("resourceId", resourceId);
+    const path = this.resourcePath(kind, resourceId);
+    withFileLock(path, () => {
+      if (!existsSync(path)) {
+        throw new Error(`plugin resource not found: ${kind}/${resourceId}`);
+      }
+      rmSync(path, { force: true });
+    });
+  }
+
   setNextReconcileAt<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
     kind: string,
     resourceId: string,

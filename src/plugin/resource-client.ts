@@ -9,6 +9,30 @@ export interface PluginResourceClient {
   list<TSpec, TStatus>(
     resourceKind?: string,
   ): readonly Readonly<PluginResource<TSpec, TStatus>>[];
+  /**
+   * Creates a new PluginResource with the given spec.
+   *
+   * The status will be initialized to an empty object and should be set
+   * by the reconciler on the first reconciliation.
+   */
+  create<TSpec, TStatus>(
+    resourceKind: string,
+    init: {
+      resourceId: string;
+      spec: TSpec;
+    },
+  ): Readonly<PluginResource<TSpec, TStatus>>;
+  delete(resourceKind: string, resourceId: string): void;
+  /**
+   * Updates the status of a PluginResource.
+   *
+   * This is the primary way to update resource state. Unlike Kubernetes where
+   * users update spec and controllers update status, in Baton plugins both
+   * create and update their own resources.
+   *
+   * The patch is merged with the existing status. Generation is NOT incremented
+   * (only resourceVersion is), so this will not trigger a new reconciliation.
+   */
   patchStatus<TSpec, TStatus>(
     resource: Readonly<PluginResource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
@@ -53,6 +77,26 @@ export function createPluginResourceClient(
       return store
         .list<TSpec, TStatus>(resourceKind)
         .map((resource) => deepFreeze(resource));
+    },
+    create<TSpec, TStatus>(
+      resourceKind: string,
+      init: {
+        resourceId: string;
+        spec: TSpec;
+      },
+    ) {
+      return deepFreeze(
+        store.create<TSpec, TStatus>({
+          kind: resourceKind,
+          resourceId: init.resourceId,
+          spec: init.spec,
+        }),
+      );
+    },
+    delete(resourceKind: string, resourceId: string) {
+      const resource = store.get(resourceKind, resourceId);
+      assertOwned(resource);
+      store.delete(resourceKind, resourceId);
     },
     patchStatus<TSpec, TStatus>(
       resource: Parameters<PluginResourceClient["patchStatus"]>[0],
