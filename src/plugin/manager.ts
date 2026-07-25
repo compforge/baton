@@ -355,9 +355,19 @@ export class Manager {
       throw new Error(`plugin Instance is disabled: ${pluginInstanceId}`);
     }
     const plugin = await this.resolvePackage(instance.pluginId, instance.packageVersion);
+    const batonSession = this.snapshot().session;
+    if (batonSession.batonSessionId !== this.proposals.batonSessionId) {
+      throw new Error(
+        `PluginActivationContext batonSessionId must be ${this.proposals.batonSessionId}, got ${batonSession.batonSessionId}`,
+      );
+    }
 
     const binding = new PluginBinding(
       instance,
+      {
+        batonSessionId: batonSession.batonSessionId,
+        ...(batonSession.cwd === undefined ? {} : { cwd: batonSession.cwd }),
+      },
       {
         registerResource: (contribution) =>
           this.bindResource(instance.pluginInstanceId, contribution),

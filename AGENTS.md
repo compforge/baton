@@ -32,6 +32,8 @@ baton/
 │   ├── approval-lifecycle.md # 审批/用户确认：审批诚实、审批人跟随 harness、人工审批与回执
 │   ├── harness-interaction-design.md # 输入/输出、用户交互与 Adapter 协议演进方案
 │   └── resume-fork.md       # resume/fork 语义、会话锁与 crash recovery 的 why
+├── packages/
+│   └── plugin/              # @qiankun01/baton-plugin：三方 Plugin 开发使用的纯类型契约
 ├── src/
 │   ├── event/               # 内部事件信封（identity / scope / source）与归一 payload
 │   │   ├── ids.ts           # 带前缀 ULID（ev_/ix_/ctx_/ctxe_/bs_/hs_/t_/m_/tc_...），稳定可外部引用
@@ -61,7 +63,7 @@ baton/
 │   │   ├── attempt.ts       # Controller 内部的 Harness 投递 Attempt 状态机与重放索引
 │   │   ├── turn.ts          # driven / observed Turn ledger 与幂等终态记账
 │   │   └── interaction.ts   # Interaction waiter 的 opened / resolved / cancel 生命周期
-│   ├── plugin/              # Plugin 域：Package/Instance/Binding、Builtin/Plugin Resource、Controller 与 Proposal
+│   ├── plugin/              # Plugin 宿主 runtime：Binding、Manager、Resource/Controller、Marketplace 与 Proposal
 │   ├── session/
 │   │   └── open.ts          # BatonSession 打开的唯一入口：新建/继续/指定 + 会话锁 + crash recovery
 │   ├── commands/
@@ -83,7 +85,7 @@ baton/
 └── tests/                   # bun test 单测
 ```
 
-运行时 Bun，单包结构（不预造 package 边界）。验证命令：`bun run check`（typecheck + test）。
+运行时 Bun；宿主与公共 Plugin 契约同仓分包。验证命令：`bun run check`（typecheck + test）。
 
 本地试用：仓库内 `bun install && bun link` 后全局可用 `baton`（Bun 直接跑 TS 源码，无构建步骤；不用 `bun build --compile`，opentui 原生库与 Claude SDK 的动态加载在单文件二进制下有坑）。
 
@@ -95,6 +97,7 @@ baton/
 - **BatonSession、HarnessTarget 与 HarnessSession 分属三层**：BatonSession 是用户拥有、跨 harness、可持久恢复的逻辑历史；HarnessTarget 是具体执行与状态实例坐标；HarnessSession 只是该 Target 启动出的私有执行状态。`HarnessBinding`、原生 session、同步水位、偏好 / 授权与 Target-scoped 投影状态一律按 `harnessTargetId` 隔离；Target ID 必须经显式 resolver 找到完整 Target，未知值 fail closed，不能从 Harness 名称、alias 或 wire key 猜实例；Adapter 工厂再按 `target.harness` 选择协议实现。driven turn 在 BatonSession 内全局串行；harness 自发的 observed turn 与队列正交，见 `docs/kernel.md` §3。
 - **事件流是统一历史的合并真相源，UI 是投影**：每条 Event 必须有稳定 `eventId`、单一 `scope` 和显式事实 `source`；归属、来源与 `harness*` / `turnId` 等执行坐标正交。Adapter 只提交事实内容，`source`、Harness 与 HarnessTarget 由绑定它的宿主入口统一补齐，不能由 Adapter 自报。`session.jsonl` 记录可重放事件，TUI 状态由 reduce 重建——live 投影经 `SessionHandle.subscribe` 订阅事件流，与 resume 同一条 reduce 路径，不允许旁路投影通道（曾因 per-turn 回调这条第二通道静默丢掉 observed turn 的回复）；`meta.json` 保存定位与恢复元数据，不替代事件历史。HarnessSession 原生 resume 是加速路径，不是正确性的前提。
 - **Plugin 通过只读 Builtin Resource 感知 Baton 内部事实**：Builtin Resource 是 Event Ledger 的 replay/live 投影，不另建真相也不允许 Plugin patch；Manager 以变化的 Resource 唤醒 reconcile，并同时提供冻结的 `BatonSnapshot` 当前态。需要 desired/observed state 时使用 Plugin 自有的 `spec/status` Resource；Plugin 不必先创建 Resource、更不必是 loop。
+- **三方 Plugin 只依赖公共类型包**：`packages/plugin` 不包含 Manager、Binding、Controller、Store、Marketplace 或 Harness runtime；Baton 宿主也消费同一份契约，避免内外两套 API 漂移。领域 Plugin 独立版本化并通过 Marketplace 交付。
 - **用户输入的 owner 是 Controller，harness 执行的 owner 是 Adapter**：driven turn 出队即由 controller 落 `user_message`/`running`（原始输入进正典历史，harness 冷启动不阻塞 Transcript，preparing 可取消）；Adapter 只报告执行过程与终态，steer 成功时补 `delivery:"steer"` 的用户消息。用户输入专项语义及其 Adapter 行为契约见 `docs/user-input-lifecycle.md`；完整交互面的总体结构见 `docs/harness-interaction-design.md`。
 - **Harness 投递先记账再执行**：当前用户驱动 turn 以已持久化 Input 作为上游，Controller 在 submit 前持久化带不可变 launch snapshot 的 Delivery Attempt；Adapter resolve 只确认接受投递责任，Harness idle 才给出最终 outcome。Baton 无法证明 Harness 是否接收或结束时必须保留 `uncertain`，不能猜成失败后重投；幂等重试仍是长期模型，见 `docs/baton-v2.md` §1.5。
 - **上下文交付以 Receipt 推进基线**：不同来源收束为 `ContextSource(kind + owner + key)`；Snapshot 只说明准备送什么，transport 接受后持久化的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch。`meta.syncedSeq` 是兼容缓存，不替代事件历史；当前首个 source kind 是 BatonSession `session_history`，见 `docs/kernel.md` §3 与 `docs/baton-v2.md` §1.6。
@@ -125,5 +128,6 @@ baton/
 - `docs/baton-v2.md` — 面向 Loop 的 v2 内核目标：作用域、可靠工作投递、上下文交付与恢复
 - `docs/loop-engineering.md` — 长期 Loop Engineering 控制面：Baton Plugin / Harness Plugin、Event、Hook、Schedule、Board 与 Context 边界
 - `docs/plugin.md` — Baton Plugin 的 Package / Instance / Binding 与 Resource / Reconcile 运行模型
-- `docs/reqloop.md` — bundled `reqloop` Plugin：Requirement Loop 领域模型、内部 Connector 与预留的 Harness 驱动能力
+- reqloop 领域设计（独立仓）：
+  `https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md`
 - 参考实现与协议规范的外部链接见 `docs/design.md` 末尾"参考"一节

@@ -1,0 +1,28 @@
+{
+  "name": "@qiankun01/baton-plugin",
+  "version": "0.1.0",
+  "description": "Public protocol and authoring types for Baton plugins.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qiankunli/baton.git",
+    "directory": "packages/plugin"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

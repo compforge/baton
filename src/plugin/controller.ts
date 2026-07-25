@@ -46,6 +46,11 @@ export type Reconciler<TSpec, TStatus> = ResourceReconciler<
 export interface PluginResourceReconcileProposal {
   readonly key: ReconcileKey;
   readonly basedOnGeneration: number;
+  /**
+   * Reconciler 产出建议时看到的最新 Resource revision。
+   * 同一 spec generation 下的不同外部 observation 必须能形成不同 Proposal。
+   */
+  readonly basedOnResourceVersion?: number;
   readonly basedOnRevision?: never;
   readonly text: string;
 }
@@ -53,6 +58,7 @@ export interface PluginResourceReconcileProposal {
 export interface BuiltinResourceReconcileProposal {
   readonly key: ReconcileKey;
   readonly basedOnGeneration?: never;
+  readonly basedOnResourceVersion?: never;
   readonly basedOnRevision: number;
   readonly text: string;
 }
@@ -274,6 +280,7 @@ export class Controller<TSpec, TStatus> {
                 proposal: Object.freeze({
                   key,
                   basedOnGeneration: resource.metadata.generation,
+                  basedOnResourceVersion: latest.metadata.resourceVersion,
                   text: result.output.text,
                 }),
               }

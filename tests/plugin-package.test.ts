@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
@@ -97,10 +98,22 @@ describe("Plugin Package lifecycle", () => {
       packages: [reqloopPackage((activation) => {
         context = activation;
       })],
+      snapshot: () => {
+        const snapshot = emptyBatonSnapshot("bs_test");
+        return {
+          ...snapshot,
+          session: { ...snapshot.session, cwd: root },
+        };
+      },
       onProposal() {},
     });
 
     await manager.start();
+    expect(context!.session).toEqual({
+      batonSessionId: "bs_test",
+      cwd: root,
+    });
+    expect(Object.isFrozen(context!.session)).toBe(true);
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }
