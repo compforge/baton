@@ -235,6 +235,62 @@ export default {
     expect(registered.rootDir).toBe(join(batonRoot, "plugins", "marketplaces", "reqloop"));
     expect(registry.available()).toHaveLength(1);
   });
+
+  test("refreshes a dirty Git Marketplace cache from its upstream branch", async () => {
+    const marketplaceRoot = testRoot("baton-marketplace-git-source-");
+    const batonRoot = testRoot("baton-marketplace-data-");
+    createMarketplace(marketplaceRoot);
+    for (const args of [
+      ["init", "--quiet"],
+      ["add", "."],
+      [
+        "-c",
+        "user.name=Baton Test",
+        "-c",
+        "user.email=baton@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+    ]) {
+      const result = Bun.spawnSync(["git", ...args], {
+        cwd: marketplaceRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+    }
+    const registry = new MarketplaceRegistry({ rootDir: batonRoot });
+    const registered = await registry.add(pathToGitUrl(marketplaceRoot));
+    const cachedEntry = join(registered.rootDir, "requirement-loop", "src", "index.ts");
+    writeFileSync(cachedEntry, "dirty cache");
+
+    createMarketplace(marketplaceRoot, { version: "0.2.0" });
+    for (const args of [
+      ["add", "."],
+      [
+        "-c",
+        "user.name=Baton Test",
+        "-c",
+        "user.email=baton@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "update",
+      ],
+    ]) {
+      const result = Bun.spawnSync(["git", ...args], {
+        cwd: marketplaceRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+    }
+
+    expect(registry.available()[0]?.manifest.version).toBe("0.2.0");
+    expect(readFileSync(cachedEntry, "utf8")).toContain('version: "0.2.0"');
+  });
 });
 
 function pathToGitUrl(path: string): string {

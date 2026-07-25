@@ -512,45 +512,41 @@ export class MarketplaceRegistry {
     if (registration.source.kind !== "git") return;
 
     try {
-      // Silently fetch and pull to get latest marketplace.json and plugins
-      // Use a short timeout since this runs on every /plugins invocation
-      const timeoutMs = 5000; // 5 seconds timeout for auto-update
+      const fetchArgs = registration.source.ref
+        ? ["git", "fetch", "--quiet", "origin", registration.source.ref]
+        : ["git", "fetch", "--quiet", "origin"];
+      const fetched = Bun.spawnSync(fetchArgs, {
+        cwd: rootDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      });
+      if (fetched.exitCode !== 0) return;
 
-      // Check if it's a detached HEAD (ref-pinned marketplace)
-      const symbolic = Bun.spawnSync(["git", "symbolic-ref", "-q", "HEAD"], {
+      let target = "FETCH_HEAD";
+      if (!registration.source.ref) {
+        const upstream = Bun.spawnSync(
+          ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+          {
+            cwd: rootDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        if (upstream.exitCode !== 0) return;
+        target = upstream.stdout.toString().trim();
+        if (!target) return;
+      }
+
+      // Git marketplaces are Baton-owned delivery caches. Resetting instead of pulling keeps
+      // accidental edits inside the cache from permanently blocking update discovery.
+      Bun.spawnSync(["git", "reset", "--quiet", "--hard", target], {
         cwd: rootDir,
         stdout: "pipe",
         stderr: "pipe",
       });
-
-      if (symbolic.exitCode === 0) {
-        // On a branch, can pull
-        Bun.spawnSync(["git", "pull", "--quiet", "--ff-only"], {
-          cwd: rootDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-      } else {
-        // Detached HEAD (ref-pinned), fetch and reset to origin
-        Bun.spawnSync(["git", "fetch", "--quiet", "origin"], {
-          cwd: rootDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        if (registration.source.ref) {
-          // Reset to the pinned ref
-          Bun.spawnSync(["git", "reset", "--quiet", "--hard", `origin/${registration.source.ref}`], {
-            cwd: rootDir,
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-        }
-      }
-
-      // Update failures are silent - marketplace will still work with cached version
     } catch {
-      // Silently ignore update failures - user can still use cached marketplace
+      // Update failures are silent; the last valid cache remains usable.
     }
   }
 
