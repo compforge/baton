@@ -19,6 +19,7 @@ import {
 import { newId } from "../../event/ids.ts";
 import type { DiagnosticSink } from "../../diagnostics.ts";
 import { diagnosticError } from "../../diagnostics.ts";
+import { readClaudeSettings } from "./settings.ts";
 import type {
   ContentBlock,
   DiffBlock,
@@ -325,6 +326,8 @@ interface ClaudeRuntime {
   tasks: Map<string, TaskEntry>;
   /** tool_use 已登记、等待 tool_result 落账的 Task 操作（key: tool_use_id） */
   pendingTaskOps: Map<string, TaskToolOp>;
+  /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
+  settings?: import("./settings.ts").ClaudeSettings;
 }
 
 const CLAUDE_FALLBACK_MODELS: ModelOption[] = [
@@ -444,14 +447,20 @@ export class ClaudeAdapter implements HarnessAdapter {
   async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
     const id = newId("hs");
 
-    // 注意：不需要手动读取 .claude/settings.json 并传递给 SDK。
-    // SDK 通过子进程启动 Claude CLI，CLI 会自动读取 cwd 目录下的配置：
+    // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
+    const settings = await readClaudeSettings(opts.cwd, this.options.diagnostic);
+
+    // 注意：虽然 SDK 通过子进程启动 Claude CLI，CLI 会自动读取配置文件层级：
     //   1. ~/.claude/settings.json (user-level)
     //   2. ${cwd}/.claude/settings.json (project-level)
     //   3. ${cwd}/.claude/settings.local.json (local override)
     //   4. managed-settings.json (policy)
-    // CLI 会自动处理 enabledPlugins、extraKnownMarketplaces、插件加载等。
-    // 我们只需要传递正确的 cwd，其余交给 CLI 处理。
+    //
+    // 但为了确保 plugins 和 mcpServers 能被正确加载，我们需要：
+    // 1. 通过 SDK Options 显式传递 plugins 和 mcpServers（确保 SDK 能看到）
+    // 2. 同时保持 cwd 正确，让 CLI 能读取 enabledPlugins 等其他配置
+    //
+    // 这种"双保险"策略能最大程度保证 plugin 正常工作。
 
     this.sessions.set(id, {
       cwd: opts.cwd,
@@ -461,6 +470,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       suppressedToolIds: new Set(),
       tasks: new Map(),
       pendingTaskOps: new Map(),
+      settings,
     });
     return { harness: this.harness, harnessSessionId: id, resumed: Boolean(opts.resumeSessionId) };
   }
@@ -621,7 +631,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const emit: EventSink = (ev) => this.emit(rt, ev, current);
     const executable = this.options.executablePath ?? process.env.BATON_CLAUDE_BIN;
 
-    // SDK Options：只传递必要的运行时参数，让 Claude CLI 自动读取配置文件。
+    // SDK Options：传递必要的运行时参数和配置。
     //
     // 工作原理：
     // - SDK 通过子进程启动 claude CLI（由 pathToClaudeCodeExecutable 指定）
@@ -632,8 +642,8 @@ export class ClaudeAdapter implements HarnessAdapter {
     //     managed-settings.json              (policy)
     // - CLI 自动处理：enabledPlugins、extraKnownMarketplaces、插件加载、MCP 服务器等
     //
-    // 因此我们不需要手动读取 settings.json 并通过 options 传递 plugins/mcpServers。
-    // 只在需要程序化覆盖配置时，才显式传递 plugins/mcpServers 到 options。
+    // 但为了确保 plugins 和 mcpServers 能被 SDK 正确识别，我们显式传递它们。
+    // 这样即使 CLI 的自动配置加载有问题，SDK 也能直接使用这些配置。
     const sdkOptions: Options = {
       cwd: rt.cwd,
       env: { ...(process.env as Record<string, string>), ...rt.env },
@@ -642,6 +652,8 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(rt.model ? { model: rt.model } : {}),
       ...(rt.effort ? { effort: rt.effort } : {}),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+      ...(rt.settings?.plugins ? { plugins: rt.settings.plugins } : {}),
+      ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),
       canUseTool: (toolName, toolInput, meta) =>
         this.handleCanUseTool(() => current.turnId, toolName, toolInput, meta),
     };
