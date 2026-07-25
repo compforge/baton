@@ -71,6 +71,29 @@ afterEach(() => {
 });
 
 describe("Plugin Marketplace", () => {
+  test("keeps the same plugin version from different marketplaces isolated", async () => {
+    const firstMarketplace = testRoot("baton-marketplace-first-");
+    const secondMarketplace = testRoot("baton-marketplace-second-");
+    const batonRoot = testRoot("baton-marketplace-data-");
+    createMarketplace(firstMarketplace, { name: "first" });
+    createMarketplace(secondMarketplace, { name: "second" });
+    const registry = new MarketplaceRegistry({ rootDir: batonRoot });
+    await registry.add(firstMarketplace);
+    await registry.add(secondMarketplace);
+
+    const first = registry.install("qiankun/requirement-loop", { marketplace: "first" });
+    const second = registry.install("qiankun/requirement-loop", { marketplace: "second" });
+
+    expect(first.packageDir).not.toBe(second.packageDir);
+    expect(registry.installed()).toHaveLength(2);
+    await expect(
+      registry.load("qiankun/requirement-loop", "first", "0.1.0"),
+    ).resolves.toMatchObject({ pluginId: "qiankun/requirement-loop", version: "0.1.0" });
+    await expect(
+      registry.load("qiankun/requirement-loop", "second", "0.1.0"),
+    ).resolves.toMatchObject({ pluginId: "qiankun/requirement-loop", version: "0.1.0" });
+  });
+
   test("registers, discovers, installs, and loads a local Marketplace Package", async () => {
     const marketplaceRoot = testRoot("baton-marketplace-source-");
     const batonRoot = testRoot("baton-marketplace-data-");
@@ -101,7 +124,7 @@ describe("Plugin Marketplace", () => {
     const installed = registry.install("qiankun/requirement-loop");
     expect(installed.alreadyInstalled).toBe(false);
     expect(installed.packageDir).toContain(
-      join("plugins", "packages", "qiankun%2Frequirement-loop", "0.1.0"),
+      join("plugins", "packages", "reqloop", "qiankun%2Frequirement-loop", "0.1.0"),
     );
     expect(installed.provenance).toEqual({
       marketplace: "reqloop",
@@ -112,7 +135,7 @@ describe("Plugin Marketplace", () => {
     expect(existsSync(join(installed.packageDir, "node_modules"))).toBe(false);
     expect(existsSync(join(installed.packageDir, ".git"))).toBe(false);
 
-    const plugin = await registry.load("qiankun/requirement-loop", "0.1.0");
+    const plugin = await registry.load("qiankun/requirement-loop", "reqloop", "0.1.0");
     expect(plugin.pluginId).toBe("qiankun/requirement-loop");
     expect(plugin.version).toBe("0.1.0");
     expect(typeof plugin.activate).toBe("function");
@@ -161,11 +184,12 @@ export default {
     };
 
     writeEntry("first");
-    const first = await registry.load("qiankun/requirement-loop", "0.1.0");
+    const first = await registry.load("qiankun/requirement-loop", "reqloop", "0.1.0");
     writeEntry("second");
-    const cached = await registry.load("qiankun/requirement-loop", "0.1.0");
+    const cached = await registry.load("qiankun/requirement-loop", "reqloop", "0.1.0");
     const fresh = await registry.load(
       "qiankun/requirement-loop",
+      "reqloop",
       "0.1.0",
       { fresh: true },
     );

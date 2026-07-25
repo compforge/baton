@@ -13,6 +13,7 @@ export interface PluginInstance {
   readonly pluginInstanceId: string;
   readonly batonSessionId: string;
   readonly pluginId: string;
+  readonly marketplace?: string;
   readonly packageVersion: string;
   readonly enabled: boolean;
   readonly config: Readonly<PluginConfig>;

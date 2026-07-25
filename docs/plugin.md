@@ -2,9 +2,9 @@
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
 > PluginResource / Reconcile / Proposal / Board projection / 动态唤醒、`baton.turn` Builtin Resource
-> 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、当前 Session 的
-> Instance 启停、`/plugins` 首期管理面和
-> `/reload-plugins` 已经落地；Command、Context projection、Instance 配置和权限审阅仍按真实产品入口增量
+> 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
+> Plugin 启停、`/plugins` 首期管理面和
+> `/reload-plugins` 已经落地；Command、Context projection、配置编辑 UI 和权限审阅仍按真实产品入口增量
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
@@ -23,8 +23,8 @@ Baton Plugin 要让一个扩展在不进入 Baton core 的前提下：
 4. 产生可由人审核的推荐输入；未来也可请求 Baton 受控调用 Harness；
 5. 在 Baton 重启后从 Event Ledger、PluginResource 和 Proposal 恢复工作。
 
-Plugin 不是一组随意拼接的回调。它既是可交付的能力包，也是在一个 BatonSession 中可配置、
-可持久恢复的领域参与者。Baton 负责控制面一致性，Plugin 负责自己的领域模型和外部系统适配。
+Plugin 不是一组随意拼接的回调。它既是可交付的能力包，也是用户级可配置、在各
+BatonSession 中拥有独立运行态的领域参与者。Baton 负责控制面一致性，Plugin 负责自己的领域模型和外部系统适配。
 Plugin 也不必等于一个 loop：例如“分析刚完成的用户问题并推荐合适 Harness”的 Plugin，只需
 观察 `baton.turn` 并产生 Proposal，不必先创建一份 PluginResource。
 
@@ -82,18 +82,20 @@ Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 
 
 #### PluginInstance
 
-`PluginInstance` 是某个 Package 在 BatonSession 中的一份配置身份，包含：
+`PluginInstance` 是一份用户级 Plugin 配置在某个 BatonSession 中的运行时投影，包含：
 
-- 稳定的 `pluginInstanceId` 和 Package 引用；
-- 所属 `batonSessionId`；
+- 稳定的 `plugin@marketplace` 身份、派生 `pluginInstanceId` 和 Package 版本引用；
+- 当前投影所属的 `batonSessionId`；
 - 启用状态、配置、secret 绑定和权限策略；
-- 独立的可写数据位置。
+- 当前 Session 内独立的可写数据位置。
 
-一个 Package 可以有多个 Instance，例如同一 reqloop 分别连接不同组织或环境。
-`pluginId` 回答“是什么扩展”，`pluginInstanceId` 回答“当前由哪份配置负责”。
+首版一个 `plugin@marketplace` 对应一份用户级配置。`pluginId` 回答“是什么扩展”，
+`marketplace` 回答“从哪个分发源安装”，二者共同避免不同 Marketplace 的同名 Package
+互相覆盖。多账号、多环境实例等到出现真实配置路由需求后再扩展，不复用 marketplace 冒充环境。
 
-Instance data 只保存 Connector cursor、缓存或确实私有的材料。可驱动 loop 的领域状态进入
-Plugin Resource 的 `spec/status`；外部平台仍是其领域事实的来源。不能把一份不透明的
+用户级配置只保存版本、enabled、config 及后续的 secret/权限引用。Connector cursor、缓存或
+确实私有的运行材料仍归当前 BatonSession；可驱动 loop 的领域状态进入 Plugin Resource 的
+`spec/status`；外部平台仍是其领域事实的来源。不能把一份不透明的
 `private runtime state` 变成 Baton 无法恢复、无法审计的第二真相源。
 
 #### PluginBinding
@@ -325,9 +327,9 @@ Marketplace 详情在面板内逐层展开，不把 Plugin 管理伪装成新的
 - 注册本地目录或 Git 仓库形式的 Marketplace；
 - 从 Marketplace 仓内相对路径发现 PluginPackage；
 - 校验 Marketplace 索引与 Package manifest 的 `pluginId` 一致；
-- 按 `pluginId + version` 安装不可变快照并记录来源；
+- 按 `plugin@marketplace + version` 安装不可变快照并记录来源；
 - 从 `/plugins` 浏览、搜索、查看详情并安装 Package；
-- 在 Package 详情下创建、启用或停用当前 BatonSession 的 PluginInstance；
+- 在 Package 详情下创建、启用或停用用户级 Plugin 配置，并立即同步当前 Session；
 - 从安装缓存加载可信的进程内 PluginPackage，交给现有 Manager 激活。
 
 `baton plugins marketplace add|list`、`baton plugins available`、`baton plugins install` 和
@@ -336,25 +338,36 @@ Marketplace 详情在面板内逐层展开，不把 Plugin 管理伪装成新的
 生命周期。这些管理操作由 Baton core 执行，不注册成普通 PluginContribution，也不能被 Plugin
 自己拦截或替换。
 
-Package 安装不等于创建或启用 Instance；用户需要在详情中显式启用。显式启用失败时，Manager
-保留 disabled Instance 供诊断和重试，不留下“配置显示启用、运行期却未激活”的半状态。当前详情
-只在 Package 没有 Instance 时创建一份，在恰有一份时启停；配置、多 Instance 选择以及 Package
-更新 / 卸载尚未进入首期面板，更新也不能静默改写现有 Instance 引用。
+安装入口采用 Claude/Codex 都容易理解的默认：安装成功即在用户级配置中启用；用户也可从
+详情中显式禁用。激活失败时回滚为 disabled，避免留下“配置显示启用、当前运行期却未激活”的
+半状态。启停对新 Session 自动生效；其它已经运行的 Baton 进程不会被跨进程强行热改。
 
-`/reload-plugins` 只重载当前 BatonSession：先关闭现有 Binding，再重新读取 Package，并激活
-全部 enabled Instance。它不创建 Instance、不改变 enabled 配置；单个插件失败不会阻断其他
+`/reload-plugins` 只重载当前 BatonSession：先关闭现有 Binding，再重新读取
+`~/.baton/plugin.yaml` 与 Package，并激活全部 enabled Plugin。它不改变 enabled 配置；单个插件失败不会阻断其他
 插件，最终统一显示成功与失败摘要。Bun 会缓存同一路径的 ESM 及其相对依赖，因此 fresh load
 使用独立的临时 Package 快照提供新的模块身份；快照保留到 Baton 退出，避免 Plugin 在激活后
 通过模块目录读取资源时路径失效。
 
 Marketplace 是长期的 Package 发现与分发层，负责搜索、版本、来源、信任信息、安装、升级和
-卸载。它交付不可变的 PluginPackage 后便退出运行链路，不拥有 PluginInstance、Binding、
-权限策略、PluginResource 或 reconcile due time。安装 Package 也不等于启用 Instance，更不
-等于批准其 Connector 权限。
+卸载。它交付不可变的 PluginPackage 后便退出运行链路，不拥有 Plugin 配置、Binding、
+权限策略、PluginResource 或 reconcile due time。用户入口会在安装成功后另行写入全局
+enabled 配置；这仍不等于批准其 Connector 权限。
 
-`pluginId` 是跨 Marketplace 稳定的包身份，应使用 owner namespace 避免冲突；Marketplace
-来源作为安装 provenance 单独记录，不拼进 PluginInstance 身份。这样更换分发源不会让既有
-Instance、Resource 和权限记录变成另一套对象。
+用户可操作的 Plugin 身份是 `plugin@marketplace`；`pluginId` 仍应使用 owner namespace，
+Marketplace 仍记录安装 provenance。同一个 `pluginId + version` 来自不同 Marketplace 时，
+安装目录、启用配置和 Package load cache 均隔离，不能因路径相同而互相覆盖。
+
+用户级配置集中在 `~/.baton/plugin.yaml`，最小可手写形状如下；缺省 `config` 也会按空对象
+处理，Baton 写回时可以附加时间戳元数据：
+
+```yaml
+version: 1
+plugins:
+  "qiankun/requirement-loop@reqloop":
+    enabled: true
+    version: 0.1.0
+    config: {}
+```
 
 Marketplace 和 Package 各自使用一份小 manifest。Marketplace 索引只保存 Package 身份和仓内
 相对路径，Package manifest 才是版本、入口和展示信息的权威来源：
@@ -407,9 +420,9 @@ discover / install PluginPackage
 可用状态。首期不做运行中无感热升级；更新 Package 后通过 `/reload-plugins` 或下一次启动重新
 绑定，优先保证单机多进程场景下的身份和恢复语义清晰。
 
-`MarketplaceRegistry.load()` 从安装目录加载并复核 Package 身份；`Manager` 从本 BatonSession
-的 `instance.json` 读取启用 Instance，以精确
-`pluginId + packageVersion` 找到 Package，再创建 Binding。Package 不接收 Store、Controller
+`MarketplaceRegistry.load()` 从安装目录加载并复核 Package 身份；`Manager` 从用户级
+`plugin.yaml` 读取启用配置，以精确
+`pluginId + marketplace + packageVersion` 找到 Package，再为当前 Session 创建 Binding。Package 不接收 Store、Controller
 或可伪造的 owner；`registerResource` 与 `watchBuiltinResource` 都由 Binding 自动补齐
 BatonSession 和 PluginInstance scope。单个 Instance 激活失败只关闭并报告该 Binding，不阻断其他 Plugin 的恢复；Manager
 退出或 Instance 解绑时，Binding 统一撤销注册和动态唤醒。
@@ -527,25 +540,25 @@ Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部
   Intent / Attempt / Receipt；
 - 需要关闭 TUI 后继续实时推进时，再引入 daemon，复用同一 Resource store 和 reconcile queue。
 
-### 2.4 Command 与多实例
+### 2.4 Command 与配置路由
 
-Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一，不因配置多个 Instance 就
-在命令列表中生成多份 `/requirement`。
-
-- 没有可用 Instance：进入配置或启用引导；
-- 只有一个 Instance：直接路由；
-- 有多个 Instance：使用当前 BatonSession 的默认值，没有默认值时让用户选择。
+Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一。首版每个
+`plugin@marketplace` 只有一份用户级配置：没有可用配置时进入安装或启用引导，有配置时直接
+路由。未来若真实场景需要同一 Plugin 的多账号或多环境实例，再为配置增加独立身份与选择入口，
+但命令列表仍不生成多份 `/requirement`。
 
 命令一旦开始执行，后续 Resource、Event 和 Board projection 都携带明确的
 `pluginInstanceId`，不能依赖“当前 Plugin”之类的隐式全局状态。
 
 ### 2.5 Disable、崩溃与升级
 
-禁用 Instance 时，Baton 关闭其 Binding，撤销运行期注册和 due timer，并停止推进 reconcile
-queue；已经持久化的 Resource、Receipt 和审计历史继续保留。
+全局禁用 Plugin 时，当前操作所在的 Baton 关闭其 Binding，撤销运行期注册和 due timer，并
+停止推进 reconcile queue；其它已运行进程在显式 `/reload-plugins` 后同步。已经持久化的
+Resource、Receipt 和审计历史继续保留。
 
-进程重启后，Baton 从启用的 PluginInstance 重建 Binding，先恢复待处理 Proposal，再扫描
-Resource 和 `nextReconcileAt`，将未完成对象重新 enqueue。Package 升级不会静默覆盖 Instance data；
+新 Session 或进程重启后，Baton 从用户级启用配置重建当前 Session 的 Binding，先恢复待处理
+Proposal，再扫描 Resource 和 `nextReconcileAt`，将未完成对象重新 enqueue。Package 升级不会
+静默覆盖 Session 运行数据；
 确需 Resource schema migration 时由新版本显式声明并产生可审计结果。
 
 ## 3. 关键设计
@@ -606,8 +619,8 @@ Reconcile
 | 体系 | 吸收 | 不照搬 |
 |---|---|---|
 | OpenCode | 按领域注册、作用域拥有注册项、关闭作用域时自动撤销 | 向 Plugin 暴露 client、shell 和可变宿主对象；一张不断增长的 Hooks 表 |
-| Codex | 不可变能力包、manifest、资源路径约束、Package Root 与可写 Data 分离、宿主控制信任与权限 | 只把 Plugin 当静态能力集合，缺少 Baton 所需的多实例和长期 reconcile 身份 |
-| Claude Code | 自包含包、组件命名空间、安装 scope、版本隔离和持久化 Plugin Data | 用易失 monitor stdout 承担可靠领域事件，或让 Hook 形成第二条执行状态机 |
+| Codex | `plugin@marketplace` 身份、用户级 enabled 配置、不可变能力包、Package Root 与可写 Data 分离 | 只把 Plugin 当静态能力集合，缺少 Baton 所需的 Session Resource 与长期 reconcile 身份 |
+| Claude Code | 用户级启用作用域、自包含包、版本隔离、运行中 `/reload-plugins` | 首版不照搬 project/local/managed 多层覆盖，也不用 Hook 形成第二条执行状态机 |
 
 Baton 因此采用“Codex / Claude 的 Package 边界 + OpenCode v2 的 scoped Binding +
 Baton 自己的 Instance、Event 和 Attempt 语义”，而不是复制其中任意一套完整 API。
@@ -659,24 +672,24 @@ reqloop repository          # 独立 Marketplace，只依赖 Baton 公开 Plugin
 `src/plugin/` 是 Baton core 的 Plugin Manager 边界；独立 reqloop 仓库拥有 Requirement Loop
 的领域模型和 Connector。Baton core 除安装注册入口外，不依赖 reqloop 的领域类型。
 
-PluginPackage 是用户级安装资产；Plugin 运行数据则跟随 BatonSession：
+PluginPackage 与启用配置是用户级资产；Plugin 运行数据仍跟随 BatonSession：
 
 ```text
 ~/.baton/
+├── plugin.yaml                             # plugin@marketplace → enabled/version/config
 ├── plugins/
 │   ├── marketplaces.json
 │   ├── marketplaces/<marketplaceName>/    # Git source 的本地 checkout
-│   └── packages/<encodedPluginId>/<version>/
+│   └── packages/<marketplace>/<encodedPluginId>/<version>/
 └── projects/<projectKey>/
     └── sessions/<batonSessionId>/
         └── plugins/<pluginInstanceId>/
-            ├── instance.json
             ├── resources/<kind>/<resourceId>.json
             └── proposals/<proposalId>.json
 ```
 
 Project 只负责组织和发现 BatonSession，不拥有 Plugin runtime。Manager、Controller、Binding
-和队列是进程态；恢复时从当前 Session 的 Event Ledger、PluginInstance、PluginResource 和
+和队列是进程态；恢复时从用户级启用配置和当前 Session 的 Event Ledger、PluginResource、
 Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
 
 ### 3.6 增量落地
@@ -689,7 +702,7 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
    `watchBuiltinResource` 复用同一 queue、退避和 Proposal 管线；启动 replay 与 live append
    使用同一资源 key。
 4. 已建立本地 / Git Marketplace 注册、仓内 Package 发现、版本化不可变安装和进程内加载；
-   Marketplace provenance 与 Package identity 分离。
+   用户身份统一为 `plugin@marketplace`，同名 Package 按 Marketplace 隔离。
 5. 以 reqloop 的 `/requirement` 验证 Command 的真实需要，再补
    `command | resource` 声明校验和多实例路由，不先为未接产品入口的 Command 造 handler。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
@@ -699,7 +712,7 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Reconciler 主动启动 Harness 后，再设计受控调用；首期只允许用户把
    `proposed-input` Output 提交成普通 Input。
-9. `/plugins` 首期管理面已接入 Marketplace 浏览、Package 搜索 / 详情 / 安装、当前 Session
-   的 Instance 启停和加载错误；`/reload-plugins` 已接入 Manager 的 Binding 重建。真实分发
+9. `/plugins` 首期管理面已接入 Marketplace 浏览、Package 搜索 / 详情 / 安装、用户级
+   Plugin 启停和加载错误；新 Session 自动加载，`/reload-plugins` 已接入当前 Session 的 Binding 重建。真实分发
    需求出现后再增加配置、多 Instance 管理、更新、卸载、内容信任和进程隔离，不改变既有
    Instance / Binding 运行模型。

@@ -21,6 +21,7 @@ import {
 import {
   type CreatePluginInstance,
   type PluginInstance,
+  type PluginInstanceRepository,
   PluginInstanceStore,
 } from "./instance.ts";
 import {
@@ -86,7 +87,7 @@ export interface ManagerOptions {
    */
   session?: Pick<SessionHandle, "id" | "dir" | "readEvents" | "subscribe">;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
-  instances?: PluginInstanceStore;
+  instances?: PluginInstanceRepository;
   /** 当前进程可激活的可信、不可变 Package 版本。 */
   packages?: readonly PluginPackage[];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
@@ -95,7 +96,7 @@ export interface ManagerOptions {
   loadPackage?(
     pluginId: string,
     version: string,
-    options?: { fresh?: boolean },
+    options?: { fresh?: boolean; marketplace?: string },
   ): Promise<PluginPackage>;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
@@ -162,7 +163,7 @@ function positiveDelay(name: string, value: number): void {
 export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
-  private readonly instances: PluginInstanceStore;
+  private readonly instances: PluginInstanceRepository;
   private readonly packages = new Map<string, PluginPackage>();
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
   private readonly loadPackage: ManagerOptions["loadPackage"];
@@ -368,7 +369,11 @@ export class Manager {
     if (!instance.enabled) {
       throw new Error(`plugin Instance is disabled: ${pluginInstanceId}`);
     }
-    const plugin = await this.resolvePackage(instance.pluginId, instance.packageVersion);
+    const plugin = await this.resolvePackage(
+      instance.pluginId,
+      instance.packageVersion,
+      instance.marketplace,
+    );
     const batonSession = this.snapshot().session;
     if (batonSession.batonSessionId !== this.proposals.batonSessionId) {
       throw new Error(
@@ -498,7 +503,7 @@ export class Manager {
     const current = this.instances.get(pluginInstanceId);
     if (current.packageVersion === packageVersion) return current;
 
-    await this.resolvePackage(current.pluginId, packageVersion);
+    await this.resolvePackage(current.pluginId, packageVersion, current.marketplace);
     const wasActive = this.isInstanceActive(pluginInstanceId);
     if (wasActive) await this.deactivateInstance(pluginInstanceId);
     const updated = this.instances.setPackageVersion(pluginInstanceId, packageVersion);
@@ -522,6 +527,13 @@ export class Manager {
     }
   }
 
+  async removeInstance(pluginInstanceId: string): Promise<void> {
+    if (this.closed) throw new Error("plugin Manager is closed");
+    await this.start();
+    await this.deactivateInstance(pluginInstanceId);
+    this.instances.delete(pluginInstanceId);
+  }
+
   /**
    * 重载当前 BatonSession 的全部 enabled Instance。Package 每个版本只 fresh load 一次；
    * 单个 Package 或 Instance 失败不阻断其它插件，也不改变用户的 enabled 配置。
@@ -542,11 +554,16 @@ export class Manager {
     const packageFailures = new Map<string, unknown>();
     const loadedPackages = new Set<string>();
     for (const instance of enabled) {
-      const key = pluginPackageKey(instance.pluginId, instance.packageVersion);
+      const key = this.runtimePackageKey(instance);
       if (loadedPackages.has(key)) continue;
       loadedPackages.add(key);
       try {
-        await this.resolvePackage(instance.pluginId, instance.packageVersion, true);
+        await this.resolvePackage(
+          instance.pluginId,
+          instance.packageVersion,
+          instance.marketplace,
+          true,
+        );
       } catch (error) {
         packageFailures.set(key, error);
       }
@@ -556,7 +573,7 @@ export class Manager {
     for (const instance of enabled) {
       if (failures.has(instance.pluginInstanceId)) continue;
       const error = packageFailures.get(
-        pluginPackageKey(instance.pluginId, instance.packageVersion),
+        this.runtimePackageKey(instance),
       );
       if (error) {
         failures.set(instance.pluginInstanceId, {
@@ -667,9 +684,12 @@ export class Manager {
   private async resolvePackage(
     pluginId: string,
     version: string,
+    marketplace?: string,
     fresh = false,
   ): Promise<PluginPackage> {
-    const key = pluginPackageKey(pluginId, version);
+    const key = marketplace
+      ? JSON.stringify([pluginId, marketplace, version])
+      : pluginPackageKey(pluginId, version);
     if (!fresh) {
       const cached = this.packages.get(key);
       if (cached) return cached;
@@ -682,7 +702,16 @@ export class Manager {
       throw new Error(`plugin Package is unavailable: ${pluginId}@${version}`);
     }
     const loading = Promise.resolve()
-      .then(() => this.loadPackage!(pluginId, version, fresh ? { fresh: true } : undefined))
+      .then(() =>
+        this.loadPackage!(
+          pluginId,
+          version,
+          {
+            ...(fresh ? { fresh: true } : {}),
+            ...(marketplace ? { marketplace } : {}),
+          },
+        ),
+      )
       .then((plugin) => {
         validatePluginPackage(plugin);
         if (plugin.pluginId !== pluginId || plugin.version !== version) {
@@ -698,6 +727,12 @@ export class Manager {
       });
     this.packageLoads.set(key, loading);
     return await loading;
+  }
+
+  private runtimePackageKey(instance: PluginInstance): string {
+    return instance.marketplace
+      ? JSON.stringify([instance.pluginId, instance.marketplace, instance.packageVersion])
+      : pluginPackageKey(instance.pluginId, instance.packageVersion);
   }
 
   private bindResource<TSpec, TStatus>(

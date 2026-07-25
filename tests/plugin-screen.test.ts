@@ -112,6 +112,7 @@ describe("Plugin manager projection", () => {
       pluginInstanceId: "pi_reqloop",
       batonSessionId: "bs_test",
       pluginId: available.manifest.pluginId,
+      marketplace: available.marketplace,
       packageVersion: available.manifest.version,
       enabled: true,
       config: {},
@@ -130,6 +131,7 @@ describe("Plugin manager projection", () => {
     expect(
       packageInstances(
         available.manifest.pluginId,
+        available.marketplace,
         available.manifest.version,
         withInstance,
       ),

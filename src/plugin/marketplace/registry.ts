@@ -250,7 +250,7 @@ async function runGit(
 }
 
 /**
- * Marketplace 只负责把目录源解析为不可变 Package；Instance 和 Binding 仍归 session runtime。
+ * Marketplace 只负责把目录源解析为不可变 Package；全局启用配置与 session Binding 分别管理。
  */
 export class MarketplaceRegistry {
   readonly rootDir: string;
@@ -350,31 +350,22 @@ export class MarketplaceRegistry {
   installed(): InstalledPluginPackage[] {
     const root = this.packagesDir();
     if (!existsSync(root)) return [];
-    const installed: InstalledPluginPackage[] = [];
-    for (const pluginEntry of readdirSync(root, { withFileTypes: true })) {
-      if (!pluginEntry.isDirectory()) continue;
-      for (const versionEntry of readdirSync(join(root, pluginEntry.name), {
-        withFileTypes: true,
-      })) {
-        if (!versionEntry.isDirectory()) continue;
-        installed.push(this.readInstalled(join(root, pluginEntry.name, versionEntry.name)));
-      }
-    }
+    const installed = this.installedPackageDirs(root).map((path) => this.readInstalled(path));
     return installed.sort((left, right) =>
-      `${left.manifest.pluginId}@${left.manifest.version}`.localeCompare(
-        `${right.manifest.pluginId}@${right.manifest.version}`,
+      `${left.manifest.pluginId}@${left.provenance.marketplace}@${left.manifest.version}`.localeCompare(
+        `${right.manifest.pluginId}@${right.provenance.marketplace}@${right.manifest.version}`,
       ),
     );
   }
 
-  uninstall(pluginId: string, version: string): void {
-    const packageDir = this.packageDir(pluginId, version);
+  uninstall(pluginId: string, marketplace: string, version: string): void {
+    const packageDir = this.resolveInstalledPackageDir(pluginId, marketplace, version);
     if (!existsSync(packageDir)) {
-      throw new Error(`Plugin Package is not installed: ${pluginId}@${version}`);
+      throw new Error(`Plugin Package is not installed: ${pluginId}@${marketplace} ${version}`);
     }
     return withFileLock(packageDir, () => {
       if (!existsSync(packageDir)) {
-        throw new Error(`Plugin Package is not installed: ${pluginId}@${version}`);
+        throw new Error(`Plugin Package is not installed: ${pluginId}@${marketplace} ${version}`);
       }
       rmSync(packageDir, { recursive: true, force: true });
       // Clean up empty parent directory if this was the last version
@@ -392,10 +383,13 @@ export class MarketplaceRegistry {
 
   async load(
     pluginId: string,
+    marketplace: string,
     version: string,
     options: { fresh?: boolean } = {},
   ): Promise<PluginPackage> {
-    const installed = this.readInstalled(this.packageDir(pluginId, version));
+    const installed = this.readInstalled(
+      this.resolveInstalledPackageDir(pluginId, marketplace, version),
+    );
     let packageDir = installed.packageDir;
     if (options.fresh) {
       const runtimeRoot =
@@ -572,6 +566,7 @@ export class MarketplaceRegistry {
     const marketplace = this.list().find(({ name }) => name === available.marketplace);
     if (!marketplace) throw new Error(`marketplace not registered: ${available.marketplace}`);
     const target = this.packageDir(
+      available.marketplace,
       available.manifest.pluginId,
       available.manifest.version,
     );
@@ -620,21 +615,30 @@ export class MarketplaceRegistry {
   private readInstalled(packageDir: string): InstalledPluginPackage {
     if (!existsSync(packageDir)) throw new Error(`Plugin Package is not installed: ${packageDir}`);
     const manifest = readPluginManifest(packageDir);
-    const expected = this.packageDir(manifest.pluginId, manifest.version);
-    if (resolve(packageDir) !== resolve(expected)) {
+    const receiptPath = join(packageDir, INSTALL_RECEIPT_PATH);
+    if (!existsSync(receiptPath)) {
+      throw new Error(`Plugin Package install receipt not found: ${receiptPath}`);
+    }
+    const provenance = parseProvenance(readJson(receiptPath, "Package install receipt"));
+    const expected = this.packageDir(
+      provenance.marketplace,
+      manifest.pluginId,
+      manifest.version,
+    );
+    const legacyExpected = this.legacyPackageDir(manifest.pluginId, manifest.version);
+    if (
+      resolve(packageDir) !== resolve(expected) &&
+      resolve(packageDir) !== resolve(legacyExpected)
+    ) {
       throw new Error(
         `installed Package path does not match manifest identity: ${manifest.pluginId}@${manifest.version}`,
       );
     }
     resolveExistingWithin(packageDir, manifest.entry, `Plugin entry ${manifest.pluginId}`);
-    const receiptPath = join(packageDir, INSTALL_RECEIPT_PATH);
-    if (!existsSync(receiptPath)) {
-      throw new Error(`Plugin Package install receipt not found: ${receiptPath}`);
-    }
     return Object.freeze({
       packageDir,
       manifest,
-      provenance: parseProvenance(readJson(receiptPath, "Package install receipt")),
+      provenance,
     });
   }
 
@@ -650,12 +654,52 @@ export class MarketplaceRegistry {
       : join(this.marketplacesDir(), registration.name);
   }
 
-  private packageDir(pluginId: string, version: string): string {
+  private packageDir(marketplace: string, pluginId: string, version: string): string {
+    return join(
+      this.packagesDir(),
+      packageDirectoryName(marketplace),
+      packageDirectoryName(validatePluginId(pluginId)),
+      validatePackageVersion(version),
+    );
+  }
+
+  private legacyPackageDir(pluginId: string, version: string): string {
     return join(
       this.packagesDir(),
       packageDirectoryName(validatePluginId(pluginId)),
       validatePackageVersion(version),
     );
+  }
+
+  private resolveInstalledPackageDir(
+    pluginId: string,
+    marketplace: string,
+    version: string,
+  ): string {
+    const current = this.packageDir(marketplace, pluginId, version);
+    if (existsSync(current)) return current;
+    const legacy = this.legacyPackageDir(pluginId, version);
+    if (existsSync(legacy)) {
+      const installed = this.readInstalled(legacy);
+      if (installed.provenance.marketplace === marketplace) return legacy;
+    }
+    return current;
+  }
+
+  private installedPackageDirs(root: string): string[] {
+    const packages: string[] = [];
+    const visit = (directory: string, depth: number): void => {
+      if (existsSync(join(directory, INSTALL_RECEIPT_PATH))) {
+        packages.push(directory);
+        return;
+      }
+      if (depth >= 3) return;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) visit(join(directory, entry.name), depth + 1);
+      }
+    };
+    visit(root, 0);
+    return packages;
   }
 
   private pluginsDir(): string {
