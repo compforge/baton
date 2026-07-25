@@ -64,7 +64,7 @@ interface ThreadRuntime {
   threadId: string;
   /** codex 回吐的生效审批路由（权威）；null = 本次没问出来，投影据此静默。 */
   approvalRoute: ApprovalRoute | null;
-  sink?: EventSink;
+  sink: EventSink;
   /** 最近一次 submit 的 baton turn id：迟到通知（tokenUsage 等）也用它标注信封 */
   turnId?: string;
   /** 当前被接受、尚未逻辑终结的 turn */
@@ -961,7 +961,7 @@ export class CodexAdapter implements HarnessAdapter {
     // 空回合判定的记账点：任何可见产出都经过这里，集中标记比在各通知分支手工标记可靠
     const owner = turn ?? rt.activeTurn;
     if (owner && !owner.finalized && OUTPUT_EVENT_KINDS.has(ev.kind)) owner.sawOutput = true;
-    rt.sink?.({ ...ev, harnessSessionId: rt.threadId, turnId: turn?.turnId ?? rt.turnId, raw });
+    rt.sink({ ...ev, harnessSessionId: rt.threadId, turnId: turn?.turnId ?? rt.turnId, raw });
   }
 
   /**
