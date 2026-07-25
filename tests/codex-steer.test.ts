@@ -57,7 +57,7 @@ test("codex steer: maps to turn/steer with the codex turn id and emits a steer u
 
   const receipt = await adapter.steer(ref, input, "t_A");
 
-  expect(receipt).toEqual({ effective: "steer" });
+  expect(receipt).toEqual({ supported: true, value: { effective: "steer" } });
   expect(requests).toEqual([
     {
       method: "turn/steer",
@@ -81,7 +81,7 @@ test("codex steer: stale expectedTurnId is rejected without any wire call or eve
 
   const receipt = await adapter.steer(ref, { ...input, turnId: "t_B" }, "t_B");
 
-  expect(receipt).toEqual({ effective: "rejected" });
+  expect(receipt).toEqual({ supported: true, value: { effective: "rejected" } });
   expect(requests).toHaveLength(0);
   expect(events).toHaveLength(0);
 });
@@ -90,7 +90,7 @@ test("codex steer: finalized turn is rejected", async () => {
   const { adapter, events, requests, rt, ref } = harness();
   rt.activeTurn = { turnId: "t_A", finalized: true };
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ effective: "rejected" });
+  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
   expect(requests).toHaveLength(0);
   expect(events).toHaveLength(0);
 });
@@ -99,7 +99,7 @@ test("codex steer: missing codex turn id (turn/start response not yet arrived) i
   const { adapter, events, requests, rt, ref } = harness();
   rt.codexTurnId = undefined;
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ effective: "rejected" });
+  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
   expect(requests).toHaveLength(0);
   expect(events).toHaveLength(0);
 });
@@ -107,7 +107,7 @@ test("codex steer: missing codex turn id (turn/start response not yet arrived) i
 test("codex steer: wire rejection (stale turn on codex side) maps to rejected, no event", async () => {
   const { adapter, events, ref } = harness({ requestError: new Error("turn already completed") });
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ effective: "rejected" });
+  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
   expect(events).toHaveLength(0);
 });
 

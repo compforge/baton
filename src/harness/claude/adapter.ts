@@ -564,6 +564,21 @@ export class ClaudeAdapter implements HarnessAdapter {
     return { accepted: true };
   }
 
+  /**
+   * Claude adapter 当前不支持 steer（需要 sidecar 架构支持 prompt queue）。
+   * 返回 supported: false，由 controller 自动降级为 follow-up。
+   */
+  async steer(
+    _ref: HarnessSessionRef,
+    _input: PromptInput,
+    _expectedTurnId: string,
+  ): Promise<import("../adapter.ts").SteerResult> {
+    return {
+      supported: false,
+      reason: "Claude adapter does not support steer (requires sidecar architecture with prompt queue)",
+    };
+  }
+
   /** submit 只做 admission 并启动后台消费循环；turn 进展与终结全部经事件报告 */
   async submit(
     ref: HarnessSessionRef,

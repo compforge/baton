@@ -887,13 +887,13 @@ export class CodexAdapter implements HarnessAdapter {
    * 当前 turn 的下一个安全边界被消费。stale turn、codex 侧拒绝（review/compact 等特殊
    * turn）与 wire 失败都归 rejected 交 controller 降级——rejected 路径不发任何事件。
    */
-  async steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<SteerReceipt> {
+  async steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<import("../adapter.ts").SteerResult> {
     const rt = this.mustThread(ref);
     const turn = rt.activeTurn;
     // race 防线：用户提交时看到的 turn 已终结，或 codex turn id 尚未就位（turn/start
     // 响应未回），都无法把输入安全钉到目标 turn——拒绝而不是注入错误的 turn。
     if (!turn || turn.finalized || turn.turnId !== expectedTurnId || !rt.codexTurnId) {
-      return { effective: "rejected" };
+      return { supported: true, value: { effective: "rejected" } };
     }
     const unsupported = unsupportedPromptBlocks(input.blocks, this.capabilities);
     if (unsupported.length) {
@@ -906,7 +906,7 @@ export class CodexAdapter implements HarnessAdapter {
         input: [{ type: "text", text: textOf(input.blocks) }],
       });
     } catch {
-      return { effective: "rejected" };
+      return { supported: true, value: { effective: "rejected" } };
     }
     // codex 已按 expectedTurnId 校验通过：消息确定进入该 turn，用户消息绑定原 turn 落盘
     this.emit(
@@ -918,7 +918,7 @@ export class CodexAdapter implements HarnessAdapter {
       undefined,
       turn,
     );
-    return { effective: "steer" };
+    return { supported: true, value: { effective: "steer" } };
   }
 
   async cancel(ref: HarnessSessionRef): Promise<void> {
