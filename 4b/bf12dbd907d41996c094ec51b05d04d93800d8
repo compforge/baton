@@ -1,0 +1,23 @@
+src/tui/plugins/model.ts
+  s_17da7bac6cd9db::t_01089e123a0659 60-122
+src/tui/plugins/screen.tsx
+  s_17da7bac6cd9db::t_b10d50f85f9505 26,318-324,353-359,388-427,466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4bbf12dbd907d41996c094ec51b05d04d93800d8",
+  "prompts": {},
+  "sessions": {
+    "s_17da7bac6cd9db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa529979-5794-4e93-9848-2cd2fef6e4c5",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
