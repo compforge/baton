@@ -233,8 +233,18 @@ function PluginPanel(props: PluginPanelProps): ReactNode {
           manager={props.manager}
           theme={props.theme}
           notice={notice}
-          onChanged={(nextNotice) => {
-            setData(loadBrowserData(props.registry, props.manager));
+          onChanged={(nextNotice, selectedPackage) => {
+            const nextData = loadBrowserData(props.registry, props.manager);
+            setData(nextData);
+            if (selectedPackage) {
+              const selected = pluginBrowserItems("installed", nextData).find(
+                (item) =>
+                  item.kind === "installed-package" &&
+                  item.package.manifest.pluginId === selectedPackage.pluginId &&
+                  item.package.manifest.version === selectedPackage.version,
+              );
+              if (selected) setDetail(selected);
+            }
             setNotice(nextNotice);
           }}
           onBack={() => {
@@ -298,7 +308,10 @@ interface PluginDetailProps {
   manager: Manager;
   theme: Theme;
   notice?: PluginNotice;
-  onChanged: (notice: PluginNotice) => void;
+  onChanged: (
+    notice: PluginNotice,
+    selectedPackage?: { pluginId: string; version: string },
+  ) => void;
   onBack: () => void;
 }
 
@@ -352,8 +365,8 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
       : []),
     ...(newerVersion
       ? [{
-          name: `Update now to ${newerVersion.manifest.version}`,
-          description: "Install the newer version and migrate instances",
+          name: "Update now",
+          description: `Install ${newerVersion.manifest.version} and update this session`,
           value: "update",
         }]
       : []),
@@ -386,43 +399,41 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
         return;
       }
       if (value === "update" && props.item.kind === "installed-package" && newerVersion) {
-        // 1. 先安装新版本
-        const installResult = props.registry.install(newerVersion.manifest.pluginId, {
+        props.registry.install(newerVersion.manifest.pluginId, {
           marketplace: newerVersion.marketplace,
         });
 
-        // 2. 迁移所有旧版本的 instances 到新版本
         const oldInstances = packageInstances(
           manifest.pluginId,
           manifest.version,
           props.data,
         );
         for (const oldInstance of oldInstances) {
-          // 创建新版本的 instance，保持 enabled 状态
-          await props.manager.createInstance({
-            pluginId: newerVersion.manifest.pluginId,
-            packageVersion: newerVersion.manifest.version,
-          });
-          // 禁用旧版本的 instance
-          if (oldInstance.enabled) {
-            await props.manager.setInstanceEnabled(oldInstance.pluginInstanceId, false);
-          }
+          await props.manager.setInstancePackageVersion(
+            oldInstance.pluginInstanceId,
+            newerVersion.manifest.version,
+          );
         }
 
-        // 3. 如果旧版本没有活跃的 instances，可以卸载
-        const remainingInstances = packageInstances(
-          manifest.pluginId,
-          manifest.version,
-          props.data,
+        const oldVersionIsReferenced = props.manager.listInstances().some(
+          (instance) =>
+            instance.pluginId === manifest.pluginId &&
+            instance.packageVersion === manifest.version,
         );
-        if (remainingInstances.every((inst) => !inst.enabled)) {
+        if (!oldVersionIsReferenced) {
           props.registry.uninstall(manifest.pluginId, manifest.version);
         }
 
-        props.onChanged({
-          text: `Updated ${manifest.pluginId} from ${manifest.version} to ${newerVersion.manifest.version}`,
-          tone: "success",
-        });
+        props.onChanged(
+          {
+            text: `Updated ${manifest.pluginId} from ${manifest.version} to ${newerVersion.manifest.version}`,
+            tone: "success",
+          },
+          {
+            pluginId: newerVersion.manifest.pluginId,
+            version: newerVersion.manifest.version,
+          },
+        );
         return;
       }
       if (value === "enable") {

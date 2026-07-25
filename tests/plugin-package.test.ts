@@ -56,10 +56,11 @@ function key(pluginInstanceId: string, resourceId: string) {
 
 function reqloopPackage(
   activate: PluginPackage["activate"],
+  version = "1.2.0",
 ): PluginPackage {
   return {
     pluginId: "qiankun/reqloop",
-    version: "1.2.0",
+    version,
     activate,
   };
 }
@@ -487,6 +488,76 @@ describe("Plugin Package lifecycle", () => {
     expect(activations).toBe(1);
     expect(restored.isInstanceActive(created.pluginInstanceId)).toBe(false);
     await restored.close();
+  });
+
+  test("updates an Instance Package while preserving identity, config, and enabled state", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+      config: { project: "baton" },
+    });
+    const activated: string[] = [];
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage(() => {
+          activated.push("1.2.0");
+        }),
+        reqloopPackage(() => {
+          activated.push("1.3.0");
+        }, "1.3.0"),
+      ],
+      onProposal() {},
+    });
+    await manager.start();
+
+    const updated = await manager.setInstancePackageVersion(
+      "reqloop_default",
+      "1.3.0",
+    );
+
+    expect(updated).toMatchObject({
+      pluginInstanceId: "reqloop_default",
+      packageVersion: "1.3.0",
+      enabled: true,
+      config: { project: "baton" },
+    });
+    expect(manager.isInstanceActive("reqloop_default")).toBe(true);
+    expect(activated).toEqual(["1.2.0", "1.3.0"]);
+    await manager.close();
+  });
+
+  test("restores the previous Package when updated activation fails", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage(() => {}),
+        reqloopPackage(() => {
+          throw new Error("new Package failed");
+        }, "1.3.0"),
+      ],
+      onProposal() {},
+    });
+    await manager.start();
+
+    await expect(
+      manager.setInstancePackageVersion("reqloop_default", "1.3.0"),
+    ).rejects.toThrow("new Package failed");
+    expect(instances.get("reqloop_default").packageVersion).toBe("1.2.0");
+    expect(manager.isInstanceActive("reqloop_default")).toBe(true);
+    await manager.close();
   });
 
   test("fresh reloads each Package once and isolates activation failures", async () => {

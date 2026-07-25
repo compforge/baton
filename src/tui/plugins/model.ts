@@ -66,7 +66,9 @@ export function findNewerVersion(
   available: readonly AvailablePluginPackage[],
 ): AvailablePluginPackage | undefined {
   const candidates = available.filter(
-    (pkg) => pkg.manifest.pluginId === installed.manifest.pluginId,
+    (pkg) =>
+      pkg.manifest.pluginId === installed.manifest.pluginId &&
+      pkg.marketplace === installed.provenance.marketplace,
   );
   if (candidates.length === 0) return undefined;
 

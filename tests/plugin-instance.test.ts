@@ -66,11 +66,12 @@ describe("PluginInstanceStore", () => {
     expect(readFileSync(path, "utf8")).toContain('"pluginId": "qiankun/reqloop"');
   });
 
-  test("updates enabled and config without changing package identity", () => {
+  test("updates package version, enabled state, and config without changing Instance identity", () => {
     const timestamps = [
       new Date("2026-07-24T01:00:00.000Z"),
       new Date("2026-07-24T02:00:00.000Z"),
       new Date("2026-07-24T03:00:00.000Z"),
+      new Date("2026-07-24T04:00:00.000Z"),
     ];
     const instances = store(testRoot(), () => timestamps.shift() as Date);
     const created = instances.create({
@@ -79,17 +80,19 @@ describe("PluginInstanceStore", () => {
       packageVersion: "1.2.0",
     });
     const disabled = instances.setEnabled("reqloop_default", false);
+    const upgraded = instances.setPackageVersion("reqloop_default", "1.3.0");
     const configured = instances.replaceConfig("reqloop_default", { project: "baton" });
 
     expect(disabled.enabled).toBe(false);
+    expect(upgraded.packageVersion).toBe("1.3.0");
     expect(configured).toMatchObject({
       pluginInstanceId: created.pluginInstanceId,
       pluginId: created.pluginId,
-      packageVersion: created.packageVersion,
+      packageVersion: "1.3.0",
       enabled: false,
       config: { project: "baton" },
       createdAt: created.createdAt,
-      updatedAt: "2026-07-24T03:00:00.000Z",
+      updatedAt: "2026-07-24T04:00:00.000Z",
     });
   });
 
@@ -103,6 +106,7 @@ describe("PluginInstanceStore", () => {
     });
 
     expect(instances.setEnabled("reqloop_default", true)).toEqual(created);
+    expect(instances.setPackageVersion("reqloop_default", "1.2.0")).toEqual(created);
     expect(instances.replaceConfig("reqloop_default", { project: "baton" })).toEqual(created);
   });
 

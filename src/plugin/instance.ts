@@ -172,6 +172,15 @@ export class PluginInstanceStore {
     );
   }
 
+  setPackageVersion(pluginInstanceId: string, packageVersion: string): PluginInstance {
+    nonEmptyString("packageVersion", packageVersion);
+    return this.update(pluginInstanceId, (current) =>
+      current.packageVersion === packageVersion
+        ? current
+        : { ...current, packageVersion },
+    );
+  }
+
   replaceConfig(pluginInstanceId: string, config: PluginConfig): PluginInstance {
     const nextConfig = jsonObject("config", config);
     return this.update(pluginInstanceId, (current) =>

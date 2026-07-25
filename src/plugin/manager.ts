@@ -456,6 +456,43 @@ export class Manager {
   }
 
   /**
+   * 显式升级一份 Instance 的 Package 引用，并保留其稳定身份、配置和启用状态。
+   * 新版本激活失败时恢复旧引用与旧 Binding，避免一次更新留下半迁移状态。
+   */
+  async setInstancePackageVersion(
+    pluginInstanceId: string,
+    packageVersion: string,
+  ): Promise<PluginInstance> {
+    if (this.closed) throw new Error("plugin Manager is closed");
+    await this.start();
+    const current = this.instances.get(pluginInstanceId);
+    if (current.packageVersion === packageVersion) return current;
+
+    await this.resolvePackage(current.pluginId, packageVersion);
+    const wasActive = this.isInstanceActive(pluginInstanceId);
+    if (wasActive) await this.deactivateInstance(pluginInstanceId);
+    const updated = this.instances.setPackageVersion(pluginInstanceId, packageVersion);
+    if (!current.enabled) return updated;
+
+    try {
+      await this.activateInstance(pluginInstanceId);
+      return updated;
+    } catch (error) {
+      this.instances.setPackageVersion(pluginInstanceId, current.packageVersion);
+      if (!wasActive) throw error;
+      try {
+        await this.activateInstance(pluginInstanceId);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `could not update plugin Instance ${pluginInstanceId} or restore ${current.packageVersion}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 重载当前 BatonSession 的全部 enabled Instance。Package 每个版本只 fresh load 一次；
    * 单个 Package 或 Instance 失败不阻断其它插件，也不改变用户的 enabled 配置。
    */

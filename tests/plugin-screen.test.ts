@@ -6,6 +6,7 @@ import type {
   RegisteredMarketplace,
 } from "../src/plugin/marketplace/index.ts";
 import {
+  findNewerVersion,
   packageInstances,
   pluginBrowserItems,
   pluginPanelHeight,
@@ -89,6 +90,21 @@ describe("Plugin manager projection", () => {
     expect(rows[0]).toMatchObject({ installed: true, name: "Requirement Loop  ✓ installed" });
     expect(pluginBrowserItems("discover", data(), "QIANKUN/REQUIREMENT")).toHaveLength(1);
     expect(pluginBrowserItems("discover", data(), "missing")).toHaveLength(0);
+  });
+
+  test("finds updates only from the Package's original Marketplace", () => {
+    const newer = {
+      ...available,
+      manifest: { ...available.manifest, version: "0.3.0" },
+    };
+    const foreign = {
+      ...available,
+      marketplace: "foreign",
+      manifest: { ...available.manifest, version: "9.0.0" },
+    };
+
+    expect(findNewerVersion(installed, [foreign, newer])?.manifest.version).toBe("0.3.0");
+    expect(findNewerVersion(installed, [available])).toBeUndefined();
   });
 
   test("projects Package Instances without adding another top-level browser item", () => {
