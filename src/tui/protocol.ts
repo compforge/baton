@@ -9,12 +9,13 @@ import type {
   Candidate,
   CommandSpec,
   DiffOp,
+  InteractionResponse,
+  InteractionView,
   RunStatusItem,
   StatusMessage,
   TranscriptBlockContent,
   TranscriptBlockStatus,
   TranscriptItem,
-  QuestionAnswers,
 } from "chat-tui";
 
 import {
@@ -44,6 +45,7 @@ import {
 import type {
   HookTrustInteraction,
   Interaction,
+  InteractionResolution,
   PermissionOption,
 } from "../interaction/types.ts";
 import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
@@ -94,6 +96,72 @@ function hookTrustDescription(interaction: HookTrustInteraction): string {
       return `${owner} · ${hook.trustStatus}${matcher}\n${hook.sourcePath}\n${hook.command}`;
     })
     .join("\n\n");
+}
+
+function interactionRequester(interaction: Interaction): string {
+  if (interaction.requester.type === "harness") {
+    return harnessAuthor(interaction.requester.harnessTargetId) ?? interaction.requester.harnessTargetId;
+  }
+  if (interaction.requester.type === "plugin") return interaction.requester.pluginInstanceId;
+  return "baton";
+}
+
+function interactionView(interaction: Interaction): InteractionView {
+  const requester = interactionRequester(interaction);
+  if (interaction.kind === "permission") {
+    return {
+      id: interaction.interactionId,
+      kind: "approval",
+      blocking: true,
+      requester,
+      approval: {
+        title: interaction.title,
+        description: interaction.description,
+        options: interaction.options.map((option) => ({
+          optionId: option.optionId,
+          name: option.name,
+          kind: approvalOptionKind(option),
+        })),
+      },
+    };
+  }
+  if (interaction.kind === "question") {
+    return {
+      id: interaction.interactionId,
+      kind: "question",
+      blocking: true,
+      requester,
+      question: {
+        questions: interaction.questions.map((prompt) => ({
+          id: prompt.questionId,
+          header: prompt.header,
+          question: prompt.question,
+          options: prompt.options,
+          multiSelect: prompt.multiSelect,
+          allowOther: prompt.allowOther,
+          secret: prompt.secret,
+        })),
+      },
+    };
+  }
+  return {
+    id: interaction.interactionId,
+    kind: "approval",
+    blocking: true,
+    requester,
+    approval: {
+      title: `Trust ${interaction.hooks.length} ${interaction.harnessName} hook${interaction.hooks.length === 1 ? "" : "s"}?`,
+      description: hookTrustDescription(interaction),
+      options: [
+        {
+          optionId: "trust",
+          name: "Trust current definitions (ask again if changed)",
+          kind: "allow_always",
+        },
+        { optionId: "skip", name: "Continue without Codex hooks", kind: "reject_once" },
+      ],
+    },
+  };
 }
 
 /** harness（id 或 wire key）→ 时间线 author 展示名；归一与着色 key 统一走 registry。 */
@@ -263,8 +331,8 @@ export class BatonChatProtocol implements ChatProtocol {
     this.state = this.session.loadState();
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(this.session);
-    this.view = this.buildView();
     this.plugins = this.createPluginManager();
+    this.view = this.buildView();
     this.startPluginManager();
   }
 
@@ -514,32 +582,37 @@ export class BatonChatProtocol implements ChatProtocol {
     })();
   }
 
-  /**
-   * 审批卡片应答 → Controller。Controller 先落 `interaction.resolved(source:user)`，
-   * reduced pending 随即消失，再唤醒等待中的 Harness continuation。
-   */
-  resolveApproval(id: string, optionId: string): void {
-    const interaction = this.state.interactions.get(id)?.interaction;
-    const resolution =
-      interaction?.kind === "hook_trust"
-        ? ({ kind: "hook_trust", outcome: optionId === "trust" ? "trusted" : "skipped" } as const)
-        : ({ kind: "permission", outcome: "selected", optionId } as const);
-    if (!this.controller.resolveInteraction(id, resolution)) {
-      // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
-      this.status = { text: "approval request is no longer pending", tone: "info" };
+  async resolveInteraction(id: string, response: InteractionResponse): Promise<void> {
+    if (response.kind === "suggested_input") {
+      const pending = this.plugins
+        .listPendingProposals()
+        .find((proposal) => proposal.proposalId === id);
+      if (!pending) {
+        this.status = { text: "plugin suggestion is no longer pending", tone: "info" };
+        this.changed();
+        return;
+      }
+      this.plugins.resolveProposal(id, response.outcome);
       this.changed();
+      if (response.outcome === "submitted") await this.submit(response.text);
+      return;
     }
-  }
 
-  resolveQuestion(id: string, answers: QuestionAnswers): void {
-    if (
-      !this.controller.resolveInteraction(id, {
-        kind: "question",
-        outcome: "answered",
-        answers,
-      })
-    ) {
-      this.status = { text: "question is no longer pending", tone: "info" };
+    const interaction = this.state.interactions.get(id)?.interaction;
+    let resolution: InteractionResolution | undefined;
+    if (response.kind === "approval" && interaction?.kind === "permission") {
+      resolution = { kind: "permission", outcome: "selected", optionId: response.optionId };
+    } else if (response.kind === "approval" && interaction?.kind === "hook_trust") {
+      resolution = {
+        kind: "hook_trust",
+        outcome: response.optionId === "trust" ? "trusted" : "skipped",
+      };
+    } else if (response.kind === "question" && interaction?.kind === "question") {
+      resolution = { kind: "question", outcome: "answered", answers: response.answers };
+    }
+    if (!resolution || !this.controller.resolveInteraction(id, resolution)) {
+      // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
+      this.status = { text: "interaction request is no longer pending", tone: "info" };
       this.changed();
     }
   }
@@ -658,11 +731,7 @@ export class BatonChatProtocol implements ChatProtocol {
         }),
       loadPackage: (pluginId, version, options) =>
         this.marketplace.load(pluginId, version, options),
-      onProposal: (proposal) => {
-        this.status = {
-          text: `Plugin proposal pending from ${proposal.key.pluginInstanceId}`,
-          tone: "info",
-        };
+      onProposal: () => {
         this.changed();
       },
       onActivationError: ({ pluginInstanceId, error }) => {
@@ -841,21 +910,21 @@ export class BatonChatProtocol implements ChatProtocol {
   private buildView(): ChatViewState {
     const v = this.state;
     const activeTargetId = this.controller.activeHarnessTargetId;
-    // Interaction 是统一持久对象；Map 保打开顺序，UI 各取最早的未解决 kind。
-    const pendingInteractions = [...v.interactions.values()].filter((item) => !item.resolution);
-    const interactions = pendingInteractions.map((item) => item.interaction);
-    const permission = interactions.find(
-      (interaction): interaction is Extract<Interaction, { kind: "permission" }> =>
-        interaction.kind === "permission",
-    );
-    const hookTrust = interactions.find(
-      (interaction): interaction is Extract<Interaction, { kind: "hook_trust" }> =>
-        interaction.kind === "hook_trust",
-    );
-    const question = interactions.find(
-      (interaction): interaction is Extract<Interaction, { kind: "question" }> =>
-        interaction.kind === "question",
-    );
+    // Baton Interaction 保持阻塞生命周期；Plugin Proposal 只在 UI 投影层加入同一 Dock，
+    // 不伪造 interaction.opened/resolved。阻塞项在前，避免建议遮住 harness 等待。
+    const interactions: InteractionView[] = [
+      ...[...v.interactions.values()]
+        .filter((item) => !item.resolution)
+        .map((item) => interactionView(item.interaction)),
+      ...this.plugins.listPendingProposals().map((proposal) => ({
+        id: proposal.proposalId,
+        kind: "suggested_input" as const,
+        blocking: false,
+        requester: proposal.key.pluginInstanceId,
+        title: "Suggested follow-up",
+        text: proposal.text,
+      })),
+    ];
     const observedRuns = [...v.activeTurns.values()].filter((turn) => turn.role === "observed");
     const observedRun = observedRuns.at(-1);
     // baton 当前只呈现一个 Target 的状态：driven turn 优先，其次是 Harness 自发的
@@ -965,46 +1034,7 @@ export class BatonChatProtocol implements ChatProtocol {
       picker: this.picker
         ? { id: this.picker.id, title: this.picker.title, options: this.picker.options }
         : null,
-      approval: permission
-        ? {
-            id: permission.interactionId,
-            title: permission.title,
-            description: permission.description,
-            options: permission.options.map((option) => ({
-              optionId: option.optionId,
-              name: option.name,
-              kind: approvalOptionKind(option),
-            })),
-          }
-        : hookTrust
-          ? {
-              id: hookTrust.interactionId,
-              title: `Trust ${hookTrust.hooks.length} ${hookTrust.harnessName} hook${hookTrust.hooks.length === 1 ? "" : "s"}?`,
-              description: hookTrustDescription(hookTrust),
-              options: [
-                {
-                  optionId: "trust",
-                  name: "Trust current definitions (ask again if changed)",
-                  kind: "allow_always",
-                },
-                { optionId: "skip", name: "Continue without Codex hooks", kind: "reject_once" },
-              ],
-            }
-          : null,
-      question: question
-        ? {
-            id: question.interactionId,
-            questions: question.questions.map((prompt) => ({
-              id: prompt.questionId,
-              header: prompt.header,
-              question: prompt.question,
-              options: prompt.options,
-              multiSelect: prompt.multiSelect,
-              allowOther: prompt.allowOther,
-              secret: prompt.secret,
-            })),
-          }
-        : null,
+      interactions,
       status: this.status,
       footer: `session: ${this.session.id}  in:${v.usage.inputTokens} out:${v.usage.outputTokens}  turns:${v.turnSummaries.length}  queue:${this.controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}  cwd:${this.session.meta.cwd}`,
       // ↑ 召回提示只在"可召回"时出现：交互发生地是 composer（placeholder 天然只在空输入时可见）

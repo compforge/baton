@@ -63,8 +63,7 @@ function protocol(options: {
     cancel: () => {},
     exit: () => {},
     resolvePicker: () => {},
-    resolveApproval: () => {},
-    resolveQuestion: () => {},
+    resolveInteraction: () => {},
   } as unknown as BatonChatProtocol;
 }
 

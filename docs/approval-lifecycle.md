@@ -43,8 +43,9 @@ payload 和 resolution。ApprovalReview 则是**未打开 Interaction 时**观�
 ### 2.1 交互审批
 
 Adapter 向 `InteractionHandler` 提交 permission draft → Controller 签发 `interactionId`、登记
-waiter 并 append `interaction.opened` → reducer 派生 `requires_action`，chat-tui 渲染审批卡 →
-用户经 `resolveApproval` 调用 `Controller.resolveInteraction` → Controller append
+waiter 并 append `interaction.opened` → reducer 派生 `requires_action`，chat-tui 在
+InteractionDock 渲染审批卡 → 用户经 `resolveInteraction` 调用
+`Controller.resolveInteraction` → Controller append
 `interaction.resolved(source:user)` 并解开 Adapter await → Adapter 将选择映射回 Harness。
 
 Interaction 的 durable 真相源是事件流；Controller 的 waiter 只是 live 回执通道。重启时没有
