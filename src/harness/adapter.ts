@@ -2,11 +2,17 @@
 // 各家用原生协议接入，翻译成内部 Event 草稿交给 sink；source / harness /
 // harnessTargetId 由宿主在可信边界补齐，其余信封字段由 Store 补齐。
 
-import type { AnyEventDraft, PromptBlock } from "../event/types.ts";
+import type {
+  AnyEventDraft,
+  ConfigValue,
+  PromptBlock,
+  SessionConfigOption,
+} from "../event/types.ts";
 import type {
   InteractionDraft,
   InteractionResolution,
 } from "../interaction/types.ts";
+import type { HarnessResumeState } from "./resume.ts";
 
 /**
  * 能力包装器：表达 adapter 是否支持某个可选能力。
@@ -35,7 +41,9 @@ export type EventSink = (ev: AnyEventDraft) => void;
 export interface OpenOptions {
   cwd: string;
   env?: Record<string, string>;
-  /** 已记录的原生 HarnessSession ID；adapter 应优先恢复，缺失时新建。 */
+  /** Adapter 上次返回的版本化恢复状态；adapter 应优先恢复，缺失时新建。 */
+  resumeState?: HarnessResumeState;
+  /** @deprecated 旧 meta/第三方 adapter 的迁移兼容；新实现使用 resumeState。 */
   resumeSessionId?: string;
 }
 
@@ -103,6 +111,8 @@ export interface AdapterCapabilities {
   sync?: CapabilityMarker;
   commands?: CapabilityMarker;
   config?: CapabilityMarker;
+  /** 声明后必须实现 Reconcilable：可查询 harness 眼中的权威运行态。 */
+  reconcile?: CapabilityMarker;
   /** 声明后必须实现 ApprovalRoutable：能报告审批请求当前路由给谁。 */
   approvalRouting?: CapabilityMarker;
   interactions?: {
@@ -213,6 +223,51 @@ export function isEffortConfigurable(adapter: HarnessAdapter): adapter is Harnes
 }
 
 /**
+ * 通用 session 配置能力。每次读写都返回完整快照，因为 model 变化可能联动 effort 等选项。
+ * `/model`、`/effort` 只是该快照中 model / thought_level 两项的快捷入口。
+ */
+export interface SessionConfigurable {
+  getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]>;
+  setConfig(
+    ref: HarnessSessionRef,
+    configId: string,
+    value: ConfigValue,
+  ): Promise<SessionConfigOption[]>;
+}
+
+export function isSessionConfigurable(
+  adapter: HarnessAdapter,
+): adapter is HarnessAdapter & SessionConfigurable {
+  const candidate = adapter as Partial<SessionConfigurable>;
+  return (
+    typeof candidate.getConfig === "function" &&
+    typeof candidate.setConfig === "function"
+  );
+}
+
+export type ReconcileState =
+  | "idle"
+  | "active"
+  | "waiting_approval"
+  | "waiting_input"
+  | "unknown";
+
+export interface ReconcileVerdict {
+  state: ReconcileState;
+  /** Harness 原始状态标识，只用于诊断，不参与通用决策。 */
+  detail?: string;
+}
+
+/** 可选对账能力：只观察 Harness 当前状态，是否收口由 Controller 决定。 */
+export interface Reconcilable {
+  reconcile(ref: HarnessSessionRef, turnId: string): Promise<ReconcileVerdict>;
+}
+
+export function isReconcilable(adapter: HarnessAdapter): adapter is HarnessAdapter & Reconcilable {
+  return typeof (adapter as Partial<Reconcilable>).reconcile === "function";
+}
+
+/**
  * 审批路由的归一值：`user` = 请求进 baton TUI；`delegated` = harness 侧 reviewer 代批
  * （必须留下带 id 的回执，kernel §4 MUST NOT "静默持有审批授权"）。harness 的方言词
  * （codex 的 `auto_review` / `guardian_subagent`）在 adapter 边界收口，不越界。
@@ -297,7 +352,18 @@ export function isContextSynchronizable(
   return typeof (adapter as Partial<ContextSynchronizable>).syncContext === "function";
 }
 
-/** adapter 的运行时句柄与可持久化的原生 session ID 不同时，由此能力显式暴露。 */
+/** Adapter 显式暴露可持久化 checkpoint；Baton 不解析其中的 adapter 私有 data。 */
+export interface NativeSessionCheckpointable {
+  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined;
+}
+
+export function isNativeSessionCheckpointable(
+  adapter: HarnessAdapter,
+): adapter is HarnessAdapter & NativeSessionCheckpointable {
+  return typeof (adapter as Partial<NativeSessionCheckpointable>).resumeState === "function";
+}
+
+/** @deprecated 迁移兼容；新 adapter 实现 NativeSessionCheckpointable。 */
 export interface NativeSessionIdentifiable {
   nativeSessionId(ref: HarnessSessionRef): string | undefined;
 }

@@ -357,6 +357,12 @@ interface HarnessAdapter {
 type PromptReceipt = { accepted: true };
 ```
 
+`OpenOptions.resumeState` 是 `{ version, data }` 形态的 adapter-owned checkpoint；
+Baton 只负责持久化并在下次 `open` 时原样回传，不把恢复能力压扁成单个 session id。
+当前 Claude/Codex 的 v1 `data` 只含原生 session id，旧 `resumeSessionId` 暂留迁移兼容。
+Adapter 在首轮执行后才拿到 checkpoint 时，通过可选 `NativeSessionCheckpointable.resumeState()`
+回填；未知版本由 Adapter 自己 fail closed 或新建，core 不猜测。
+
 `submit()` throw 只表示 Adapter 尚未接受投递责任；resolve 不代表 turn 完成，此后的失败必须
 经事件流给出 Harness 终态。Delivery Attempt 是 Controller 的持久记账，不进入
 `PromptInput`，Adapter 也不参与其生命周期。用户输入的 owner 是 Controller，harness 执行
@@ -446,6 +452,7 @@ interface AdapterCapabilities {
   compact?: CapabilityMarker;
   commands?: CapabilityMarker;
   config?: CapabilityMarker;
+  reconcile?: CapabilityMarker;
   interactions?: {
     permission?: CapabilityMarker;
     question?: CapabilityMarker;

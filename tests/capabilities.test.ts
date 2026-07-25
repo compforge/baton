@@ -31,6 +31,7 @@ const CAPABILITY_CONTRACT: Record<string, string[]> = {
   sync: [],
   commands: ["listCommands"],
   config: ["getConfig", "setConfig"],
+  reconcile: ["reconcile"],
   approvalRouting: ["approvalRoute"],
   "interactions.permission": ["respond"],
   "interactions.question": ["respond"],

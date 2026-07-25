@@ -21,10 +21,12 @@ import type { DiagnosticSink } from "../../diagnostics.ts";
 import { diagnosticError } from "../../diagnostics.ts";
 import { readClaudeSettings } from "./settings.ts";
 import type {
+  ConfigValue,
   ContentBlock,
   DiffBlock,
   PlanEntry,
   PromptBlock,
+  SessionConfigOption,
 } from "../../event/types.ts";
 import { textOf } from "../../event/types.ts";
 import type {
@@ -45,6 +47,11 @@ import type {
   InteractionHandler,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
+import {
+  sessionIdFromResumeState,
+  sessionIdResumeState,
+  type HarnessResumeState,
+} from "../resume.ts";
 
 const APPROVAL_OPTIONS: PermissionOption[] = [
   { optionId: "allow", name: "Allow once", polarity: "allow", lifetime: "once" },
@@ -440,7 +447,11 @@ export class ClaudeAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   // 当前 adapter 最终只发送 text（design.md §3.1）；可选能力接口落地并验证后才声明
   // 对应 marker——契约测试钉住"声明支持就必须实现对应接口"。
-  readonly capabilities: AdapterCapabilities = { prompt: {}, compact: { supported: true } };
+  readonly capabilities: AdapterCapabilities = {
+    prompt: {},
+    compact: { supported: true },
+    config: { supported: true },
+  };
   private sessions = new Map<string, ClaudeRuntime>();
 
   constructor(private options: ClaudeAdapterOptions) {}
@@ -448,6 +459,9 @@ export class ClaudeAdapter implements HarnessAdapter {
   /** SDK 无独立"启动"步骤：session 在首个 submit 时创建，这里登记运行时并绑定事件出口 */
   async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
     const id = newId("hs");
+    const resumeSessionId = opts.resumeState
+      ? sessionIdFromResumeState(opts.resumeState)
+      : opts.resumeSessionId;
 
     // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
     const settings = await readClaudeSettings(opts.cwd, this.options.diagnostic);
@@ -468,13 +482,18 @@ export class ClaudeAdapter implements HarnessAdapter {
       cwd: opts.cwd,
       env: opts.env,
       sink,
-      claudeSessionId: opts.resumeSessionId,
+      claudeSessionId: resumeSessionId,
       suppressedToolIds: new Set(),
       tasks: new Map(),
       pendingTaskOps: new Map(),
       settings,
     });
-    return { harness: this.harness, harnessSessionId: id, resumed: Boolean(opts.resumeSessionId) };
+    return { harness: this.harness, harnessSessionId: id, resumed: Boolean(resumeSessionId) };
+  }
+
+  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined {
+    const sessionId = this.nativeSessionId(ref);
+    return sessionId ? sessionIdResumeState(sessionId) : undefined;
   }
 
   /** 拿 Claude 原生 session id（宿主存入 meta 以支持将来 resume） */
@@ -529,6 +548,57 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   currentEffort(ref: HarnessSessionRef): string | null {
     return this.mustSession(ref).effort ?? null;
+  }
+
+  async getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]> {
+    const [models, efforts] = await Promise.all([
+      this.listModels(ref),
+      this.listEfforts(ref),
+    ]);
+    return [
+      {
+        id: "model",
+        type: "select",
+        name: "Model",
+        category: "model",
+        value: this.currentModel(ref) ?? "default",
+        options: models.map(({ id, label, description }) => ({
+          value: id,
+          name: label,
+          ...(description ? { description } : {}),
+        })),
+      },
+      {
+        id: "effort",
+        type: "select",
+        name: "Effort",
+        category: "thought_level",
+        value: this.currentEffort(ref) ?? "default",
+        options: efforts.map(({ id, label, description }) => ({
+          value: id,
+          name: label,
+          ...(description ? { description } : {}),
+        })),
+      },
+    ];
+  }
+
+  async setConfig(
+    ref: HarnessSessionRef,
+    configId: string,
+    value: ConfigValue,
+  ): Promise<SessionConfigOption[]> {
+    if (typeof value !== "string") {
+      throw new Error(`Claude config ${configId} requires a string value`);
+    }
+    if (configId === "model") {
+      await this.setModel(ref, value);
+    } else if (configId === "effort") {
+      await this.setEffort(ref, value);
+    } else {
+      throw new Error(`Unknown Claude session config: ${configId}`);
+    }
+    return this.getConfig(ref);
   }
 
   private async ensureModelCatalog(rt: ClaudeRuntime): Promise<void> {

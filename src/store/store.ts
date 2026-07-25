@@ -40,6 +40,7 @@ import {
   type UsageUpdate,
 } from "../event/types.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
+import type { HarnessResumeState } from "../harness/resume.ts";
 import { reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
@@ -48,6 +49,8 @@ export interface HarnessSessionMeta {
   /** 当前原生 session 最近一次 create/resume 实际采用的配置快照。 */
   launchSnapshot?: HarnessLaunchSnapshot;
   harnessSessionId?: string;
+  /** Adapter 拥有的版本化 checkpoint；Baton 只保存并在下次 open 时原样回传。 */
+  resumeState?: HarnessResumeState;
   /** 该 harness session 后续 turn 使用的模型；缺省表示 harness 默认值。 */
   model?: string;
   /** 该 harness session 后续 turn 使用的推理强度；缺省表示 harness 默认值。 */

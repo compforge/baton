@@ -10,8 +10,10 @@ import { diagnosticError } from "../../diagnostics.ts";
 import { newId } from "../../event/ids.ts";
 import { closedTerminal } from "../normalize.ts";
 import type {
+  ConfigValue,
   ContentBlock,
   DiffBlock,
+  SessionConfigOption,
   StopReason,
   ToolCallStatus,
 } from "../../event/types.ts";
@@ -35,9 +37,16 @@ import type {
   InteractionHandler,
   SteerReceipt,
   ApprovalRoute,
+  ReconcileState,
+  ReconcileVerdict,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
+import {
+  sessionIdFromResumeState,
+  sessionIdResumeState,
+  type HarnessResumeState,
+} from "../resume.ts";
 
 /**
  * 一次 turn/start 所属的 turn 状态（同 claude adapter 的 ClaudeTurn）：终态必须绑定
@@ -522,6 +531,23 @@ export interface CodexAdapterOptions {
  * turn/start 刻意不设——老版本 app-server 会合法地阻塞到 turn 结束。
  */
 const STARTUP_REQUEST_TIMEOUT_MS = 30_000;
+const RECONCILE_REQUEST_TIMEOUT_MS = 10_000;
+
+/** 只翻译 thread/read 的 live status；未知状态保守返回 unknown。 */
+export function mapThreadStatus(
+  status: { type?: string; activeFlags?: string[] } | undefined,
+): ReconcileState {
+  switch (status?.type) {
+    case "idle":
+      return "idle";
+    case "active":
+      if (status.activeFlags?.includes("waitingOnApproval")) return "waiting_approval";
+      if (status.activeFlags?.includes("waitingOnUserInput")) return "waiting_input";
+      return "active";
+    default:
+      return "unknown";
+  }
+}
 
 /**
  * 计入"turn 有产出"的事件 kind（空回合判定，见 CodexTurn.sawOutput）。
@@ -569,14 +595,22 @@ function routeFrom(response: unknown): ApprovalRoute | null {
  */
 export async function openCodexThread(
   peer: CodexThreadPeer,
-  opts: { cwd: string; resumeSessionId?: string; approvalReviewer?: "user" | "auto_review" },
+  opts: {
+    cwd: string;
+    resumeState?: HarnessResumeState;
+    resumeSessionId?: string;
+    approvalReviewer?: "user" | "auto_review";
+  },
 ): Promise<{ threadId: string; resumed: boolean; route: ApprovalRoute | null }> {
   const reviewer = opts.approvalReviewer ? { approvalsReviewer: opts.approvalReviewer } : {};
-  if (opts.resumeSessionId) {
+  const resumeSessionId = opts.resumeState
+    ? sessionIdFromResumeState(opts.resumeState)
+    : opts.resumeSessionId;
+  if (resumeSessionId) {
     try {
       const response = await peer.request(
         "thread/resume",
-        { threadId: opts.resumeSessionId, ...reviewer },
+        { threadId: resumeSessionId, ...reviewer },
         { timeoutMs: STARTUP_REQUEST_TIMEOUT_MS },
       );
       return {
@@ -610,6 +644,8 @@ export class CodexAdapter implements HarnessAdapter {
     steer: { supported: true },
     compact: { supported: true },
     sync: { supported: true },
+    config: { supported: true },
+    reconcile: { supported: true },
     approvalRouting: { supported: true },
   };
   private threads = new Map<string, ThreadRuntime>();
@@ -759,6 +795,11 @@ export class CodexAdapter implements HarnessAdapter {
     return this.threads.get(ref.harnessSessionId)?.approvalRoute ?? null;
   }
 
+  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined {
+    const threadId = this.threads.get(ref.harnessSessionId)?.threadId;
+    return threadId ? sessionIdResumeState(threadId) : undefined;
+  }
+
   async listModels(ref: HarnessSessionRef): Promise<ModelOption[]> {
     const rt = this.mustThread(ref);
     return codexModels(await rt.peer.request("model/list", { limit: 200 }));
@@ -809,6 +850,76 @@ export class CodexAdapter implements HarnessAdapter {
 
   currentEffort(ref: HarnessSessionRef): string | null {
     return this.mustThread(ref).effortSelection ?? null;
+  }
+
+  async getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]> {
+    const rt = this.mustThread(ref);
+    // 一次 model/list 生成整份快照，避免 model 与 effort 来自两个不同时点的 catalog。
+    const catalog = await rt.peer.request("model/list", { limit: 200 });
+    const models = codexModels(catalog);
+    const efforts = codexEfforts(catalog, rt.model);
+    return [
+      {
+        id: "model",
+        type: "select",
+        name: "Model",
+        category: "model",
+        value: this.currentModel(ref) ?? "default",
+        options: models.map(({ id, label, description }) => ({
+          value: id,
+          name: label,
+          ...(description ? { description } : {}),
+        })),
+      },
+      {
+        id: "effort",
+        type: "select",
+        name: "Effort",
+        category: "thought_level",
+        value: this.currentEffort(ref) ?? "default",
+        options: efforts.map(({ id, label, description }) => ({
+          value: id,
+          name: label,
+          ...(description ? { description } : {}),
+        })),
+      },
+    ];
+  }
+
+  async setConfig(
+    ref: HarnessSessionRef,
+    configId: string,
+    value: ConfigValue,
+  ): Promise<SessionConfigOption[]> {
+    if (typeof value !== "string") {
+      throw new Error(`Codex config ${configId} requires a string value`);
+    }
+    if (configId === "model") {
+      await this.setModel(ref, value);
+    } else if (configId === "effort") {
+      await this.setEffort(ref, value);
+    } else {
+      throw new Error(`Unknown Codex session config: ${configId}`);
+    }
+    return this.getConfig(ref);
+  }
+
+  async reconcile(
+    ref: HarnessSessionRef,
+    _turnId: string,
+  ): Promise<ReconcileVerdict> {
+    const rt = this.mustThread(ref);
+    const response = await rt.peer.request(
+      "thread/read",
+      { threadId: rt.threadId, includeTurns: false },
+      { timeoutMs: RECONCILE_REQUEST_TIMEOUT_MS },
+    );
+    const status = (
+      response as {
+        thread?: { status?: { type?: string; activeFlags?: string[] } };
+      }
+    ).thread?.status;
+    return { state: mapThreadStatus(status), detail: status?.type };
   }
 
   async compactContext(ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt> {
