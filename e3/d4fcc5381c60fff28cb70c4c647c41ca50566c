@@ -1,0 +1,23 @@
+bun.lock
+  s_951b43c6fa3905::t_c003f52fd6ceba 8,24,26,28,30,32,34,36,38,40
+package.json
+  s_951b43c6fa3905::t_c07f7cb4c71594 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e3d4fcc5381c60fff28cb70c4c647c41ca50566c",
+  "prompts": {},
+  "sessions": {
+    "s_951b43c6fa3905": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da1b3182-e634-4047-9c0a-f61e608c40ec",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
