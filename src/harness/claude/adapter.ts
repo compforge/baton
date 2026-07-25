@@ -19,6 +19,7 @@ import {
 import { newId } from "../../event/ids.ts";
 import type { DiagnosticSink } from "../../diagnostics.ts";
 import { diagnosticError } from "../../diagnostics.ts";
+import { readClaudeSettings } from "./settings.ts";
 import type {
   ContentBlock,
   DiffBlock,
@@ -325,6 +326,8 @@ interface ClaudeRuntime {
   tasks: Map<string, TaskEntry>;
   /** tool_use 已登记、等待 tool_result 落账的 Task 操作（key: tool_use_id） */
   pendingTaskOps: Map<string, TaskToolOp>;
+  /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
+  settings?: import("./settings.ts").ClaudeSettings;
 }
 
 const CLAUDE_FALLBACK_MODELS: ModelOption[] = [
@@ -443,6 +446,10 @@ export class ClaudeAdapter implements HarnessAdapter {
   /** SDK 无独立"启动"步骤：session 在首个 submit 时创建，这里登记运行时并绑定事件出口 */
   async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
     const id = newId("hs");
+
+    // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
+    const settings = await readClaudeSettings(opts.cwd, this.options.diagnostic);
+
     this.sessions.set(id, {
       cwd: opts.cwd,
       env: opts.env,
@@ -451,6 +458,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       suppressedToolIds: new Set(),
       tasks: new Map(),
       pendingTaskOps: new Map(),
+      settings,
     });
     return { harness: this.harness, harnessSessionId: id, resumed: Boolean(opts.resumeSessionId) };
   }
@@ -618,6 +626,8 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(rt.model ? { model: rt.model } : {}),
       ...(rt.effort ? { effort: rt.effort } : {}),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+      ...(rt.settings?.plugins ? { plugins: rt.settings.plugins } : {}),
+      ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),
       canUseTool: (toolName, toolInput, meta) =>
         this.handleCanUseTool(() => current.turnId, toolName, toolInput, meta),
     };
