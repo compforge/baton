@@ -626,11 +626,17 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(rt.model ? { model: rt.model } : {}),
       ...(rt.effort ? { effort: rt.effort } : {}),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
-      ...(rt.settings?.plugins ? { plugins: rt.settings.plugins } : {}),
-      ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),
       canUseTool: (toolName, toolInput, meta) =>
         this.handleCanUseTool(() => current.turnId, toolName, toolInput, meta),
     };
+
+    // 添加 plugins 和 mcpServers（如果存在）
+    if (rt.settings?.plugins) {
+      sdkOptions.plugins = rt.settings.plugins;
+    }
+    if (rt.settings?.mcpServers) {
+      sdkOptions.mcpServers = rt.settings.mcpServers;
+    }
 
     let q: Query | undefined;
     try {
