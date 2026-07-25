@@ -47,7 +47,12 @@ function claudeHarness(): { events: AnyEventDraft[]; feed: (msg: unknown) => voi
 function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, params: unknown) => void } {
   const adapter = new CodexAdapter({ interactionHandler });
   const events: AnyEventDraft[] = [];
-  const rt = { threadId: "th1", turnId: "t1", sink: (ev: AnyEventDraft) => events.push(ev) };
+  const rt = {
+    threadId: "th1",
+    turnId: "t1",
+    activeTurn: { turnId: "t1", finalized: false, sawOutput: false },
+    sink: (ev: AnyEventDraft) => events.push(ev),
+  };
   const notify = (method: string, params: unknown) =>
     (adapter as unknown as { handleNotification: (r: unknown, m: string, p: unknown) => void }).handleNotification(
       rt,
@@ -56,6 +61,60 @@ function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, par
     );
   return { events, notify };
 }
+
+describe("codex: error notifications", () => {
+  test("projects a non-retrying error and closes the turn as failed", () => {
+    const { events, notify } = codexHarness();
+    const params = {
+      threadId: "th1",
+      turnId: "ct1",
+      error: {
+        message: "Your access token could not be refreshed. Please sign in again.",
+        codexErrorInfo: "unauthorized",
+      },
+      willRetry: false,
+    };
+
+    notify("error", params);
+
+    expect(events.map((event) => event.kind)).toEqual(["_baton_error_update", "state_update"]);
+    expect(events[0]).toMatchObject({
+      turnId: "t1",
+      payload: {
+        code: "unauthorized",
+        message: "Your access token could not be refreshed. Please sign in again.",
+        willRetry: false,
+      },
+      raw: params,
+    });
+    expect(events[1]).toMatchObject({
+      turnId: "t1",
+      payload: { state: "idle", stopReason: "failed" },
+    });
+  });
+
+  test("projects a retrying error without closing the turn", () => {
+    const { events, notify } = codexHarness();
+
+    notify("error", {
+      threadId: "th1",
+      turnId: "ct1",
+      error: { message: "stream disconnected", codexErrorInfo: "responseStreamDisconnected" },
+      willRetry: true,
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "_baton_error_update",
+      turnId: "t1",
+      payload: {
+        code: "responseStreamDisconnected",
+        message: "stream disconnected",
+        willRetry: true,
+      },
+    });
+  });
+});
 
 describe("codex: unmapped notifications", () => {
   test("writes a throttled diagnostic instead of entering the session timeline", () => {
