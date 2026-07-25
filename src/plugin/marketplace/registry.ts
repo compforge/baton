@@ -367,6 +367,29 @@ export class MarketplaceRegistry {
     );
   }
 
+  uninstall(pluginId: string, version: string): void {
+    const packageDir = this.packageDir(pluginId, version);
+    if (!existsSync(packageDir)) {
+      throw new Error(`Plugin Package is not installed: ${pluginId}@${version}`);
+    }
+    return withFileLock(packageDir, () => {
+      if (!existsSync(packageDir)) {
+        throw new Error(`Plugin Package is not installed: ${pluginId}@${version}`);
+      }
+      rmSync(packageDir, { recursive: true, force: true });
+      // Clean up empty parent directory if this was the last version
+      const pluginDir = dirname(packageDir);
+      try {
+        const remaining = readdirSync(pluginDir);
+        if (remaining.length === 0) {
+          rmSync(pluginDir, { recursive: true, force: true });
+        }
+      } catch {
+        // Ignore errors when cleaning up parent directory
+      }
+    });
+  }
+
   async load(
     pluginId: string,
     version: string,

@@ -337,11 +337,15 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
               value: "enable",
             }
         : undefined;
+  const canUninstall = installed && instances.length === 0;
   const actions = [
     ...(canInstall
       ? [{ name: "Install package", description: "Copy this immutable Package into Baton", value: "install" }]
       : []),
     ...(instanceAction ? [instanceAction] : []),
+    ...(canUninstall
+      ? [{ name: "Uninstall package", description: "Remove this Package from Baton", value: "uninstall" }]
+      : []),
     { name: "Back to plugin list", description: "Return to the current section", value: "back" },
   ];
 
@@ -392,10 +396,19 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
           text: `Disabled ${manifest.pluginId}@${manifest.version}`,
           tone: "success",
         });
+        return;
+      }
+      if (value === "uninstall") {
+        props.registry.uninstall(manifest.pluginId, manifest.version);
+        props.onChanged({
+          text: `Uninstalled ${manifest.pluginId}@${manifest.version}`,
+          tone: "success",
+        });
+        return;
       }
     } catch (error) {
       props.onChanged({
-        text: `${value === "install" ? "Install" : "Plugin action"} failed: ${errorMessage(error)}`,
+        text: `${value === "install" ? "Install" : value === "uninstall" ? "Uninstall" : "Plugin action"} failed: ${errorMessage(error)}`,
         tone: "error",
       });
     } finally {
