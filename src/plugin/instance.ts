@@ -20,6 +20,7 @@ export interface PluginInstance {
   readonly pluginInstanceId: string;
   readonly batonSessionId: string;
   readonly pluginId: string;
+  readonly marketplace?: string;
   readonly packageVersion: string;
   readonly enabled: boolean;
   readonly config: Readonly<PluginConfig>;
@@ -30,9 +31,22 @@ export interface PluginInstance {
 export interface CreatePluginInstance {
   pluginInstanceId?: string;
   pluginId: string;
+  marketplace?: string;
   packageVersion: string;
   enabled?: boolean;
   config?: PluginConfig;
+}
+
+export interface PluginInstanceRepository {
+  readonly batonSessionId: string;
+  readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
+  create(input: CreatePluginInstance): PluginInstance;
+  get(pluginInstanceId: string): PluginInstance;
+  list(): PluginInstance[];
+  setEnabled(pluginInstanceId: string, enabled: boolean): PluginInstance;
+  setPackageVersion(pluginInstanceId: string, packageVersion: string): PluginInstance;
+  replaceConfig(pluginInstanceId: string, config: PluginConfig): PluginInstance;
+  delete(pluginInstanceId: string): void;
 }
 
 export interface PluginInstanceStoreOptions {
@@ -99,7 +113,7 @@ function writeJsonAtomic(path: string, value: unknown): void {
 /**
  * BatonSession 内 Plugin 配置身份的事实来源。Resource、Proposal 等运行数据仍由各自 Store 管理。
  */
-export class PluginInstanceStore {
+export class PluginInstanceStore implements PluginInstanceRepository {
   readonly batonSessionId: string;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly now: () => Date;
@@ -188,6 +202,15 @@ export class PluginInstanceStore {
         ? current
         : { ...current, config: nextConfig },
     );
+  }
+
+  delete(pluginInstanceId: string): void {
+    assertPathSegment("pluginInstanceId", pluginInstanceId);
+    const path = this.instancePath(pluginInstanceId);
+    withFileLock(path, () => {
+      if (!existsSync(path)) throw new Error(`plugin instance not found: ${pluginInstanceId}`);
+      rmSync(path);
+    });
   }
 
   private update(

@@ -52,6 +52,10 @@ import type {
 import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
 import { Manager } from "../plugin/manager.ts";
 import { MarketplaceRegistry } from "../plugin/marketplace/index.ts";
+import {
+  GlobalPluginInstanceStore,
+  PluginSettingsStore,
+} from "../plugin/settings.ts";
 import { ProposalStore } from "../plugin/proposal.ts";
 import { openBatonSession } from "../session/open.ts";
 import { Controller } from "../controller/index.ts";
@@ -771,9 +775,14 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private createPluginManager(): Manager {
+    const settings = new PluginSettingsStore(this.store.rootDir);
     return new Manager({
       session: this.session,
       proposals: new ProposalStore({ session: this.session }),
+      instances: new GlobalPluginInstanceStore({
+        settings,
+        session: this.session,
+      }),
       snapshot: () =>
         createBatonSnapshot({
           batonSessionId: this.session.id,
@@ -786,8 +795,12 @@ export class BatonChatProtocol implements ChatProtocol {
             label: definition.label,
           })),
         }),
-      loadPackage: (pluginId, version, options) =>
-        this.marketplace.load(pluginId, version, options),
+      loadPackage: (pluginId, version, options) => {
+        if (!options?.marketplace) {
+          throw new Error(`marketplace is required to load ${pluginId}`);
+        }
+        return this.marketplace.load(pluginId, options.marketplace, version, options);
+      },
       onProposal: () => {
         this.changed();
       },

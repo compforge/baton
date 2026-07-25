@@ -2,7 +2,7 @@
 
 ## 项目定位与边界
 
-baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在自己拥有的 BatonSession 中工作，在一个 TUI 里切换不同 coding agent，而不需要随 harness 一起切换或搬运会话历史。BatonSession 同时是 session-scoped Plugin runtime 的 owner；Project 只按 cwd 组织和发现 Session。它要消除“人充当 agent 之间传话筒”的工作——反复复制产出、解释上下文、手写交接文档。Claude Code 和 Codex 是首批内置 harness，不是封闭支持列表；差异化在“上下文打通”，不是“又一个并行会话管理器”，开发时要警惕滑回后者。
+baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在自己拥有的 BatonSession 中工作，在一个 TUI 里切换不同 coding agent，而不需要随 harness 一起切换或搬运会话历史。BatonSession 是 Plugin Binding、Resource、Proposal 等运行态的 owner；Plugin 启用配置则是用户级，供新 Session 自动加载。Project 只按 cwd 组织和发现 Session。它要消除“人充当 agent 之间传话筒”的工作——反复复制产出、解释上下文、手写交接文档。Claude Code 和 Codex 是首批内置 harness，不是封闭支持列表；差异化在“上下文打通”，不是“又一个并行会话管理器”，开发时要警惕滑回后者。
 
 第一阶段只聚焦两件事：
 
@@ -97,6 +97,7 @@ baton/
 - **BatonSession、HarnessTarget 与 HarnessSession 分属三层**：BatonSession 是用户拥有、跨 harness、可持久恢复的逻辑历史；HarnessTarget 是具体执行与状态实例坐标；HarnessSession 只是该 Target 启动出的私有执行状态。`HarnessBinding`、原生 session、同步水位、偏好 / 授权与 Target-scoped 投影状态一律按 `harnessTargetId` 隔离；Target ID 必须经显式 resolver 找到完整 Target，未知值 fail closed，不能从 Harness 名称、alias 或 wire key 猜实例；Adapter 工厂再按 `target.harness` 选择协议实现。driven turn 在 BatonSession 内全局串行；harness 自发的 observed turn 与队列正交，见 `docs/kernel.md` §3。
 - **事件流是统一历史的合并真相源，UI 是投影**：每条 Event 必须有稳定 `eventId`、单一 `scope` 和显式事实 `source`；归属、来源与 `harness*` / `turnId` 等执行坐标正交。Adapter 只提交事实内容，`source`、Harness 与 HarnessTarget 由绑定它的宿主入口统一补齐，不能由 Adapter 自报。`session.jsonl` 记录可重放事件，TUI 状态由 reduce 重建——live 投影经 `SessionHandle.subscribe` 订阅事件流，与 resume 同一条 reduce 路径，不允许旁路投影通道（曾因 per-turn 回调这条第二通道静默丢掉 observed turn 的回复）；`meta.json` 保存定位与恢复元数据，不替代事件历史。HarnessSession 原生 resume 是加速路径，不是正确性的前提。
 - **Plugin 通过只读 Builtin Resource 感知 Baton 内部事实**：Builtin Resource 是 Event Ledger 的 replay/live 投影，不另建真相也不允许 Plugin patch；Manager 以变化的 Resource 唤醒 reconcile，并同时提供冻结的 `BatonSnapshot` 当前态。需要 desired/observed state 时使用 Plugin 自有的 `spec/status` Resource；Plugin 不必先创建 Resource、更不必是 loop。
+- **Plugin 启用身份是用户级 `plugin@marketplace`**：`~/.baton/plugin.yaml` 保存版本、enabled 和 config；新 BatonSession 启动时加载，运行中的 Session 通过 `/reload-plugins` 重建 Binding。Package 缓存按 marketplace 隔离，Resource、Proposal 与 Connector 运行态仍严格归当前 BatonSession。
 - **三方 Plugin 只依赖公共类型包**：`packages/plugin` 不包含 Manager、Binding、Controller、Store、Marketplace 或 Harness runtime；Baton 宿主也消费同一份契约，避免内外两套 API 漂移。领域 Plugin 独立版本化并通过 Marketplace 交付。
 - **Board 是带归属的派生读模型**：Plugin 只通过 Resource Contribution 的 `BoardProjector` 派生条目，Baton 补齐 owner 与 Resource 身份；无数据时 UI 完全隐藏，Board 不成为 PluginResource 或外部系统之外的新真相源。整体边界见 `docs/loop-engineering.md` §6。
 - **用户输入的 owner 是 Controller，harness 执行的 owner 是 Adapter**：driven turn 出队即由 controller 落 `user_message`/`running`（原始输入进正典历史，harness 冷启动不阻塞 Transcript，preparing 可取消）；Adapter 只报告执行过程与终态，steer 成功时补 `delivery:"steer"` 的用户消息。用户输入专项语义及其 Adapter 行为契约见 `docs/user-input-lifecycle.md`；完整交互面的总体结构见 `docs/harness-interaction-design.md`。

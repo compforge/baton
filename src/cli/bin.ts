@@ -12,7 +12,9 @@
 
 import packageJson from "../../package.json" with { type: "json" };
 
+import { pluginKey } from "../plugin/identity.ts";
 import { MarketplaceRegistry, type MarketplaceSource } from "../plugin/marketplace/index.ts";
+import { PluginSettingsStore } from "../plugin/settings.ts";
 import { sessionTreeRows, treeRowPrefix } from "../store/session-tree.ts";
 import { SessionStore, sessionDisplayTitle } from "../store/store.ts";
 
@@ -44,7 +46,7 @@ Usage:
   baton plugins available [--marketplace <name>] [--root <dir>]
                         list Plugin Packages available from Marketplaces
   baton plugins install <plugin-id> [--marketplace <name>] [--root <dir>]
-                        install an immutable Plugin Package
+                        install and globally enable an immutable Plugin Package
   baton plugins list [--root <dir>]
                         list installed Plugin Packages
   baton version         show version (also --version / -V)
@@ -54,6 +56,7 @@ Config:
   ~/.baton/config.yaml      generated on first run; defaultAgent / claudeExecutable /
                             codexCommand / codexApprovalReviewer /
                             mentionBudgetChars / showThoughts
+  ~/.baton/plugin.yaml      globally enabled plugins keyed by plugin@marketplace
   BATON_CLAUDE_BIN          env var, takes precedence over claudeExecutable in config.yaml
 `;
 
@@ -201,6 +204,7 @@ async function runPlugins(): Promise<void> {
     new Set(["--root", "--ref", "--marketplace"]),
   );
   const registry = new MarketplaceRegistry({ rootDir: argValue("--root") });
+  const settings = new PluginSettingsStore(registry.rootDir);
   try {
     if (args[0] === "marketplace" && args[1] === "add") {
       const source = args[2];
@@ -231,7 +235,7 @@ async function runPlugins(): Promise<void> {
           ? `  ${plugin.manifest.displayName}`
           : "";
         console.log(
-          `${plugin.manifest.pluginId}@${plugin.manifest.version}  ${plugin.marketplace}${display}`,
+          `${pluginKey(plugin.manifest.pluginId, plugin.marketplace)}  ${plugin.manifest.version}${display}`,
         );
       }
       return;
@@ -242,8 +246,14 @@ async function runPlugins(): Promise<void> {
       const installed = registry.install(pluginId, {
         marketplace: argValue("--marketplace"),
       });
+      settings.set({
+        pluginId: installed.manifest.pluginId,
+        marketplace: installed.provenance.marketplace,
+        packageVersion: installed.manifest.version,
+        enabled: true,
+      });
       console.log(
-        `${installed.alreadyInstalled ? "already installed" : "installed"} ${installed.manifest.pluginId}@${installed.manifest.version}  from ${installed.provenance.marketplace}`,
+        `${installed.alreadyInstalled ? "already installed" : "installed"} and enabled ${pluginKey(installed.manifest.pluginId, installed.provenance.marketplace)}  ${installed.manifest.version}`,
       );
       return;
     }
@@ -253,9 +263,12 @@ async function runPlugins(): Promise<void> {
         console.log("(no Plugin Packages installed)");
         return;
       }
+      const configured = new Map(settings.list().map((setting) => [setting.key, setting]));
       for (const plugin of installed) {
+        const key = pluginKey(plugin.manifest.pluginId, plugin.provenance.marketplace);
+        const setting = configured.get(key);
         console.log(
-          `${plugin.manifest.pluginId}@${plugin.manifest.version}  from ${plugin.provenance.marketplace}`,
+          `${key}  ${plugin.manifest.version}${setting ? `  ${setting.enabled ? "enabled" : "disabled"}` : ""}`,
         );
       }
       return;

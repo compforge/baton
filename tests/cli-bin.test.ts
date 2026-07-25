@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -76,7 +76,7 @@ describe("baton plugins", () => {
       const available = runCli(["plugins", "available", "--root", root]);
       expect(available.exitCode).toBe(0);
       expect(available.stdout.toString()).toContain(
-        "qiankun/requirement-loop@0.1.0  reqloop",
+        "qiankun/requirement-loop@reqloop  0.1.0",
       );
 
       const installed = runCli([
@@ -88,13 +88,16 @@ describe("baton plugins", () => {
       ]);
       expect(installed.exitCode).toBe(0);
       expect(installed.stdout.toString()).toContain(
-        "installed qiankun/requirement-loop@0.1.0",
+        "installed and enabled qiankun/requirement-loop@reqloop  0.1.0",
+      );
+      expect(readFileSync(join(root, "plugin.yaml"), "utf8")).toContain(
+        "qiankun/requirement-loop@reqloop:",
       );
 
       const listed = runCli(["plugins", "list", "--root", root]);
       expect(listed.exitCode).toBe(0);
       expect(listed.stdout.toString()).toContain(
-        "qiankun/requirement-loop@0.1.0  from reqloop",
+        "qiankun/requirement-loop@reqloop  0.1.0  enabled",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

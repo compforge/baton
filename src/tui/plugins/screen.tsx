@@ -241,6 +241,7 @@ function PluginPanel(props: PluginPanelProps): ReactNode {
                 (item) =>
                   item.kind === "installed-package" &&
                   item.package.manifest.pluginId === selectedPackage.pluginId &&
+                  item.package.provenance.marketplace === selectedPackage.marketplace &&
                   item.package.manifest.version === selectedPackage.version,
               );
               if (selected) setDetail(selected);
@@ -310,7 +311,7 @@ interface PluginDetailProps {
   notice?: PluginNotice;
   onChanged: (
     notice: PluginNotice,
-    selectedPackage?: { pluginId: string; version: string },
+    selectedPackage?: { pluginId: string; marketplace: string; version: string },
   ) => void;
   onBack: () => void;
 }
@@ -321,8 +322,14 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
     props.item.kind === "available-package" || props.item.kind === "installed-package"
       ? props.item.package.manifest
       : undefined;
+  const marketplace =
+    props.item.kind === "available-package"
+      ? props.item.package.marketplace
+      : props.item.kind === "installed-package"
+        ? props.item.package.provenance.marketplace
+        : undefined;
   const instances = manifest
-    ? packageInstances(manifest.pluginId, manifest.version, props.data)
+    ? packageInstances(manifest.pluginId, marketplace!, manifest.version, props.data)
     : [];
   const installed =
     props.item.kind === "installed-package" ||
@@ -341,32 +348,32 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
   const instanceAction =
     installed && instances.length === 0
       ? {
-          name: "Enable in this session",
-          description: "Create and activate one Plugin Instance",
+          name: "Enable globally",
+          description: "Load in new sessions and activate in this session",
           value: "enable",
         }
       : instances.length === 1
         ? instances[0]!.enabled
           ? {
-              name: "Disable in this session",
-              description: "Deactivate this Plugin Instance",
+              name: "Disable globally",
+              description: "Deactivate here and skip future sessions",
               value: "disable",
             }
           : {
-              name: "Enable in this session",
-              description: "Activate this Plugin Instance",
+              name: "Enable globally",
+              description: "Load in new sessions and activate here",
               value: "enable",
             }
         : undefined;
-  const canUninstall = installed && instances.length === 0;
+  const canUninstall = installed;
   const actions = [
     ...(canInstall
-      ? [{ name: "Install package", description: "Copy this immutable Package into Baton", value: "install" }]
+      ? [{ name: "Install and enable", description: "Install globally and activate in this session", value: "install" }]
       : []),
     ...(newerVersion
       ? [{
           name: "Update now",
-          description: `Install ${newerVersion.manifest.version} and update this session`,
+          description: `Install ${newerVersion.manifest.version} and update the global setting`,
           value: "update",
         }]
       : []),
@@ -390,10 +397,26 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
         const result = props.registry.install(props.item.package.manifest.pluginId, {
           marketplace: props.item.package.marketplace,
         });
+        const existing = instances[0];
+        if (existing) {
+          if (existing.packageVersion !== result.manifest.version) {
+            await props.manager.setInstancePackageVersion(
+              existing.pluginInstanceId,
+              result.manifest.version,
+            );
+          }
+          await props.manager.setInstanceEnabled(existing.pluginInstanceId, true);
+        } else {
+          await props.manager.createInstance({
+            pluginId: result.manifest.pluginId,
+            marketplace: result.provenance.marketplace,
+            packageVersion: result.manifest.version,
+          });
+        }
         props.onChanged({
           text: result.alreadyInstalled
-            ? `${result.manifest.pluginId}@${result.manifest.version} was already installed`
-            : `Installed ${result.manifest.pluginId}@${result.manifest.version}`,
+            ? `${result.manifest.pluginId}@${result.provenance.marketplace} was already installed and is enabled`
+            : `Installed and enabled ${result.manifest.pluginId}@${result.provenance.marketplace}`,
           tone: "success",
         });
         return;
@@ -405,6 +428,7 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
 
         const oldInstances = packageInstances(
           manifest.pluginId,
+          props.item.package.provenance.marketplace,
           manifest.version,
           props.data,
         );
@@ -418,10 +442,15 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
         const oldVersionIsReferenced = props.manager.listInstances().some(
           (instance) =>
             instance.pluginId === manifest.pluginId &&
+            instance.marketplace === marketplace &&
             instance.packageVersion === manifest.version,
         );
         if (!oldVersionIsReferenced) {
-          props.registry.uninstall(manifest.pluginId, manifest.version);
+          props.registry.uninstall(
+            manifest.pluginId,
+            props.item.package.provenance.marketplace,
+            manifest.version,
+          );
         }
 
         props.onChanged(
@@ -431,6 +460,7 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
           },
           {
             pluginId: newerVersion.manifest.pluginId,
+            marketplace: newerVersion.marketplace,
             version: newerVersion.manifest.version,
           },
         );
@@ -441,6 +471,7 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
           instances.length === 0
             ? await props.manager.createInstance({
                 pluginId: manifest.pluginId,
+                marketplace: marketplace!,
                 packageVersion: manifest.version,
               })
             : await props.manager.setInstanceEnabled(
@@ -448,7 +479,7 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
                 true,
               );
         props.onChanged({
-          text: `Enabled ${manifest.pluginId}@${manifest.version} as ${instance.pluginInstanceId}`,
+          text: `Enabled ${manifest.pluginId}@${marketplace}`,
           tone: "success",
         });
         return;
@@ -459,15 +490,18 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
           false,
         );
         props.onChanged({
-          text: `Disabled ${manifest.pluginId}@${manifest.version}`,
+          text: `Disabled ${manifest.pluginId}@${marketplace}`,
           tone: "success",
         });
         return;
       }
       if (value === "uninstall") {
-        props.registry.uninstall(manifest.pluginId, manifest.version);
+        for (const instance of instances) {
+          await props.manager.removeInstance(instance.pluginInstanceId);
+        }
+        props.registry.uninstall(manifest.pluginId, marketplace!, manifest.version);
         props.onChanged({
-          text: `Uninstalled ${manifest.pluginId}@${manifest.version}`,
+          text: `Uninstalled ${manifest.pluginId}@${marketplace}`,
           tone: "success",
         });
         return;
@@ -550,7 +584,7 @@ function detailContent(
         {`\nMarketplace: ${origin}`}
         {manifest.description ? `\n\n${manifest.description}` : ""}
         {instances.length === 0
-          ? "\n\nSession: not enabled"
+          ? "\n\nGlobal setting: not enabled"
           : `\n\nInstance${instances.length === 1 ? "" : "s"}:\n${instances
               .map((instance) => instanceDetail(instance, activeInstanceIds))
               .join("\n")}`}

@@ -51,9 +51,10 @@ export function isPackageInstalled(
   installed: readonly InstalledPluginPackage[],
 ): boolean {
   return installed.some(
-    ({ manifest }) =>
+    ({ manifest, provenance }) =>
       manifest.pluginId === available.manifest.pluginId &&
-      manifest.version === available.manifest.version,
+      manifest.version === available.manifest.version &&
+      provenance.marketplace === available.marketplace,
   );
 }
 
@@ -124,27 +125,31 @@ function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
 
 export function packageInstances(
   pluginId: string,
+  marketplace: string,
   version: string,
   data: Pick<PluginBrowserData, "instances">,
 ): PluginInstance[] {
   return data.instances.filter(
     (instance) =>
-      instance.pluginId === pluginId && instance.packageVersion === version,
+      instance.pluginId === pluginId &&
+      instance.marketplace === marketplace &&
+      instance.packageVersion === version,
   );
 }
 
 function instanceDescription(
   pluginId: string,
+  marketplace: string,
   version: string,
   data: PluginBrowserData,
 ): string | undefined {
-  const instances = packageInstances(pluginId, version, data);
+  const instances = packageInstances(pluginId, marketplace, version, data);
   if (instances.length === 0) return undefined;
   const enabled = instances.filter((instance) => instance.enabled);
   const active = enabled.filter((instance) =>
     data.activeInstanceIds.includes(instance.pluginInstanceId),
   );
-  if (enabled.length === 0) return "disabled in this session";
+  if (enabled.length === 0) return "disabled globally";
   if (active.length === enabled.length) {
     return `${active.length} active in this session`;
   }
@@ -169,6 +174,7 @@ export function pluginBrowserItems(
               available.marketplace,
               instanceDescription(
                 available.manifest.pluginId,
+                available.marketplace,
                 available.manifest.version,
                 data,
               ),
@@ -183,13 +189,14 @@ export function pluginBrowserItems(
       : tab === "installed"
         ? data.installed.map((installed) => ({
             kind: "installed-package",
-            key: `installed:${installed.manifest.pluginId}@${installed.manifest.version}`,
+            key: `installed:${installed.manifest.pluginId}@${installed.provenance.marketplace}:${installed.manifest.version}`,
             name: installed.manifest.displayName ?? installed.manifest.pluginId,
             description: [
               `${installed.manifest.pluginId}@${installed.manifest.version}`,
               `from ${installed.provenance.marketplace}`,
               instanceDescription(
                 installed.manifest.pluginId,
+                installed.provenance.marketplace,
                 installed.manifest.version,
                 data,
               ),
