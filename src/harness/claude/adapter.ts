@@ -334,6 +334,8 @@ interface ClaudeRuntime {
   effort?: EffortLevel;
   /** 已归一成 plan_update 的 tool_use id：其 tool_result 也要跳过，避免时间线出现重复工具卡 */
   suppressedToolIds: Set<string>;
+  /** ExitPlanMode 可能从 assistant message 与 canUseTool 各到一次；按原生 id / 内容双重去重。 */
+  capturedProposedPlanKeys: Set<string>;
   /** Task 工具族归一的任务表（跨 turn 持久）：每次成功落账后整表投影成 plan_update */
   tasks: Map<string, TaskEntry>;
   /** tool_use 已登记、等待 tool_result 落账的 Task 操作（key: tool_use_id） */
@@ -546,6 +548,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       sink,
       claudeSessionId: resumeSessionId,
       suppressedToolIds: new Set(),
+      capturedProposedPlanKeys: new Set(),
       tasks: new Map(),
       pendingTaskOps: new Map(),
       settings,
@@ -813,6 +816,8 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),
       canUseTool: (toolName, toolInput, meta) =>
         this.handleCanUseTool(
+          rt,
+          (ev) => this.emit(rt, ev, rt.currentTurn ?? rt.activeTurn),
           () => rt.currentTurn?.turnId ?? rt.activeTurn?.turnId ?? "",
           toolName,
           toolInput,
@@ -988,16 +993,27 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   private async handleCanUseTool(
+    rt: Pick<ClaudeRuntime, "capturedProposedPlanKeys">,
+    emit: EventSink,
     turnId: () => string,
     toolName: string,
     input: Record<string, unknown>,
-    meta: { title?: string; suggestions?: PermissionUpdate[] },
+    meta: { title?: string; suggestions?: PermissionUpdate[]; toolUseID?: string },
   ): Promise<PermissionResult> {
-    if (toolName === "AskUserQuestion") return this.handleQuestion(turnId, input);
+    if (toolName === "AskUserQuestion") return this.handleQuestion(turnId, input, meta.toolUseID);
+    if (toolName === "ExitPlanMode") {
+      this.captureProposedPlan(rt, emit, turnId(), input, meta.toolUseID, { toolName, input, meta });
+      return {
+        behavior: "deny",
+        message:
+          "Baton captured the proposed plan. Stop here and wait for user feedback or a later implementation request.",
+      };
+    }
     const suggestions = meta.suggestions ?? [];
     const interaction: InteractionDraft = {
       kind: "permission",
       title: meta.title ?? claudeToolTitle(toolName, input),
+      ...(meta.toolUseID ? { toolCallId: meta.toolUseID } : {}),
       options: claudeApprovalOptions(suggestions.length > 0),
     };
     const resolution = await this.options.interactionHandler(interaction, {
@@ -1018,7 +1034,11 @@ export class ClaudeAdapter implements HarnessAdapter {
     return { behavior: "deny", message: "denied by baton user" };
   }
 
-  private async handleQuestion(turnId: () => string, input: Record<string, unknown>): Promise<PermissionResult> {
+  private async handleQuestion(
+    turnId: () => string,
+    input: Record<string, unknown>,
+    toolCallId?: string,
+  ): Promise<PermissionResult> {
     const source = Array.isArray(input.questions) ? input.questions : [];
     const questions: QuestionPrompt[] = source.map((value, index) => {
       const question = (value ?? {}) as Record<string, unknown>;
@@ -1041,7 +1061,11 @@ export class ClaudeAdapter implements HarnessAdapter {
         allowOther: true,
       };
     });
-    const interaction: InteractionDraft = { kind: "question", questions };
+    const interaction: InteractionDraft = {
+      kind: "question",
+      ...(toolCallId ? { toolCallId } : {}),
+      questions,
+    };
     const resolution = await this.options.interactionHandler(interaction, {
       turnId: turnId(),
       raw: input,
@@ -1054,6 +1078,29 @@ export class ClaudeAdapter implements HarnessAdapter {
       questions.map((question) => [question.question, (decisionAnswers[question.questionId] ?? []).join(", ")]),
     );
     return { behavior: "allow", updatedInput: { ...input, answers } };
+  }
+
+  private captureProposedPlan(
+    rt: Pick<ClaudeRuntime, "capturedProposedPlanKeys">,
+    emit: EventSink,
+    turnId: string,
+    input: Record<string, unknown>,
+    toolUseId: string | undefined,
+    raw: unknown,
+  ): void {
+    const content = typeof input.plan === "string" ? input.plan.trim() : "";
+    if (!content) return;
+    const keys = [
+      `turn:${turnId}:content:${content}`,
+      ...(toolUseId ? [`turn:${turnId}:tool:${toolUseId}`] : []),
+    ];
+    if (keys.some((key) => rt.capturedProposedPlanKeys.has(key))) return;
+    for (const key of keys) rt.capturedProposedPlanKeys.add(key);
+    emit({
+      kind: "proposed_plan",
+      payload: { planId: newId("pl"), content },
+      raw,
+    });
   }
 
   private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: SDKMessage, turn: ClaudeTurn): void {
@@ -1118,6 +1165,12 @@ export class ClaudeAdapter implements HarnessAdapter {
           if (b.type !== "tool_use") continue;
           const toolName = String(b.name);
           const input = (b.input ?? {}) as Record<string, unknown>;
+          if (toolName === "ExitPlanMode") {
+            const toolUseId = String(b.id);
+            rt.suppressedToolIds.add(toolUseId);
+            this.captureProposedPlan(rt, emit, turn.turnId, input, toolUseId, msg);
+            continue;
+          }
           // TodoWrite 归一成 plan_update（计划不是工具调用，是头等中间过程）
           if (toolName === "TodoWrite") {
             rt.suppressedToolIds.add(String(b.id));

@@ -1216,6 +1216,21 @@ function buildTranscript(state: SessionState, pinnedPlanId?: string): Transcript
       if (review) items.push(approvalReviewTranscriptItem(review));
       continue;
     }
+    if (entry.type === "proposed_plan") {
+      const proposal = state.proposedPlans.get(entry.id);
+      if (!proposal) continue;
+      items.push({
+        type: "block",
+        id: entry.id,
+        kind: "proposed_plan",
+        status: "completed",
+        author: harnessAuthor(proposal.harness),
+        title: "Proposed plan",
+        content: { type: "text", text: proposal.content },
+      });
+      continue;
+    }
+    if (entry.type !== "plan") continue;
     const plan = state.plans.get(entry.id);
     if (!plan) continue;
     if (plan.planId === pinnedPlanId) continue; // 进行中归 pin，transcript 只在盖棺后展示终态卡

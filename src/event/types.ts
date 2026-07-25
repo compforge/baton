@@ -192,6 +192,15 @@ export interface PlanUpdate {
 }
 
 /**
+ * Agent 已完成、等待用户反馈或另行要求执行的计划提案。
+ * 它是不可变产物，不是执行中的 plan_update，也不代表用户已授权执行。
+ */
+export interface ProposedPlan {
+  planId: string;
+  content: string;
+}
+
+/**
  * 自动审批（auto-review）回执：reviewer 替用户对某操作作出的决策，供诚实留痕（见
  * docs/approval-lifecycle.md §3）。与 Interaction 的交互待决流正交——
  * auto-review 开启时审批卡不触发，baton 只观测这条回执。归一自 codex
@@ -348,6 +357,7 @@ export type EventPayloadMap = {
   tool_call_update: ToolCallUpdate;
   tool_call_content_chunk: ToolCallContentChunk;
   plan_update: PlanUpdate;
+  proposed_plan: ProposedPlan;
   "interaction.opened": Interaction;
   "interaction.resolved": InteractionResolved;
   approval_review_update: ApprovalReviewUpdate;

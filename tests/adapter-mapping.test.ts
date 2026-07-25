@@ -30,6 +30,7 @@ function claudeHarness(): { events: AnyEventDraft[]; feed: (msg: unknown) => voi
   const rt = {
     cwd: "/tmp",
     suppressedToolIds: new Set<string>(),
+    capturedProposedPlanKeys: new Set<string>(),
     claudeSessionId: "sess1",
     tasks: new Map(),
     pendingTaskOps: new Map(),
@@ -170,6 +171,92 @@ describe("claude: TodoWrite → plan_update", () => {
 
   test("todoWritePlan tolerates unknown status", () => {
     expect(todoWritePlan({ todos: [{ content: "x", status: "weird" }] })[0]!.status).toBe("pending");
+  });
+});
+
+describe("claude: ExitPlanMode → proposed_plan", () => {
+  test("captures a completed proposal without creating a tool card", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu-plan",
+            name: "ExitPlanMode",
+            input: { plan: "# Safe rollout\n\n1. Verify\n2. Ship" },
+          },
+        ],
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "proposed_plan",
+      payload: { content: "# Safe rollout\n\n1. Verify\n2. Ship" },
+    });
+    expect((events[0]!.payload as { planId: string }).planId).toMatch(/^pl_/);
+
+    feed({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "tu-plan", content: "denied" }] },
+    });
+    expect(events).toHaveLength(1);
+  });
+
+  test("canUseTool deduplicates within a turn, then stops for user feedback", async () => {
+    const events: AnyEventDraft[] = [];
+    const interactions: InteractionDraft[] = [];
+    const runtime = { capturedProposedPlanKeys: new Set<string>() };
+    const adapter = new ClaudeAdapter({
+      interactionHandler: async (interaction) => {
+        interactions.push(interaction);
+        return { kind: "permission", outcome: "selected", optionId: "deny" };
+      },
+    });
+    const handleCanUseTool = (
+      adapter as unknown as {
+        handleCanUseTool: (
+          runtime: { capturedProposedPlanKeys: Set<string> },
+          emit: (event: AnyEventDraft) => void,
+          turnId: () => string,
+          name: string,
+          input: Record<string, unknown>,
+          meta: Record<string, unknown>,
+        ) => Promise<{ behavior: string; message?: string }>;
+      }
+    ).handleCanUseTool.bind(adapter);
+
+    const first = await handleCanUseTool(
+      runtime,
+      (event) => events.push(event),
+      () => "t1",
+      "ExitPlanMode",
+      { plan: "Implement after approval" },
+      { toolUseID: "tu-plan" },
+    );
+    const duplicate = await handleCanUseTool(
+      runtime,
+      (event) => events.push(event),
+      () => "t1",
+      "ExitPlanMode",
+      { plan: "Implement after approval" },
+      { toolUseID: "tu-plan" },
+    );
+    await handleCanUseTool(
+      runtime,
+      (event) => events.push(event),
+      () => "t2",
+      "ExitPlanMode",
+      { plan: "Implement after approval" },
+      { toolUseID: "tu-plan-2" },
+    );
+
+    expect(first).toMatchObject({ behavior: "deny", message: expect.stringContaining("user feedback") });
+    expect(duplicate.behavior).toBe("deny");
+    expect(events.filter((event) => event.kind === "proposed_plan")).toHaveLength(2);
+    expect(interactions).toEqual([]);
   });
 });
 
@@ -380,28 +467,39 @@ describe("claude: edit tools → diff content", () => {
 });
 
 describe("structured questions", () => {
-  test("Claude AskUserQuestion opens an Interaction and returns answers in updatedInput", async () => {
+  test("Claude AskUserQuestion maps internal ids back to the full question-text wire keys", async () => {
     const events: AnyEventDraft[] = [];
     const interactions: InteractionDraft[] = [];
     const adapter = new ClaudeAdapter({
       interactionHandler: async (interaction) => {
         interactions.push(interaction);
         return interaction.kind === "question"
-          ? { kind: "question", outcome: "answered", answers: { [interaction.questions[0]!.questionId]: ["Careful"] } }
+          ? {
+              kind: "question",
+              outcome: "answered",
+              answers: {
+                [interaction.questions[0]!.questionId]: ["Careful"],
+                [interaction.questions[1]!.questionId]: ["Unit", "Integration"],
+              },
+            }
           : { kind: "permission", outcome: "selected", optionId: "deny" };
       },
     });
     const result = await (
       adapter as unknown as {
         handleCanUseTool: (
+          runtime: { capturedProposedPlanKeys: Set<string> },
           emit: (event: AnyEventDraft) => void,
+          turnId: () => string,
           name: string,
           input: Record<string, unknown>,
           meta: Record<string, unknown>,
         ) => Promise<{ behavior: string; updatedInput?: Record<string, unknown> }>;
       }
     ).handleCanUseTool(
+      { capturedProposedPlanKeys: new Set() },
       (event) => events.push(event),
+      () => "t1",
       "AskUserQuestion",
       {
         questions: [
@@ -411,13 +509,26 @@ describe("structured questions", () => {
             multiSelect: false,
             options: [{ label: "Careful", description: "Verify first" }],
           },
+          {
+            header: "Tests",
+            question: "Which tests should run?",
+            multiSelect: true,
+            options: [
+              { label: "Unit", description: "Fast checks" },
+              { label: "Integration", description: "Cross-module checks" },
+            ],
+          },
         ],
       },
-      {},
+      { toolUseID: "tu-question" },
     );
 
     expect(events).toEqual([]);
-    expect(interactions[0]).toMatchObject({ kind: "question", questions: [{ questionId: "q0" }] });
+    expect(interactions[0]).toMatchObject({
+      kind: "question",
+      toolCallId: "tu-question",
+      questions: [{ questionId: "q0" }, { questionId: "q1" }],
+    });
     expect(result).toEqual({
       behavior: "allow",
       updatedInput: {
@@ -428,8 +539,20 @@ describe("structured questions", () => {
             multiSelect: false,
             options: [{ label: "Careful", description: "Verify first" }],
           },
+          {
+            header: "Tests",
+            question: "Which tests should run?",
+            multiSelect: true,
+            options: [
+              { label: "Unit", description: "Fast checks" },
+              { label: "Integration", description: "Cross-module checks" },
+            ],
+          },
         ],
-        answers: { "How should we proceed?": "Careful" },
+        answers: {
+          "How should we proceed?": "Careful",
+          "Which tests should run?": "Unit, Integration",
+        },
       },
     });
   });
