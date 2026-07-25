@@ -9,20 +9,30 @@ export interface PluginResourceClient {
   list<TSpec, TStatus>(
     resourceKind?: string,
   ): readonly Readonly<PluginResource<TSpec, TStatus>>[];
+  /**
+   * Creates a new PluginResource with the given spec.
+   *
+   * The status will be initialized to an empty object and should be set
+   * by the reconciler on the first reconciliation.
+   */
   create<TSpec, TStatus>(
     resourceKind: string,
     init: {
       resourceId: string;
       spec: TSpec;
-      status?: TStatus;
     },
   ): Readonly<PluginResource<TSpec, TStatus>>;
-  update<TSpec, TStatus>(
-    resourceKind: string,
-    resourceId: string,
-    spec: TSpec,
-  ): Readonly<PluginResource<TSpec, TStatus>>;
   delete(resourceKind: string, resourceId: string): void;
+  /**
+   * Updates the status of a PluginResource.
+   *
+   * This is the primary way to update resource state. Unlike Kubernetes where
+   * users update spec and controllers update status, in Baton plugins both
+   * create and update their own resources.
+   *
+   * The patch is merged with the existing status. Generation is NOT incremented
+   * (only resourceVersion is), so this will not trigger a new reconciliation.
+   */
   patchStatus<TSpec, TStatus>(
     resource: Readonly<PluginResource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
@@ -73,7 +83,6 @@ export function createPluginResourceClient(
       init: {
         resourceId: string;
         spec: TSpec;
-        status?: TStatus;
       },
     ) {
       return deepFreeze(
@@ -81,19 +90,7 @@ export function createPluginResourceClient(
           kind: resourceKind,
           resourceId: init.resourceId,
           spec: init.spec,
-          status: init.status,
         }),
-      );
-    },
-    update<TSpec, TStatus>(
-      resourceKind: string,
-      resourceId: string,
-      spec: TSpec,
-    ) {
-      const resource = store.get<TSpec, TStatus>(resourceKind, resourceId);
-      assertOwned(resource);
-      return deepFreeze(
-        store.replaceSpec<TSpec, TStatus>(resourceKind, resourceId, spec),
       );
     },
     delete(resourceKind: string, resourceId: string) {
