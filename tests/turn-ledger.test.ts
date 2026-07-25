@@ -17,7 +17,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
@@ -57,9 +57,9 @@ class OverlapAdapter implements HarnessAdapter {
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.driven = input;
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(_ref: HarnessSessionRef): Promise<void> {}
@@ -206,7 +206,7 @@ describe("finalized turn records are retired (memory retention regression)", () 
     const submitted = controller.submit("claude", [{ type: "text", text: "go" }]);
     await Bun.sleep(1);
     const turnId = adapter.driven!.turnId;
-    expect(ledger.get(turnId)?.turn).toBeDefined(); // active 期间入队原件在场（canSteer 依赖）
+    expect(ledger.get(turnId)?.turn).toBeDefined(); // active 期间入队原件在场（same-turn send 依赖）
 
     adapter.sink?.({
       kind: "state_update",

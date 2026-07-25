@@ -1,15 +1,13 @@
 import {
   isContextSynchronizable,
   isContextCompactable,
-  isSteerable,
   type HarnessAdapter,
   type ApprovalRoute,
   type EffortOption,
   type InteractionContext,
   type InteractionHandler,
   type ModelOption,
-  type SteerReceipt,
-  type SteerResult,
+  type SendTurnReceipt,
 } from "../harness/adapter.ts";
 import { buildTargetCatchUpContext } from "../context/mention.ts";
 import {
@@ -68,15 +66,19 @@ export type {
 export type Control = { kind: "interrupt" };
 
 /**
- * steer 请求的调度结果（design §3.7：requested 与 effective 分开呈现）：
+ * 用户 sendTurn 的调度结果（design §3.7：requested 与 effective 分开呈现）：
  * - `steer`：已注入当前 turn 的下一个安全边界，不产生新 turn；
- * - `follow_up`：不可 steer 或 harness 拒绝，已显式降级入队；outcome 与 submit
- *   的回执同语义（turn 完成/被撤回时 resolve），UI 不得把降级结果仍标成 steer。
- *   reason 可选，当 adapter 不支持 steer 时说明原因。
+ * - `new_turn`：已进入 Controller 的 driven turn 队列；`queued` 说明它是否在等待当前
+ *   turn。outcome 在该 turn 完成/被撤回时 resolve。
  */
-export type SteerOutcome =
+export type SendTurnOutcome =
   | { effective: "steer" }
-  | { effective: "follow_up"; outcome: Promise<SubmitOutcome>; reason?: string };
+  | {
+      effective: "new_turn";
+      queued: boolean;
+      outcome: Promise<SubmitOutcome>;
+      reason?: string;
+    };
 
 /** Controller 注入给 Adapter 的宿主能力；Interaction 必须经可信边界打开。 */
 export interface InteractionHandlers {
@@ -119,7 +121,7 @@ export const INTERRUPTED_NOTICE_TITLE = "Conversation interrupted — tell the a
  * - observed turn：harness 自发（Harness 来源的 `state_update(running)` 开界），
  *   baton 不控制其开始，只划界、记账（turn summary + 同步水位），不进队列。
  *
- * 生命周期由 state event 驱动（design §4.1）：adapter.submit 只确认接收，turn 的
+ * 生命周期由 state event 驱动（design §4.1）：adapter.sendTurn 只确认接收，turn 的
  * 完成以 `state_update(idle)` 为准，经 finalize 按 baton turn id 幂等收口——
  * 重复/迟到的物理终态（reconnect、transport race）不会二次终结，也不会关闭更新的 turn。
  *
@@ -235,80 +237,65 @@ export class Controller {
   }
 
   /**
-   * 当前输入能否 steer 到活跃 turn：有未终结的 driven turn、harness 匹配、
-   * adapter 声明并实现了 steer。UI 据此决定 busy 时的默认 delivery 与选项展示。
-   * observed turn（harness 自发）不接受 steer——baton 不拥有其生命周期。
+   * 用户输入的统一入口。没有更早 follow-up、目标与当前 driven turn 一致且 HarnessSession
+   * 已就绪时，直接交给 Adapter 依据原生运行态决定 same-turn send；其余情况进入全局队列。
+   * observed turn（harness 自发）不接受输入——Baton 不拥有其生命周期。
    */
-  canSteer(harnessTargetId: string): boolean {
+  async sendTurn(
+    harnessTargetId: string,
+    blocks: PromptBlock[],
+  ): Promise<SendTurnOutcome> {
     const active = this.activeDriven();
-    if (!active?.turn) return false;
-    if (active.turn.target.id !== harnessTargetId) return false;
-    if (!active.binding.ref) return false;
-    return (
-      Boolean(active.binding.adapter.capabilities.steer) &&
-      isSteerable(active.binding.adapter)
-    );
-  }
-
-  /**
-   * 把输入注入当前 turn 的下一个安全边界（design §4.3）。不可 steer、harness 拒绝
-   * （expectedTurnId 过期 / review turn）或 wire 故障时，一律显式降级为 follow-up
-   * 入队——永不静默丢失输入，也不把降级结果伪装成 steer（effective 如实上报）。
-   */
-  async steer(harnessTargetId: string, blocks: PromptBlock[]): Promise<SteerOutcome> {
-    const active = this.activeDriven();
-    if (!active || !this.canSteer(harnessTargetId) || !active.binding.ref) {
-      return { effective: "follow_up", outcome: this.submit(harnessTargetId, blocks) };
-    }
-    const activeInput = active.turn;
-    if (!activeInput) {
-      return { effective: "follow_up", outcome: this.submit(harnessTargetId, blocks) };
-    }
-    const adapter = active.binding.adapter;
-    if (!isSteerable(adapter)) {
-      return { effective: "follow_up", outcome: this.submit(harnessTargetId, blocks) };
-    }
-    const target = activeInput.target;
-    const messageId = newId("m");
-    let result: SteerResult;
-    try {
-      result = await adapter.steer(
-        active.binding.ref,
-        // steer 消息归属被注入的 turn；messageId 照常由 controller 分配（design §4.10.1）
-        { turnId: active.turnId, messageId, blocks },
-        active.turnId,
-      );
-    } catch {
-      // wire 故障视同拒绝：降级路径会经 submit 的正常错误通道暴露 transport 问题，
-      // 这里不吞掉输入本身
-      result = { supported: true, value: { effective: "rejected" } };
-    }
-
-    // 处理 unsupported 情况
-    if (!result.supported) {
+    if (
+      this.inputQueue.length === 0 &&
+      active?.turn &&
+      active.turn.target.id === harnessTargetId &&
+      active.binding.ref
+    ) {
+      const messageId = newId("m");
+      let receipt: SendTurnReceipt;
+      try {
+        receipt = await active.binding.adapter.sendTurn(active.binding.ref, {
+          turnId: active.turnId,
+          messageId,
+          blocks,
+        });
+      } catch (error) {
+        receipt = {
+          accepted: false,
+          effective: "rejected",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (receipt.effective === "steer") {
+        // 已接受的 same-turn send 是一等 Input：挂到当前 turn，cancel 时统一迁移 interrupted。
+        (active.steers ??= []).push(
+          this.inputQueue.acceptSteer(active.turn.target, active.turnId, messageId, blocks),
+        );
+        this.changed();
+        return { effective: "steer" };
+      }
+      if (receipt.effective === "new_turn") {
+        throw new Error(
+          `adapter ${active.binding.adapter.harness} opened a new turn while Baton turn ${active.turnId} is active`,
+        );
+      }
       return {
-        effective: "follow_up",
+        effective: "new_turn",
+        queued: true,
         outcome: this.submit(harnessTargetId, blocks),
-        reason: result.reason,
+        ...(receipt.effective === "rejected" && receipt.reason
+          ? { reason: receipt.reason }
+          : {}),
       };
     }
 
-    // 处理 rejected 情况
-    if (result.value.effective !== "steer") {
-      return {
-        effective: "follow_up",
-        outcome: this.submit(harnessTargetId, blocks),
-      };
-    }
-
-    // 已接受的 steer 是一等 Input（不再"无独立队列实体"）：挂到当前 turn，供 cancel 时
-    // 统一迁移 interrupted（S3：不静默丢、不自动重发）。fire-and-forget，无独立回执。
-    // 身份即 steer user_message 的 messageId（adapter 成功路径已用它落 delivery:"steer" 消息）。
-    (active.steers ??= []).push(
-      this.inputQueue.acceptSteer(target, active.turnId, messageId, blocks),
-    );
-    this.changed();
-    return { effective: "steer" };
+    const queued = Boolean(active) || this.draining || this.inputQueue.length > 0;
+    return {
+      effective: "new_turn",
+      queued,
+      outcome: this.submit(harnessTargetId, blocks),
+    };
   }
 
   /** 只允许撤回尚未开始执行的最新 turn；已被 drain 取走的 active turn 不在此列。 */
@@ -664,7 +651,7 @@ export class Controller {
           await binding.adapter.syncContext(binding.ref, [syncBlock]);
           this.acceptContextDelivery(binding, snapshot, "sync_context");
         } else {
-          // 随本 turn 的 submit 送达（原生 side-channel 或 prepend）；两种形态共享
+          // 随本 turn 的 sendTurn 送达（原生 side-channel 或 prepend）；两种形态共享
           // 同一水位语义：admission 通过后才推进，失败则下次重注入
           if (binding.adapter.capabilities.sync?.supported) {
             syncBlocks = [syncBlock];
@@ -690,16 +677,25 @@ export class Controller {
       });
       this.deliveryAttempts.markDispatching(binding, attempt);
 
-      // submit 回执只确认 Adapter 接受本次投递责任；Harness 终态仍由 idle Event 收口。
+      // sendTurn 回执只确认 Adapter 接受本次投递责任；Harness 终态仍由 idle Event 收口。
       // Adapter 契约规定：throw 只发生在接受责任之前；接受后即使原生 transport 失败，
       // 也必须经事件流报告终态，不能把不确定性藏进一个迟到 rejection。
       try {
-        await binding.adapter.submit(binding.ref, {
+        const receipt = await binding.adapter.sendTurn(binding.ref, {
           turnId: turn.turnId,
           messageId: turn.messageId,
           blocks,
           ...(syncBlocks ? { syncBlocks } : {}),
         });
+        if (receipt.effective !== "new_turn") {
+          const reason =
+            receipt.effective === "rejected" && receipt.reason
+              ? `: ${receipt.reason}`
+              : "";
+          throw new Error(
+            `adapter ${binding.adapter.harness} rejected new Baton turn ${turn.turnId}${reason}`,
+          );
+        }
       } catch (error) {
         this.deliveryAttempts.finalize(binding, attempt, "not_accepted", {
           detail: error instanceof Error ? error.message : String(error),
@@ -708,7 +704,7 @@ export class Controller {
       }
       this.deliveryAttempts.markAccepted(binding, attempt);
       if (submitContext) {
-        // admission 通过 ⇒ 随 submit 送达的 sync 块（syncBlocks 或 prepend）已进入 harness
+        // admission 通过 ⇒ 随 sendTurn 送达的 sync 块（syncBlocks 或 prepend）已进入 harness
         // 输入：视为同步到 throughSeq。
         // admission 失败走 catch 上抛，水位不动，下次重新注入。
         this.acceptContextDelivery(

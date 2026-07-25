@@ -18,7 +18,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
@@ -61,10 +61,10 @@ class StreamingAdapter implements HarnessAdapter {
     return { harness: this.harness, harnessSessionId: "streaming-ref", resumed: false };
   }
 
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.turnId = input.turnId;
     this.admitted();
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   /** 模拟 harness 在 turn 运行中经同一 sink 上报一个事件（走 controller.appendEvent） */

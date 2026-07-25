@@ -128,7 +128,7 @@ describe("Claude model capability", () => {
     const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
 
-    await adapter.submit(ref, {
+    await adapter.sendTurn(ref, {
       turnId: "t_1",
       messageId: "m_1",
       blocks: [{ type: "text", text: "hello" }],
@@ -266,7 +266,7 @@ describe("Codex model capability", () => {
     await adapter.setModel(ref, "gpt-5");
     expect((await adapter.listEfforts(ref)).map((effort) => effort.id)).toEqual(["default", "low", "high"]);
     await adapter.setEffort(ref, "high");
-    await adapter.submit(ref, {
+    await adapter.sendTurn(ref, {
       turnId: "t_1",
       messageId: "m_1",
       blocks: [{ type: "text", text: "hello" }],
@@ -277,7 +277,7 @@ describe("Codex model capability", () => {
     expect(turnRequests[0]?.effort).toBe("high");
     await adapter.setEffort(ref, "default");
     expect(adapter.currentEffort(ref)).toBeNull();
-    await adapter.submit(ref, {
+    await adapter.sendTurn(ref, {
       turnId: "t_2",
       messageId: "m_2",
       blocks: [{ type: "text", text: "again" }],
@@ -344,7 +344,7 @@ describe("Codex model capability", () => {
     const ref = { harness: "codex", harnessSessionId: "thread-1" };
 
     expect(adapter.capabilities.sync?.supported).toBe(true);
-    await adapter.submit(ref, {
+    await adapter.sendTurn(ref, {
       turnId: "t_1",
       messageId: "m_1",
       blocks: [{ type: "text", text: "hello" }],
@@ -375,7 +375,7 @@ describe("Codex model capability", () => {
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
 
-    await adapter.submit(
+    await adapter.sendTurn(
       { harness: "codex", harnessSessionId: "thread-1" },
       {
         turnId: "t_1",

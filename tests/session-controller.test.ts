@@ -12,6 +12,7 @@ import type {
   OpenOptions,
   PromptInput,
   PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/types.ts";
@@ -76,8 +77,8 @@ class FakeAdapter implements HarnessAdapter {
     return this.effort;
   }
 
-  /** submit 立即回执；事件（含终态）异步经 open 绑定的 sink 上报。user_message 由 controller 落盘 */
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  /** sendTurn 立即回执；事件（含终态）异步经 open 绑定的 sink 上报。user_message 由 controller 落盘 */
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.hooks.enter?.();
     this.prompts.push(textOf(input.blocks));
     void (async () => {
@@ -94,7 +95,7 @@ class FakeAdapter implements HarnessAdapter {
         payload: { state: "idle", stopReason: "end_turn" },
       });
     })();
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(_ref: HarnessSessionRef): Promise<void> {}
@@ -181,7 +182,7 @@ function completedTurn(handle: SessionHandle, harness: string, turnId: string, t
 describe("Controller", () => {
   test("overrides adapter-supplied event attribution at the trusted host boundary", async () => {
     class SpoofingAdapter extends FakeAdapter {
-      override async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+      override async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "agent_message",
           turnId: input.turnId,
@@ -195,7 +196,7 @@ describe("Controller", () => {
           turnId: input.turnId,
           payload: { state: "idle", stopReason: "end_turn" },
         });
-        return { accepted: true };
+        return { accepted: true, effective: "new_turn" };
       }
     }
 
@@ -223,9 +224,9 @@ describe("Controller", () => {
     class ManualAdapter extends FakeAdapter {
       turnId?: string;
 
-      override async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+      override async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
         this.turnId = input.turnId;
-        return { accepted: true };
+        return { accepted: true, effective: "new_turn" };
       }
     }
 
@@ -619,7 +620,7 @@ describe("interaction resolver registry", () => {
       return { harness: this.harness, harnessSessionId: "ia-ref", resumed: false };
     }
 
-    async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+    async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
       const emit = (ev: Parameters<EventSink>[0]) => this.sink?.({ ...ev, turnId: input.turnId });
       emit({ kind: "state_update", payload: { state: "running" } });
       void (async () => {
@@ -640,7 +641,7 @@ describe("interaction resolver registry", () => {
 
         emit({ kind: "state_update", payload: { state: "idle", stopReason: "end_turn" } });
       })();
-      return { accepted: true };
+      return { accepted: true, effective: "new_turn" };
     }
 
     async cancel(_ref: HarnessSessionRef): Promise<void> {}
@@ -734,13 +735,13 @@ describe("interaction resolver registry", () => {
         return { harness: this.harness, harnessSessionId: "startup-trust", resumed: false };
       }
 
-      async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+      async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "state_update",
           turnId: input.turnId,
           payload: { state: "idle", stopReason: "end_turn" },
         });
-        return { accepted: true };
+        return { accepted: true, effective: "new_turn" };
       }
 
       async cancel(): Promise<void> {}
@@ -794,13 +795,13 @@ describe("interaction resolver registry", () => {
         return { harness: this.harness, harnessSessionId: "setup-permission", resumed: false };
       }
 
-      async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+      async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "state_update",
           turnId: input.turnId,
           payload: { state: "idle", stopReason: "end_turn" },
         });
-        return { accepted: true };
+        return { accepted: true, effective: "new_turn" };
       }
 
       async cancel(): Promise<void> {}

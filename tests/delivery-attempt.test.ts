@@ -10,7 +10,7 @@ import type {
   HarnessSessionRef,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
 } from "../src/harness/adapter.ts";
 import {
   reduceDeliveryAttempts,
@@ -35,15 +35,15 @@ class DeliveryAdapter implements HarnessAdapter {
     return { harness: this.harness, harnessSessionId: "hs-native", resumed: false };
   }
 
-  async submit(
+  async sendTurn(
     _ref: HarnessSessionRef,
     input: PromptInput,
-  ): Promise<PromptReceipt> {
+  ): Promise<SendTurnReceipt> {
     this.submission = input;
     if (this.mode === "reject") throw new Error("admission rejected");
     // 刻意同步上报终态，覆盖 idle 早于 submit Promise continuation 的竞态。
     if (this.mode === "complete") this.finish(input.turnId, "end_turn");
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   finish(turnId: string, stopReason: string): void {

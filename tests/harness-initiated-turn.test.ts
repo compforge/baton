@@ -15,7 +15,7 @@ import type {
   ModelOption,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
@@ -166,7 +166,7 @@ class WakingAdapter implements HarnessAdapter {
     return [{ id: "default", label: "Default" }];
   }
 
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.sink?.({
       kind: "user_message",
       turnId: input.turnId,
@@ -198,7 +198,7 @@ class WakingAdapter implements HarnessAdapter {
         payload: { state: "idle", stopReason: "end_turn" },
       });
     })();
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(_ref: HarnessSessionRef): Promise<void> {}

@@ -43,6 +43,7 @@ import type {
   OpenOptions,
   PromptInput,
   PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
   InteractionHandler,
 } from "../adapter.ts";
@@ -283,10 +284,9 @@ function claudeToolResultBlocks(result: unknown): ContentBlock[] {
 }
 
 /**
- * 一条 runQuery 消费循环所属的 turn 状态。终态标记、cancel 标记与流式 messageId
- * 必须绑定在 turn 对象上而不是共享 runtime 上：上一 turn 的消息流在 result 消息之后
- * 才真正 close，其"流耗尽兜底 finishTurn"与 finally 清理可能落在下一 turn 已经开始
- * 之后（steer 排队时毫秒级衔接）——读写共享字段会把新 turn 误终结成空回答。
+ * 长生命周期 query 当前消费的 turn 状态。终态标记、cancel 标记与流式 messageId
+ * 必须绑定在 turn 对象上而不是散落成 runtime 字段，避免 result 之后的迟到消息
+ * 被错误归到下一 turn。
  */
 interface ClaudeTurn {
   turnId: string;
@@ -316,16 +316,21 @@ interface ClaudeRuntime {
   /** SDK 的 session_id，首个 turn 的 init 消息里拿到；resume 靠它 */
   claudeSessionId?: string;
   activeQuery?: Query;
+  promptChannel?: ClaudePromptChannel;
   /** 冷启动模型发现不占 turn，也不能冒充 activeQuery；close 时仍需能终止其子进程。 */
   modelDiscoveryQuery?: Query;
   modelDiscovery?: Promise<void>;
   /** 当前被接受、尚未逻辑终结的 turn */
   activeTurn?: ClaudeTurn;
-  /** 用户在 baton 中选择的模型；只在下一次 query 创建时生效。 */
+  /** query 消费循环当前归属的 turn；包含不占 admission 槽的 observed turn。 */
+  currentTurn?: ClaudeTurn;
+  /** effort 无动态控制接口；变更后在下个新 turn 前重建 streaming query。 */
+  queryOptionsDirty?: boolean;
+  /** 用户在 baton 中选择的模型；已有 streaming query 通过 setModel 动态更新。 */
   model?: string;
   models?: ModelOption[];
   modelInfos?: ModelInfo[];
-  /** 用户在 baton 中选择的推理强度；只在下一次 query 创建时生效。 */
+  /** 用户在 baton 中选择的推理强度；下次 query 创建时生效。 */
   effort?: EffortLevel;
   /** 已归一成 plan_update 的 tool_use id：其 tool_result 也要跳过，避免时间线出现重复工具卡 */
   suppressedToolIds: Set<string>;
@@ -335,6 +340,63 @@ interface ClaudeRuntime {
   pendingTaskOps: Map<string, TaskToolOp>;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
   settings?: import("./settings.ts").ClaudeSettings;
+}
+
+interface ClaudePromptChannel {
+  stream: AsyncGenerator<SDKUserMessage>;
+  offer(message: SDKUserMessage): boolean;
+  close(): void;
+}
+
+/**
+ * Agent SDK 只有 streaming input 才能在一个运行中回合继续收用户输入。这个单消费者
+ * channel 是 Baton 侧的最小 prompt queue：query 生命周期内持续打开，close 时丢弃
+ * 尚未消费的输入并唤醒 generator。
+ */
+function claudePromptChannel(): ClaudePromptChannel {
+  const queued: SDKUserMessage[] = [];
+  let closed = false;
+  let wake: (() => void) | undefined;
+  const stream = (async function* () {
+    while (!closed) {
+      if (queued.length === 0) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+      }
+      while (!closed && queued.length > 0) {
+        yield queued.shift() as SDKUserMessage;
+      }
+    }
+  })();
+  return {
+    stream,
+    offer(message) {
+      if (closed) return false;
+      queued.push(message);
+      wake?.();
+      return true;
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      queued.length = 0;
+      wake?.();
+    },
+  };
+}
+
+function claudeUserMessage(blocks: PromptBlock[]): SDKUserMessage {
+  return {
+    type: "user",
+    session_id: "",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [{ type: "text", text: textOf(blocks) }],
+    },
+  };
 }
 
 const CLAUDE_FALLBACK_MODELS: ModelOption[] = [
@@ -456,7 +518,7 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   constructor(private options: ClaudeAdapterOptions) {}
 
-  /** SDK 无独立"启动"步骤：session 在首个 submit 时创建，这里登记运行时并绑定事件出口 */
+  /** SDK 无独立"启动"步骤：streaming query 在首个 sendTurn 时创建，这里只登记运行时。 */
   async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
     const id = newId("hs");
     const resumeSessionId = opts.resumeState
@@ -517,6 +579,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (rt.effort && !claudeEffortsForModel(rt, model).some((candidate) => candidate.id === rt.effort)) {
       throw new Error(`Claude model ${model ?? "default"} does not support effort ${rt.effort}`);
     }
+    if (rt.activeQuery) await rt.activeQuery.setModel(model);
     rt.model = model;
   }
 
@@ -538,12 +601,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     const rt = this.mustSession(ref);
     if (!effortId || effortId === "default") {
       rt.effort = undefined;
+      if (rt.activeQuery) rt.queryOptionsDirty = true;
       return;
     }
     if (!claudeEfforts(rt).some((candidate) => candidate.id === effortId)) {
       throw new Error(`Claude model ${rt.model ?? "default"} does not support effort ${effortId}`);
     }
     rt.effort = effortId as EffortLevel;
+    if (rt.activeQuery) rt.queryOptionsDirty = true;
   }
 
   currentEffort(ref: HarnessSessionRef): string | null {
@@ -646,76 +711,92 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (rt.activeTurn && !rt.activeTurn.finalized) {
       throw new Error(`claude turn ${rt.activeTurn.turnId} still active; cannot compact`);
     }
-    const turn: ClaudeTurn = { turnId, finalized: false, cancelRequested: false };
-    rt.activeTurn = turn;
-    void this.runQuery(
-      rt,
-      { turnId, messageId: newId("m"), blocks: [{ type: "text", text: "/compact" }] },
-      turn,
-    );
+    const receipt = await this.sendTurn(ref, {
+      turnId,
+      messageId: newId("m"),
+      blocks: [{ type: "text", text: "/compact" }],
+    });
+    if (!receipt.accepted || receipt.effective !== "new_turn") {
+      throw new Error(
+        !receipt.accepted ? receipt.reason ?? "Claude rejected context compaction" : "Claude compact opened as steer",
+      );
+    }
     return { accepted: true };
   }
 
   /**
-   * Claude adapter 当前不支持 steer（需要 sidecar 架构支持 prompt queue）。
-   * 返回 supported: false，由 controller 自动降级为 follow-up。
+   * 统一输入入口，对齐 T3Code 的 Claude runtime：
+   * - 空闲时在长生命周期 streaming query 上开启新 turn；
+   * - 运行中且 Baton turnId 匹配时，把消息投进同一 prompt stream，作为当前 turn 的 steer；
+   * - turnId 不匹配时拒绝，由 Controller 排成 follow-up，绝不误注入别的回合。
    */
-  async steer(
-    _ref: HarnessSessionRef,
-    _input: PromptInput,
-    _expectedTurnId: string,
-  ): Promise<import("../adapter.ts").SteerResult> {
-    return {
-      supported: false,
-      reason: "Claude adapter does not support steer (requires sidecar architecture with prompt queue)",
-    };
-  }
-
-  /** submit 只做 admission 并启动后台消费循环；turn 进展与终结全部经事件报告 */
-  async submit(
+  async sendTurn(
     ref: HarnessSessionRef,
     input: PromptInput,
-  ): Promise<PromptReceipt> {
+  ): Promise<SendTurnReceipt> {
     const rt = this.mustSession(ref);
-    if (rt.activeTurn && !rt.activeTurn.finalized) {
-      throw new Error(`claude turn ${rt.activeTurn.turnId} still active; steer/parallel prompt unsupported`);
-    }
     const unsupported = unsupportedPromptBlocks(input.blocks, this.capabilities);
     if (unsupported.length) {
       throw new Error(`claude-code adapter does not support prompt block type(s): ${unsupported.join(", ")}`);
     }
 
+    const active = rt.activeTurn && !rt.activeTurn.finalized ? rt.activeTurn : undefined;
+    if (active) {
+      if (active.turnId !== input.turnId) {
+        return {
+          accepted: false,
+          effective: "rejected",
+          reason: `active Claude turn is ${active.turnId}, not ${input.turnId}`,
+        };
+      }
+      if (!rt.promptChannel?.offer(claudeUserMessage(input.blocks))) {
+        return {
+          accepted: false,
+          effective: "rejected",
+          reason: "Claude streaming input is unavailable",
+        };
+      }
+      this.emit(
+        rt,
+        {
+          kind: "user_message",
+          payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+        },
+        active,
+      );
+      return { accepted: true, effective: "steer" };
+    }
+
+    // observed turn 不占 admission 槽；用户新输入到达时先明确收口，避免后续消息与
+    // 新 driven turn 共用 currentTurn 而发生归属混淆。
+    if (rt.currentTurn && !rt.currentTurn.finalized) {
+      const observed = rt.currentTurn;
+      this.finishTurn(rt, (ev) => this.emit(rt, ev, observed), observed, "end_turn");
+    }
+    if (rt.queryOptionsDirty) this.closeStreamingQuery(rt);
+
     const turn: ClaudeTurn = { turnId: input.turnId, finalized: false, cancelRequested: false };
     rt.activeTurn = turn;
+    rt.currentTurn = turn;
     // user_message / state_update(running) 由 controller 在出队时落盘（用户输入是 BatonSession
     // 的事实，不等 harness 就绪）；adapter 只报告 harness 执行过程与终态。
 
-    // 后台消费 SDK 消息流；submit 本身立即回执（design §4.1）
-    void this.runQuery(rt, input, turn);
-    return { accepted: true };
+    try {
+      this.ensureStreamingQuery(rt);
+      if (!rt.promptChannel?.offer(claudeUserMessage(input.blocks))) {
+        throw new Error("Claude streaming input closed before prompt was accepted");
+      }
+    } catch (error) {
+      if (rt.activeTurn === turn) rt.activeTurn = undefined;
+      if (rt.currentTurn === turn) rt.currentTurn = undefined;
+      throw error;
+    }
+    return { accepted: true, effective: "new_turn" };
   }
 
-  private async runQuery(rt: ClaudeRuntime, input: PromptInput, turn: ClaudeTurn): Promise<void> {
-    // current 指向本条消息流上"正在进行"的 turn：先是 submit 的 driven turn，
-    // result 之后若流上再来活动消息，则铸造 observed turn 接棒（可多次）。
-    // emit 经 current 动态绑定——审批回调、流耗尽兜底都要盖当时所属 turn 的 id。
-    let current = turn;
-    const emit: EventSink = (ev) => this.emit(rt, ev, current);
+  private ensureStreamingQuery(rt: ClaudeRuntime): void {
+    if (rt.activeQuery) return;
     const executable = this.options.executablePath ?? process.env.BATON_CLAUDE_BIN;
-
-    // SDK Options：传递必要的运行时参数和配置。
-    //
-    // 工作原理：
-    // - SDK 通过子进程启动 claude CLI（由 pathToClaudeCodeExecutable 指定）
-    // - CLI 根据 cwd 自动读取配置层级：
-    //     ~/.claude/settings.json           (user-level)
-    //     ${cwd}/.claude/settings.json      (project-level)
-    //     ${cwd}/.claude/settings.local.json (local override)
-    //     managed-settings.json              (policy)
-    // - CLI 自动处理：enabledPlugins、extraKnownMarketplaces、插件加载、MCP 服务器等
-    //
-    // 但为了确保 plugins 和 mcpServers 能被 SDK 正确识别，我们显式传递它们。
-    // 这样即使 CLI 的自动配置加载有问题，SDK 也能直接使用这些配置。
     const sdkOptions: Options = {
       cwd: rt.cwd,
       env: { ...(process.env as Record<string, string>), ...rt.env },
@@ -731,36 +812,70 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(rt.settings?.plugins ? { plugins: rt.settings.plugins } : {}),
       ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),
       canUseTool: (toolName, toolInput, meta) =>
-        this.handleCanUseTool(() => current.turnId, toolName, toolInput, meta),
+        this.handleCanUseTool(
+          () => rt.currentTurn?.turnId ?? rt.activeTurn?.turnId ?? "",
+          toolName,
+          toolInput,
+          meta,
+        ),
     };
 
-    let q: Query | undefined;
-    try {
-      q = (this.options.queryFactory ?? query)({ prompt: textOf(input.blocks), options: sdkOptions });
-      rt.activeQuery = q;
-      void q
-        .initializationResult()
-        .then((result) => {
-          rt.modelInfos = result.models;
-          rt.models = claudeModels(result.models);
-        })
-        .catch((error) => {
-          this.options.diagnostic?.({
-            level: "warn",
-            component: "claude.initialization",
-            harness: this.harness,
-            turnId: current.turnId,
-            message: "Claude SDK initialization result failed",
-            error: diagnosticError(error),
-          });
+    const channel = claudePromptChannel();
+    const q = (this.options.queryFactory ?? query)({ prompt: channel.stream, options: sdkOptions });
+    rt.promptChannel = channel;
+    rt.activeQuery = q;
+    rt.queryOptionsDirty = false;
+    void q
+      .initializationResult()
+      .then((result) => {
+        rt.modelInfos = result.models;
+        rt.models = claudeModels(result.models);
+      })
+      .catch((error) => {
+        this.options.diagnostic?.({
+          level: "warn",
+          component: "claude.initialization",
+          harness: this.harness,
+          turnId: rt.currentTurn?.turnId,
+          message: "Claude SDK initialization result failed",
+          error: diagnosticError(error),
         });
+      });
+    void this.consumeQuery(rt, q, channel);
+  }
+
+  private async consumeQuery(rt: ClaudeRuntime, q: Query, channel: ClaudePromptChannel): Promise<void> {
+    try {
       for await (const msg of q) {
-        if (startsObservedTurn(msg.type, current)) current = this.mintObservedTurn(rt);
+        let current = rt.currentTurn;
+        if (!current) {
+          if (msg.type === "system" && msg.subtype === "init") {
+            rt.claudeSessionId = msg.session_id;
+          }
+          continue;
+        }
+        if (startsObservedTurn(msg.type, current)) {
+          current = this.mintObservedTurn(rt);
+          rt.currentTurn = current;
+        }
+        const emit: EventSink = (ev) => this.emit(rt, ev, current);
         this.handleMessage(rt, emit, msg, current);
       }
-      // 流正常耗尽但没有 result 消息（SDK 异常路径）：仍要保证恰好一次终态
-      this.finishTurn(rt, emit, current, current.cancelRequested ? "cancelled" : "end_turn");
+      const current = rt.currentTurn;
+      if (current) {
+        this.finishTurn(
+          rt,
+          (ev) => this.emit(rt, ev, current),
+          current,
+          current.cancelRequested ? "cancelled" : "end_turn",
+        );
+      }
     } catch (error) {
+      // effort 变更或 close 会主动替换/清掉 query；旧消费循环此时无需制造错误事件。
+      if (rt.activeQuery !== q) return;
+      const current = rt.currentTurn;
+      if (!current) return;
+      const emit: EventSink = (ev) => this.emit(rt, ev, current);
       this.options.diagnostic?.({
         level: current.cancelRequested ? "info" : "error",
         component: "claude.query",
@@ -779,15 +894,28 @@ export class ClaudeAdapter implements HarnessAdapter {
         this.finishTurn(rt, emit, current, "error");
       }
     } finally {
-      // 只清自己注册的 query：本 finally 可能在下一 turn 已把 activeQuery 换掉后才跑
-      if (rt.activeQuery === q) rt.activeQuery = undefined;
+      if (rt.activeQuery === q) {
+        rt.activeQuery = undefined;
+        rt.promptChannel = undefined;
+      }
+      channel.close();
     }
+  }
+
+  private closeStreamingQuery(rt: ClaudeRuntime): void {
+    const queryHandle = rt.activeQuery;
+    const channel = rt.promptChannel;
+    rt.activeQuery = undefined;
+    rt.promptChannel = undefined;
+    rt.queryOptionsDirty = false;
+    channel?.close();
+    queryHandle?.close();
   }
 
   /**
    * 铸造 observed turn 并以 harness 来源的 running 开界（design §5.10）。
-   * 刻意不写 rt.activeTurn：observed turn 不占 admission 槽——用户此刻仍可 submit
-   * 新 driven turn（走新 query），宿主队列语义不受 harness 自发活动影响。
+   * 刻意不写 rt.activeTurn：observed turn 不占 admission 槽；新 driven turn 到达时
+   * sendTurn 会先将它收口，再把用户输入送进同一个 streaming query。
    */
   private mintObservedTurn(rt: ClaudeRuntime): ClaudeTurn {
     const observed: ClaudeTurn = { turnId: newId("t"), finalized: false, cancelRequested: false };
@@ -825,15 +953,16 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   async cancel(ref: HarnessSessionRef): Promise<void> {
     const rt = this.sessions.get(ref.harnessSessionId);
-    if (!rt?.activeQuery) return;
-    if (rt.activeTurn) rt.activeTurn.cancelRequested = true;
-    // interrupt 与消息流会被 SDK 同时结束；最终 idle/cancelled 由 runQuery 的消费路径收口。
+    const turn = rt?.activeTurn;
+    if (!rt?.activeQuery || !turn) return;
+    turn.cancelRequested = true;
+    // streaming query 本身保持存活；SDK result 仍从 consumeQuery 收口当前 turn。
     await rt.activeQuery.interrupt().catch((error) => {
       this.options.diagnostic?.({
         level: "warn",
         component: "claude.cancel",
         harness: this.harness,
-        turnId: rt.activeTurn?.turnId,
+        turnId: turn.turnId,
         message: "Claude SDK interrupt failed",
         error: diagnosticError(error),
       });
@@ -847,7 +976,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const turn = rt.activeTurn;
     if (turn) turn.cancelRequested = true;
     rt.modelDiscoveryQuery?.close();
-    await rt.activeQuery?.interrupt().catch(() => {});
+    this.closeStreamingQuery(rt);
     // 宿主主动 close 时若仍有活跃 turn，合成终态，不留"已接受未终结"的悬挂状态
     if (turn) this.finishTurn(rt, (ev) => this.emit(rt, ev, turn), turn, "cancelled");
   }
@@ -1099,7 +1228,13 @@ export class ClaudeAdapter implements HarnessAdapter {
             raw: msg,
           });
         }
-        this.finishTurn(rt, emit, turn, msg.subtype === "success" ? "end_turn" : msg.subtype, msg);
+        this.finishTurn(
+          rt,
+          emit,
+          turn,
+          turn.cancelRequested ? "cancelled" : msg.subtype === "success" ? "end_turn" : msg.subtype,
+          msg,
+        );
         break;
       }
       default:

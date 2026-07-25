@@ -12,9 +12,8 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
-  SteerReceipt,
 } from "../src/harness/adapter.ts";
 import { textOf, type PromptBlock } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
@@ -22,14 +21,15 @@ import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 /** turn 不自动终结：由测试显式 finish()，制造稳定的"turn 进行中"窗口 */
-class SteerableFakeAdapter implements HarnessAdapter {
-  readonly capabilities: AdapterCapabilities = { prompt: {}, steer: { supported: true } };
+class SendTurnFakeAdapter implements HarnessAdapter {
+  readonly capabilities: AdapterCapabilities = { prompt: {} };
   sink?: EventSink;
   prompts: string[] = [];
   steers: Array<{ turnId: string; expectedTurnId: string; text: string }> = [];
-  steerResult: SteerReceipt = { effective: "steer" };
+  steerResult: SendTurnReceipt = { accepted: true, effective: "steer" };
   steerError?: Error;
-  private activeInput?: PromptInput;
+  protected activeInput?: PromptInput;
+  protected steerSupported = true;
 
   constructor(readonly harness: string) {}
 
@@ -38,26 +38,29 @@ class SteerableFakeAdapter implements HarnessAdapter {
     return { harness: this.harness, harnessSessionId: `${this.harness}-ref`, resumed: false };
   }
 
-  // 新契约：普通 prompt 的 user_message / running 由 controller 出队时落盘；
-  // adapter 只在 steer 成功路径补 delivery:"steer" 的用户消息（见下方 steer()）
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+    if (this.activeInput) {
+      if (!this.steerSupported || this.activeInput.turnId !== input.turnId) {
+        return { accepted: false, effective: "rejected" };
+      }
+      if (this.steerError) throw this.steerError;
+      this.steers.push({
+        turnId: input.turnId,
+        expectedTurnId: this.activeInput.turnId,
+        text: textOf(input.blocks),
+      });
+      if (this.steerResult.effective === "steer") {
+        this.sink?.({
+          kind: "user_message",
+          turnId: input.turnId,
+          payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+        });
+      }
+      return this.steerResult;
+    }
     this.activeInput = input;
     this.prompts.push(textOf(input.blocks));
-    return { accepted: true };
-  }
-
-  async steer(_ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<SteerReceipt> {
-    if (this.steerError) throw this.steerError;
-    this.steers.push({ turnId: input.turnId, expectedTurnId, text: textOf(input.blocks) });
-    if (this.steerResult.effective === "steer") {
-      // 契约：成功路径由 adapter 发 delivery:"steer" 的 user_message，绑定被注入的 turn
-      this.sink?.({
-        kind: "user_message",
-        turnId: input.turnId,
-        payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
-      });
-    }
-    return this.steerResult;
+    return { accepted: true, effective: "new_turn" };
   }
 
   /** 终结当前 turn（模拟 harness 的 idle 终态） */
@@ -82,10 +85,10 @@ class SteerableFakeAdapter implements HarnessAdapter {
 }
 
 /** 无 steer 能力的最小 adapter：验证 capability 缺失时的降级 */
-class PlainFakeAdapter extends SteerableFakeAdapter {
-  override readonly capabilities: AdapterCapabilities = { prompt: {} };
-  override async steer(): Promise<SteerReceipt> {
-    throw new Error("plain adapter must not be steered when capability is undeclared");
+class RejectingSendTurnFakeAdapter extends SendTurnFakeAdapter {
+  constructor(harness: string) {
+    super(harness);
+    this.steerSupported = false;
   }
 }
 
@@ -118,16 +121,14 @@ async function until(cond: () => boolean): Promise<void> {
   expect(cond()).toBe(true);
 }
 
-describe("Controller.steer", () => {
+describe("Controller.sendTurn", () => {
   test("steers the active turn: no new turn, message lands in the steered turn", async () => {
-    const adapter = new SteerableFakeAdapter("codex");
+    const adapter = new SendTurnFakeAdapter("codex");
     const controller = controllerWith(adapter);
 
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
-    expect(controller.canSteer("codex")).toBe(true);
-
-    const outcome = await controller.steer("codex", text("prefer approach B"));
+    const outcome = await controller.sendTurn("codex", text("prefer approach B"));
 
     expect(outcome.effective).toBe("steer");
     expect(controller.queueLength).toBe(0);
@@ -148,68 +149,65 @@ describe("Controller.steer", () => {
   });
 
   test("degrades to follow-up when the adapter rejects (stale turn race)", async () => {
-    const adapter = new SteerableFakeAdapter("codex");
-    adapter.steerResult = { effective: "rejected" };
+    const adapter = new SendTurnFakeAdapter("codex");
+    adapter.steerResult = { accepted: false, effective: "rejected" };
     const controller = controllerWith(adapter);
 
     const first = controller.submit("codex", text("one"));
     await until(() => adapter.prompts.length === 1);
-    const outcome = await controller.steer("codex", text("two"));
+    const outcome = await controller.sendTurn("codex", text("two"));
 
-    expect(outcome.effective).toBe("follow_up");
+    expect(outcome.effective).toBe("new_turn");
     expect(controller.queueLength).toBe(1);
     adapter.finish(); // 结束 turn one → 降级的 follow-up 开始执行
     await first;
     await until(() => adapter.prompts.length === 2);
     adapter.finish();
-    if (outcome.effective === "follow_up") expect(await outcome.outcome).toBe("completed");
+    if (outcome.effective === "new_turn") expect(await outcome.outcome).toBe("completed");
     expect(adapter.prompts).toEqual(["one", "two"]);
   });
 
   test("degrades to follow-up when the adapter throws (wire failure)", async () => {
-    const adapter = new SteerableFakeAdapter("codex");
+    const adapter = new SendTurnFakeAdapter("codex");
     adapter.steerError = new Error("peer closed");
     const controller = controllerWith(adapter);
 
     controller.submit("codex", text("one"));
     await until(() => adapter.prompts.length === 1);
-    const outcome = await controller.steer("codex", text("two"));
+    const outcome = await controller.sendTurn("codex", text("two"));
 
-    expect(outcome.effective).toBe("follow_up");
+    expect(outcome.effective).toBe("new_turn");
     expect(controller.queueLength).toBe(1);
   });
 
-  test("degrades when the harness does not declare the steer capability", async () => {
-    const adapter = new PlainFakeAdapter("claude");
+  test("degrades when the adapter rejects same-turn send", async () => {
+    const adapter = new RejectingSendTurnFakeAdapter("claude");
     const controller = controllerWith(adapter);
 
     controller.submit("claude", text("one"));
     await until(() => adapter.prompts.length === 1);
-    expect(controller.canSteer("claude")).toBe(false);
-
-    const outcome = await controller.steer("claude", text("two"));
-    expect(outcome.effective).toBe("follow_up");
+    const outcome = await controller.sendTurn("claude", text("two"));
+    expect(outcome.effective).toBe("new_turn");
     expect(controller.queueLength).toBe(1);
   });
 
   test("degrades when idle (no active turn to steer)", async () => {
-    const adapter = new SteerableFakeAdapter("codex");
+    const adapter = new SendTurnFakeAdapter("codex");
     const controller = controllerWith(adapter);
 
-    expect(controller.canSteer("codex")).toBe(false);
-    const outcome = await controller.steer("codex", text("hello"));
-    expect(outcome.effective).toBe("follow_up");
+    const outcome = await controller.sendTurn("codex", text("hello"));
+    expect(outcome.effective).toBe("new_turn");
 
     await until(() => adapter.prompts.length === 1);
     adapter.finish();
-    if (outcome.effective === "follow_up") expect(await outcome.outcome).toBe("completed");
+    if (outcome.effective === "new_turn") expect(await outcome.outcome).toBe("completed");
     expect(adapter.steers).toHaveLength(0);
     expect(adapter.prompts).toEqual(["hello"]);
   });
 
   test("degrades when steering a harness other than the active one", async () => {
-    const codex = new SteerableFakeAdapter("codex");
-    const claude = new SteerableFakeAdapter("claude-code");
+    const codex = new SendTurnFakeAdapter("codex");
+    const claude = new SendTurnFakeAdapter("claude-code");
     const adapters: Record<string, HarnessAdapter> = { codex, claude };
     const controller = new Controller({
       session,
@@ -220,10 +218,8 @@ describe("Controller.steer", () => {
 
     controller.submit("codex", text("one"));
     await until(() => codex.prompts.length === 1);
-    expect(controller.canSteer("claude")).toBe(false);
-
-    const outcome = await controller.steer("claude", text("two"));
-    expect(outcome.effective).toBe("follow_up");
+    const outcome = await controller.sendTurn("claude", text("two"));
+    expect(outcome.effective).toBe("new_turn");
     expect(claude.steers).toHaveLength(0);
     expect(controller.queueLength).toBe(1);
   });

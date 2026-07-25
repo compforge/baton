@@ -14,7 +14,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import { textOf } from "../src/event/types.ts";
@@ -43,7 +43,7 @@ class GatedOpenAdapter implements HarnessAdapter {
   }
 
   /** admission 后立即自动完成本 turn（终态经 sink 报告） */
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.prompts.push(textOf(input.blocks));
     queueMicrotask(() => {
       this.sink?.({
@@ -57,7 +57,7 @@ class GatedOpenAdapter implements HarnessAdapter {
         payload: { state: "idle", stopReason: "end_turn" },
       });
     });
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(_ref: HarnessSessionRef): Promise<void> {}

@@ -12,9 +12,8 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
-  SteerReceipt,
 } from "../src/harness/adapter.ts";
 import { textOf, type PromptBlock } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
@@ -23,7 +22,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
 class HoldingAdapter implements HarnessAdapter {
-  readonly capabilities: AdapterCapabilities = { prompt: {}, steer: { supported: true } };
+  readonly capabilities: AdapterCapabilities = { prompt: {} };
   sink?: EventSink;
   prompts: string[] = [];
   private active?: PromptInput;
@@ -35,19 +34,21 @@ class HoldingAdapter implements HarnessAdapter {
     return { harness: this.harness, harnessSessionId: `${this.harness}-ref`, resumed: false };
   }
 
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+    if (this.active) {
+      if (this.active.turnId !== input.turnId) {
+        return { accepted: false, effective: "rejected" };
+      }
+      this.sink?.({
+        kind: "user_message",
+        turnId: input.turnId,
+        payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+      });
+      return { accepted: true, effective: "steer" };
+    }
     this.active = input;
     this.prompts.push(textOf(input.blocks));
-    return { accepted: true };
-  }
-
-  async steer(_ref: HarnessSessionRef, input: PromptInput): Promise<SteerReceipt> {
-    this.sink?.({
-      kind: "user_message",
-      turnId: input.turnId,
-      payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
-    });
-    return { effective: "steer" };
+    return { accepted: true, effective: "new_turn" };
   }
 
   finish(stopReason: string): void {
@@ -133,7 +134,7 @@ describe("Input lifecycle (InputRecord)", () => {
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
 
-    const outcome = await controller.steer("codex", text("prefer B"));
+    const outcome = await controller.sendTurn("codex", text("prefer B"));
     expect(outcome.effective).toBe("steer");
 
     const steer = controller.inputs.find((i) => i.delivery === "steer");
@@ -149,7 +150,7 @@ describe("Input lifecycle (InputRecord)", () => {
     const controller = controllerWith(adapter);
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
-    await controller.steer("codex", text("also do B"));
+    await controller.sendTurn("codex", text("also do B"));
     expect(controller.inputs.some((i) => i.status === "accepted_steer")).toBe(true);
 
     await controller.control({ kind: "interrupt" });

@@ -154,7 +154,8 @@ async function main(): Promise<void> {
 
     sawOutput = false;
     try {
-      await controller.submit(target.id, [{ type: "text", text: prompt }]);
+      const sent = await controller.sendTurn(target.id, [{ type: "text", text: prompt }]);
+      if (sent.effective === "new_turn") await sent.outcome;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       stdout.write(`\nerror: ${message}\n`);

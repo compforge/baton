@@ -12,7 +12,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { PromptBlock } from "../src/event/types.ts";
@@ -34,7 +34,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
     return { harness: this.harness, harnessSessionId: "hold-ref", resumed: false };
   }
 
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.active = input;
     void (async () => {
       await this.handlers.interactionHandler({
@@ -43,7 +43,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
         options: [{ optionId: "allow", name: "Allow", polarity: "allow", lifetime: "once" }],
       }, { turnId: input.turnId });
     })();
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(_ref: HarnessSessionRef): Promise<void> {
