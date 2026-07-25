@@ -9,6 +9,20 @@ export interface PluginResourceClient {
   list<TSpec, TStatus>(
     resourceKind?: string,
   ): readonly Readonly<PluginResource<TSpec, TStatus>>[];
+  create<TSpec, TStatus>(
+    resourceKind: string,
+    init: {
+      resourceId: string;
+      spec: TSpec;
+      status?: TStatus;
+    },
+  ): Readonly<PluginResource<TSpec, TStatus>>;
+  update<TSpec, TStatus>(
+    resourceKind: string,
+    resourceId: string,
+    spec: TSpec,
+  ): Readonly<PluginResource<TSpec, TStatus>>;
+  delete(resourceKind: string, resourceId: string): void;
   patchStatus<TSpec, TStatus>(
     resource: Readonly<PluginResource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
@@ -53,6 +67,39 @@ export function createPluginResourceClient(
       return store
         .list<TSpec, TStatus>(resourceKind)
         .map((resource) => deepFreeze(resource));
+    },
+    create<TSpec, TStatus>(
+      resourceKind: string,
+      init: {
+        resourceId: string;
+        spec: TSpec;
+        status?: TStatus;
+      },
+    ) {
+      return deepFreeze(
+        store.create<TSpec, TStatus>({
+          kind: resourceKind,
+          resourceId: init.resourceId,
+          spec: init.spec,
+          status: init.status,
+        }),
+      );
+    },
+    update<TSpec, TStatus>(
+      resourceKind: string,
+      resourceId: string,
+      spec: TSpec,
+    ) {
+      const resource = store.get<TSpec, TStatus>(resourceKind, resourceId);
+      assertOwned(resource);
+      return deepFreeze(
+        store.replaceSpec<TSpec, TStatus>(resourceKind, resourceId, spec),
+      );
+    },
+    delete(resourceKind: string, resourceId: string) {
+      const resource = store.get(resourceKind, resourceId);
+      assertOwned(resource);
+      store.delete(resourceKind, resourceId);
     },
     patchStatus<TSpec, TStatus>(
       resource: Parameters<PluginResourceClient["patchStatus"]>[0],
