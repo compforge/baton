@@ -180,6 +180,94 @@ function completedTurn(handle: SessionHandle, harness: string, turnId: string, t
 }
 
 describe("Controller", () => {
+  test("uses HarnessTarget probe for discovery without opening an Adapter session", async () => {
+    let adaptersCreated = 0;
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => {
+        adaptersCreated++;
+        return new FakeAdapter("example-harness");
+      },
+      probeTarget: async () => ({
+        models: [{ id: "target-model", label: "Target model" }],
+      }),
+    });
+
+    expect(await controller.listModels("example")).toEqual([
+      { id: "target-model", label: "Target model" },
+    ]);
+    expect(adaptersCreated).toBe(0);
+  });
+
+  test("links an accepted implementation turn back to its proposed plan", async () => {
+    session.append({
+      source: { type: "harness", harnessTargetId: "example" },
+      harness: "example-harness",
+      harnessTargetId: "example",
+      turnId: "t-plan",
+      kind: "proposed_plan",
+      payload: { planId: "plan-1", content: "Implement safely" },
+    });
+    const adapter = new FakeAdapter("example-harness");
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => adapter,
+    });
+
+    await controller.submit(
+      "example",
+      [{ type: "text", text: "Implement the plan" }],
+      { sourceProposedPlanId: "plan-1" },
+    );
+
+    const link = session
+      .readEvents()
+      .find((event) => event.kind === "proposed_plan_implementation_started");
+    expect(link).toMatchObject({
+      source: { type: "baton" },
+      harnessTargetId: "example",
+      payload: { planId: "plan-1" },
+    });
+    expect(session.loadState().proposedPlans.get("plan-1")?.implementationTurnId).toBe(
+      link?.turnId,
+    );
+  });
+
+  test("admits at most one pending implementation turn per proposed plan", async () => {
+    session.append({
+      source: { type: "harness", harnessTargetId: "example" },
+      harness: "example-harness",
+      harnessTargetId: "example",
+      turnId: "t-plan",
+      kind: "proposed_plan",
+      payload: { planId: "plan-1", content: "Implement once" },
+    });
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => new FakeAdapter("example-harness", { delayMs: 20 }),
+    });
+
+    const first = controller.submit(
+      "example",
+      [{ type: "text", text: "Implement" }],
+      { sourceProposedPlanId: "plan-1" },
+    );
+    expect(() =>
+      controller.submit(
+        "example",
+        [{ type: "text", text: "Implement again" }],
+        { sourceProposedPlanId: "plan-1" },
+      ),
+    ).toThrow(/pending implementation turn/);
+    await first;
+  });
+
   test("overrides adapter-supplied event attribution at the trusted host boundary", async () => {
     class SpoofingAdapter extends FakeAdapter {
       override async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {

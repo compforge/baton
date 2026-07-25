@@ -40,6 +40,7 @@ import type {
   EffortOption,
   EventSink,
   ModelOption,
+  NativeEventSink,
   OpenOptions,
   PromptInput,
   PromptReceipt,
@@ -53,6 +54,7 @@ import {
   sessionIdResumeState,
   type HarnessResumeState,
 } from "../resume.ts";
+import type { HarnessTargetProbeResult } from "../target.ts";
 
 const APPROVAL_OPTIONS: PermissionOption[] = [
   { optionId: "allow", name: "Allow once", polarity: "allow", lifetime: "once" },
@@ -317,9 +319,6 @@ interface ClaudeRuntime {
   claudeSessionId?: string;
   activeQuery?: Query;
   promptChannel?: ClaudePromptChannel;
-  /** 冷启动模型发现不占 turn，也不能冒充 activeQuery；close 时仍需能终止其子进程。 */
-  modelDiscoveryQuery?: Query;
-  modelDiscovery?: Promise<void>;
   /** 当前被接受、尚未逻辑终结的 turn */
   activeTurn?: ClaudeTurn;
   /** query 消费循环当前归属的 turn；包含不占 admission 槽的 observed turn。 */
@@ -340,6 +339,8 @@ interface ClaudeRuntime {
   tasks: Map<string, TaskEntry>;
   /** tool_use 已登记、等待 tool_result 落账的 Task 操作（key: tool_use_id） */
   pendingTaskOps: Map<string, TaskToolOp>;
+  /** 未映射 wire 形状按 key 限流，只在每个 session 首次出现时报警。 */
+  unmappedMessageKeys?: Set<string>;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
   settings?: import("./settings.ts").ClaudeSettings;
 }
@@ -452,6 +453,63 @@ async function initializeWithTimeout(queryHandle: Query): Promise<SDKControlInit
   }
 }
 
+/**
+ * HarnessTarget 级只读发现。它使用独立、不可持久化、禁用工具/MCP 的 SDK query，
+ * 只完成 initialize/control 握手，不创建用户消息或可恢复的 HarnessSession。
+ */
+export async function probeClaudeTarget(options: {
+  cwd: string;
+  env?: Record<string, string>;
+  executablePath?: string;
+  diagnostic?: DiagnosticSink;
+  queryFactory?: typeof query;
+}): Promise<HarnessTargetProbeResult> {
+  const idleInput = idleClaudeInput();
+  const settings = await readClaudeSettings(options.cwd, options.diagnostic);
+  const queryHandle = (options.queryFactory ?? query)({
+    prompt: idleInput.stream,
+    options: {
+      cwd: options.cwd,
+      env: { ...(process.env as Record<string, string>), ...options.env },
+      allowedTools: [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      persistSession: false,
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      settingSources: [...CLAUDE_SETTING_SOURCES],
+      ...(options.executablePath
+        ? { pathToClaudeCodeExecutable: options.executablePath }
+        : {}),
+      ...(settings.plugins
+        ? {
+            plugins: settings.plugins.map((plugin) => ({
+              ...plugin,
+              // probe 只发现 catalog；插件的 skill/command 可加载，MCP 连接留给真实 session。
+              skipMcpDiscovery: true,
+            })),
+          }
+        : {}),
+    },
+  });
+  try {
+    const initialized = await initializeWithTimeout(queryHandle);
+    const commands = await queryHandle.supportedCommands();
+    const runtime = { modelInfos: initialized.models } as ClaudeRuntime;
+    return {
+      models: claudeModels(initialized.models),
+      efforts: claudeEffortsForModel(runtime, undefined),
+      commands: commands.map((command) => ({
+        name: command.name,
+        ...(command.description ? { description: command.description } : {}),
+        ...(command.argumentHint ? { input: { hint: command.argumentHint } } : {}),
+      })),
+    };
+  } finally {
+    idleInput.close();
+    queryHandle.close();
+  }
+}
+
 const CLAUDE_EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 function effortLabel(effort: string): string {
@@ -501,6 +559,7 @@ function claudeContextUsage(
 export interface ClaudeAdapterOptions {
   interactionHandler: InteractionHandler;
   diagnostic?: DiagnosticSink;
+  nativeEvent?: NativeEventSink;
   /** claude 可执行文件路径；默认 BATON_CLAUDE_BIN 环境变量，再默认交给 SDK 自己找 */
   executablePath?: string;
   /** 测试注入点；生产始终使用 Agent SDK 的 query。 */
@@ -671,41 +730,13 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   private async ensureModelCatalog(rt: ClaudeRuntime): Promise<void> {
     if (rt.models) return;
-    rt.modelDiscovery ??= this.discoverModelCatalog(rt);
-    try {
-      await rt.modelDiscovery;
-    } finally {
-      rt.modelDiscovery = undefined;
-    }
-  }
-
-  private async discoverModelCatalog(rt: ClaudeRuntime): Promise<void> {
     if (rt.activeQuery) {
       rt.modelInfos = await rt.activeQuery.supportedModels();
       rt.models = claudeModels(rt.modelInfos);
       return;
     }
-
-    const executable = this.options.executablePath ?? process.env.BATON_CLAUDE_BIN;
-    const idleInput = idleClaudeInput();
-    const queryHandle = (this.options.queryFactory ?? query)({
-      prompt: idleInput.stream,
-      options: {
-        cwd: rt.cwd,
-        env: { ...(process.env as Record<string, string>), ...rt.env },
-        ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
-      },
-    });
-    rt.modelDiscoveryQuery = queryHandle;
-    try {
-      const initialized = await initializeWithTimeout(queryHandle);
-      rt.modelInfos = initialized.models;
-      rt.models = claudeModels(initialized.models);
-    } finally {
-      if (rt.modelDiscoveryQuery === queryHandle) rt.modelDiscoveryQuery = undefined;
-      idleInput.close();
-      queryHandle.close();
-    }
+    // 静态发现归 HarnessTarget probe；live Adapter 在尚未启动 query 时只提供稳定别名。
+    rt.models = CLAUDE_FALLBACK_MODELS;
   }
 
   async compactContext(ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt> {
@@ -852,6 +883,11 @@ export class ClaudeAdapter implements HarnessAdapter {
   private async consumeQuery(rt: ClaudeRuntime, q: Query, channel: ClaudePromptChannel): Promise<void> {
     try {
       for await (const msg of q) {
+        this.options.nativeEvent?.({
+          direction: "in",
+          name: msg.type === "system" ? `system/${msg.subtype}` : msg.type,
+          payload: msg,
+        });
         let current = rt.currentTurn;
         if (!current) {
           if (msg.type === "system" && msg.subtype === "init") {
@@ -980,7 +1016,6 @@ export class ClaudeAdapter implements HarnessAdapter {
     this.sessions.delete(ref.harnessSessionId);
     const turn = rt.activeTurn;
     if (turn) turn.cancelRequested = true;
-    rt.modelDiscoveryQuery?.close();
     this.closeStreamingQuery(rt);
     // 宿主主动 close 时若仍有活跃 turn，合成终态，不留"已接受未终结"的悬挂状态
     if (turn) this.finishTurn(rt, (ev) => this.emit(rt, ev, turn), turn, "cancelled");
@@ -1119,6 +1154,74 @@ export class ClaudeAdapter implements HarnessAdapter {
                 : { phase: null },
             raw: msg,
           });
+        } else if (msg.subtype === "commands_changed") {
+          emit({
+            kind: "available_commands_update",
+            payload: {
+              commands: msg.commands.map((command) => ({
+                name: command.name,
+                ...(command.description ? { description: command.description } : {}),
+                ...(command.argumentHint ? { input: { hint: command.argumentHint } } : {}),
+              })),
+            },
+            raw: msg,
+          });
+        } else if (msg.subtype === "task_started") {
+          emit({
+            kind: "task_update",
+            payload: {
+              taskId: msg.task_id,
+              status: "in_progress",
+              title: msg.description,
+              ...(msg.subagent_type ?? msg.task_type
+                ? { taskType: msg.subagent_type ?? msg.task_type }
+                : {}),
+              ...(msg.skip_transcript !== undefined
+                ? { skipTranscript: msg.skip_transcript }
+                : {}),
+            },
+            raw: msg,
+          });
+        } else if (msg.subtype === "task_progress") {
+          emit({
+            kind: "task_update",
+            payload: {
+              taskId: msg.task_id,
+              status: "in_progress",
+              title: msg.description,
+              ...(msg.subagent_type ? { taskType: msg.subagent_type } : {}),
+              ...(msg.summary ? { summary: msg.summary } : {}),
+              ...(msg.last_tool_name ? { lastToolName: msg.last_tool_name } : {}),
+              usage: {
+                totalTokens: msg.usage.total_tokens,
+                toolUses: msg.usage.tool_uses,
+                durationMs: msg.usage.duration_ms,
+              },
+            },
+            raw: msg,
+          });
+        } else if (msg.subtype === "task_notification") {
+          emit({
+            kind: "task_update",
+            payload: {
+              taskId: msg.task_id,
+              status: msg.status,
+              summary: msg.summary,
+              usage: msg.usage
+                ? {
+                    totalTokens: msg.usage.total_tokens,
+                    toolUses: msg.usage.tool_uses,
+                    durationMs: msg.usage.duration_ms,
+                  }
+                : undefined,
+              ...(msg.skip_transcript !== undefined
+                ? { skipTranscript: msg.skip_transcript }
+                : {}),
+            },
+            raw: msg,
+          });
+        } else if (!CLAUDE_IGNORED_SYSTEM_SUBTYPES.has(msg.subtype)) {
+          this.noticeUnmappedMessage(rt, `system/${msg.subtype}`);
         }
         break;
       case "stream_event": {
@@ -1291,7 +1394,61 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       default:
-        break; // 其余系统消息 M2 不消费
+        if (!CLAUDE_IGNORED_MESSAGE_TYPES.has(msg.type)) {
+          this.noticeUnmappedMessage(rt, msg.type);
+        }
     }
   }
+
+  private noticeUnmappedMessage(rt: ClaudeRuntime, key: string): void {
+    const seen = (rt.unmappedMessageKeys ??= new Set());
+    if (seen.has(key)) return;
+    seen.add(key);
+    this.options.diagnostic?.({
+      level: "warn",
+      component: "claude.protocol",
+      harness: this.harness,
+      turnId: rt.currentTurn?.turnId,
+      message: `unmapped Claude SDK message: ${key}`,
+      details: { count: 1 },
+    });
+  }
 }
+
+const CLAUDE_IGNORED_SYSTEM_SUBTYPES = new Set<string>([
+  "background_tasks_changed",
+  "compact_boundary",
+  "control_request_progress",
+  "elicitation_complete",
+  "hook_progress",
+  "hook_response",
+  "hook_started",
+  "memory_recall",
+  "plugin_install",
+  "task_updated",
+]);
+
+const CLAUDE_IGNORED_MESSAGE_TYPES = new Set<string>([
+  "api_retry",
+  "auth_status",
+  "control_request_progress",
+  "elicitation_complete",
+  "files_persisted",
+  "hook_progress",
+  "hook_response",
+  "hook_started",
+  "informational",
+  "local_command_output",
+  "model_refusal_fallback",
+  "model_refusal_no_fallback",
+  "notification",
+  "permission_denied",
+  "plugin_install",
+  "prompt_suggestion",
+  "rate_limit_event",
+  "session_state_changed",
+  "thinking_tokens",
+  "tool_progress",
+  "tool_use_summary",
+  "worker_shutting_down",
+]);

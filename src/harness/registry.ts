@@ -2,14 +2,14 @@
 // wire/持久化 key、展示名、认色和 adapter 工厂在这里组装成 HarnessDefinition。
 // 任何按名字分发、贴标签、着色的代码都必须经本模块归一。
 
-import type { HarnessAdapter, InteractionHandler } from "./adapter.ts";
-import { ClaudeAdapter } from "./claude/adapter.ts";
+import type { HarnessAdapter, InteractionHandler, NativeEventSink } from "./adapter.ts";
+import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
 import type { BatonConfig } from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
 import type { DiagnosticSink } from "../diagnostics.ts";
 import { HARNESS_IDENTITIES, HARNESSES, parseHarness, type HarnessName } from "./ids.ts";
-import type { HarnessTarget } from "./target.ts";
+import type { HarnessTarget, HarnessTargetProbeResult } from "./target.ts";
 
 export { HARNESSES, parseHarness, type HarnessName };
 
@@ -18,6 +18,7 @@ export interface HarnessAdapterOptions {
   target: HarnessTarget;
   interactionHandler: InteractionHandler;
   diagnostic?: DiagnosticSink;
+  nativeEvent?: NativeEventSink;
   config: BatonConfig;
   rootDir?: string;
 }
@@ -40,6 +41,15 @@ export interface HarnessDefinition<Id extends string = string> {
   /** 固定认色：用户会形成"橙=claude"的肌肉记忆，颜色不随池子调整漂移 */
   color: string;
   create(options: HarnessAdapterOptions): HarnessAdapter;
+  probe?: (options: HarnessProbeOptions) => Promise<HarnessTargetProbeResult>;
+}
+
+export interface HarnessProbeOptions {
+  target: HarnessTarget;
+  cwd: string;
+  env?: Record<string, string>;
+  diagnostic?: DiagnosticSink;
+  config: BatonConfig;
 }
 
 /** 首批内置 harness；扩展支持只在这里注册，不进入 BatonSession core。 */
@@ -50,10 +60,11 @@ export const HARNESS_REGISTRY = [
     sessionKey: "codex",
     shortName: "codex",
     color: "#73daca", // 青
-    create: ({ target, interactionHandler, diagnostic, config, rootDir }) =>
+    create: ({ target, interactionHandler, diagnostic, nativeEvent, config, rootDir }) =>
       new CodexAdapter({
         interactionHandler,
         diagnostic,
+        nativeEvent,
         command: config.codexCommand,
         approvalReviewer: config.codexApprovalReviewer,
         hookTrustStore: new FileHookTrustStore(target.id, rootDir),
@@ -65,8 +76,20 @@ export const HARNESS_REGISTRY = [
     sessionKey: "claude-code",
     shortName: "claude",
     color: "#ff9e64", // 橙
-    create: ({ interactionHandler, diagnostic, config }) =>
-      new ClaudeAdapter({ interactionHandler, diagnostic, executablePath: config.claudeExecutable }),
+    create: ({ interactionHandler, diagnostic, nativeEvent, config }) =>
+      new ClaudeAdapter({
+        interactionHandler,
+        diagnostic,
+        nativeEvent,
+        executablePath: config.claudeExecutable,
+      }),
+    probe: ({ cwd, env, diagnostic, config }) =>
+      probeClaudeTarget({
+        cwd,
+        env,
+        diagnostic,
+        executablePath: config.claudeExecutable,
+      }),
   },
 ] as const satisfies readonly HarnessDefinition<HarnessName>[];
 
@@ -95,6 +118,20 @@ export function createHarnessAdapter(
     throw new Error(`HarnessTarget ${target.id} references an unregistered Harness: ${target.harness}`);
   }
   return definition.create({ ...options, target });
+}
+
+/** Target 级发现的唯一入口；没有 probe 的 Harness 返回空快照，不为发现而创建 Adapter。 */
+export async function probeHarnessTarget(
+  target: HarnessTarget,
+  options: Omit<HarnessProbeOptions, "target">,
+): Promise<HarnessTargetProbeResult> {
+  const definition = HARNESS_REGISTRY.find((candidate) => candidate.id === target.harness);
+  if (!definition) {
+    throw new Error(`HarnessTarget ${target.id} references an unregistered Harness: ${target.harness}`);
+  }
+  return "probe" in definition && definition.probe
+    ? definition.probe({ ...options, target })
+    : {};
 }
 
 /**

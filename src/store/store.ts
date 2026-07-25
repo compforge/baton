@@ -16,6 +16,7 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   truncateSync,
   writeFileSync,
   writeSync,
@@ -447,6 +448,36 @@ export class SessionHandle {
       );
     } catch {
       // session 目录本身不可写时只能放弃；调用方仍按自己的错误语义继续或失败。
+    }
+  }
+
+  /**
+   * Provider 原生入站消息的旁路 NDJSON。与 session.log 分开，避免高频 wire trace
+   * 淹没错误诊断；单文件到 10 MiB 后保留一份上一代。失败不影响正典事件流。
+   */
+  nativeEvent(
+    harnessTargetId: string,
+    harness: string,
+    event: { direction: "in"; name?: string; payload: unknown },
+  ): void {
+    try {
+      const safeTarget = harnessTargetId.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const path = join(this.dir, `native-${safeTarget}.jsonl`);
+      if (existsSync(path) && statSync(path).size >= 10 * 1024 * 1024) {
+        renameSync(path, `${path}.1`);
+      }
+      appendFileSync(
+        path,
+        `${JSON.stringify({
+          ts: new Date().toISOString(),
+          batonSessionId: this.id,
+          harnessTargetId,
+          harness,
+          ...event,
+        })}\n`,
+      );
+    } catch {
+      // 原生 trace 只服务协议排障，不能反向影响 Harness 执行。
     }
   }
 

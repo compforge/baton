@@ -553,6 +553,8 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 | `interaction.opened/resolved` | permission / question / hook trust 共用生命周期，kind-specific contract 保持独立 |
 | `kind: elicitation` | MCP/harness form 或 URL flow；新增 kind，不新增平行 lifecycle |
 | `context_usage_update` | 当前 context used/size/cost 的完整快照，映射 ACP v2 `usage_update` |
+| `proposed_plan` / `proposed_plan_implementation_started` | 计划产物与用户明确启动的执行 turn 分开记账，接受投递后才建立因果边 |
+| `task_update` | Claude background task 与 Codex collab agent 已共同印证的执行实体生命周期 |
 | `_baton_error_update` | 保留 error code/message/retryable/willRetry，不能只塞 stopReason |
 | `_baton_notice` | warning、deprecation、auth/config 提示 |
 
@@ -560,11 +562,8 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 
 `DiffBlock` 同样收敛到 ACP v2 的 `changes[] + patch {format,diff}`，补齐 copy、fileType、mimeType；本地 path image 在进入 adapter 前按 harness capability 保留 path 或解析为 data/URI，禁止由 `textOf()` 静默丢弃。
 
-后续有第二个 harness 证明语义稳定后，再提升这些 extension：
-
-- `_baton_task_update`
-- `_baton_subagent_update`
-- `_baton_context_update`（compaction/context usage）
+`task_update` 已由 Claude background task 与 Codex collab agent 两家印证后升格；工作清单
+（TodoWrite/TaskCreate）仍是 `plan_update`，不能与已经启动的执行实体混为一谈。
 
 工具仍用 ACP `tool_call_update` 做最大公约数。command exit code/duration、web citations、subagent children 等细节先放结构化 `rawInput/rawOutput` 与 `raw`；当 chat-tui 确实需要跨 harness 展示，才增加新的通用字段或 content block，避免一个 harness 一个 block。
 
@@ -573,7 +572,7 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 - harness error 必须同时产生结构化 error event；若结束工作，再产生 `idle` + 对应 stopReason；
 - retrying error 不得错误地把 session 切 idle；
 - mapped event 的 wire 原文继续保存在 `raw`；
-- 完全未知的 notification 不进入主 session timeline，进入 session 目录下与 `session.jsonl` 配对的 `session.log`，并记录 method/type 与计数；不能无声 `default: break`；
+- 完全未知的 notification 不进入主 session timeline，进入 `session.log` 并记录 method/type 与计数；映射前的完整 provider 消息另写 Target-scoped、轮转的 native NDJSON，不能无声 `default: break`；
 - adapter mapping contract test 固定当前支持的 request / notification 清单，harness schema 升级时显式看到新增未映射项。
 
 ### 4.10 Store 与 reduce 不变量
@@ -640,7 +639,7 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 - markdown/image/resource/diff display block；
 - process stdout/stderr、exit/duration；
 - error/retry/compaction/context usage；
-- subagent/task 在出现第二个可对齐 harness 后升格为正式事件。
+- task/subagent 已由 Claude 与 Codex 共同印证并升格为 `task_update`；后续 enrich 仍只取两家稳定交集。
 
 ## 7. 验收矩阵
 

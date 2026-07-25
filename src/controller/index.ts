@@ -7,6 +7,7 @@ import {
   type InteractionContext,
   type InteractionHandler,
   type ModelOption,
+  type NativeEventSink,
   type SendTurnReceipt,
 } from "../harness/adapter.ts";
 import { buildTargetCatchUpContext } from "../context/mention.ts";
@@ -31,7 +32,7 @@ import {
   type StopReason,
 } from "../event/types.ts";
 import { HarnessBinding } from "../harness/binding.ts";
-import type { HarnessTarget } from "../harness/target.ts";
+import type { HarnessTarget, HarnessTargetProbeResult } from "../harness/target.ts";
 import type {
   InteractionDraft,
   InteractionResolution,
@@ -84,6 +85,7 @@ export type SendTurnOutcome =
 export interface InteractionHandlers {
   interactionHandler: InteractionHandler;
   diagnostic: DiagnosticSink;
+  nativeEvent: NativeEventSink;
 }
 
 export interface ControllerOptions {
@@ -97,6 +99,8 @@ export interface ControllerOptions {
   createAdapter(target: HarnessTarget, handlers: InteractionHandlers): HarnessAdapter;
   /** HarnessTarget identity 的唯一 owner；未知 id 必须返回 undefined，不能反推 Harness。 */
   resolveTarget(harnessTargetId: string): HarnessTarget | undefined;
+  /** 不创建 HarnessSession 的 Target 级只读发现；缺省时兼容回落到 live binding。 */
+  probeTarget?: (target: HarnessTarget, cwd: string) => Promise<HarnessTargetProbeResult>;
   onChange?: () => void;
   /**
    * cancel 后等待 harness 确认终态的宽限期。到期仍无终态则合成 terminal error 并
@@ -228,9 +232,31 @@ export class Controller {
     return this.draining;
   }
 
-  submit(harnessTargetId: string, blocks: PromptBlock[]): Promise<SubmitOutcome> {
+  submit(
+    harnessTargetId: string,
+    blocks: PromptBlock[],
+    options?: { sourceProposedPlanId?: string },
+  ): Promise<SubmitOutcome> {
     const target = this.targetFor(harnessTargetId);
-    const outcome = this.inputQueue.enqueue(target, blocks);
+    if (options?.sourceProposedPlanId) {
+      if (
+        this.inputs.some(
+          (input) => input.sourceProposedPlanId === options.sourceProposedPlanId,
+        )
+      ) {
+        throw new Error(`Proposed plan already has a pending implementation turn: ${options.sourceProposedPlanId}`);
+      }
+      const proposal = this.options.session
+        .loadState()
+        .proposedPlans.get(options.sourceProposedPlanId);
+      if (!proposal) {
+        throw new Error(`Proposed plan not found: ${options.sourceProposedPlanId}`);
+      }
+      if (proposal.implementationTurnId) {
+        throw new Error(`Proposed plan already has an implementation turn: ${options.sourceProposedPlanId}`);
+      }
+    }
+    const outcome = this.inputQueue.enqueue(target, blocks, options);
     this.changed();
     void this.drain();
     return outcome;
@@ -244,9 +270,11 @@ export class Controller {
   async sendTurn(
     harnessTargetId: string,
     blocks: PromptBlock[],
+    options?: { sourceProposedPlanId?: string },
   ): Promise<SendTurnOutcome> {
     const active = this.activeDriven();
     if (
+      !options?.sourceProposedPlanId &&
       this.inputQueue.length === 0 &&
       active?.turn &&
       active.turn.target.id === harnessTargetId &&
@@ -283,7 +311,7 @@ export class Controller {
       return {
         effective: "new_turn",
         queued: true,
-        outcome: this.submit(harnessTargetId, blocks),
+        outcome: this.submit(harnessTargetId, blocks, options),
         ...(receipt.effective === "rejected" && receipt.reason
           ? { reason: receipt.reason }
           : {}),
@@ -294,7 +322,7 @@ export class Controller {
     return {
       effective: "new_turn",
       queued,
-      outcome: this.submit(harnessTargetId, blocks),
+      outcome: this.submit(harnessTargetId, blocks, options),
     };
   }
 
@@ -307,6 +335,9 @@ export class Controller {
   }
 
   async listModels(harnessTargetId: string): Promise<ModelOption[]> {
+    const target = this.targetFor(harnessTargetId);
+    const probed = await this.options.probeTarget?.(target, this.options.session.meta.cwd);
+    if (probed?.models) return probed.models;
     return (await this.ensureHarness(harnessTargetId)).listModels();
   }
 
@@ -327,6 +358,9 @@ export class Controller {
   }
 
   async listEfforts(harnessTargetId: string): Promise<EffortOption[]> {
+    const target = this.targetFor(harnessTargetId);
+    const probed = await this.options.probeTarget?.(target, this.options.session.meta.cwd);
+    if (probed?.efforts) return probed.efforts;
     return (await this.ensureHarness(harnessTargetId)).listEfforts();
   }
 
@@ -703,6 +737,21 @@ export class Controller {
         throw error;
       }
       this.deliveryAttempts.markAccepted(binding, attempt);
+      if (turn.sourceProposedPlanId) {
+        // 只在 Adapter 已接受投递责任后建立因果边；启动/admission 失败不能把提案误标为执行中。
+        this.appendEvent(
+          binding,
+          {
+            kind: "proposed_plan_implementation_started",
+            turnId: turn.turnId,
+            payload: {
+              planId: turn.sourceProposedPlanId,
+              implementationTurnId: turn.turnId,
+            },
+          },
+          { type: "baton" },
+        );
+      }
       if (submitContext) {
         // admission 通过 ⇒ 随 sendTurn 送达的 sync 块（syncBlocks 或 prepend）已进入 harness
         // 输入：视为同步到 throughSeq。
@@ -929,6 +978,8 @@ export class Controller {
           this.openHarnessInteraction(target.id, interaction, context),
         diagnostic: (entry) =>
           this.options.session.diagnostic({ ...entry, harnessTargetId: target.id }),
+        nativeEvent: (event) =>
+          this.options.session.nativeEvent(target.id, target.harness, event),
       });
       let created!: HarnessBinding;
       created = new HarnessBinding({

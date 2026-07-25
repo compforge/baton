@@ -30,6 +30,7 @@ import type {
   EffortOption,
   EventSink,
   ModelOption,
+  NativeEventSink,
   OpenOptions,
   PromptInput,
   PromptReceipt,
@@ -517,6 +518,7 @@ function stopReasonOf(turnStatus: string): StopReason {
 export interface CodexAdapterOptions {
   interactionHandler: InteractionHandler;
   diagnostic?: DiagnosticSink;
+  nativeEvent?: NativeEventSink;
   /** 缺省由 auto-review 审批；显式 user 时请求进入 Baton TUI。 */
   approvalReviewer?: "user" | "auto_review";
   /** 覆盖二进制，测试用 */
@@ -1156,6 +1158,7 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   private handleNotification(rt: ThreadRuntime, method: string, params: unknown): void {
+    this.options.nativeEvent?.({ direction: "in", name: method, payload: params });
     const p = (params ?? {}) as Record<string, unknown>;
     if (p.threadId !== undefined && p.threadId !== rt.threadId) return;
 
@@ -1240,6 +1243,35 @@ export class CodexAdapter implements HarnessAdapter {
                 method === "item/started"
                   ? { phase: "compacting", title: "Compacting context…" }
                   : { phase: null },
+            },
+            params,
+          );
+        } else if (itemType === "collabAgentToolCall") {
+          const terminal = codexToolTerminalStatus(item.status);
+          const title = item.prompt ?? item.description;
+          const taskType = item.agentType ?? item.subagentType;
+          this.emit(
+            rt,
+            {
+              kind: "task_update",
+              payload: {
+                taskId: String(item.id),
+                status:
+                  method === "item/started"
+                    ? "in_progress"
+                    : terminal === "completed"
+                      ? "completed"
+                      : "failed",
+                ...(title !== undefined
+                  ? { title: String(title) }
+                  : method === "item/started"
+                    ? { title: toolTitleOf(item) }
+                    : {}),
+                ...(taskType !== undefined ? { taskType: String(taskType) } : {}),
+                ...(method === "item/completed" && (item.result ?? item.output) !== undefined
+                  ? { summary: String(item.result ?? item.output) }
+                  : {}),
+              },
             },
             params,
           );

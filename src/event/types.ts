@@ -200,6 +200,33 @@ export interface ProposedPlan {
   content: string;
 }
 
+/** 用户明确以某个计划提案为来源启动了执行 turn。 */
+export interface ProposedPlanImplementationStarted {
+  planId: string;
+  implementationTurnId: string;
+}
+
+export interface HarnessTaskUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
+/**
+ * 后台任务 / subagent 的一等生命周期 upsert。与 TaskCreate/TodoWrite 的“工作清单”
+ * 不同：这里描述 Harness 已经启动的执行实体。
+ */
+export interface HarnessTaskUpdate {
+  taskId: string;
+  status: "in_progress" | "completed" | "failed" | "stopped";
+  title?: string;
+  taskType?: string;
+  summary?: string;
+  lastToolName?: string;
+  usage?: HarnessTaskUsage;
+  skipTranscript?: boolean;
+}
+
 /**
  * 自动审批（auto-review）回执：reviewer 替用户对某操作作出的决策，供诚实留痕（见
  * docs/approval-lifecycle.md §3）。与 Interaction 的交互待决流正交——
@@ -358,6 +385,8 @@ export type EventPayloadMap = {
   tool_call_content_chunk: ToolCallContentChunk;
   plan_update: PlanUpdate;
   proposed_plan: ProposedPlan;
+  proposed_plan_implementation_started: ProposedPlanImplementationStarted;
+  task_update: HarnessTaskUpdate;
   "interaction.opened": Interaction;
   "interaction.resolved": InteractionResolved;
   approval_review_update: ApprovalReviewUpdate;

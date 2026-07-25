@@ -40,6 +40,7 @@ import {
   harnessDefinitionFor,
   harnessShortName,
   resolveDefaultHarnessTarget,
+  probeHarnessTarget,
 } from "../harness/registry.ts";
 import type {
   HookTrustInteraction,
@@ -316,7 +317,10 @@ export class BatonChatProtocol implements ChatProtocol {
     return this.submitMessage(text);
   }
 
-  private async submitMessage(text: string): Promise<void> {
+  private async submitMessage(
+    text: string,
+    options?: { sourceProposedPlanId?: string },
+  ): Promise<void> {
     // 用户实际提交的内容进历史；一次新提交结束当前的 ↑ 浏览会话。
     this.recordHistory(text);
     this.resetHistoryNav();
@@ -332,7 +336,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
     // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
     // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
-    const sent = await this.controller.sendTurn(target, blocks);
+    const sent = await this.controller.sendTurn(target, blocks, options);
     if (sent.effective === "steer") {
       this.status = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
       this.changed();
@@ -400,6 +404,36 @@ export class BatonChatProtocol implements ChatProtocol {
         this.status = { text: `${target} context compacted`, tone: "info" };
         this.changed();
         return;
+      }
+      case "implement-plan": {
+        const explicitId = argument.trim();
+        const proposal = explicitId
+          ? this.state.proposedPlans.get(explicitId)
+          : [...this.state.timeline]
+              .reverse()
+              .find((entry) => {
+                if (entry.type !== "proposed_plan") return false;
+                return !this.state.proposedPlans.get(entry.id)?.implementationTurnId;
+              })
+              ?.id;
+        const resolved =
+          typeof proposal === "string"
+            ? this.state.proposedPlans.get(proposal)
+            : proposal;
+        if (!resolved) {
+          throw new Error(
+            explicitId
+              ? `Proposed plan not found: ${explicitId}`
+              : "No unimplemented proposed plan found",
+          );
+        }
+        if (resolved.implementationTurnId) {
+          throw new Error(`Proposed plan already has an implementation turn: ${resolved.planId}`);
+        }
+        return this.submitMessage(
+          `Implement the following proposed plan:\n\n${resolved.content}`,
+          { sourceProposedPlanId: resolved.planId },
+        );
       }
       case "plugins": {
         if (argument) throw new Error("/plugins takes no arguments");
@@ -636,6 +670,13 @@ export class BatonChatProtocol implements ChatProtocol {
           rootDir: this.store.rootDir,
         }),
       resolveTarget: resolveDefaultHarnessTarget,
+      probeTarget: (target, cwd) =>
+        probeHarnessTarget(target, {
+          cwd,
+          config: this.config,
+          diagnostic: (entry) =>
+            this.session.diagnostic({ ...entry, harnessTargetId: target.id }),
+        }),
       onChange: () => this.changed(),
     });
   }
@@ -1225,8 +1266,32 @@ function buildTranscript(state: SessionState, pinnedPlanId?: string): Transcript
         kind: "proposed_plan",
         status: "completed",
         author: harnessAuthor(proposal.harness),
-        title: "Proposed plan",
+        title: proposal.implementationTurnId
+          ? `Proposed plan · implementation started`
+          : "Proposed plan",
         content: { type: "text", text: proposal.content },
+      });
+      continue;
+    }
+    if (entry.type === "task") {
+      const task = state.tasks.get(entry.id);
+      if (!task) continue;
+      const status =
+        task.status === "stopped"
+          ? "failed"
+          : task.status;
+      const details = [
+        task.summary,
+        task.lastToolName ? `Last tool: ${task.lastToolName}` : undefined,
+      ].filter((value): value is string => Boolean(value));
+      items.push({
+        type: "block",
+        id: entry.id,
+        kind: "task",
+        status,
+        author: harnessAuthor(task.harness),
+        title: task.title ?? task.taskType ?? "Background task",
+        ...(details.length ? { content: { type: "lines", lines: details } } : {}),
       });
       continue;
     }

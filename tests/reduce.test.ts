@@ -257,6 +257,45 @@ describe("state / permission / plan / usage", () => {
     expect(state.timeline).toContainEqual({ type: "plan", id: "pl-running" });
   });
 
+  test("proposed plan records the accepted implementation turn without rewriting the artifact", () => {
+    const state = reduceEvents([
+      ev("proposed_plan", { planId: "proposal-1", content: "Ship safely" }, "t-plan"),
+      ev(
+        "proposed_plan_implementation_started",
+        { planId: "proposal-1", implementationTurnId: "t-implementation" },
+        "t-implementation",
+      ),
+    ]);
+    expect(state.proposedPlans.get("proposal-1")).toMatchObject({
+      content: "Ship safely",
+      implementationTurnId: "t-implementation",
+      implementationStartedAt: new Date(0).toISOString(),
+    });
+  });
+
+  test("background task progress upserts one timeline item", () => {
+    const state = reduceEvents([
+      ev("task_update", {
+        taskId: "task-1",
+        status: "in_progress",
+        title: "Explore",
+      }),
+      ev("task_update", {
+        taskId: "task-1",
+        status: "completed",
+        summary: "Found it",
+      }),
+    ]);
+    expect(state.timeline.filter((entry) => entry.type === "task")).toEqual([
+      { type: "task", id: "task-1" },
+    ]);
+    expect(state.tasks.get("task-1")).toMatchObject({
+      status: "completed",
+      title: "Explore",
+      summary: "Found it",
+    });
+  });
+
   test("usage accumulates as deltas", () => {
     const state = reduceEvents([
       ev("usage_update", { inputTokens: 100, outputTokens: 10 }),

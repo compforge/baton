@@ -29,6 +29,8 @@ export interface InputRecord {
   blocks: PromptBlock[];
   status: InputStatus;
   delivery: "prompt" | "steer";
+  /** 本 turn 是用户对某个已完成计划提案的明确执行请求。 */
+  sourceProposedPlanId?: string;
   /** queued/admitted 专属：submit 的回执通道；accepted_steer 无。 */
   resolve?: (outcome: SubmitOutcome) => void;
   reject?: (error: unknown) => void;
@@ -50,6 +52,7 @@ export interface InputSnapshot {
   harness: string;
   status: InputStatus;
   delivery: "prompt" | "steer";
+  sourceProposedPlanId?: string;
 }
 
 export type SubmitOutcome = "completed" | "recalled";
@@ -74,7 +77,11 @@ export class InputQueue {
     return this.queue.map(queuedTurnSnapshot);
   }
 
-  enqueue(target: HarnessTarget, blocks: PromptBlock[]): Promise<SubmitOutcome> {
+  enqueue(
+    target: HarnessTarget,
+    blocks: PromptBlock[],
+    options?: { sourceProposedPlanId?: string },
+  ): Promise<SubmitOutcome> {
     return new Promise((resolve, reject) => {
       this.queue.push({
         id: this.nextId++,
@@ -84,6 +91,9 @@ export class InputQueue {
         blocks,
         status: "queued",
         delivery: "prompt",
+        ...(options?.sourceProposedPlanId
+          ? { sourceProposedPlanId: options.sourceProposedPlanId }
+          : {}),
         resolve,
         reject,
       });
@@ -130,6 +140,9 @@ export function inputSnapshot(input: InputRecord): InputSnapshot {
     harness: input.target.harness,
     status: input.status,
     delivery: input.delivery,
+    ...(input.sourceProposedPlanId
+      ? { sourceProposedPlanId: input.sourceProposedPlanId }
+      : {}),
   };
 }
 
