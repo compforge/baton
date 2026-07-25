@@ -1,0 +1,21 @@
+docs/plugin.md
+  s_dae84d55fcb64d::t_4114f0018d7848 173-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0306d7aba0e7eb0af54eb3af5a8cb32901993490",
+  "prompts": {},
+  "sessions": {
+    "s_dae84d55fcb64d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68408228-f83d-4421-94e6-d02b0e140f74",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
