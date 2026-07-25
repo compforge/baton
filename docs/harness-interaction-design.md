@@ -212,11 +212,21 @@ Input 驱动或注入 turn；resolution 必须引用已打开的 `interactionId`
 Baton 只观测 reviewer 的终态回执。此时伪造一对 opened/resolved 会制造不存在的用户待决过程，
 所以它保持独立审计 Event（见 `approval-lifecycle.md`）。
 
-协议层分别定义三种 view/intent，只在 overlay 调度层组成 union：
+协议层为 UI 展示定义统一的 `InteractionView` / `InteractionResponse`，但每个 variant 仍保留
+自己的 typed payload：
 
 ```ts
-type InteractionView = PermissionInteractionView | QuestionInteractionView | ElicitationInteractionView;
+type InteractionView =
+  | ApprovalInteractionView
+  | QuestionInteractionView
+  | SuggestedInputInteractionView;
 ```
+
+这里的 `InteractionView` 是 chat-tui 展示联合，不等于 Baton 内核的持久 `Interaction`：
+permission、question、hook trust 从内核 Interaction 投影为 blocking view；Plugin Proposal
+保持自己的持久 identity / resolution，只在 `tui/protocol.ts` 投影为 non-blocking
+`suggested_input`，与前述请求共享 `InteractionDock` 的排序和响应入口，不伪造
+`interaction.opened/resolved`。
 
 #### Permission
 
@@ -599,6 +609,7 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 | Interaction `kind:permission` | PermissionInteractionView + permission resolution intent |
 | Interaction `kind:question` | QuestionInteractionView + question resolution intent |
 | Interaction `kind:elicitation` | ElicitationInteractionView + elicitation resolution intent |
+| Plugin Proposal | SuggestedInputInteractionView + proposed-input resolution intent |
 | controller input state | InputView（requested/effective delivery） |
 
 映射只存在于 baton `tui/protocol.ts` 一处；chat-tui 和 harness adapter 不互相依赖。

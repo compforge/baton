@@ -22,9 +22,9 @@
     "baton": "src/cli/launcher.cjs"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test tests",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test",
+    "check": "bun run typecheck && bun test tests",
     "repl": "bun src/cli/main.ts",
     "tui": "bun src/tui/main.tsx"
   },
@@ -38,7 +38,7 @@
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
     "bun": "^1.3.14",
-    "chat-tui": "github:qiankunli/chat-tui#0668ee7",
+    "chat-tui": "github:qiankunli/chat-tui#91964a60bf9f6d2abbe51e68e94a2dee1fbc84c6",
     "react": "^19.2.7",
     "yaml": "^2.9.0"
   }

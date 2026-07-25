@@ -452,10 +452,10 @@ Plugin 自有 Resource 的读写通过 `PluginActivationContext.resources` 提�
 `BatonSnapshot` 始终只读，不混入 mutation capability。Builtin Resource 不接受 status patch。
 
 `PluginOutput.kind` 是 Baton 定义的封闭联合，每个 kind 对应明确的校验、权限、持久化和 UI
-生命周期。首个 `proposed-input` 只是准备交给 Harness 的文本建议，不创建 Interaction
-或一套审批状态机。Baton
-把它放入 composer；用户可以编辑后提交，也可以丢弃。只有提交后，它才成为普通 Input，继续走
-现有 Input → Attempt → Harness 路径。Baton 从本次 Resource 自动取得 resource
+生命周期。首个 `proposed-input` 只是准备交给 Harness 的文本建议，不创建 Baton 内核
+Interaction 或另一套审批状态机。Baton 把持久 Proposal 投影为 InteractionDock 中的非阻塞
+suggested input；用户显式采用后才进入 composer，可编辑后提交，也可直接丢弃。只有提交后，
+它才成为普通 Input，继续走现有 Input → Attempt → Harness 路径。Baton 从本次 Resource 自动取得 resource
 identity 与水位，再结合文本摘要给 Proposal 生成稳定内部身份；PluginResource Proposal 使用
 `basedOnGeneration`，Builtin Resource Proposal 使用 `basedOnRevision`，这些 Manager 管理的
 信息不由 Plugin 回填。
@@ -659,8 +659,9 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
    Marketplace provenance 与 Package identity 分离。
 5. 以 reqloop 的 `/requirement` 验证 Command 的真实需要，再补
    `command | resource` 声明校验和多实例路由，不先为未接产品入口的 Command 造 handler。
-6. 接通 Board projection、`proposed-input` Output 与可选 Context projection，跑通用户审核文本后驱动
-   Harness 的 Requirement Loop。
+6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
+   提交后驱动 Harness；后续接通 Board projection 与可选 Context projection，跑通完整
+   Requirement Loop。
 7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Reconciler 主动启动 Harness 后，再设计受控调用；首期只允许用户把

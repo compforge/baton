@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
+import { ProposalStore } from "../src/plugin/proposal.ts";
 import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import { BatonChatProtocol, runStatusLabel, thoughtDisplayBlocks, toolTranscriptItem } from "../src/tui/protocol.ts";
 
@@ -296,7 +297,7 @@ describe("BatonChatProtocol streaming projection", () => {
       });
 
       expect(notifications).toBe(1);
-      expect(protocol.getView().approval?.id).toBe("ix_stream");
+      expect(protocol.getView().interactions?.[0]?.id).toBe("ix_stream");
       expect(protocol.getView().transcript).toContainEqual(
         expect.objectContaining({ id: "m_stream", text: "latest output" }),
       );
@@ -957,16 +958,21 @@ describe("interaction eventization: pending projects from the event stream", () 
         },
       });
       let view = protocol.getView();
-      expect(view.approval).toMatchObject({
+      expect(view.interactions?.[0]).toMatchObject({
         id: "ix_1",
-        title: "Write file?",
-        description: "/repo/output.txt",
+        kind: "approval",
+        blocking: true,
+        requester: "claude",
+        approval: {
+          title: "Write file?",
+          description: "/repo/output.txt",
+        },
       });
 
       // 无 live resolver（如崩溃残留）：应答提示 stale，不静默吞掉
-      protocol.resolveApproval("ix_1", "allow");
+      await protocol.resolveInteraction("ix_1", { kind: "approval", optionId: "allow" });
       view = protocol.getView();
-      expect(view.approval).not.toBeNull(); // 卡片消失只由 resolved 事件驱动
+      expect(view.interactions).toHaveLength(1); // 卡片消失只由 resolved 事件驱动
       expect(view.status?.text).toContain("no longer pending");
 
       // resolved 落盘 → 卡片消失
@@ -979,7 +985,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().approval).toBeNull();
+      expect(protocol.getView().interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1005,7 +1011,31 @@ describe("interaction eventization: pending projects from the event stream", () 
           questions: [{ questionId: "q1", header: "Scope", question: "Which scope?" }],
         },
       });
-      expect(protocol.getView().question).toMatchObject({ id: "ix_2" });
+      expect(protocol.getView().interactions?.[0]).toMatchObject({
+        id: "ix_2",
+        kind: "question",
+        blocking: true,
+        requester: "codex",
+      });
+      let resolution: unknown;
+      const internals = protocol as unknown as {
+        controller: {
+          resolveInteraction(id: string, value: unknown): boolean;
+        };
+      };
+      internals.controller.resolveInteraction = (_id, value) => {
+        resolution = value;
+        return true;
+      };
+      await protocol.resolveInteraction("ix_2", {
+        kind: "question",
+        answers: { q1: ["repository"] },
+      });
+      expect(resolution).toEqual({
+        kind: "question",
+        outcome: "answered",
+        answers: { q1: ["repository"] },
+      });
 
       session.append({
         source: { type: "baton" },
@@ -1016,7 +1046,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().question).toBeNull();
+      expect(protocol.getView().interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1051,13 +1081,28 @@ describe("interaction eventization: pending projects from the event stream", () 
           ],
         },
       });
-      expect(protocol.getView().approval).toMatchObject({
+      expect(protocol.getView().interactions?.[0]).toMatchObject({
         id: "ix_3",
-        title: "Trust 1 Codex hook?",
-        options: [{ optionId: "trust" }, { optionId: "skip" }],
+        kind: "approval",
+        blocking: true,
+        requester: "codex",
+        approval: {
+          title: "Trust 1 Codex hook?",
+          options: [{ optionId: "trust" }, { optionId: "skip" }],
+        },
       });
-      protocol.resolveApproval("ix_3", "trust");
-      expect(protocol.getView().status?.text).toContain("no longer pending");
+      let resolution: unknown;
+      const internals = protocol as unknown as {
+        controller: {
+          resolveInteraction(id: string, value: unknown): boolean;
+        };
+      };
+      internals.controller.resolveInteraction = (_id, value) => {
+        resolution = value;
+        return true;
+      };
+      await protocol.resolveInteraction("ix_3", { kind: "approval", optionId: "trust" });
+      expect(resolution).toEqual({ kind: "hook_trust", outcome: "trusted" });
       session.append({
         source: { type: "baton" },
         kind: "interaction.resolved",
@@ -1067,7 +1112,82 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().approval).toBeNull();
+      expect(protocol.getView().interactions).toEqual([]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Plugin Proposal projection", () => {
+  test("shows proposals in InteractionDock and persists dismiss/submit outcomes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-proposal-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const proposals = new ProposalStore({ session });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const internals = protocol as unknown as { changed(): void };
+
+      const dismissed = proposals.record({
+        key: {
+          batonSessionId: session.id,
+          pluginInstanceId: "reqloop_default",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_1",
+        },
+        basedOnGeneration: 1,
+        text: "Review the requirement",
+      });
+      internals.changed();
+      expect(protocol.getView().interactions).toEqual([
+        {
+          id: dismissed.proposalId,
+          kind: "suggested_input",
+          blocking: false,
+          requester: "reqloop_default",
+          title: "Suggested follow-up",
+          text: "Review the requirement",
+        },
+      ]);
+
+      await protocol.resolveInteraction(dismissed.proposalId, {
+        kind: "suggested_input",
+        outcome: "dismissed",
+      });
+      expect(proposals.get(dismissed.proposalId).resolution?.outcome).toBe("dismissed");
+      expect(protocol.getView().interactions).toEqual([]);
+
+      const submitted = proposals.record({
+        key: {
+          batonSessionId: session.id,
+          pluginInstanceId: "reqloop_default",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_2",
+        },
+        basedOnGeneration: 1,
+        text: "Check the implementation",
+      });
+      internals.changed();
+      const submittedInputs: string[] = [];
+      protocol.submit = async (text) => {
+        submittedInputs.push(text);
+      };
+      await protocol.resolveInteraction(submitted.proposalId, {
+        kind: "suggested_input",
+        outcome: "submitted",
+        text: "Check the implementation and tests",
+      });
+      expect(proposals.get(submitted.proposalId).resolution?.outcome).toBe("submitted");
+      expect(submittedInputs).toEqual(["Check the implementation and tests"]);
+      expect(protocol.getView().interactions).toEqual([]);
+
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
