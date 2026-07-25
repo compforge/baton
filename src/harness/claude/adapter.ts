@@ -337,6 +337,8 @@ const CLAUDE_FALLBACK_MODELS: ModelOption[] = [
   { id: "haiku", label: "Haiku" },
 ];
 
+const CLAUDE_SETTING_SOURCES = ["user", "project", "local"] as const;
+
 function claudeModels(models: ModelInfo[]): ModelOption[] {
   const discovered = models.map((model) => ({
     id: model.value,
@@ -649,6 +651,10 @@ export class ClaudeAdapter implements HarnessAdapter {
       env: { ...(process.env as Record<string, string>), ...rt.env },
       resume: rt.claudeSessionId,
       includePartialMessages: true,
+      // Agent SDK 默认使用空 system prompt；显式恢复 Claude Code 语义，确保
+      // skills、auto-memory 等原生能力与直接运行 claude CLI 一致。
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      settingSources: [...CLAUDE_SETTING_SOURCES],
       ...(rt.model ? { model: rt.model } : {}),
       ...(rt.effort ? { effort: rt.effort } : {}),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
