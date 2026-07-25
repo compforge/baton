@@ -2,7 +2,9 @@ import {
   isApprovalRoutable,
   isEffortConfigurable,
   isModelConfigurable,
+  isNativeSessionCheckpointable,
   isNativeSessionIdentifiable,
+  isSessionConfigurable,
   type ApprovalRoute,
   type EffortOption,
   type EventSink,
@@ -11,7 +13,13 @@ import {
   type ModelOption,
 } from "./adapter.ts";
 import { newId } from "../event/ids.ts";
+import type { ConfigValue, SessionConfigOption } from "../event/types.ts";
 import type { SessionHandle } from "../store/store.ts";
+import {
+  sessionIdFromResumeState,
+  sessionIdResumeState,
+  type HarnessResumeState,
+} from "./resume.ts";
 import { createHarnessLaunchSnapshot, type HarnessTarget } from "./target.ts";
 
 export interface HarnessBindingOptions {
@@ -85,6 +93,18 @@ export class HarnessBinding {
   }
 
   async listModels(): Promise<ModelOption[]> {
+    if (this.ref && isSessionConfigurable(this.adapter)) {
+      const option = (await this.adapter.getConfig(this.ref)).find(
+        (candidate) => candidate.id === "model" && candidate.type === "select",
+      );
+      if (option?.type === "select") {
+        return option.options.map(({ value, name, description }) => ({
+          id: value,
+          label: name,
+          ...(description ? { description } : {}),
+        }));
+      }
+    }
     if (!this.ref || !isModelConfigurable(this.adapter)) {
       throw new Error(`${this.target.id} does not support /model`);
     }
@@ -92,10 +112,16 @@ export class HarnessBinding {
   }
 
   async setModel(modelId: string | null): Promise<void> {
-    if (!this.ref || !isModelConfigurable(this.adapter)) {
+    if (!this.ref) {
       throw new Error(`${this.target.id} does not support /model`);
     }
-    await this.adapter.setModel(this.ref, modelId);
+    if (isSessionConfigurable(this.adapter)) {
+      await this.adapter.setConfig(this.ref, "model", modelId ?? "default");
+    } else if (isModelConfigurable(this.adapter)) {
+      await this.adapter.setModel(this.ref, modelId);
+    } else {
+      throw new Error(`${this.target.id} does not support /model`);
+    }
     const existing = this.session.meta.harnessSessions[this.target.id] ?? {
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
@@ -117,6 +143,18 @@ export class HarnessBinding {
   }
 
   async listEfforts(): Promise<EffortOption[]> {
+    if (this.ref && isSessionConfigurable(this.adapter)) {
+      const option = (await this.adapter.getConfig(this.ref)).find(
+        (candidate) => candidate.id === "effort" && candidate.type === "select",
+      );
+      if (option?.type === "select") {
+        return option.options.map(({ value, name, description }) => ({
+          id: value,
+          label: name,
+          ...(description ? { description } : {}),
+        }));
+      }
+    }
     if (!this.ref || !isEffortConfigurable(this.adapter)) {
       throw new Error(`${this.target.id} does not support /effort`);
     }
@@ -124,10 +162,16 @@ export class HarnessBinding {
   }
 
   async setEffort(effortId: string | null): Promise<void> {
-    if (!this.ref || !isEffortConfigurable(this.adapter)) {
+    if (!this.ref) {
       throw new Error(`${this.target.id} does not support /effort`);
     }
-    await this.adapter.setEffort(this.ref, effortId);
+    if (isSessionConfigurable(this.adapter)) {
+      await this.adapter.setConfig(this.ref, "effort", effortId ?? "default");
+    } else if (isEffortConfigurable(this.adapter)) {
+      await this.adapter.setEffort(this.ref, effortId);
+    } else {
+      throw new Error(`${this.target.id} does not support /effort`);
+    }
     const existing = this.session.meta.harnessSessions[this.target.id] ?? {
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
@@ -153,11 +197,56 @@ export class HarnessBinding {
     return this.adapter.approvalRoute(this.ref);
   }
 
-  nativeSessionId(): string | undefined {
+  async getConfig(): Promise<SessionConfigOption[]> {
+    if (!this.ref || !isSessionConfigurable(this.adapter)) {
+      throw new Error(`${this.target.id} does not support session config`);
+    }
+    return this.adapter.getConfig(this.ref);
+  }
+
+  async setConfig(configId: string, value: ConfigValue): Promise<SessionConfigOption[]> {
+    if (!this.ref || !isSessionConfigurable(this.adapter)) {
+      throw new Error(`${this.target.id} does not support session config`);
+    }
+    const snapshot = await this.adapter.setConfig(this.ref, configId, value);
+    const existing = this.session.meta.harnessSessions[this.target.id] ?? {
+      harnessTargetId: this.target.id,
+      harness: this.adapter.harness,
+    };
+    const selected = (id: string): string | undefined => {
+      const option = snapshot.find(
+        (candidate) => candidate.id === id && candidate.type === "select",
+      );
+      if (!option || option.type !== "select" || option.value === "default") return undefined;
+      return option.value;
+    };
+    this.session.setHarnessSession(this.target.id, {
+      ...existing,
+      harnessTargetId: this.target.id,
+      harness: this.adapter.harness,
+      model: selected("model"),
+      effort: selected("effort"),
+    });
+    return snapshot;
+  }
+
+  resumeState(): HarnessResumeState | undefined {
     if (!this.ref) return undefined;
-    return isNativeSessionIdentifiable(this.adapter)
+    if (isNativeSessionCheckpointable(this.adapter)) {
+      return this.adapter.resumeState(this.ref);
+    }
+    const nativeId = isNativeSessionIdentifiable(this.adapter)
       ? this.adapter.nativeSessionId(this.ref)
       : this.ref.harnessSessionId;
+    return nativeId ? sessionIdResumeState(nativeId) : undefined;
+  }
+
+  nativeSessionId(): string | undefined {
+    if (!this.ref) return undefined;
+    if (isNativeSessionIdentifiable(this.adapter)) {
+      return this.adapter.nativeSessionId(this.ref);
+    }
+    return sessionIdFromResumeState(this.resumeState()) ?? this.ref.harnessSessionId;
   }
 
   async close(): Promise<void> {
@@ -175,10 +264,11 @@ export class HarnessBinding {
   private async open(): Promise<void> {
     try {
       const existing = this.session.meta.harnessSessions[this.target.id];
+      const configAdapter = isSessionConfigurable(this.adapter) ? this.adapter : undefined;
       const modelAdapter = isModelConfigurable(this.adapter) ? this.adapter : undefined;
       const effortAdapter = isEffortConfigurable(this.adapter) ? this.adapter : undefined;
-      const model = modelAdapter ? this.preferredModel() : undefined;
-      const effort = effortAdapter ? this.preferredEffort() : undefined;
+      const model = configAdapter || modelAdapter ? this.preferredModel() : undefined;
+      const effort = configAdapter || effortAdapter ? this.preferredEffort() : undefined;
       const launchSnapshot = createHarnessLaunchSnapshot({
         target: this.target,
         harnessSessionKey: this.adapter.harness,
@@ -198,6 +288,12 @@ export class HarnessBinding {
       this.ref = await this.adapter.open(
         {
           cwd: this.session.meta.cwd,
+          resumeState:
+            existing?.resumeState ??
+            (existing?.harnessSessionId
+              ? sessionIdResumeState(existing.harnessSessionId)
+              : undefined),
+          // 兼容尚未迁到版本化 checkpoint 的第三方 adapter。
           resumeSessionId: existing?.harnessSessionId,
         },
         this.eventSink,
@@ -207,14 +303,21 @@ export class HarnessBinding {
         this.ref.resumed && existing?.contextEpochId
           ? existing.contextEpochId
           : newId("ctxe");
-      if (model) await modelAdapter?.setModel(this.ref, model);
-      if (effort) await effortAdapter?.setEffort(this.ref, effort);
+      if (model) {
+        if (configAdapter) await configAdapter.setConfig(this.ref, "model", model);
+        else await modelAdapter?.setModel(this.ref, model);
+      }
+      if (effort) {
+        if (configAdapter) await configAdapter.setConfig(this.ref, "effort", effort);
+        else await effortAdapter?.setEffort(this.ref, effort);
+      }
       this.session.setHarnessSession(this.target.id, {
         ...this.session.meta.harnessSessions[this.target.id],
         harnessTargetId: this.target.id,
         harness: this.adapter.harness,
         launchSnapshot,
         harnessSessionId: this.nativeSessionId(),
+        resumeState: this.resumeState(),
         contextEpochId: this.contextEpochId,
         syncedSeq: this.ref.resumed ? existing?.syncedSeq : 0,
         ...(model ? { model } : {}),

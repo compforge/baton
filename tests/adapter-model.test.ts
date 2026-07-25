@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { sessionIdResumeState } from "../src/harness/resume.ts";
 
 const interactionHandler: InteractionHandler = async (req) =>
   req.kind === "permission"
@@ -68,9 +69,50 @@ describe("Claude model capability", () => {
 
   test("records a native session id for resume", async () => {
     const adapter = new ClaudeAdapter({ interactionHandler });
-    const ref = await adapter.open({ cwd: "/tmp", resumeSessionId: "claude-session-1" }, () => {});
+    const ref = await adapter.open(
+      { cwd: "/tmp", resumeState: sessionIdResumeState("claude-session-1") },
+      () => {},
+    );
     expect(ref.resumed).toBe(true);
     expect(adapter.nativeSessionId(ref)).toBe("claude-session-1");
+    expect(adapter.resumeState(ref)).toEqual(sessionIdResumeState("claude-session-1"));
+  });
+
+  test("generic config returns a full snapshot after mutation", async () => {
+    const adapter = new ClaudeAdapter({ interactionHandler });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+    const runtime = (
+      adapter as unknown as {
+        sessions: Map<
+          string,
+          {
+            models?: Array<{ id: string; label: string }>;
+            modelInfos?: unknown[];
+          }
+        >;
+      }
+    ).sessions.get(ref.harnessSessionId);
+    if (!runtime) throw new Error("missing Claude test runtime");
+    runtime.models = [
+      { id: "default", label: "Default" },
+      { id: "sonnet", label: "Sonnet" },
+    ];
+    runtime.modelInfos = [
+      {
+        value: "sonnet",
+        displayName: "Sonnet",
+        supportedEffortLevels: ["high"],
+      },
+    ];
+    const snapshot = await adapter.setConfig(ref, "model", "sonnet");
+
+    expect(snapshot.find((option) => option.id === "model")).toMatchObject({
+      value: "sonnet",
+      category: "model",
+    });
+    expect(snapshot.find((option) => option.id === "effort")).toMatchObject({
+      category: "thought_level",
+    });
   });
 
   test("restores Claude Code prompt and filesystem settings for normal turns", async () => {
@@ -127,6 +169,43 @@ describe("Claude model capability", () => {
 });
 
 describe("Codex model capability", () => {
+  test("generic config returns a full snapshot after mutation", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    const peer = {
+      request: async (method: string) => {
+        if (method === "model/list") {
+          return {
+            data: [
+              {
+                id: "gpt-5",
+                displayName: "GPT-5",
+                isDefault: true,
+                defaultReasoningEffort: "medium",
+                supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    };
+    const runtime = { threadId: "thread-1", peer };
+    (
+      adapter as unknown as { threads: Map<string, typeof runtime> }
+    ).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    const snapshot = await adapter.setConfig(ref, "model", "gpt-5");
+    expect(snapshot.find((option) => option.id === "model")).toMatchObject({
+      value: "gpt-5",
+      category: "model",
+    });
+    expect(snapshot.find((option) => option.id === "effort")).toMatchObject({
+      category: "thought_level",
+    });
+    expect(adapter.resumeState(ref)).toEqual(sessionIdResumeState("thread-1"));
+  });
+
   test("maps context compaction to thread/compact/start", async () => {
     const adapter = new CodexAdapter({ interactionHandler });
     const requests: Array<{ method: string; params: unknown }> = [];

@@ -319,6 +319,10 @@ describe("Controller", () => {
     expect(adapters[0]?.model).toBe("fast");
     expect(adapters[1]?.model).toBeNull();
     expect(adapters[1]?.openOptions?.resumeSessionId).toBe("instance-2-old");
+    expect(adapters[1]?.openOptions?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "instance-2-old" },
+    });
     expect(adapters[1]?.synced[0]).toContain("first target");
     expect(session.meta.harnessSessions["codex-a"]).toMatchObject({
       harnessTargetId: "codex-a",
@@ -516,11 +520,19 @@ describe("Controller", () => {
     await controller.submit("codex", [{ type: "text", text: "next" }]);
 
     expect(codex.openOptions?.resumeSessionId).toBe("thread-old");
+    expect(codex.openOptions?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "thread-old" },
+    });
     expect(codex.model).toBe("fast");
     expect(codex.effort).toBe("high");
     expect(codex.synced[0]).toContain("new claude work");
     expect(codex.synced[0]).not.toContain("old codex work");
     expect(session.meta.harnessSessions.codex?.harnessSessionId).toBe("codex-native");
+    expect(session.meta.harnessSessions.codex?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "codex-native" },
+    });
     expect(session.meta.harnessSessions.codex?.contextEpochId).toBe("ctxe_existing");
   });
 

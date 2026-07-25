@@ -129,7 +129,9 @@ interface HarnessAdapter {
 - `submit` throw 只表示 Adapter 尚未接受投递责任；resolve 后的任何失败都必须经事件流
   给出 Harness 终态。Delivery Attempt 是 Controller 的记账，不进入 Adapter 输入契约。
 - 需要外部参与者时向宿主提交 typed `InteractionDraft` 并等待 resolution；不得自签 `interactionId`，也不得自行 emit `interaction.opened/resolved`。
-- 可选能力（`Steerable` / `Reconcilable` / `ModelConfigurable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，绝不是核心分支。
+- 可选能力（`Steerable` / `Reconcilable` / `SessionConfigurable` /
+  `NativeSessionCheckpointable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，
+  绝不是核心分支。
 - 经 `harness/registry`（Harness 定义 + adapter 工厂）+ `harness/ids`（无 SDK 身份目录：id + aliases）注册。
 
 **MUST NOT**（默认边界；确需突破时走 §5 的演进门槛，不在此私自扩核心）：

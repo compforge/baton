@@ -183,12 +183,17 @@ describe("session lifecycle", () => {
       harnessTargetId: "codex",
       harness: "codex",
       harnessSessionId: "thread_123",
+      resumeState: { version: 1, data: { sessionId: "thread_123" } },
       resumeCursor: "42",
       model: "gpt-5",
       effort: "high",
     });
     const reopened = store.openSession(h.id);
     expect(reopened.meta.harnessSessions["codex"]!.harnessSessionId).toBe("thread_123");
+    expect(reopened.meta.harnessSessions["codex"]!.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "thread_123" },
+    });
     expect(reopened.meta.harnessSessions["codex"]!.resumeCursor).toBe("42");
     expect(reopened.meta.harnessSessions["codex"]!.model).toBe("gpt-5");
     expect(reopened.meta.harnessSessions["codex"]!.effort).toBe("high");
@@ -509,6 +514,7 @@ describe("forkSession", () => {
       harnessTargetId: "codex",
       harness: "codex",
       harnessSessionId: "thread_123",
+      resumeState: { version: 1, data: { sessionId: "thread_123" } },
       resumeCursor: "42",
       syncedSeq: 7,
       model: "gpt-5",

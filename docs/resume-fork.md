@@ -37,7 +37,11 @@ toolCall 等领域对象 ID 仍原样保留。
 
 ### 为什么 harnessSessions 只保留 target 配置，不保留原生 session 绑定
 
-`harnessSessionId` / `contextEpochId` / `syncedSeq` / `resumeCursor` 描述的是源会话与其原生 HarnessSession 的绑定（`syncedSeq` 只是 Receipt 基线的缓存），child 若继承会 resume 源的原生会话，导致两个 BatonSession 写进同一份 harness 历史，fork 即失效。`model` / `effort` 是用户偏好，丢掉会让 child 静默回落 harness 默认值，故单独保留。
+`harnessSessionId` / `resumeState` / `contextEpochId` / `syncedSeq` / `resumeCursor`
+描述的是源会话与其原生 HarnessSession 的绑定（`resumeState` 是 adapter-owned 的版本化
+checkpoint，`syncedSeq` 只是 Receipt 基线的缓存），child 若继承会 resume 源的原生会话，
+导致两个 BatonSession 写进同一份 harness 历史，fork 即失效。`model` / `effort` 是用户偏好，
+丢掉会让 child 静默回落 harness 默认值，故单独保留。
 `harnessTargetId` / `harness` 也要保留，使 child 仍知道后续应使用哪个配置目标和执行协议；
 `HarnessLaunchSnapshot` 与源原生 session 的那次启动绑定，child 会 fresh launch，因此不复制。
 

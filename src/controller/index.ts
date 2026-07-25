@@ -27,7 +27,9 @@ import {
   type AnyNewEvent,
   type EventEnvelope,
   type EventSource,
+  type ConfigValue,
   type PromptBlock,
+  type SessionConfigOption,
   type StopReason,
 } from "../event/types.ts";
 import { HarnessBinding } from "../harness/binding.ts";
@@ -355,6 +357,22 @@ export class Controller {
       this.options.effortPreferences?.[harnessTargetId] ??
       null
     );
+  }
+
+  async getConfig(harnessTargetId: string): Promise<SessionConfigOption[]> {
+    return (await this.ensureHarness(harnessTargetId)).getConfig();
+  }
+
+  async setConfig(
+    harnessTargetId: string,
+    configId: string,
+    value: ConfigValue,
+  ): Promise<SessionConfigOption[]> {
+    const snapshot = await (
+      await this.ensureHarness(harnessTargetId)
+    ).setConfig(configId, value);
+    this.changed();
+    return snapshot;
   }
 
   /**
@@ -838,7 +856,7 @@ export class Controller {
 
     session.summarizeTurnEvent(turnId);
     if (record.role === "driven") record.binding.freshNative = false;
-    this.backfillHarnessSessionId(record.binding);
+    this.backfillHarnessResumeState(record.binding);
 
     this.turns.finish(record, stopReason);
     this.changed();
@@ -849,17 +867,24 @@ export class Controller {
    * 刻意**不**推进 syncedSeq——水位只在注入时前进（见 runTurn）：finalize 推尾水位
    * 会越过并发期间其它 harness 落盘、尚未注入本 harness 的事件，形成永久同步洞。
    */
-  private backfillHarnessSessionId(binding: HarnessBinding): void {
+  private backfillHarnessResumeState(binding: HarnessBinding): void {
     const session = this.options.session;
     const key = binding.target.id;
     const existing = session.meta.harnessSessions[key];
     const nativeId = binding.nativeSessionId() ?? existing?.harnessSessionId;
-    if (nativeId === existing?.harnessSessionId) return; // 无变化不写盘
+    const resumeState = binding.resumeState() ?? existing?.resumeState;
+    if (
+      nativeId === existing?.harnessSessionId &&
+      JSON.stringify(resumeState) === JSON.stringify(existing?.resumeState)
+    ) {
+      return;
+    }
     session.setHarnessSession(key, {
       ...existing,
       harnessTargetId: key,
       harness: binding.adapter.harness,
       harnessSessionId: nativeId,
+      resumeState,
     });
   }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { openCodexThread } from "../src/harness/codex/adapter.ts";
+import { sessionIdResumeState } from "../src/harness/resume.ts";
 
 describe("openCodexThread", () => {
   test("resumes an existing thread by id", async () => {
@@ -12,7 +13,12 @@ describe("openCodexThread", () => {
       },
     };
 
-    expect(await openCodexThread(peer, { cwd: "/repo", resumeSessionId: "thread-old" })).toEqual({
+    expect(
+      await openCodexThread(peer, {
+        cwd: "/repo",
+        resumeState: sessionIdResumeState("thread-old"),
+      }),
+    ).toEqual({
       threadId: "thread-old",
       resumed: true,
       route: null,
@@ -36,6 +42,25 @@ describe("openCodexThread", () => {
       route: null,
     });
     expect(calls).toEqual(["thread/resume", "thread/start"]);
+  });
+
+  test("does not reinterpret an unknown resume-state version through the legacy id", async () => {
+    const calls: string[] = [];
+    const peer = {
+      request: async (method: string) => {
+        calls.push(method);
+        return { thread: { id: "thread-new" } };
+      },
+    };
+
+    expect(
+      await openCodexThread(peer, {
+        cwd: "/repo",
+        resumeState: { version: 2, data: { sessionId: "thread-v2" } },
+        resumeSessionId: "thread-legacy",
+      }),
+    ).toMatchObject({ threadId: "thread-new", resumed: false });
+    expect(calls).toEqual(["thread/start"]);
   });
 
   test("does not hide non-missing resume failures", async () => {
