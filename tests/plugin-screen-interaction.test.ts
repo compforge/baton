@@ -12,7 +12,11 @@ import { defaultTheme, type ChatViewState } from "chat-tui";
 import { createElement, createRef } from "react";
 
 import type { Manager } from "../src/plugin/manager.ts";
-import type { MarketplaceRegistry } from "../src/plugin/marketplace/index.ts";
+import type {
+  AvailablePluginPackage,
+  InstalledPluginPackage,
+  MarketplaceRegistry,
+} from "../src/plugin/marketplace/index.ts";
 import {
   BatonTui,
   type BatonTuiHandle,
@@ -34,10 +38,13 @@ const view: ChatViewState = {
   footer: "ready",
 };
 
-function protocol(): BatonChatProtocol {
+function protocol(options: {
+  available?: readonly AvailablePluginPackage[];
+  installed?: readonly InstalledPluginPackage[];
+} = {}): BatonChatProtocol {
   const marketplace = {
-    available: () => [],
-    installed: () => [],
+    available: () => options.available ?? [],
+    installed: () => options.installed ?? [],
     list: () => [],
   } as unknown as MarketplaceRegistry;
   const pluginManager = {
@@ -105,5 +112,57 @@ describe("Plugin screen interaction", () => {
     await setup.mockInput.typeText("focus restored");
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("focus restored");
+  });
+
+  test("offers Update now for an installed Package with a newer Marketplace version", async () => {
+    const setup = await createTestRenderer({
+      width: 120,
+      height: 30,
+      kittyKeyboard: true,
+      screenMode: "main-screen",
+    });
+    const root = createRoot(setup.renderer);
+    mounted = { root, setup };
+    const tui = createRef<BatonTuiHandle>();
+    const manifest = {
+      manifestVersion: 1 as const,
+      pluginId: "qiankun/requirement-loop",
+      version: "0.2.0",
+      entry: "./src/index.ts",
+      displayName: "Requirement Loop",
+    };
+
+    root.render(
+      createElement(BatonTui, {
+        ref: tui,
+        protocol: protocol({
+          available: [{
+            marketplace: "reqloop",
+            packageDir: "/marketplace/requirement-loop",
+            manifest: { ...manifest, version: "0.3.0" },
+          }],
+          installed: [{
+            packageDir: "/baton/requirement-loop/0.2.0",
+            manifest,
+            provenance: {
+              marketplace: "reqloop",
+              installedAt: "2026-07-25T00:00:00.000Z",
+              marketplaceSource: { kind: "local", path: "/marketplace" },
+            },
+          }],
+        }),
+        theme: defaultTheme,
+      }),
+    );
+    await settle(setup);
+
+    tui.current?.openPlugins();
+    await settle(setup);
+    setup.mockInput.pressArrow("right");
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("Update now");
   });
 });
