@@ -160,16 +160,16 @@ function PluginPanel(props: PluginPanelProps): ReactNode {
       else props.onBack();
       return;
     }
-    if (detail) return;
     if (
       key.name === "tab" ||
-      (!query && (key.name === "left" || key.name === "right"))
+      ((detail || !query) && (key.name === "left" || key.name === "right"))
     ) {
       key.preventDefault();
       if (key.name === "left" || key.shift) tabs.current?.moveLeft();
       else tabs.current?.moveRight();
       return;
     }
+    if (detail) return;
     if (key.name === "up" || key.name === "down") {
       key.preventDefault();
       if (key.name === "up") list.current?.moveUp();

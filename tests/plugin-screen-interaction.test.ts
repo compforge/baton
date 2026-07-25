@@ -164,5 +164,13 @@ describe("Plugin screen interaction", () => {
     await settle(setup);
 
     expect(setup.captureCharFrame()).toContain("Update now");
+
+    setup.mockInput.pressArrow("right");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Search marketplaces");
+
+    setup.mockInput.pressArrow("left");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Search installed");
   });
 });
