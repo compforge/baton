@@ -23,6 +23,7 @@ import {
 import type { PluginInstance } from "../../plugin/instance.ts";
 import { Manager } from "../../plugin/manager.ts";
 import {
+  findNewerVersion,
   isPackageInstalled,
   packageInstances,
   pluginBrowserItems,
@@ -314,6 +315,13 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
     props.item.kind === "installed-package" ||
     (props.item.kind === "available-package" &&
       isPackageInstalled(props.item.package, props.data.installed));
+
+  // 检测是否有新版本可用
+  const newerVersion =
+    props.item.kind === "installed-package"
+      ? findNewerVersion(props.item.package, props.data.available)
+      : undefined;
+
   const canInstall =
     props.item.kind === "available-package" &&
     !installed;
@@ -342,6 +350,13 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
     ...(canInstall
       ? [{ name: "Install package", description: "Copy this immutable Package into Baton", value: "install" }]
       : []),
+    ...(newerVersion
+      ? [{
+          name: `Update now to ${newerVersion.manifest.version}`,
+          description: "Install the newer version and migrate instances",
+          value: "update",
+        }]
+      : []),
     ...(instanceAction ? [instanceAction] : []),
     ...(canUninstall
       ? [{ name: "Uninstall package", description: "Remove this Package from Baton", value: "uninstall" }]
@@ -366,6 +381,46 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
           text: result.alreadyInstalled
             ? `${result.manifest.pluginId}@${result.manifest.version} was already installed`
             : `Installed ${result.manifest.pluginId}@${result.manifest.version}`,
+          tone: "success",
+        });
+        return;
+      }
+      if (value === "update" && props.item.kind === "installed-package" && newerVersion) {
+        // 1. 先安装新版本
+        const installResult = props.registry.install(newerVersion.manifest.pluginId, {
+          marketplace: newerVersion.marketplace,
+        });
+
+        // 2. 迁移所有旧版本的 instances 到新版本
+        const oldInstances = packageInstances(
+          manifest.pluginId,
+          manifest.version,
+          props.data,
+        );
+        for (const oldInstance of oldInstances) {
+          // 创建新版本的 instance，保持 enabled 状态
+          await props.manager.createInstance({
+            pluginId: newerVersion.manifest.pluginId,
+            packageVersion: newerVersion.manifest.version,
+          });
+          // 禁用旧版本的 instance
+          if (oldInstance.enabled) {
+            await props.manager.setInstanceEnabled(oldInstance.pluginInstanceId, false);
+          }
+        }
+
+        // 3. 如果旧版本没有活跃的 instances，可以卸载
+        const remainingInstances = packageInstances(
+          manifest.pluginId,
+          manifest.version,
+          props.data,
+        );
+        if (remainingInstances.every((inst) => !inst.enabled)) {
+          props.registry.uninstall(manifest.pluginId, manifest.version);
+        }
+
+        props.onChanged({
+          text: `Updated ${manifest.pluginId} from ${manifest.version} to ${newerVersion.manifest.version}`,
           tone: "success",
         });
         return;
@@ -408,7 +463,7 @@ function PluginDetail(props: PluginDetailProps): ReactNode {
       }
     } catch (error) {
       props.onChanged({
-        text: `${value === "install" ? "Install" : value === "uninstall" ? "Uninstall" : "Plugin action"} failed: ${errorMessage(error)}`,
+        text: `${value === "install" ? "Install" : value === "update" ? "Update" : value === "uninstall" ? "Uninstall" : "Plugin action"} failed: ${errorMessage(error)}`,
         tone: "error",
       });
     } finally {

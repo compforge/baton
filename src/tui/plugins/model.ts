@@ -57,6 +57,69 @@ export function isPackageInstalled(
   );
 }
 
+/**
+ * 检查已安装的 package 是否有新版本可用。
+ * 返回新版本的 AvailablePluginPackage，如果没有新版本则返回 undefined。
+ */
+export function findNewerVersion(
+  installed: InstalledPluginPackage,
+  available: readonly AvailablePluginPackage[],
+): AvailablePluginPackage | undefined {
+  const candidates = available.filter(
+    (pkg) => pkg.manifest.pluginId === installed.manifest.pluginId,
+  );
+  if (candidates.length === 0) return undefined;
+
+  // 简单的版本比较：按 semver 的 major.minor.patch 比较
+  const installedVersion = parseVersion(installed.manifest.version);
+  let newerPackage: AvailablePluginPackage | undefined;
+  let newerVersion = installedVersion;
+
+  for (const candidate of candidates) {
+    const candidateVersion = parseVersion(candidate.manifest.version);
+    if (compareVersions(candidateVersion, newerVersion) > 0) {
+      newerVersion = candidateVersion;
+      newerPackage = candidate;
+    }
+  }
+
+  return newerPackage;
+}
+
+interface ParsedVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease?: string;
+}
+
+function parseVersion(version: string): ParsedVersion {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(version);
+  if (!match) {
+    // 无法解析时返回 0.0.0，让其总是比有效版本小
+    return { major: 0, minor: 0, patch: 0 };
+  }
+  return {
+    major: parseInt(match[1]!, 10),
+    minor: parseInt(match[2]!, 10),
+    patch: parseInt(match[3]!, 10),
+    prerelease: match[4],
+  };
+}
+
+function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  if (a.patch !== b.patch) return a.patch - b.patch;
+  // 简化处理：有 prerelease 的版本小于没有 prerelease 的版本
+  if (a.prerelease && !b.prerelease) return -1;
+  if (!a.prerelease && b.prerelease) return 1;
+  if (a.prerelease && b.prerelease) {
+    return a.prerelease.localeCompare(b.prerelease);
+  }
+  return 0;
+}
+
 export function packageInstances(
   pluginId: string,
   version: string,
