@@ -283,6 +283,10 @@ export class MarketplaceRegistry {
   list(): RegisteredMarketplace[] {
     return this.readRegistry().marketplaces.map((registration) => {
       const rootDir = this.marketplaceRoot(registration);
+      // Auto-update Git marketplaces to fetch latest plugins
+      if (registration.source.kind === "git") {
+        this.updateGitMarketplaceSync(registration, rootDir);
+      }
       const manifest = readMarketplaceManifest(rootDir);
       if (manifest.name !== registration.name) {
         throw new Error(
@@ -475,6 +479,55 @@ export class MarketplaceRegistry {
       });
     } finally {
       rmSync(temporary, { recursive: true, force: true });
+    }
+  }
+
+  private updateGitMarketplaceSync(
+    registration: MarketplaceRegistration,
+    rootDir: string,
+  ): void {
+    if (registration.source.kind !== "git") return;
+
+    try {
+      // Silently fetch and pull to get latest marketplace.json and plugins
+      // Use a short timeout since this runs on every /plugins invocation
+      const timeoutMs = 5000; // 5 seconds timeout for auto-update
+
+      // Check if it's a detached HEAD (ref-pinned marketplace)
+      const symbolic = Bun.spawnSync(["git", "symbolic-ref", "-q", "HEAD"], {
+        cwd: rootDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      if (symbolic.exitCode === 0) {
+        // On a branch, can pull
+        Bun.spawnSync(["git", "pull", "--quiet", "--ff-only"], {
+          cwd: rootDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      } else {
+        // Detached HEAD (ref-pinned), fetch and reset to origin
+        Bun.spawnSync(["git", "fetch", "--quiet", "origin"], {
+          cwd: rootDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        if (registration.source.ref) {
+          // Reset to the pinned ref
+          Bun.spawnSync(["git", "reset", "--quiet", "--hard", `origin/${registration.source.ref}`], {
+            cwd: rootDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+        }
+      }
+
+      // Update failures are silent - marketplace will still work with cached version
+    } catch {
+      // Silently ignore update failures - user can still use cached marketplace
     }
   }
 
