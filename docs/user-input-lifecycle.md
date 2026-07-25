@@ -85,6 +85,7 @@ Composer 的 ↑/↓ 是“取回既有输入”的统一入口。在无补全�
 | 推理强度 | `/effort` → `EffortConfigurable` | 下个新 turn 前按 `effort` 重建 query | 当前 model 的候选 → 下一次 `turn/start.effort` | 已支持；与 model 分开选择 |
 | baton slash command | command registry → baton core | 不下发 harness | 不下发 harness | 已支持已注册命令；未知命令不做文本透传 |
 | harness command | command discovery + Adapter capability | 原生可发现 | 需显式映射 | 未支持 |
+| 执行计划提案 | `/implement-plan [planId]` 新开 turn；Input 保留 source plan provenance | ExitPlanMode 提案 | 可消费同一通用 Input | 已支持；Adapter 接受后才落 implementation edge |
 | interrupt | `HarnessAdapter.cancel()` | `Query.interrupt()` | `turn/interrupt` | 已支持当前 driven turn |
 | queued follow-up | controller 全局 FIFO | harness 无感知 | harness 无感知 | 已支持；当前 turn 结束后开启下一 turn |
 | same-turn steer | `sendTurn()` 由 Adapter 判定；拒绝时降级 follow-up | 同一 query 的 streaming prompt queue | `turn/steer(expectedTurnId)` | Claude / Codex 均支持 |

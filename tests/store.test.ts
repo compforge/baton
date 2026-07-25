@@ -264,6 +264,26 @@ describe("event append / read", () => {
     expect(readFileSync(join(h.dir, "session.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
   });
 
+  test("native provider trace is target-scoped and stays outside the event ledger", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    h.nativeEvent("claude-work", "claude", {
+      direction: "in",
+      name: "system/memory_recall",
+      payload: { subtype: "memory_recall", memories: [] },
+    });
+
+    expect(h.readEvents()).toEqual([]);
+    const trace = JSON.parse(
+      readFileSync(join(h.dir, "native-claude-work.jsonl"), "utf8").trim(),
+    );
+    expect(trace).toMatchObject({
+      batonSessionId: h.id,
+      harnessTargetId: "claude-work",
+      name: "system/memory_recall",
+      payload: { subtype: "memory_recall" },
+    });
+  });
+
   test("raw is preserved verbatim (细节保真)", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     const raw = { method: "item/agentMessage/delta", params: { weird: [1, { deep: true }] } };

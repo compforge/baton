@@ -24,6 +24,13 @@ export interface HarnessSessionRef {
 /** Adapter 只报告事实内容；执行归属由绑定该 Adapter 的宿主补齐。 */
 export type EventSink = (ev: AnyEventDraft) => void;
 
+/** provider 原生入站消息的旁路 trace；不进入 session event ledger。 */
+export type NativeEventSink = (event: {
+  direction: "in";
+  name?: string;
+  payload: unknown;
+}) => void;
+
 export interface OpenOptions {
   cwd: string;
   env?: Record<string, string>;

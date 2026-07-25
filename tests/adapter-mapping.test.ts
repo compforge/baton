@@ -356,6 +356,124 @@ describe("claude: Task 工具族 → plan_update", () => {
   });
 });
 
+describe("background task / subagent lifecycle", () => {
+  test("Claude SDK task edges upsert one first-class task", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "system",
+      subtype: "task_started",
+      task_id: "task-1",
+      description: "Inspect the adapter",
+      subagent_type: "Explore",
+    });
+    feed({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "task-1",
+      description: "Inspect the adapter",
+      summary: "Found the mapping",
+      last_tool_name: "Read",
+      usage: { total_tokens: 12, tool_uses: 2, duration_ms: 30 },
+    });
+    feed({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task-1",
+      status: "completed",
+      summary: "Done",
+      output_file: "/tmp/task-1",
+    });
+
+    expect(events.map((event) => event.kind)).toEqual([
+      "task_update",
+      "task_update",
+      "task_update",
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      payload: { taskId: "task-1", status: "completed", summary: "Done" },
+    });
+  });
+
+  test("Codex collabAgentToolCall maps to the same task_update contract", () => {
+    const { events, notify } = codexHarness();
+    notify("item/started", {
+      threadId: "th1",
+      item: {
+        id: "agent-1",
+        type: "collabAgentToolCall",
+        prompt: "Review this patch",
+        agentType: "reviewer",
+      },
+    });
+    notify("item/completed", {
+      threadId: "th1",
+      item: {
+        id: "agent-1",
+        type: "collabAgentToolCall",
+        status: "completed",
+        result: "Looks good",
+      },
+    });
+    expect(events.map((event) => event.kind)).toEqual(["task_update", "task_update"]);
+    expect(events.at(-1)).toMatchObject({
+      payload: { taskId: "agent-1", status: "completed", summary: "Looks good" },
+    });
+  });
+});
+
+describe("native provider observability", () => {
+  test("Codex traces every native notification before mapping", () => {
+    const native: unknown[] = [];
+    const adapter = new CodexAdapter({
+      interactionHandler,
+      nativeEvent: (event) => native.push(event),
+    });
+    const rt = { threadId: "th1", activeTurn: { turnId: "t1", finalized: false } };
+    (
+      adapter as unknown as {
+        handleNotification: (runtime: unknown, method: string, params: unknown) => void;
+      }
+    ).handleNotification(rt, "future/event", { threadId: "th1", value: 1 });
+    expect(native).toEqual([
+      {
+        direction: "in",
+        name: "future/event",
+        payload: { threadId: "th1", value: 1 },
+      },
+    ]);
+  });
+
+  test("Claude reports an unknown SDK message once instead of silently dropping it", () => {
+    const diagnostics: DiagnosticEntry[] = [];
+    const adapter = new ClaudeAdapter({
+      interactionHandler,
+      diagnostic: (entry) => diagnostics.push(entry),
+    });
+    const rt = {
+      cwd: "/tmp",
+      suppressedToolIds: new Set(),
+      capturedProposedPlanKeys: new Set(),
+      tasks: new Map(),
+      pendingTaskOps: new Map(),
+    };
+    const turn = { turnId: "t1", finalized: false, cancelRequested: false };
+    const handle = (
+      adapter as unknown as {
+        handleMessage: (
+          runtime: unknown,
+          emit: (event: AnyEventDraft) => void,
+          message: unknown,
+          active: unknown,
+        ) => void;
+      }
+    ).handleMessage.bind(adapter);
+    handle(rt, () => {}, { type: "future_message" }, turn);
+    handle(rt, () => {}, { type: "future_message" }, turn);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("future_message");
+  });
+});
+
 describe("claude: edit tools → diff content", () => {
   test("Skill title includes the launched skill name", () => {
     expect(claudeToolTitle("Skill", { skill: "devloop:gcampr" })).toBe("Skill: devloop:gcampr");

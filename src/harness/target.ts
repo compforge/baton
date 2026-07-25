@@ -1,3 +1,6 @@
+import type { AvailableCommand } from "../event/types.ts";
+import type { EffortOption, ModelOption } from "./adapter.ts";
+
 /**
  * Baton 配置与调度侧的 Harness 目标。`harness` 选择执行协议，`id` 标识一份具体配置；
  * 同一种 Harness 可以有多个 target，但它们不能共享 HarnessBinding 或原生 session。
@@ -5,6 +8,16 @@
 export interface HarnessTarget {
   readonly id: string;
   readonly harness: string;
+}
+
+/**
+ * 对 HarnessTarget 的只读发现结果。它不创建 HarnessSession，也不进入 Adapter 生命周期；
+ * model / command 等静态目录可在用户真正发 turn 前安全查询。
+ */
+export interface HarnessTargetProbeResult {
+  models?: ModelOption[];
+  efforts?: EffortOption[];
+  commands?: AvailableCommand[];
 }
 
 /**

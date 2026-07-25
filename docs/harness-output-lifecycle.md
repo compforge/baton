@@ -26,7 +26,7 @@
 
 ### 2.1 事件归一与保真
 
-Adapter 消费原生 wire（Codex app-server 的 JSON-RPC 通知、Claude Agent SDK 的消息流），翻译成内部 Event 草稿交给 sink；宿主在可信入口盖上 `source:harness`，Store 再补齐版本、时间、序号和 BatonSession。归一原则是"最大公约数 + raw 保真"：思考、工具、文件改动、命令输出、计划等形状统一，粒度差异（Claude 原始思考流 vs Codex reasoning 摘要）不掩盖、全部留在 `raw`。渲染层与存储层不出现 harness 分支。
+Adapter 消费原生 wire（Codex app-server 的 JSON-RPC 通知、Claude Agent SDK 的消息流），翻译成内部 Event 草稿交给 sink；宿主在可信入口盖上 `source:harness`，Store 再补齐版本、时间、序号和 BatonSession。归一原则是"最大公约数 + raw 保真"：思考、工具、文件改动、命令输出、计划等形状统一，粒度差异（Claude 原始思考流 vs Codex reasoning 摘要）不掩盖、全部留在 `raw`。渲染层与存储层不出现 harness 分支。映射前的完整 provider 入站另写 Target-scoped `native-<target>.jsonl` 旁路 trace（有界轮转、best effort），用于 SDK 升级后的协议漂移排障，不进入正典 ledger。
 
 ### 2.2 三态 patch 与自愈
 
@@ -61,6 +61,7 @@ completed 但整个 turn 零产出，说明 prompt 在进模型前被丢弃（ho
 | 命令实时输出 | `tool_call_content_chunk` | 无（输出随 `tool_result` 一次性到达） | `item/commandExecution/outputDelta` | 已支持 |
 | 文件改动 | `DiffBlock`（changes + 标准 unified patch） | Edit/Write/MultiEdit 入参合成 | fileChange item 的 `changes[].diff` | 已支持；拼不出合法 patch 时只发 changes |
 | 计划 | `plan_update`（整体替换 entries） | `TodoWrite` 归一并抑制其工具卡 | `turn/plan/updated` | 已支持 |
+| 后台任务 / subagent | `task_update`（按 taskId upsert 的封闭生命周期） | `task_started/progress/notification` | `collabAgentToolCall` item | 已支持 |
 | 运行阶段（compacting…） | `_baton_run_status`（phase 开放字符串，null 清除） | `system/status`（SDKStatus 原生即 phase-or-null） | `contextCompaction` item 并抑制其工具卡 | 已支持 |
 | token 用量 | `usage_update`（delta，baton 既有语义） | SDK usage | usage 差分 | 已支持 |
 | context 用量 | `context_usage_update`（按 HarnessTarget 保存的 snapshot，映射 ACP v2 usage） | result `modelUsage` | `thread/tokenUsage/updated` 的 `last` + `modelContextWindow` | 已支持；`/status` 展示当前 Target/model 快照 |
@@ -68,7 +69,7 @@ completed 但整个 turn 零产出，说明 prompt 在进模型前被丢弃（ho
 | 错误 | `_baton_error_update` + `idle(failed)` | SDK error | wire error / 响应终态 | 已支持 |
 | 空回合 | `_baton_notice`（warning，不改生命周期） | 无此形态（SDK 进程内 hook 报错走 error 流） | completed 且零产出 + `hook/completed`（仅 userPromptSubmit/sessionStart 的 blocked/stopped 会让 codex 静默空结束） | Codex 已支持 |
 | observed turn | Harness 来源的 `state_update(running)` 开界、idle 收界 | 后台任务唤醒 | — | 已支持；不进队列 |
-| 未知通知 | 有界诊断日志 + 计数 | 进程内 hook 报错走 error 流 | 未识别通知 | 当前忽略，不进 timeline |
+| 未知通知 | 有界诊断日志 + 计数；完整 wire 另有 native trace | 未识别 SDK message/subtype | 未识别 notification | 已支持，不进 timeline |
 | **静默悬挂对账** | L1 stall 观测 + 可选 `reconcile` 能力（见 §5） | 未声明 reconcile，回落 L1（`backgroundTasks`/`getContextUsage` 为后续方向） | `thread/read.status` | L1 已支持；L2 Codex 已支持，Claude 回落 L1 |
 
 ## 4. 三个重点场景

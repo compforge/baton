@@ -10,6 +10,7 @@ export type CommandName =
   | "model"
   | "effort"
   | "compact"
+  | "implement-plan"
   | "plugins"
   | "reload-plugins"
   | "sessions"
@@ -49,6 +50,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     description: "Compact the current harness context",
     scope: "harness",
     runPolicy: "idle",
+  },
+  {
+    name: "implement-plan",
+    description: "Start a new turn that implements a proposed plan (latest by default)",
+    scope: "baton",
+    runPolicy: "always",
   },
   {
     name: "plugins",

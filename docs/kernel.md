@@ -37,7 +37,7 @@ Controller / Harness 平铺为同一层概念；每个对象仍绑定一条不�
 | **Interaction** | Baton 持有的持久待决交互；`kind` 区分 permission / question / hook trust，`requester` 指明谁在等待 | identity 与 opened/resolved 生命周期由 Controller 统一签发和收口；Adapter 只提交 kind-specific draft 并等待结果 |
 | **Delivery Attempt** | Controller 域内向 Harness 投递一轮已 admit Input 的持久执行记录 | 先持久化 `prepared` 再 dispatch；`accepted` 只确认 Adapter 接受投递责任，Harness 终态才给出最终 `outcome`；无法证明是否接收或结束时保持 `uncertain`，不盲目重投 |
 | **Context delivery** | Controller 域内把有 owner/key 的 ContextSource 组装成 Snapshot，并向某个 HarnessSession 交付 | Snapshot 说明准备送什么；只有 transport 接受后落下的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch，不能用 Board 已更新或本地已组装代替 |
-| **HarnessTarget** | Baton 配置、调度与状态查询侧的一份具体 Harness 目标 | 实例坐标与协议类型分离：Target ID 只经显式 resolver 解析，未知值 fail closed；Adapter 工厂接收完整 Target；`Controller` processing / queue、`HarnessBinding`、原生 session、同步水位、偏好 / 授权和 Target-scoped 投影状态均按 `harnessTargetId` 隔离，不按 Harness 名称混用 |
+| **HarnessTarget** | Baton 配置、调度与状态查询侧的一份具体 Harness 目标；可在不创建 HarnessSession 的前提下做只读 capability/catalog probe | 实例坐标与协议类型分离：Target ID 只经显式 resolver 解析，未知值 fail closed；Adapter 工厂接收完整 Target；`Controller` processing / queue、`HarnessBinding`、原生 session、同步水位、偏好 / 授权和 Target-scoped 投影状态均按 `harnessTargetId` 隔离，不按 Harness 名称混用；发现不借 Adapter.open 制造隐形 session |
 | **Adapter + Capability** | harness 方言的**唯一**居所：小核心 `HarnessAdapter` + 可选能力 descriptor | 差异表达为"能力有无"，type-guard 发现、契约测试钉住；**内核永不 `if harness===`** |
 | **Projection** | 纯函数：event reduce → 视图快照 | 只产展示形状；chat-tui 消费形状不消费语义；未变返回同引用（快照一致）|
 

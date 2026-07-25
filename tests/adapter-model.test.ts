@@ -1,7 +1,11 @@
 import type { InteractionHandler } from "../src/harness/adapter.ts";
 import { describe, expect, test } from "bun:test";
 
-import { ClaudeAdapter, type ClaudeAdapterOptions } from "../src/harness/claude/adapter.ts";
+import {
+  ClaudeAdapter,
+  probeClaudeTarget,
+  type ClaudeAdapterOptions,
+} from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
 
@@ -11,7 +15,7 @@ const interactionHandler: InteractionHandler = async (req) =>
     : { kind: "question", outcome: "answered", answers: {} };
 
 describe("Claude model capability", () => {
-  test("discovers models before the first turn without sending a user message", async () => {
+  test("probes the target before the first turn without creating an adapter session", async () => {
     let prompt: unknown;
     let closes = 0;
     const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
@@ -42,21 +46,26 @@ describe("Claude model capability", () => {
             },
           ],
         }),
+        supportedCommands: async () => [
+          { name: "devloop:gcam", description: "Commit changes", argumentHint: "" },
+        ],
         close: () => closes++,
       } as unknown as ReturnType<NonNullable<ClaudeAdapterOptions["queryFactory"]>>;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
-    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+    const discovered = await probeClaudeTarget({ cwd: "/tmp", queryFactory });
 
-    expect((await adapter.listModels(ref)).map((model) => model.id)).toEqual([
+    expect(discovered.models?.map((model) => model.id)).toEqual([
       "default",
       "claude-fable-5[1m]",
       "sonnet",
     ]);
+    expect(discovered.efforts?.map((effort) => effort.id)).toEqual(["default", "high"]);
+    expect(discovered.commands?.map((command) => command.name)).toEqual(["devloop:gcam"]);
     expect(closes).toBe(1);
     expect(typeof (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe("function");
-    expect((await adapter.listEfforts(ref)).map((effort) => effort.id)).toEqual(["default", "high"]);
-    expect(closes).toBe(1); // model catalog is cached; /effort must not start another CLI
+
+    const adapter = new ClaudeAdapter({ interactionHandler });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
     await adapter.setModel(ref, "sonnet");
     await adapter.setEffort(ref, "high");
     expect(adapter.currentModel(ref)).toBe("sonnet");

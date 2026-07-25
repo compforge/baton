@@ -9,6 +9,7 @@ import type {
   ContextUsageUpdate,
   ErrorUpdate,
   EventEnvelope,
+  HarnessTaskUpdate,
   MessageRole,
   Notice,
   PlanUpdate,
@@ -68,6 +69,14 @@ export interface ProposedPlanState extends ProposedPlan {
   harness?: string;
   harnessTargetId?: string;
   turnId?: string;
+  implementationTurnId?: string;
+  implementationStartedAt?: string;
+}
+
+export interface HarnessTaskState extends HarnessTaskUpdate {
+  harness?: string;
+  harnessTargetId?: string;
+  turnId?: string;
 }
 
 /**
@@ -90,7 +99,7 @@ export interface HarnessTargetState {
 
 /** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
 export interface TimelineItem {
-  type: "message" | "tool_call" | "plan" | "proposed_plan" | "notice" | "approval_review" | "error";
+  type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error";
   id: string;
 }
 
@@ -142,6 +151,8 @@ export interface SessionState {
   plans: Map<string, PlanState>;
   /** 已完成、尚未表示执行授权的计划提案；按 planId 首写即定。 */
   proposedPlans: Map<string, ProposedPlanState>;
+  /** Harness 已启动的后台任务 / subagent，按 provider task id upsert。 */
+  tasks: Map<string, HarnessTaskState>;
   /** Interaction 是统一持久对象；是否 pending 由 resolution 是否存在派生。 */
   interactions: Map<string, InteractionState>;
   /**
@@ -179,6 +190,7 @@ export function emptySessionState(): SessionState {
     toolCalls: new Map(),
     plans: new Map(),
     proposedPlans: new Map(),
+    tasks: new Map(),
     interactions: new Map(),
     approvalReviews: new Map(),
     usage: {
@@ -419,6 +431,33 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         harnessTargetId: eventTargetId(ev),
         turnId: ev.turnId,
       });
+      break;
+    }
+    case "proposed_plan_implementation_started": {
+      const proposal = state.proposedPlans.get(ev.payload.planId);
+      if (!proposal || proposal.implementationTurnId) break;
+      proposal.implementationTurnId = ev.payload.implementationTurnId;
+      proposal.implementationStartedAt = ev.ts;
+      break;
+    }
+    case "task_update": {
+      const p = ev.payload;
+      const existing = state.tasks.get(p.taskId);
+      if (!existing && !p.skipTranscript) {
+        state.timeline.push({ type: "task", id: p.taskId });
+      }
+      // optional 字段只做 defined patch；否则 live 对象里的 undefined 会抹掉旧值，
+      // JSONL replay 时该字段又因 JSON.stringify 丢失，造成 live/resume 投影不一致。
+      const next = { ...existing } as HarnessTaskState;
+      for (const [key, value] of Object.entries(p)) {
+        if (value !== undefined) {
+          (next as unknown as Record<string, unknown>)[key] = value;
+        }
+      }
+      next.harness = ev.harness ?? existing?.harness;
+      next.harnessTargetId = eventTargetId(ev) ?? existing?.harnessTargetId;
+      next.turnId = ev.turnId ?? existing?.turnId;
+      state.tasks.set(p.taskId, next);
       break;
     }
     // Interaction opened/resolved 驱动 per-turn requires_action ↔ running：不变量收在 reducer，
