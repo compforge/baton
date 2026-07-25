@@ -1,0 +1,31 @@
+src/controller/index.ts
+  s_951b43c6fa3905::t_30ab0a7964662d 12,73,77,271,273,282,284-291,293-301
+src/harness/adapter.ts
+  s_951b43c6fa3905::t_abfe910009639d 11-25,240-243,250-255,260,269
+src/harness/claude/adapter.ts
+  s_951b43c6fa3905::t_bad1b65f2416a2 567-581
+src/harness/codex/adapter.ts
+  s_951b43c6fa3905::t_504b93ebe4ea1a 890,896,909,921
+src/tui/protocol.ts
+  s_951b43c6fa3905::t_b18ee1e18dd12d 343-344
+tests/codex-steer.test.ts
+  s_951b43c6fa3905::t_3c8266ec5d7474 60,84,93,102,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4d4f16362d18372645cd57f651431db60f70ac8f",
+  "prompts": {},
+  "sessions": {
+    "s_951b43c6fa3905": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da1b3182-e634-4047-9c0a-f61e608c40ec",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
