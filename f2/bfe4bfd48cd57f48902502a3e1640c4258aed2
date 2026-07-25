@@ -1,0 +1,21 @@
+src/harness/claude/adapter.ts
+  s_bad69a4df393b3::t_0e649019d1afe2 22,329-330,450-453,458-463,473,634,645-646,655-656
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f2bfe4bfd48cd57f48902502a3e1640c4258aed2",
+  "prompts": {},
+  "sessions": {
+    "s_bad69a4df393b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b54746e5-32b7-4a5f-8f24-5690c08ac6f8",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
