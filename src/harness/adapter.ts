@@ -9,17 +9,16 @@ import type {
 } from "../interaction/types.ts";
 
 /**
- * 通用的能力支持包装器。用于 adapter 接口返回值，明确表达某个能力是否被支持。
+ * 能力包装器：表达 adapter 是否支持某个可选能力。
  *
  * - `supported: true` - adapter 实现了该能力，返回实际结果
  * - `supported: false` - adapter 不支持该能力，controller 应降级处理
  *
  * 使用场景：
  * - steer: Claude 不支持 → controller 降级为 follow-up
- * - compactContext: 某些 adapter 不支持 → controller 跳过或使用其他方式
- * - 其他可选能力
+ * - 其他可选能力可以复用此模式
  */
-export type SupportWrapper<T> =
+export type Capability<T> =
   | { supported: true; value: T }
   | { supported: false; reason?: string };
 
@@ -248,10 +247,10 @@ export interface SteerReceipt {
 }
 
 /**
- * Steer 操作的完整返回类型，使用 SupportWrapper 包装。
+ * Steer 操作的完整返回类型，使用 Capability 包装。
  * 如果 adapter 不支持 steer，返回 `supported: false`。
  */
-export type SteerResult = SupportWrapper<SteerReceipt>;
+export type SteerResult = Capability<SteerReceipt>;
 
 /**
  * 可选能力（design §4.3）：把输入注入当前活跃 turn 的下一个安全边界，不新开 turn。
