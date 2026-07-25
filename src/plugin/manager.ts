@@ -532,6 +532,16 @@ export class Manager {
     return this.proposals.resolve(proposalId, outcome);
   }
 
+  getBuiltinResource<K extends BuiltinResourceKind>(
+    kind: K,
+    resourceId: string,
+  ): BuiltinResource<K> {
+    if (!this.builtinProjection) {
+      throw new Error("builtin resource projection is not available");
+    }
+    return this.builtinProjection.get(kind, resourceId);
+  }
+
   private async publishProposal(draft: ReconcileProposal): Promise<void> {
     const proposal = this.proposals.record(draft);
     if (!proposal.resolution) await this.onProposal(proposal);
