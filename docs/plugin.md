@@ -8,7 +8,8 @@
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
-> [reqloop](./reqloop.md)，当前稳定内核见 [kernel](./kernel.md)。
+> [reqloop 独立仓文档](https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md)，
+> 当前稳定内核见 [kernel](./kernel.md)。
 
 ## 1. 理念与概念
 

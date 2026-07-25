@@ -479,7 +479,7 @@ Deploy、Review、Repair 和 Completion 拆成五个 Plugin。
 reqloop 将 Requirement、Deployment、Verdict 等抽象为自己的领域概念，并用内部 Connector
 适配具体平台。Baton 只看到 reqloop 注册的 command 和 ReqLoopRun Resource Contribution；
 schema、reconcile、Board projection 与可选 Context projection 都收在该 Resource 下。详细设计
-见 [reqloop](./reqloop.md)。
+见 [reqloop 领域设计](https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md)。
 
 1. 用户启用并配置随 Baton 交付的 reqloop，通过 `/requirement` 创建或恢复 ReqLoopRun；
    Requirement、验收条件和完成策略进入 `spec`。

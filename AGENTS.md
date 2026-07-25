@@ -128,5 +128,6 @@ baton/
 - `docs/baton-v2.md` — 面向 Loop 的 v2 内核目标：作用域、可靠工作投递、上下文交付与恢复
 - `docs/loop-engineering.md` — 长期 Loop Engineering 控制面：Baton Plugin / Harness Plugin、Event、Hook、Schedule、Board 与 Context 边界
 - `docs/plugin.md` — Baton Plugin 的 Package / Instance / Binding 与 Resource / Reconcile 运行模型
-- `docs/reqloop.md` — Marketplace `reqloop` Plugin：Requirement Loop 领域模型、内部 Connector 与预留的 Harness 驱动能力
+- reqloop 领域设计（独立仓）：
+  `https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md`
 - 参考实现与协议规范的外部链接见 `docs/design.md` 末尾"参考"一节
