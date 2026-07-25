@@ -79,7 +79,7 @@ observed state、长期推进外部状态时，才需要自有 PluginResource。
                                        ▼         ▼
                              ┌─────────────┐  ┌──────────────┐
                              │  Harnesses  │  │   Plugins    │
-                             │ Codex       │  │ reqloop      │ bundled
+                             │ Codex       │  │ reqloop      │ marketplace
                              │ Claude Code │  │ other loops  │
                              │ + devloop   │  │ / utilities  │
                              └──────┬──────┘  └──────┬───────┘

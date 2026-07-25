@@ -67,15 +67,23 @@ function sha256(value: string): string {
 function proposalId(proposal: ReconcileProposal): string {
   const textDigest = sha256(proposal.text);
   if (proposal.basedOnGeneration !== undefined) {
-    // 保留首版 PluginResource Proposal 的稳定身份，升级后已有文件仍可校验。
+    // 无 resourceVersion 的旧 Proposal 保留原身份，升级后已有文件仍可校验。
+    const basis =
+      proposal.basedOnResourceVersion === undefined
+        ? [proposal.basedOnGeneration, textDigest]
+        : [
+            proposal.basedOnGeneration,
+            "resourceVersion",
+            proposal.basedOnResourceVersion,
+            textDigest,
+          ];
     return `pp_${sha256(
       JSON.stringify([
         proposal.key.batonSessionId,
         proposal.key.pluginInstanceId,
         proposal.key.resourceKind,
         proposal.key.resourceId,
-        proposal.basedOnGeneration,
-        textDigest,
+        ...basis,
       ]),
     )}`;
   }
@@ -116,6 +124,7 @@ function sameKey(left: ReconcileKey, right: ReconcileKey): boolean {
 function sameBasis(left: ReconcileProposal, right: ReconcileProposal): boolean {
   return (
     left.basedOnGeneration === right.basedOnGeneration &&
+    left.basedOnResourceVersion === right.basedOnResourceVersion &&
     left.basedOnRevision === right.basedOnRevision
   );
 }
@@ -124,6 +133,7 @@ interface SerializedProposal {
   proposalId?: unknown;
   key?: unknown;
   basedOnGeneration?: unknown;
+  basedOnResourceVersion?: unknown;
   basedOnRevision?: unknown;
   text?: unknown;
   createdAt?: unknown;
@@ -257,11 +267,17 @@ export class ProposalStore {
     const owner = reconcileResourceOwner(key);
     if (owner === "plugin") {
       positiveInteger("basedOnGeneration", draft.basedOnGeneration);
+      if (draft.basedOnResourceVersion !== undefined) {
+        positiveInteger("basedOnResourceVersion", draft.basedOnResourceVersion);
+      }
       if (draft.basedOnRevision !== undefined) {
         throw new Error("PluginResource proposal must not set basedOnRevision");
       }
     } else {
       positiveInteger("basedOnRevision", draft.basedOnRevision);
+      if (draft.basedOnResourceVersion !== undefined) {
+        throw new Error("Builtin Resource proposal must not set basedOnResourceVersion");
+      }
       if (draft.basedOnGeneration !== undefined) {
         throw new Error("Builtin Resource proposal must not set basedOnGeneration");
       }
@@ -273,7 +289,12 @@ export class ProposalStore {
       key: Object.freeze(key),
       text: draft.text,
       ...(owner === "plugin"
-        ? { basedOnGeneration: draft.basedOnGeneration }
+        ? {
+            basedOnGeneration: draft.basedOnGeneration,
+            ...(draft.basedOnResourceVersion === undefined
+              ? {}
+              : { basedOnResourceVersion: draft.basedOnResourceVersion }),
+          }
         : { basedOnRevision: draft.basedOnRevision }),
     } as ReconcileProposal;
     return Object.freeze(owned);
@@ -304,6 +325,11 @@ export class ProposalStore {
         ...(proposal.basedOnGeneration === undefined
           ? {}
           : { basedOnGeneration: proposal.basedOnGeneration as number }),
+        ...(proposal.basedOnResourceVersion === undefined
+          ? {}
+          : {
+              basedOnResourceVersion: proposal.basedOnResourceVersion as number,
+            }),
         ...(proposal.basedOnRevision === undefined
           ? {}
           : { basedOnRevision: proposal.basedOnRevision as number }),

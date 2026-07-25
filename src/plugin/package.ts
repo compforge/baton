@@ -1,48 +1,21 @@
-import type { Reconciler } from "./controller.ts";
 import type {
-  BuiltinReconciler,
+  BuiltinResourceContribution,
   BuiltinResourceKind,
-} from "./builtin.ts";
+  PluginActivationContext,
+  PluginPackage,
+  PluginSessionContext,
+  ResourceContribution,
+} from "@qiankun01/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
 import type { PluginResourceClient } from "./resource-client.ts";
 
-export interface ResourceContribution<TSpec, TStatus> {
-  resourceKind: string;
-  reconciler: Reconciler<TSpec, TStatus>;
-  /** 同一种 Resource 内允许同时执行的不同对象数；默认 1。 */
-  maxConcurrency?: number;
-}
-
-export interface BuiltinResourceContribution<K extends BuiltinResourceKind> {
-  resourceKind: K;
-  reconciler: BuiltinReconciler<K>;
-  /** 同一种 Builtin Resource 内允许同时执行的不同对象数；默认 1。 */
-  maxConcurrency?: number;
-}
-
-export interface PluginActivationContext {
-  readonly instance: PluginInstance;
-  /** 当前 PluginInstance 自有 Resource 的读写入口；Builtin Resource 始终只读。 */
-  readonly resources: PluginResourceClient;
-  registerResource<TSpec, TStatus>(
-    contribution: ResourceContribution<TSpec, TStatus>,
-  ): void;
-  /** 订阅 Baton 从 Event Ledger 投影出的只读 Builtin Resource。 */
-  watchBuiltinResource<K extends BuiltinResourceKind>(
-    contribution: BuiltinResourceContribution<K>,
-  ): void;
-  /** Connector、订阅等非 Resource 资源也归当前 Binding 统一关闭。 */
-  onClose(cleanup: () => Promise<void> | void): void;
-}
-
-/**
- * 首期可信进程内 Package 的最小契约。Manifest、权限和配置 schema 随安装流程再扩展。
- */
-export interface PluginPackage {
-  readonly pluginId: string;
-  readonly version: string;
-  activate(context: PluginActivationContext): Promise<void> | void;
-}
+export type {
+  BuiltinResourceContribution,
+  PluginActivationContext,
+  PluginPackage,
+  PluginSessionContext,
+  ResourceContribution,
+} from "@qiankun01/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(
   contribution: ResourceContribution<TSpec, TStatus>,
@@ -78,6 +51,7 @@ export function validatePluginPackage(plugin: PluginPackage): void {
  */
 export class PluginBinding implements PluginActivationContext {
   readonly instance: PluginInstance;
+  readonly session: PluginSessionContext;
   readonly resources: PluginResourceClient;
   private readonly registrars: PluginRegistrars;
   private readonly cleanups: Array<() => Promise<void> | void> = [];
@@ -87,10 +61,12 @@ export class PluginBinding implements PluginActivationContext {
 
   constructor(
     instance: PluginInstance,
+    session: PluginSessionContext,
     registrars: PluginRegistrars,
     resources: PluginResourceClient,
   ) {
     this.instance = instance;
+    this.session = Object.freeze({ ...session });
     this.registrars = registrars;
     this.resources = resources;
   }

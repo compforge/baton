@@ -79,6 +79,24 @@ describe("ProposalStore", () => {
     ).toBe(true);
   });
 
+  test("distinguishes observations within one Resource generation by resourceVersion", () => {
+    const store = new ProposalStore({
+      session: testSession(testRoot()),
+    });
+    const observedDraft = (resourceVersion: number): ReconcileProposal => ({
+      key: draft().key,
+      basedOnGeneration: 1,
+      basedOnResourceVersion: resourceVersion,
+      text: "Review requirement",
+    });
+    const first = store.record(observedDraft(2));
+    const repeated = store.record(observedDraft(2));
+    const nextObservation = store.record(observedDraft(3));
+
+    expect(repeated).toEqual(first);
+    expect(nextObservation.proposalId).not.toBe(first.proposalId);
+  });
+
   test("persists the first resolution and derives pending from its absence", () => {
     const root = testRoot();
     const proposals = new ProposalStore({

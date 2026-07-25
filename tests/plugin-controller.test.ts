@@ -118,6 +118,7 @@ describe("plugin Controller", () => {
       {
         key: key(),
         basedOnGeneration: 1,
+        basedOnResourceVersion: 2,
         text: "Please review the implementation.",
       },
     ]);

@@ -72,6 +72,13 @@ manifest 先声明 `manifestVersion + pluginId + version + entry` 和可选展�
 Contribution 与权限声明等到对应的安装审阅和运行期校验入口出现时再扩展，不先造无人消费的
 字段。
 
+三方 Plugin 只依赖独立的 `@qiankun01/baton-plugin` 类型包。它与 Baton 宿主位于同一
+monorepo，便于契约、宿主适配和测试原子演进，但独立版本化和发布；其中只包含
+`PluginPackage`、`PluginActivationContext`、Resource/Reconciler、Builtin Resource、
+`BatonSnapshot` 和 `PluginOutput` 等作者契约。Manager、Binding、Controller、Store、
+Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 自己也消费这份公共
+契约，不维护第二套同名类型。
+
 #### PluginInstance
 
 `PluginInstance` 是某个 Package 在 BatonSession 中的一份配置身份，包含：
@@ -269,10 +276,10 @@ handler。Baton 在激活时校验二者一致，既能让安装者提前看见�
 写进 manifest。
 
 Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可写 Resource。首期也不提供
-Monitor、Schedule、Action 或通用 Hook：Builtin watch、领域收敛和定时重查分别使用
-`watchBuiltinResource`、`registerResource` 与 `requeueAfter`。只有 webhook、关闭 TUI 后的
-持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，才增加
-对应的窄接口。
+Monitor、EventSource、Schedule、Action 或通用 Hook：Builtin watch、领域收敛和定时重查分别
+使用 `watchBuiltinResource`、`registerResource` 与 `requeueAfter`。只有 webhook、关闭 TUI
+后的持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，
+才增加对应的窄接口。
 
 ### 1.4 Marketplace 与 `/plugins`
 
@@ -282,7 +289,7 @@ Instance 管理，但在信息结构上保持两者分层：
 ```text
 /plugins
 ├── Discover       Marketplace 中可获得的 PluginPackage
-├── Installed      bundled / 已安装的 PluginPackage
+├── Installed      已安装的 PluginPackage
 ├── Marketplaces   已注册的 Marketplace 与来源
 └── Errors         Marketplace / Package 加载错误
 ```
@@ -457,8 +464,9 @@ Interaction 或另一套审批状态机。Baton 把持久 Proposal 投影为 Int
 suggested input；用户显式采用后才进入 composer，可编辑后提交，也可直接丢弃。只有提交后，
 它才成为普通 Input，继续走现有 Input → Attempt → Harness 路径。Baton 从本次 Resource 自动取得 resource
 identity 与水位，再结合文本摘要给 Proposal 生成稳定内部身份；PluginResource Proposal 使用
-`basedOnGeneration`，Builtin Resource Proposal 使用 `basedOnRevision`，这些 Manager 管理的
-信息不由 Plugin 回填。
+`basedOnGeneration + basedOnResourceVersion`，因此同一 Contract 下的不同外部 observation
+可以各自产生一次建议；Builtin Resource Proposal 使用 `basedOnRevision`。这些 Manager 管理的
+信息不由 Plugin 回填，旧版只有 `basedOnGeneration` 的持久 Proposal 继续按原身份读取。
 
 Manager 在通知 UI 前先持久化 Proposal，接收方按 `proposalId` 幂等投影。`resolution` 缺省即
 待处理，首次 `submitted | dismissed` 终结后不再改变；因此同一状态下被丢弃或提交的建议不会

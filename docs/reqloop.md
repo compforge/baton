@@ -32,7 +32,7 @@ Requirement
 - **Baton**：只提供 Plugin runtime、Harness、事件、调度、权限、Board 和 Context；
 - **reqloop**：拥有 Requirement Loop 的领域模型、推进策略、完成条件与平台适配。
 
-reqloop 作为 bundled Plugin 随 Baton 发布，但不是 Baton core：
+reqloop 作为独立 Package 通过 reqloop Marketplace 发布，不是 Baton core：
 
 - 可以禁用、替换和独立升级；
 - 未配置时 `/requirement` 提供引导，不要求 Baton core 理解需求字段；
@@ -213,10 +213,18 @@ reqloop 只消费 Baton 归一后的 `harness.delivery.ready`、`harness.develop
 资源引用。这样 Requirement Loop 不依赖某个 Harness Plugin 的私有文件、hook payload 或安装
 方式；未来其他 agent-loop 规范工具也可以产生同一 DevelopmentOutcome。
 
-首期 reqloop 需要修改代码或诊断失败时，返回 `PluginOutput(kind: "proposed-input")`。Baton 将文本放入
-composer，用户可以原样提交、编辑后提交或丢弃；只有提交后才成为普通 Input，继续走现有
-Input → Attempt → Harness 路径。reqloop 不直接调用 Codex/Claude Code，也不持有其原生
-session。
+review 完成提醒是首个渐进落地的例外适配：devloop 仍在 Harness 内触发 review，并把终态追加到
+自己的 `review-history.jsonl`；reqloop 内部的 `DevloopReviewConnector` 将这份外部 ledger
+映射为 Verdict observation，review-watch Resource 通过 `requeueAfter` 定时重读。Reconciler
+持久记录已观察 identity；有 findings、文件失败或 review error 时，返回
+`proposed-input`，提醒用户让当前 Harness 对照代码检查 comments。devloop 的 channel/waiter
+不再是 Baton 内提醒成立的前提；Connector 只消费 `review sha == 当前 checkout HEAD` 的记录，
+避免 repo 级 ledger 中其他 worktree 的结果串到当前会话。Baton core 不解析 `.devloop` 格式。
+
+首期 reqloop 需要修改代码或诊断失败时，返回 `PluginOutput(kind: "proposed-input")`。Baton
+将它投影到 InteractionDock；用户采用后进入 composer，可原样提交、编辑后提交，也可直接
+丢弃。只有提交后才成为普通 Input，继续走现有 Input → Attempt → Harness 路径。reqloop
+不直接调用 Codex/Claude Code，也不持有其原生 session。
 
 长期如果真实工作区证明必须在无人输入时恢复 Harness，再让 Reconciler 通过 Baton 的受控能力
 请求一个或多个 Harness。该能力嵌套在 Resource/Reconcile 契约下，不提前增加一个顶层
@@ -232,8 +240,8 @@ Harness Work 类型；Harness 的路由、成本、并发、取消和可靠投�
    user-driven turn。
 4. Harness 内部的 devloop 约束 agent 完成开发小闭环；Harness 边界报告带 ReqLoopRun reference
    的 `harness.delivery.ready`，Reconciler 将 PR 等实际交付物写入 `status`。
-5. `spec` 要求 review 且尚未启动时，Reconciler 调用 VerdictConnector，并用
-   `requeueAfter` 定时读取长耗时 review 的结果。
+5. 当前由 devloop 触发的 review 完成后，`DevloopReviewConnector + requeueAfter` 观察其终态；
+   后续由 reqloop 自己发起的远端 review 仍可由 VerdictConnector 配合 `requeueAfter` 查询。
 6. review 要求修改时，Reconciler 返回包含 review 意见的修复 `proposed-input` Output；用户审核后再次
    驱动 Harness。
 7. Deployment、Verdict 和 Completion Policy 满足时，Reconciler 更新 conditions，并在已由
@@ -333,13 +341,14 @@ Baton 作为通用产品需要一个清晰的默认故事。reqloop 随 Baton �
 2. Connector 只属于 reqloop 内部，不成为 Baton Plugin API 或 runtime identity。
 3. Reconciler 可以调用 reqloop Connector，但只能收敛已授权 spec，并对不确定外部写入先观察
    后重试。
-4. reqloop 只通过 Baton 的 Input、Event 和 Resource reference 与 Harness 协作，不发现或依赖
-   devloop 等
-   Harness Plugin 的内部实现。
+4. reqloop 只通过 Baton 的 Input、Event 和 Resource reference 与 Harness 协作；对 devloop
+   review ledger 的兼容只存在于 reqloop 内部 Connector，不进入 Baton core，也不允许
+   Reconciler 调用 devloop 的 Harness 私有能力。
 5. 首期 Reconciler 只返回 `proposed-input` Output，用户提交后才形成普通 Input。
 6. 未来即使开放主动 Harness 调用，reqloop 也不直接持有 Harness runtime 或原生 session。
 7. ReqLoopRun 是持久 Resource；Board、Connector cursor 和私有 snapshot 都不是独立真相源。
-8. reqloop bundled 但可禁用、可升级；Baton core 在没有 reqloop 时仍完整工作。
+8. reqloop 通过独立 Marketplace Package 交付、可禁用、可升级；Baton core 在没有 reqloop 时
+   仍完整工作。
 9. Plugin 声明能力不等于获得权限；敏感 desired state 在写入 spec 前完成授权。
 10. reqloop 只能修改自己的 Resource status 与 Board projection；其他 owner 的产出只能作为
     observation 读取。
