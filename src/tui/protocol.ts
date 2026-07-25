@@ -1139,6 +1139,20 @@ function buildTranscript(state: SessionState, pinnedPlanId?: string): Transcript
       });
       continue;
     }
+    if (entry.type === "error") {
+      const error = state.errors.get(entry.id);
+      if (!error) continue;
+      // 错误用 failed 状态（红色 ✗）醒目展示
+      items.push({
+        type: "block",
+        id: entry.id,
+        kind: "error",
+        status: "failed",
+        title: error.code ? `Error: ${error.code}` : "Error",
+        content: { type: "text", text: error.message },
+      });
+      continue;
+    }
     if (entry.type === "message") {
       const msg = state.messages.get(entry.id);
       if (!msg) continue;
