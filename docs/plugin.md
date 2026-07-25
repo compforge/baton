@@ -1,10 +1,10 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> PluginResource / Reconcile / Proposal / 动态唤醒、`baton.turn` Builtin Resource
+> PluginResource / Reconcile / Proposal / Board projection / 动态唤醒、`baton.turn` Builtin Resource
 > 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、当前 Session 的
 > Instance 启停、`/plugins` 首期管理面和
-> `/reload-plugins` 已经落地；Command、Board、Instance 配置和权限审阅仍按真实产品入口增量
+> `/reload-plugins` 已经落地；Command、Context projection、Instance 配置和权限审阅仍按真实产品入口增量
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
@@ -281,6 +281,30 @@ Monitor、EventSource、Schedule、Action 或通用 Hook：Builtin watch、领�
 使用 `watchBuiltinResource`、`registerResource` 与 `requeueAfter`。只有 webhook、关闭 TUI
 后的持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，
 才增加对应的窄接口。
+
+Resource Contribution 可以附带 `BoardProjector`，把当前 Resource 派生为零到多个通用
+Board 条目：
+
+```ts
+context.registerResource({
+  resourceKind: "ReqLoopRun",
+  reconciler,
+  board: {
+    project(resource) {
+      return [{
+        key: "summary",
+        title: resource.spec.title,
+        status: resource.status.phase,
+      }];
+    },
+  },
+});
+```
+
+`key` 只需在单个 Resource 内稳定且唯一。Baton 统一补齐 PluginInstance、Resource reference
+和最终条目身份；Projection 不写盘、不接收 BoardState，也不能成为第二份业务真相。没有有效
+条目时 Board 在 UI 中完全隐藏；单个 Resource 投影失败会显示归属明确的诊断条目，不遮掉其它
+Plugin 的 Board。
 
 ### 1.4 Marketplace 与 `/plugins`
 
@@ -669,8 +693,8 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
 5. 以 reqloop 的 `/requirement` 验证 Command 的真实需要，再补
    `command | resource` 声明校验和多实例路由，不先为未接产品入口的 Command 造 handler。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
-   提交后驱动 Harness；后续接通 Board projection 与可选 Context projection，跑通完整
-   Requirement Loop。
+   提交后驱动 Harness；Resource Contribution 的 `BoardProjector` 已接入可选右侧 Sidecar，
+   后续再接可选 Context projection，跑通完整 Requirement Loop。
 7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Reconciler 主动启动 Harness 后，再设计受控调用；首期只允许用户把

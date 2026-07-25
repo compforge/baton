@@ -293,6 +293,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private status: StatusMessage | null = null;
   private commandOutput: TranscriptItem | null = null;
   private picker: PendingPicker | null = null;
+  private boardMode: "auto" | "open" | "hidden" = "auto";
   private nextOverlayId = 1;
   private listeners = new Set<() => void>();
   private view: ChatViewState;
@@ -503,6 +504,16 @@ export class BatonChatProtocol implements ChatProtocol {
           { sourceProposedPlanId: resolved.planId },
         );
       }
+      case "board": {
+        const mode = argument.trim().toLowerCase() || "open";
+        if (mode !== "open" && mode !== "hide" && mode !== "auto") {
+          throw new Error(`/board takes 'open', 'hide', or 'auto' (got: ${argument})`);
+        }
+        this.boardMode = mode === "hide" ? "hidden" : mode;
+        this.status = null;
+        this.changed();
+        return;
+      }
       case "plugins": {
         if (argument) throw new Error("/plugins takes no arguments");
         if (!this.navigation) throw new Error("Plugin manager is not available in this client");
@@ -586,6 +597,11 @@ export class BatonChatProtocol implements ChatProtocol {
 
   cancel(): void {
     void this.controller.control({ kind: "interrupt" });
+  }
+
+  dismissSidecar(): void {
+    this.boardMode = "hidden";
+    this.changed();
   }
 
   /** 优雅退出：先关掉 agent 子进程再退（对应 /exit、双击 Ctrl+C、Ctrl+D） */
@@ -775,6 +791,9 @@ export class BatonChatProtocol implements ChatProtocol {
       onProposal: () => {
         this.changed();
       },
+      onBoardChanged: () => {
+        this.changed();
+      },
       onActivationError: ({ pluginInstanceId, error }) => {
         this.status = {
           text: `Plugin ${pluginInstanceId} activation failed: ${
@@ -951,6 +970,39 @@ export class BatonChatProtocol implements ChatProtocol {
   private buildView(): ChatViewState {
     const v = this.state;
     const activeTargetId = this.controller.activeHarnessTargetId;
+    const boardItems = this.plugins.listBoardItems();
+    const boardSections = new Map<
+      string,
+      {
+        id: string;
+        title: string;
+        items: Array<{
+          id: string;
+          title: string;
+          status?: string;
+          detail?: string;
+          tone?: "default" | "muted" | "success" | "warning" | "error";
+        }>;
+      }
+    >();
+    for (const item of boardItems) {
+      let section = boardSections.get(item.pluginInstanceId);
+      if (!section) {
+        section = {
+          id: item.pluginInstanceId,
+          title: item.pluginId,
+          items: [],
+        };
+        boardSections.set(item.pluginInstanceId, section);
+      }
+      section.items.push({
+        id: item.id,
+        title: item.title,
+        ...(item.status === undefined ? {} : { status: item.status }),
+        ...(item.detail === undefined ? {} : { detail: item.detail }),
+        ...(item.tone === undefined ? {} : { tone: item.tone }),
+      });
+    }
     // Baton Interaction 保持阻塞生命周期；Plugin Proposal 只在 UI 投影层加入同一 Dock，
     // 不伪造 interaction.opened/resolved。阻塞项在前，避免建议遮住 harness 等待。
     const interactions: InteractionView[] = [
@@ -1076,8 +1128,16 @@ export class BatonChatProtocol implements ChatProtocol {
         ? { id: this.picker.id, title: this.picker.title, options: this.picker.options }
         : null,
       interactions,
+      sidecar:
+        boardItems.length > 0
+          ? {
+              title: "Board",
+              mode: this.boardMode,
+              sections: [...boardSections.values()],
+            }
+          : undefined,
       status: this.status,
-      footer: `session: ${this.session.id}  in:${v.usage.inputTokens} out:${v.usage.outputTokens}  turns:${v.turnSummaries.length}  queue:${this.controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}  cwd:${this.session.meta.cwd}`,
+      footer: `session: ${this.session.id}  in:${v.usage.inputTokens} out:${v.usage.outputTokens}  turns:${v.turnSummaries.length}  queue:${this.controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${boardItems.length > 0 ? `  board:${boardItems.length}` : ""}  cwd:${this.session.meta.cwd}`,
       // ↑ 召回提示只在"可召回"时出现：交互发生地是 composer（placeholder 天然只在空输入时可见）
       // busy 时由 Adapter 决定 same-turn send 或由 Controller 保序排队。
       composerPlaceholder: `Message ${this.harnessTargetId} (/ commands, @ mentions, ${

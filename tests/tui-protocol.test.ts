@@ -164,6 +164,75 @@ describe("BatonChatProtocol status command", () => {
   });
 });
 
+describe("BatonChatProtocol Board", () => {
+  test("maps Board items to the optional sidecar and hides it when empty", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-board-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      let items = [
+        {
+          id: "board-item-1",
+          pluginId: "qiankun/reqloop",
+          pluginInstanceId: "reqloop_default",
+          resourceKind: "HelloCounter",
+          resourceId: "counter",
+          title: "Hello counter",
+          status: "2 / 3",
+          tone: "success" as const,
+        },
+      ];
+      const internals = protocol as unknown as {
+        plugins: { listBoardItems: () => typeof items };
+        changed: () => void;
+      };
+      internals.plugins.listBoardItems = () => items;
+      internals.changed();
+
+      expect(protocol.getView().sidecar).toEqual({
+        title: "Board",
+        mode: "auto",
+        sections: [
+          {
+            id: "reqloop_default",
+            title: "qiankun/reqloop",
+            items: [
+              {
+                id: "board-item-1",
+                title: "Hello counter",
+                status: "2 / 3",
+                tone: "success",
+              },
+            ],
+          },
+        ],
+      });
+      expect(protocol.getView().footer).toContain("board:1");
+
+      await protocol.command("board", "hide");
+      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+      await protocol.command("board", "");
+      expect(protocol.getView().sidecar?.mode).toBe("open");
+      protocol.dismissSidecar();
+      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+
+      items = [];
+      internals.changed();
+      expect(protocol.getView().sidecar).toBeUndefined();
+      expect(protocol.getView().footer).not.toContain("board:");
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("BatonChatProtocol proposed plan", () => {
   test("renders a completed proposal as history, not as the live plan pin", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-proposed-plan-"));

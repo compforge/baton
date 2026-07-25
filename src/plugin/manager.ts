@@ -38,6 +38,10 @@ import {
 } from "./queue.ts";
 import { PluginResourceStore } from "./resource.ts";
 import { createPluginResourceClient } from "./resource-client.ts";
+import {
+  type BoardItem,
+  projectBoardSource,
+} from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
 import {
   emptyBatonSnapshot,
@@ -95,6 +99,8 @@ export interface ManagerOptions {
   ): Promise<PluginPackage>;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
+  /** Board 数据或可用 Projection 变化；宿主据此重建展示快照。 */
+  onBoardChanged?(): void;
   /** Reconciler 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: {
     initialDelayMs?: number;
@@ -139,6 +145,11 @@ interface RetryState {
   attempt: number;
 }
 
+interface ManagedBoardSource {
+  readonly pluginInstanceId: string;
+  project(): readonly BoardItem[];
+}
+
 function positiveDelay(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${name} must be a positive integer`);
@@ -150,6 +161,7 @@ function positiveDelay(name: string, value: number): void {
  */
 export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
+  private readonly boardSources = new Map<string, ManagedBoardSource>();
   private readonly instances: PluginInstanceStore;
   private readonly packages = new Map<string, PluginPackage>();
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
@@ -162,6 +174,7 @@ export class Manager {
   private readonly builtinProjection?: BuiltinResourceProjection;
   private readonly unsubscribeBuiltinProjection?: () => void;
   private readonly onProposal: ManagerOptions["onProposal"];
+  private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly retryInitialDelayMs: number;
@@ -212,6 +225,7 @@ export class Manager {
       options.snapshot ??
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
     this.onProposal = options.onProposal;
+    this.onBoardChanged = options.onBoardChanged;
     this.onActivationError = options.onActivationError;
     this.onReconcileError = options.onReconcileError;
     this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
@@ -379,6 +393,7 @@ export class Manager {
           session: this.instances.session,
           pluginInstanceId: instance.pluginInstanceId,
         }),
+        () => this.notifyBoardChanged(),
       ),
     );
     let activation!: Promise<void>;
@@ -390,6 +405,7 @@ export class Manager {
           if (this.closed) throw new Error("plugin Manager is closed");
           this.bindings.set(pluginInstanceId, binding);
           this.resumeControllers(pluginInstanceId);
+          this.notifyBoardChanged();
         } catch (error) {
           try {
             await binding.close();
@@ -417,7 +433,11 @@ export class Manager {
     const binding = this.bindings.get(pluginInstanceId);
     if (!binding) return;
     this.bindings.delete(pluginInstanceId);
-    await binding.close();
+    try {
+      await binding.close();
+    } finally {
+      this.notifyBoardChanged();
+    }
   }
 
   isInstanceActive(pluginInstanceId: string): boolean {
@@ -575,6 +595,15 @@ export class Manager {
     return this.proposals.listPending();
   }
 
+  listBoardItems(): readonly BoardItem[] {
+    const items: BoardItem[] = [];
+    for (const source of this.boardSources.values()) {
+      if (!this.bindings.has(source.pluginInstanceId)) continue;
+      items.push(...source.project());
+    }
+    return Object.freeze(items);
+  }
+
   resolveProposal(proposalId: string, outcome: ProposalOutcome): Proposal {
     return this.proposals.resolve(proposalId, outcome);
   }
@@ -675,18 +704,42 @@ export class Manager {
     pluginInstanceId: string,
     contribution: ResourceContribution<TSpec, TStatus>,
   ): () => void {
+    const store = new PluginResourceStore({
+      session: this.instances.session,
+      pluginInstanceId,
+    });
     const registration = this.registerControllerInternal(
       {
         ...contribution,
-        store: new PluginResourceStore({
-          session: this.instances.session,
-          pluginInstanceId,
-        }),
+        store,
         now: this.now,
       },
       true,
     );
-    return () => registration.close();
+    const sourceId = reconcileScopeId({
+      batonSessionId: this.proposals.batonSessionId,
+      pluginInstanceId,
+      resourceKind: contribution.resourceKind,
+    });
+    if (contribution.board) {
+      const pluginId = this.instances.get(pluginInstanceId).pluginId;
+      const projector = contribution.board;
+      this.boardSources.set(sourceId, {
+        pluginInstanceId,
+        project: () =>
+          projectBoardSource({
+            pluginId,
+            pluginInstanceId,
+            resourceKind: contribution.resourceKind,
+            store,
+            projector,
+          }),
+      });
+    }
+    return () => {
+      this.boardSources.delete(sourceId);
+      registration.close();
+    };
   }
 
   private bindBuiltinResource<K extends BuiltinResourceKind>(
@@ -717,6 +770,7 @@ export class Manager {
     }
     for (const controller of this.controllers.values()) controller.close();
     this.controllers.clear();
+    this.boardSources.clear();
     this.retries.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
@@ -731,6 +785,15 @@ export class Manager {
       this.onActivationError?.(Object.freeze(failure));
     } catch {
       // Diagnostic projection must not keep healthy Plugin instances from starting.
+    }
+  }
+
+  private notifyBoardChanged(): void {
+    if (this.closed) return;
+    try {
+      this.onBoardChanged?.();
+    } catch {
+      // Board is a derived view; consumer invalidation must not affect Plugin runtime state.
     }
   }
 

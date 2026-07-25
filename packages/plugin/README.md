@@ -12,7 +12,18 @@ const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
   activate(context: PluginActivationContext) {
-    // Register Resources and Builtin Resource watches here.
+    context.registerResource({
+      resourceKind: "Example",
+      reconciler: { async reconcile() {} },
+      board: {
+        project(resource) {
+          return [{
+            key: "summary",
+            title: resource.metadata.resourceId,
+          }];
+        },
+      },
+    });
   },
 };
 

@@ -11,6 +11,7 @@ export type CommandName =
   | "effort"
   | "compact"
   | "implement-plan"
+  | "board"
   | "plugins"
   | "reload-plugins"
   | "sessions"
@@ -54,6 +55,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "implement-plan",
     description: "Start a new turn that implements a proposed plan (latest by default)",
+    scope: "baton",
+    runPolicy: "always",
+  },
+  {
+    name: "board",
+    description: "Open the Board sidecar ('hide' or 'auto' to change display mode)",
     scope: "baton",
     runPolicy: "always",
   },

@@ -1,4 +1,10 @@
 export type {
+  BoardItemDraft,
+  BoardItemTone,
+  BoardProjector,
+} from "./board.ts";
+
+export type {
   PluginActivationContext,
   PluginConfig,
   PluginInstance,
