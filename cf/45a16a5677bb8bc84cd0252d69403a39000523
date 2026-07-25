@@ -1,0 +1,21 @@
+src/tui/protocol.ts
+  s_7bf5b2feeb69fc::t_8bddc6e57b8575 696,698
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf45a16a5677bb8bc84cd0252d69403a39000523",
+  "prompts": {},
+  "sessions": {
+    "s_7bf5b2feeb69fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "828b8d06-2da7-4013-9dcb-058e9e26176f",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
