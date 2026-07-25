@@ -73,6 +73,30 @@ describe("Claude model capability", () => {
     expect(adapter.nativeSessionId(ref)).toBe("claude-session-1");
   });
 
+  test("restores Claude Code prompt and filesystem settings for normal turns", async () => {
+    let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
+    const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+      queryOptions = params.options;
+      return {
+        initializationResult: async () => ({ models: [] }),
+        close: () => {},
+        async *[Symbol.asyncIterator]() {},
+      } as unknown as ReturnType<NonNullable<ClaudeAdapterOptions["queryFactory"]>>;
+    }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+
+    await adapter.submit(ref, {
+      turnId: "t_1",
+      messageId: "m_1",
+      blocks: [{ type: "text", text: "hello" }],
+    });
+    await Bun.sleep(0);
+
+    expect(queryOptions?.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
+    expect(queryOptions?.settingSources).toEqual(["user", "project", "local"]);
+  });
+
   test("requires an existing native conversation before compacting", async () => {
     const adapter = new ClaudeAdapter({ interactionHandler });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
