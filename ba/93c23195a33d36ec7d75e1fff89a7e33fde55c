@@ -1,0 +1,25 @@
+src/harness/claude/adapter.ts
+  s_1732ff951c99d0::t_085c1b8279cd28 26,680,683,732-818
+tests/claude-friendly-errors.test.ts
+  s_1732ff951c99d0::t_1b64bfc12e9c44 1-113
+tests/codex-friendly-errors.test.ts
+  s_1732ff951c99d0::t_9e79cce38b32a0 7,25,37,52,67,79,91,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ba93c23195a33d36ec7d75e1fff89a7e33fde55c",
+  "prompts": {},
+  "sessions": {
+    "s_1732ff951c99d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10d58710-f6ed-4855-8f55-c4d9a23f2506",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
