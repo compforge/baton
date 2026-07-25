@@ -1304,6 +1304,27 @@ export class CodexAdapter implements HarnessAdapter {
         this.finishTurn(rt, rt.activeTurn, String(turn.status ?? "completed"));
         break;
       }
+      case "error": {
+        const error = (p.error ?? {}) as Record<string, unknown>;
+        const willRetry = p.willRetry === true;
+        const code = typeof error.codexErrorInfo === "string" ? error.codexErrorInfo : undefined;
+        this.emit(
+          rt,
+          {
+            kind: "_baton_error_update",
+            payload: {
+              message: String(error.message ?? "Codex turn failed"),
+              ...(code ? { code } : {}),
+              willRetry,
+            },
+          },
+          params,
+        );
+        // app-server 明确保证 willRetry=true 不打断 turn；反之 error 本身就是终态，
+        // 立即收口可避免依赖随后可能丢失的 turn/completed，迟到终态由 finalized 幂等吸收。
+        if (!willRetry) this.finishTurn(rt, rt.activeTurn, "failed");
+        break;
+      }
       case "hook/completed": {
         // 只关心会吞掉整个 turn 的拦截：UserPromptSubmit / SessionStart 被 block 时
         // codex core 静默空结束（prompt 不进 history、无任何 error 事件），block 原因只在
