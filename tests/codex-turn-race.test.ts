@@ -141,7 +141,7 @@ test("codex wire: turn/completed notification before the blocking turn/start res
   });
 
   // turn A admission：turn/start 请求上线；老版本 app-server 的响应阻塞在途
-  await h.adapter.submit(h.ref, prompt("t_A", "question A"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "question A"));
   const reqA = h.outbound.find((m) => m.method === "turn/start");
   expect(reqA).toBeDefined();
 
@@ -162,7 +162,7 @@ test("codex wire: turn/completed notification before the blocking turn/start res
   expect(h.idlesOf()[0]?.turnId).toBe("t_A");
 
   // 下一 turn 已 admission，其 fast-submit 响应正常先回
-  await h.adapter.submit(h.ref, prompt("t_B", "question B"));
+  await h.adapter.sendTurn(h.ref, prompt("t_B", "question B"));
   const reqB = h.outbound.filter((m) => m.method === "turn/start")[1];
   expect(reqB).toBeDefined();
   h.respond(reqB?.id ?? -1, { turn: { id: "codex-B", status: "inProgress" } });

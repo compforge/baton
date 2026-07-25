@@ -14,7 +14,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { PromptBlock } from "../src/event/types.ts";
@@ -43,10 +43,10 @@ class ManualAdapter implements HarnessAdapter {
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.activeTurn = input;
     this.prompts.push(textOf(input.blocks));
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   finish(): void {
@@ -84,13 +84,13 @@ class SyncBlocksManualAdapter extends ManualAdapter {
   syncPayloads: string[] = [];
   failNextSubmit = false;
 
-  override async submit(ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  override async sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     if (this.failNextSubmit) {
       this.failNextSubmit = false;
       throw new Error("admission down");
     }
     if (input.syncBlocks?.length) this.syncPayloads.push(textOf(input.syncBlocks));
-    return super.submit(ref, input);
+    return super.sendTurn(ref, input);
   }
 }
 

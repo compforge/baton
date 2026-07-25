@@ -79,7 +79,7 @@ HarnessTarget、PluginInstance 等配置对象使用
 控制（出站）  chat-tui intent
              → Controller（拥有 Input 生命周期，调度 driven turn）
              → Delivery Attempt（prepared → dispatching → accepted）
-             → Adapter（按 capability 映射 submit / steer / cancel / approve）
+             → Adapter（sendTurn 归一 new turn / steer，并映射 cancel / approve）
              → harness wire
 感知（入站）  harness wire
              → Adapter 归一（→ 封闭词表，未知 fail-closed，保留 raw）
@@ -102,7 +102,7 @@ HarnessTarget、PluginInstance 等配置对象使用
 **人工审批闭环**（Interaction 的一个 kind）：Adapter 提交 permission draft → Controller 签发 `ix_`、append `interaction.opened`（state → requires_action）→ 用户在 TUI 决策 → Controller append `interaction.resolved` 并解开 Adapter await → Adapter 回传 Harness。自动 reviewer 未向 Baton 打开 Interaction 时，`ApprovalReview` 是独立审计事实，不伪造 opened/resolved 配对。declined 是一等终态；委托状态对当前活跃 harness 可见。
 
 **上下文接力旁支**：`ContextSource(kind + owner + key)` → 组装并持久化
-`ContextSnapshot` → 通过 `syncContext`、submit side-channel 或 prompt prepend 交付 →
+`ContextSnapshot` → 通过 `syncContext`、sendTurn side-channel 或 prompt prepend 交付 →
 transport 接受后持久化 `ContextDeliveryReceipt` → 从 Receipt 重放该 HarnessSession 的
 `ContextEpoch`。`meta.syncedSeq` 只是兼容缓存；存在 Snapshot 但没有 Receipt 时水位不前进，
 下次仍需补投。当前首个 source kind 是 BatonSession 的 `session_history`，Board / Plugin /
@@ -117,7 +117,7 @@ interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;              // 可展示的能力 descriptor
   open(opts, sink: EventSink): Promise<HarnessSessionRef>;
-  submit(ref, input: PromptInput): Promise<PromptReceipt>; // resolve 仅代表 admission 通过，不代表 turn 完成
+  sendTurn(ref, input: PromptInput): Promise<SendTurnReceipt>; // adapter 决定 new_turn / steer / rejected
   cancel(ref): Promise<void>;
   close(ref): Promise<void>;
 }
@@ -126,10 +126,10 @@ interface HarnessAdapter {
 **MUST**：
 
 - 实现小核心 `HarnessAdapter`；把 wire 方言归一成 Event 草稿并保 `raw`；adapter 不能自填 `source`、Harness 或 HarnessTarget，宿主在接入边界按绑定关系统一补齐；未知终态按不变量 #2 保守收口。
-- `submit` throw 只表示 Adapter 尚未接受投递责任；resolve 后的任何失败都必须经事件流
+- `sendTurn` throw 只表示 Adapter 尚未接受投递责任；accepted 后的任何失败都必须经事件流
   给出 Harness 终态。Delivery Attempt 是 Controller 的记账，不进入 Adapter 输入契约。
 - 需要外部参与者时向宿主提交 typed `InteractionDraft` 并等待 resolution；不得自签 `interactionId`，也不得自行 emit `interaction.opened/resolved`。
-- 可选能力（`Steerable` / `Reconcilable` / `SessionConfigurable` /
+- 可选能力（`Reconcilable` / `SessionConfigurable` /
   `NativeSessionCheckpointable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，
   绝不是核心分支。
 - 经 `harness/registry`（Harness 定义 + adapter 工厂）+ `harness/ids`（无 SDK 身份目录：id + aliases）注册。
@@ -155,7 +155,7 @@ interface HarnessAdapter {
 
 **两个演进方向：**
 
-1. **capability 毕业**：一个可选能力（如 `Steerable`）若被所有活跃 harness 支持、且成为交互刚需，可从"可选"升为"核心约定"。代价是新 harness 从此必须实现它、接入门槛随之抬高——所以非刚需不升。
+1. **capability 毕业**：一个可选能力（如 `Reconcilable`）若被所有活跃 harness 支持、且成为交互刚需，可从"可选"升为"核心约定"。代价是新 harness 从此必须实现它、接入门槛随之抬高——所以非刚需不升。
 2. **概念提升**：一个反复在投影 / 存储层打补丁的隐式概念，被确认为跨 harness 的普遍需求后，提升为一等内核概念。§6 列出各轴的一等概念，就是这条路径的落点。
 
 **每次内核改动回答三问**：① 这是 ≥2 家的共性，还是一家的方言？② 能否用 optional capability 而非核心字段表达？③ 持久协议是保持兼容，还是以新 envelope version 明确切断？三问没有明确答案，就先留在 adapter 层。

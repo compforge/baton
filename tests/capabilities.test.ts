@@ -21,12 +21,11 @@ const adapters: HarnessAdapter[] = [
 
 /**
  * capability path → 声明支持时 adapter 必须存在的方法。
- * 新可选接口落地时在此登记（Steerable/CommandDiscoverable/SessionConfigurable/Interactive…）。
+ * 新可选接口落地时在此登记（CommandDiscoverable/SessionConfigurable/Interactive…）。
  */
 const CAPABILITY_CONTRACT: Record<string, string[]> = {
-  steer: ["steer"],
   compact: ["compactContext"],
-  // 输入映射型能力：submit 原生承载 PromptInput.syncBlocks（side-channel 注入），
+  // 输入映射型能力：sendTurn 原生承载 PromptInput.syncBlocks（side-channel 注入），
   // 无独立方法可查——行为由 watermark.test / adapter-model.test 钉住
   sync: [],
   commands: ["listCommands"],

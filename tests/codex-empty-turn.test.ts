@@ -85,7 +85,7 @@ function blockedHookRun(overrides?: Record<string, unknown>) {
 
 test("codex: blocked UserPromptSubmit hook surfaces a notice and explains the empty turn", async () => {
   const h = wireHarness();
-  await h.adapter.submit(h.ref, prompt("t_A", "hi"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "hi"));
 
   h.notifyIn("turn/started", { threadId: "th1", turn: { id: "codex-A" } });
   h.notifyIn("hook/completed", { threadId: "th1", turnId: "codex-A", run: blockedHookRun() });
@@ -116,7 +116,7 @@ test("codex: blocked UserPromptSubmit hook surfaces a notice and explains the em
 
 test("codex: empty completed turn without hook context still raises a notice", async () => {
   const h = wireHarness();
-  await h.adapter.submit(h.ref, prompt("t_A", "hi"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "hi"));
 
   h.notifyIn("turn/started", { threadId: "th1", turn: { id: "codex-A" } });
   h.notifyIn("turn/completed", { threadId: "th1", turn: { status: "completed" } });
@@ -129,7 +129,7 @@ test("codex: empty completed turn without hook context still raises a notice", a
 
 test("codex: turns with output and successful hooks emit no notice", async () => {
   const h = wireHarness();
-  await h.adapter.submit(h.ref, prompt("t_A", "hi"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "hi"));
 
   h.notifyIn("turn/started", { threadId: "th1", turn: { id: "codex-A" } });
   // 正常完成的 hook 不产生警示
@@ -150,7 +150,7 @@ test("codex: turns with output and successful hooks emit no notice", async () =>
 
 test("codex: interrupted empty turn is not reported as anomalous", async () => {
   const h = wireHarness();
-  await h.adapter.submit(h.ref, prompt("t_A", "hi"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "hi"));
 
   h.notifyIn("turn/started", { threadId: "th1", turn: { id: "codex-A" } });
   // 用户立即打断：零产出是预期结果，不是"吞消息"
@@ -161,7 +161,7 @@ test("codex: interrupted empty turn is not reported as anomalous", async () => {
 
 test("codex: non-prompt hook blocks (stop/preToolUse) are flow control, not notices", async () => {
   const h = wireHarness();
-  await h.adapter.submit(h.ref, prompt("t_A", "hi"));
+  await h.adapter.sendTurn(h.ref, prompt("t_A", "hi"));
 
   h.notifyIn("turn/started", { threadId: "th1", turn: { id: "codex-A" } });
   h.notifyIn("hook/completed", {

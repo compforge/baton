@@ -79,15 +79,15 @@ Composer 的 ↑/↓ 是“取回既有输入”的统一入口。在无补全�
 
 | 能力 | baton 统一语义 / 入口 | Claude Code | Codex | 当前状态 |
 |---|---|---|---|---|
-| 普通文本 | `PromptBlock[]` → `submit()` | SDK `query()` | `turn/start` | 已支持；当前 Adapter 最终发送 text |
+| 普通文本 | `PromptBlock[]` → `sendTurn()` | session 级 streaming `query()` | `turn/start` | 已支持；当前 Adapter 最终发送 text |
 | 图片等富输入 | `PromptBlock` 可表达 image/resource | 原生协议可表达 | `UserInput` 可表达 | 未接入；TUI Composer 与 Adapter 仍按纯文本处理 |
-| 模型切换 | `/model` → `ModelConfigurable` | 下一次 `query()` 配置 | 下一次 `turn/start` override | 已支持；不改变正在运行的 turn |
-| 推理强度 | `/effort` → `EffortConfigurable` | 下一次 `query()` 的 `effort` | 当前 model 的候选 → 下一次 `turn/start.effort` | 已支持；与 model 分开选择，不改变正在运行的 turn |
+| 模型切换 | `/model` → `ModelConfigurable` | streaming `Query.setModel()` | 下一次 `turn/start` override | 已支持 |
+| 推理强度 | `/effort` → `EffortConfigurable` | 下个新 turn 前按 `effort` 重建 query | 当前 model 的候选 → 下一次 `turn/start.effort` | 已支持；与 model 分开选择 |
 | baton slash command | command registry → baton core | 不下发 harness | 不下发 harness | 已支持已注册命令；未知命令不做文本透传 |
 | harness command | command discovery + Adapter capability | 原生可发现 | 需显式映射 | 未支持 |
 | interrupt | `HarnessAdapter.cancel()` | `Query.interrupt()` | `turn/interrupt` | 已支持当前 driven turn |
 | queued follow-up | controller 全局 FIFO | harness 无感知 | harness 无感知 | 已支持；当前 turn 结束后开启下一 turn |
-| same-turn steer | `Steerable` capability；拒绝时降级 follow-up | 未声明 | `turn/steer(expectedTurnId)` | Codex 条件支持；Claude 自动走 follow-up |
+| same-turn steer | `sendTurn()` 由 Adapter 判定；拒绝时降级 follow-up | 同一 query 的 streaming prompt queue | `turn/steer(expectedTurnId)` | Claude / Codex 均支持 |
 | ↑/↓ 召回与历史回溯 | chat-tui 按键 → `recallQueued` / `historyPrev` / `historyNext`（光标边界门槛） | harness 无感知 | harness 无感知 | 已支持；会话级历史源自事件流，跨会话全局待做 |
 
 ## 4. 三个重点场景
@@ -147,7 +147,7 @@ baton 保证 effective delivery 如实：只有 harness 确认接受才记录 st
 
 统一的 input 生命周期已在 **controller 侧落地**（一等 `InputRecord`，身份即 messageId，见上文 §1 与 `src/controller/input.ts`），取代了在 submit、steer、Esc handler 中散落的时序特判。该模型显式表达：
 
-- requested delivery 与 effective delivery（`delivery` 字段 + `SteerOutcome` effective）；
+- requested delivery 与 effective delivery（`delivery` 字段 + `SendTurnOutcome` effective）；
 - 输入属于 queued follow-up、admitted prompt、当前 turn 的 accepted_steer，还是已 finalized；
 - recall（→recalled）、interrupt（→interrupted）、harness reject（降级 follow_up）各自的状态迁移；
 - steer 被接受后作为一等 Input 挂在 turn 上，cancel 时迁移 interrupted——**不静默丢、不自动重发**（S3）。
@@ -163,10 +163,10 @@ baton 保证 effective delivery 如实：只有 harness 确认接受才记录 st
 | preparing 窗口内 Esc | query1 回到 Composer，harness 不执行；历史有明确 recalled 语义（S1 唯一可做切片） |
 | preparing 窗口后（已 admit）Esc | query1 以 cancelled 收口，不伪装成 recall |
 | Codex active + 无既有队列 + query2 | 原生 steer；同一 turn；effective delivery 可见 |
+| Claude active + 无既有队列 + query2 | 进入同一 streaming query；同一 turn；effective delivery 可见 |
 | steer rejected / stale / wire failure | query2 只入队一次，当前 turn 结束后执行 |
 | query2 queued 后 Esc | query1 cancelled，随后 query2 开新 turn |
 | query2 steer 成功后 Esc | 整 turn 打断，query2 随之中断；不静默重发。最终语义待统一 pending-input 生命周期定 |
-| Claude 未声明 steer | query2 保持 follow-up，不伪装成 steer |
 
 ## 6. 代码与测试锚点
 
@@ -177,7 +177,7 @@ baton 保证 effective delivery 如实：只有 harness 确认接受才记录 st
 - `tests/input-lifecycle.test.ts`：Input id / status 迁移契约（queued/admitted/accepted_steer/recalled/interrupted）。
 - `tests/cancel-cascade.test.ts`：Control:interrupt 打断时 pending Interaction 级联 cancelled、不留悬挂 requires_action。
 - `src/harness/codex/adapter.ts`：`turn/steer` / `turn/interrupt` 原生映射。
-- `src/harness/claude/adapter.ts`：当前只声明普通 prompt，cancel 映射 SDK interrupt。
+- `src/harness/claude/adapter.ts`：session 级 streaming query + prompt queue；运行中 `sendTurn` 复用当前 turn，cancel 映射 SDK interrupt。
 - `tests/steer.test.ts`、`tests/codex-steer.test.ts`：same-turn steer 与降级契约。
 - `tests/lifecycle.test.ts`、`tests/turn-intake.test.ts`：interrupt 后队列推进与 preparing cancel。
 - `tests/tui-protocol.test.ts`：busy 输入默认 delivery 的 UI 编排；input history 回溯 / 编辑中断 / stash 恢复 / 去重 / resume 种入。

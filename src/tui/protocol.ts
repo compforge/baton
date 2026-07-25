@@ -330,32 +330,24 @@ export class BatonChatProtocol implements ChatProtocol {
     const { prompt } = expandMentions(this.store, text, this.config.mentionBudgetChars);
     const blocks: PromptBlock[] = [{ type: "text", text: prompt }];
 
-    // busy 且当前 Target 支持时默认 steer（对齐原生"打字即纠偏"体验）；队列非空时
-    // 例外——已有排队的 follow-up 意味着用户在按顺序编排，插队 steer 会打乱预期顺序。
-    if (this.controller.queueLength === 0 && this.controller.canSteer(target)) {
-      const steered = await this.controller.steer(target, blocks);
-      if (steered.effective === "steer") {
-        this.status = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
-        this.changed();
-        return;
-      }
-      // 降级如实提示（design §3.7：不能把 follow-up 仍标成 steer）
-      const reasonSuffix = steered.reason ? ` (${steered.reason})` : "";
-      this.status = { text: `${target} steer rejected${reasonSuffix}; queued as follow-up`, tone: "info" };
+    // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
+    // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
+    const sent = await this.controller.sendTurn(target, blocks);
+    if (sent.effective === "steer") {
+      this.status = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
       this.changed();
-      const outcome = await steered.outcome;
-      if (outcome === "completed" && this.status?.tone !== "error") {
-        this.status = null;
-        this.changed();
-      }
       return;
     }
-
-    if (this.controller.isBusy || this.controller.queueLength > 0) {
+    if (sent.reason) {
+      this.status = {
+        text: `${target} same-turn send rejected (${sent.reason}); queued as follow-up`,
+        tone: "info",
+      };
+    } else if (sent.queued) {
       this.status = { text: `${target} turn queued`, tone: "info" };
     }
     this.changed();
-    const outcome = await this.controller.submit(target, blocks);
+    const outcome = await sent.outcome;
     if (outcome === "completed" && this.status?.tone !== "error") {
       this.status = null;
       this.changed();
@@ -1016,12 +1008,12 @@ export class BatonChatProtocol implements ChatProtocol {
       status: this.status,
       footer: `session: ${this.session.id}  in:${v.usage.inputTokens} out:${v.usage.outputTokens}  turns:${v.turnSummaries.length}  queue:${this.controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}  cwd:${this.session.meta.cwd}`,
       // ↑ 召回提示只在"可召回"时出现：交互发生地是 composer（placeholder 天然只在空输入时可见）
-      // busy 且可 steer 时提示 Enter 的实际语义（design §3.2：delivery 对用户可见、可预期）
+      // busy 时由 Adapter 决定 same-turn send 或由 Controller 保序排队。
       composerPlaceholder: `Message ${this.harnessTargetId} (/ commands, @ mentions, ${
         this.controller.queueLength > 0
           ? "↑ recall queued"
-          : this.controller.canSteer(this.harnessTargetId)
-            ? "Enter steers current turn"
+          : this.controller.isBusy
+            ? "Enter sends or queues"
             : "Ctrl+J newline"
       })`,
       header: `baton · session ${this.session.id}\ntype to chat · /codex or /claude switch · /sessions open · @bs_xxx reference another session\n`,

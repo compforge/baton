@@ -33,9 +33,9 @@ import type {
   OpenOptions,
   PromptInput,
   PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
   InteractionHandler,
-  SteerReceipt,
   ApprovalRoute,
   ReconcileState,
   ReconcileVerdict,
@@ -641,7 +641,6 @@ export class CodexAdapter implements HarnessAdapter {
   // 以 contextual fragment 形态随本 turn 入史，且不过 UserPromptSubmit hook。
   readonly capabilities: AdapterCapabilities = {
     prompt: {},
-    steer: { supported: true },
     compact: { supported: true },
     sync: { supported: true },
     config: { supported: true },
@@ -936,18 +935,51 @@ export class CodexAdapter implements HarnessAdapter {
     return { accepted: true };
   }
 
-  /** submit 只做 admission 并发出 turn/start；进展与终结全部经通知/终态合成路径报告 */
-  async submit(
+  /**
+   * 统一输入入口：有匹配的活跃 Baton turn 时映射原生 `turn/steer`，否则发
+   * `turn/start`。Adapter 以自身运行态做最终判断，Controller 不感知 Codex turn id。
+   */
+  async sendTurn(
     ref: HarnessSessionRef,
     input: PromptInput,
-  ): Promise<PromptReceipt> {
+  ): Promise<SendTurnReceipt> {
     const rt = this.mustThread(ref);
-    if (rt.activeTurn && !rt.activeTurn.finalized) {
-      throw new Error(`codex turn ${rt.activeTurn.turnId} still active; steer/parallel prompt unsupported`);
-    }
     const unsupported = unsupportedPromptBlocks(input.blocks, this.capabilities);
     if (unsupported.length) {
       throw new Error(`codex adapter does not support prompt block type(s): ${unsupported.join(", ")}`);
+    }
+
+    const activeTurn = rt.activeTurn;
+    if (activeTurn && !activeTurn.finalized) {
+      // race 防线：Controller 看到的 turn 已过期，或 turn/start 响应尚未给出 native id，
+      // 都无法安全定向；拒绝后由 Controller 把原输入排成 follow-up。
+      if (activeTurn.turnId !== input.turnId || !rt.codexTurnId) {
+        return { accepted: false, effective: "rejected" };
+      }
+      try {
+        await rt.peer.request("turn/steer", {
+          threadId: rt.threadId,
+          expectedTurnId: rt.codexTurnId,
+          input: [{ type: "text", text: textOf(input.blocks) }],
+        });
+      } catch (error) {
+        return {
+          accepted: false,
+          effective: "rejected",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      // Codex 已按 expectedTurnId 校验通过：消息确定进入当前 Baton turn。
+      this.emit(
+        rt,
+        {
+          kind: "user_message",
+          payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+        },
+        undefined,
+        activeTurn,
+      );
+      return { accepted: true, effective: "steer" };
     }
 
     const turn: CodexTurn = { turnId: input.turnId, finalized: false };
@@ -989,47 +1021,7 @@ export class CodexAdapter implements HarnessAdapter {
       .catch((err) => {
         this.failTurn(rt, turn, err instanceof Error ? err.message : String(err));
       });
-    return { accepted: true };
-  }
-
-  /**
-   * same-turn steer：映射原生 `turn/steer`（Steerable，design §4.3）。入参 expectedTurnId
-   * 是 baton turn id，wire 上换成 codex turn id；成功不产生新 `turn/started`，输入在
-   * 当前 turn 的下一个安全边界被消费。stale turn、codex 侧拒绝（review/compact 等特殊
-   * turn）与 wire 失败都归 rejected 交 controller 降级——rejected 路径不发任何事件。
-   */
-  async steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<import("../adapter.ts").SteerResult> {
-    const rt = this.mustThread(ref);
-    const turn = rt.activeTurn;
-    // race 防线：用户提交时看到的 turn 已终结，或 codex turn id 尚未就位（turn/start
-    // 响应未回），都无法把输入安全钉到目标 turn——拒绝而不是注入错误的 turn。
-    if (!turn || turn.finalized || turn.turnId !== expectedTurnId || !rt.codexTurnId) {
-      return { supported: true, value: { effective: "rejected" } };
-    }
-    const unsupported = unsupportedPromptBlocks(input.blocks, this.capabilities);
-    if (unsupported.length) {
-      throw new Error(`codex adapter does not support prompt block type(s): ${unsupported.join(", ")}`);
-    }
-    try {
-      await rt.peer.request("turn/steer", {
-        threadId: rt.threadId,
-        expectedTurnId: rt.codexTurnId,
-        input: [{ type: "text", text: textOf(input.blocks) }],
-      });
-    } catch {
-      return { supported: true, value: { effective: "rejected" } };
-    }
-    // codex 已按 expectedTurnId 校验通过：消息确定进入该 turn，用户消息绑定原 turn 落盘
-    this.emit(
-      rt,
-      {
-        kind: "user_message",
-        payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
-      },
-      undefined,
-      turn,
-    );
-    return { supported: true, value: { effective: "steer" } };
+    return { accepted: true, effective: "new_turn" };
   }
 
   async cancel(ref: HarnessSessionRef): Promise<void> {

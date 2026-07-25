@@ -14,7 +14,7 @@ import type {
   EventSink,
   OpenOptions,
   PromptInput,
-  PromptReceipt,
+  SendTurnReceipt,
   HarnessSessionRef,
 } from "../src/harness/adapter.ts";
 import type { AnyEventEnvelope, AnyEventDraft, StopReason } from "../src/event/types.ts";
@@ -38,9 +38,9 @@ class ScriptedAdapter implements HarnessAdapter {
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async submit(_ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt> {
+  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
     this.submits.push(input);
-    return { accepted: true };
+    return { accepted: true, effective: "new_turn" };
   }
 
   emit(ev: AnyEventDraft): void {
@@ -217,7 +217,7 @@ describe("codex transport failure", () => {
     });
     const events: AnyEventDraft[] = [];
     const ref = await adapter.open({ cwd: "/tmp" }, (ev) => events.push(ev));
-    await adapter.submit(ref, {
+    await adapter.sendTurn(ref, {
       turnId: "t_1",
       messageId: "m_1",
       blocks: [{ type: "text", text: "go" }],

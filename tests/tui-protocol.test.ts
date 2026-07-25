@@ -1055,24 +1055,16 @@ describe("BatonChatProtocol steer submit", () => {
       const calls: string[] = [];
       const internals = protocol as unknown as {
         controller: {
-          queueLength: number;
-          canSteer: (harness: string) => boolean;
-          steer: (harness: string, blocks: unknown) => Promise<{ effective: string }>;
-          submit: () => Promise<"completed">;
+          sendTurn: (harness: string, blocks: unknown) => Promise<{ effective: "steer" }>;
         };
       };
-      internals.controller.canSteer = () => true;
-      internals.controller.steer = async () => {
-        calls.push("steer");
+      internals.controller.sendTurn = async () => {
+        calls.push("sendTurn");
         return { effective: "steer" };
-      };
-      internals.controller.submit = async () => {
-        calls.push("submit");
-        return "completed";
       };
 
       await protocol.submit("prefer approach B");
-      expect(calls).toEqual(["steer"]);
+      expect(calls).toEqual(["sendTurn"]);
       expect(protocol.getView().status?.text).toContain("steering");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1085,16 +1077,24 @@ describe("BatonChatProtocol steer submit", () => {
       const protocol = protocolWith(root);
       const internals = protocol as unknown as {
         controller: {
-          canSteer: (harness: string) => boolean;
-          steer: () => Promise<{ effective: string; outcome: Promise<string> }>;
+          sendTurn: () => Promise<{
+            effective: "new_turn";
+            queued: true;
+            reason: string;
+            outcome: Promise<string>;
+          }>;
         };
       };
       let resolveOutcome: ((value: string) => void) | undefined;
       const outcome = new Promise<string>((resolve) => {
         resolveOutcome = resolve;
       });
-      internals.controller.canSteer = () => true;
-      internals.controller.steer = async () => ({ effective: "follow_up", outcome });
+      internals.controller.sendTurn = async () => ({
+        effective: "new_turn",
+        queued: true,
+        reason: "provider rejected",
+        outcome,
+      });
 
       const submitted = protocol.submit("prefer approach B");
       await Bun.sleep(1); // 让 protocol 走到降级状态提示、停在等待 outcome 处
@@ -1115,24 +1115,20 @@ describe("BatonChatProtocol steer submit", () => {
       const calls: string[] = [];
       const internals = protocol as unknown as {
         controller: {
-          queueLength: number;
-          isBusy: boolean;
-          canSteer: (harness: string) => boolean;
-          submit: () => Promise<"completed">;
+          sendTurn: () => Promise<{
+            effective: "new_turn";
+            queued: true;
+            outcome: Promise<"completed">;
+          }>;
         };
       };
-      Object.defineProperty(internals.controller, "queueLength", { get: () => 1 });
-      Object.defineProperty(internals.controller, "isBusy", { get: () => true });
-      internals.controller.canSteer = () => {
-        throw new Error("canSteer must not decide when follow-ups are already queued");
-      };
-      internals.controller.submit = async () => {
-        calls.push("submit");
-        return "completed";
+      internals.controller.sendTurn = async () => {
+        calls.push("sendTurn");
+        return { effective: "new_turn", queued: true, outcome: Promise.resolve("completed") };
       };
 
       await protocol.submit("after those");
-      expect(calls).toEqual(["submit"]);
+      expect(calls).toEqual(["sendTurn"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

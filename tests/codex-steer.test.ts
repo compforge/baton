@@ -1,4 +1,4 @@
-// codex steer 的 wire 映射（design §4.3）：baton expectedTurnId → codex turn id、
+// codex sendTurn 的 active-turn 映射（design §4.3）：baton turnId → codex turn id、
 // 成功发 delivery:"steer" 的 user_message 并绑定原 turn、stale/finalized/wire 失败
 // 一律 rejected 且不发事件（降级由 controller 决定）。
 import type { InteractionHandler } from "../src/harness/adapter.ts";
@@ -55,9 +55,9 @@ const input: PromptInput = {
 test("codex steer: maps to turn/steer with the codex turn id and emits a steer user_message", async () => {
   const { adapter, events, requests, ref } = harness();
 
-  const receipt = await adapter.steer(ref, input, "t_A");
+  const receipt = await adapter.sendTurn(ref, input);
 
-  expect(receipt).toEqual({ supported: true, value: { effective: "steer" } });
+  expect(receipt).toEqual({ accepted: true, effective: "steer" });
   expect(requests).toEqual([
     {
       method: "turn/steer",
@@ -79,19 +79,19 @@ test("codex steer: maps to turn/steer with the codex turn id and emits a steer u
 test("codex steer: stale expectedTurnId is rejected without any wire call or event", async () => {
   const { adapter, events, requests, ref } = harness();
 
-  const receipt = await adapter.steer(ref, { ...input, turnId: "t_B" }, "t_B");
+  const receipt = await adapter.sendTurn(ref, { ...input, turnId: "t_B" });
 
-  expect(receipt).toEqual({ supported: true, value: { effective: "rejected" } });
+  expect(receipt).toEqual({ accepted: false, effective: "rejected" });
   expect(requests).toHaveLength(0);
   expect(events).toHaveLength(0);
 });
 
-test("codex steer: finalized turn is rejected", async () => {
+test("codex sendTurn: a finalized previous turn opens a new turn", async () => {
   const { adapter, events, requests, rt, ref } = harness();
   rt.activeTurn = { turnId: "t_A", finalized: true };
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
-  expect(requests).toHaveLength(0);
+  expect(await adapter.sendTurn(ref, input)).toEqual({ accepted: true, effective: "new_turn" });
+  expect(requests[0]?.method).toBe("turn/start");
   expect(events).toHaveLength(0);
 });
 
@@ -99,7 +99,7 @@ test("codex steer: missing codex turn id (turn/start response not yet arrived) i
   const { adapter, events, requests, rt, ref } = harness();
   rt.codexTurnId = undefined;
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
+  expect(await adapter.sendTurn(ref, input)).toEqual({ accepted: false, effective: "rejected" });
   expect(requests).toHaveLength(0);
   expect(events).toHaveLength(0);
 });
@@ -107,7 +107,11 @@ test("codex steer: missing codex turn id (turn/start response not yet arrived) i
 test("codex steer: wire rejection (stale turn on codex side) maps to rejected, no event", async () => {
   const { adapter, events, ref } = harness({ requestError: new Error("turn already completed") });
 
-  expect(await adapter.steer(ref, input, "t_A")).toEqual({ supported: true, value: { effective: "rejected" } });
+  expect(await adapter.sendTurn(ref, input)).toEqual({
+    accepted: false,
+    effective: "rejected",
+    reason: "turn already completed",
+  });
   expect(events).toHaveLength(0);
 });
 
@@ -115,10 +119,9 @@ test("codex steer: unsupported prompt blocks fail admission before the wire", as
   const { adapter, requests, ref } = harness();
 
   expect(
-    adapter.steer(
+    adapter.sendTurn(
       ref,
       { ...input, blocks: [{ type: "image", mimeType: "image/png", data: "aGk=" }] },
-      "t_A",
     ),
   ).rejects.toThrow(/image/);
   expect(requests).toHaveLength(0);

@@ -341,7 +341,8 @@ interface UsageView {
 
 当前 `prompt(..., sink)` 直到 turn 结束才 resolve，且 sink 只活在 prompt 调用期。这会阻塞四类能力：prompt admission、harness 主动事件、后台 task、多 client/reconnect replay。
 
-改为 ACP v2 风格：session 建立时绑定事件出口，submit 只确认接收。
+改为 ACP v2 风格：session 建立时绑定事件出口，`sendTurn` 只做 admission；是否开启
+新 turn 或注入当前 turn，由 Adapter 根据原生运行态决定。
 
 ```ts
 interface HarnessAdapter {
@@ -349,12 +350,14 @@ interface HarnessAdapter {
   readonly capabilities: AdapterCapabilities;
 
   open(options: OpenOptions, sink: EventSink): Promise<HarnessSessionRef>;
-  submit(ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt>;
+  sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt>;
   cancel(ref: HarnessSessionRef): Promise<void>;
   close(ref: HarnessSessionRef): Promise<void>;
 }
 
-type PromptReceipt = { accepted: true };
+type SendTurnReceipt =
+  | { accepted: true; effective: "new_turn" | "steer" }
+  | { accepted: false; effective: "rejected"; reason?: string };
 ```
 
 `OpenOptions.resumeState` 是 `{ version, data }` 形态的 adapter-owned checkpoint；
@@ -363,7 +366,7 @@ Baton 只负责持久化并在下次 `open` 时原样回传，不把恢复能力
 Adapter 在首轮执行后才拿到 checkpoint 时，通过可选 `NativeSessionCheckpointable.resumeState()`
 回填；未知版本由 Adapter 自己 fail closed 或新建，core 不猜测。
 
-`submit()` throw 只表示 Adapter 尚未接受投递责任；resolve 不代表 turn 完成，此后的失败必须
+`sendTurn()` throw 只表示 Adapter 尚未接受投递责任；accepted 不代表 turn 完成，此后的失败必须
 经事件流给出 Harness 终态。Delivery Attempt 是 Controller 的持久记账，不进入
 `PromptInput`，Adapter 也不参与其生命周期。用户输入的 owner 是 Controller，harness 执行
 过程的 owner 是 Adapter：
@@ -374,14 +377,14 @@ controller 出队（driven turn）
                                                    //   不等 harness 冷启动；正典历史存原始输入，
                                                    //   <baton-sync> 注入只进 harness transport
   → （冷启动时）_baton_run_status(starting)        // preparing 阶段对用户可见、可取消
-submit accepted                                    // admission；Adapter 不得为 prompt 重复发
+sendTurn accepted(new_turn)                        // admission；Adapter 不得为 prompt 重复发
                                                    //   user_message / running
   → message/tool/plan/... updates
   → state_update(requires_action ↔ running)  // 可重复
   → state_update(idle, stopReason)
 ```
 
-为什么 user_message 不归 Adapter：harness 首启（spawn → initialize → thread resume/start）可达数秒，若由 `submit()` 发用户消息，Transcript 会被冷启动绑住；且 prepend 注入路径下 `submit()` 拿到的 blocks 已掺入 `<baton-sync>`，由它落盘会污染正典历史。steer 是例外——只有 harness 确认接受后消息才成为事实，成功路径仍由 Adapter 发 `delivery:"steer"` 的 user_message。
+为什么新 turn 的 user_message 不归 Adapter：harness 首启（spawn → initialize → thread resume/start）可达数秒，若由 `sendTurn()` 发用户消息，Transcript 会被冷启动绑住；且 prepend 注入路径下 Adapter 拿到的 blocks 已掺入 `<baton-sync>`，由它落盘会污染正典历史。steer 是例外——只有 harness 确认接受后消息才成为事实，成功路径仍由 Adapter 发 `delivery:"steer"` 的 user_message。
 
 出队与撤回的边界随之明确：消息在队列中可 recall；一旦出队即由 controller 落盘、成为正典历史，冷启动期间只能 cancel（立即合成 `idle/cancelled` 终态，启动继续在后台完成、`HarnessBinding` 留给后续 turn 复用）。启动或 admission 失败同样合成结构化终态（`_baton_error_update` + `idle/error` + summary）——不存在"输入消失且无历史"的半状态。为保证 preparing 总有退出路径，启动期 wire 请求（codex 的 initialize / thread resume/start）必须带显式超时；turn/start 不设（老版本 app-server 合法地阻塞到 turn 结束）。
 
@@ -415,26 +418,22 @@ interface PromptInput {
 - BatonSession / file / skill mention 先由 baton context 层解析为 harness 可见的 prompt block；
 - adapter 按 capability 映射，禁止用 `textOf()` 静默丢弃不支持的 block；不支持时在 admission 前返回带 block type 的明确错误。
 
-### 4.3 Steer 与 follow-up
+### 4.3 sendTurn、steer 与 follow-up
 
-follow-up 是 Controller 的队列策略，不进入基础 Adapter。same-turn steer 是可选 capability：
+follow-up 是 Controller 的队列策略，不进入 Adapter。所有用户 prompt 都走基础
+`sendTurn(ref, input)`：Adapter 根据自己的原生运行态返回 `new_turn`、`steer` 或
+`rejected`，不再用额外的 `Steerable` capability 分叉调用面。
 
-```ts
-interface Steerable {
-  steer(
-    ref: HarnessSessionRef,
-    input: PromptInput,
-    expectedTurnId: string,
-  ): Promise<{ effective: "steer" | "rejected" }>;
-}
-```
+- 无活跃 turn：Adapter 接受后返回 `new_turn`；
+- 有活跃 turn 且 `input.turnId` 匹配：Codex 映射 `turn/steer(expectedTurnId)`；Claude
+  把 `SDKUserMessage` 投进 session 级 streaming prompt queue，复用同一个 Agent SDK query；
+- 活跃 turn 不匹配、原生协议拒绝或无法安全 steer：返回 `rejected`，Controller 将原输入
+  降级为 queued follow-up，并记录 requested/effective delivery；
+- Adapter 有活跃 turn 时不得返回 `new_turn` 擅自并行开回合。
 
-- Codex 映射 `turn/steer(expectedTurnId)`；
-- Claude 只有确认 SDK streaming input 的实际安全边界后才声明；
-- adapter 不支持或原生拒绝时，controller 可按用户策略降级成 follow-up，并记录 effective delivery；
-- `expectedTurnId` 防止 race：用户提交时看到的 turn 已结束，就不能把 steer 注入新 turn。
-
-这里的 `expectedTurnId` 始终是 baton turn id。controller 在接受输入、进入 pending 队列时就分配该 id，而不是等真正 dequeue 执行；adapter 维护 baton turn id 到 harness turn id 的映射，并在 Codex 等 wire 调用中换成 harness id。harness id 不进入 chat-tui 或 controller action contract。
+`input.turnId` 始终是 baton turn id，也是 same-turn send 的 race 防线。adapter 维护 baton
+turn id 到 harness turn id 的映射，并在 Codex 等 wire 调用中换成 harness id。harness id
+不进入 chat-tui 或 controller action contract。
 
 ### 4.4 Capability
 
@@ -448,7 +447,6 @@ interface AdapterCapabilities {
     embeddedResource?: CapabilityMarker;
     resourceLink?: CapabilityMarker;
   };
-  steer?: CapabilityMarker;
   compact?: CapabilityMarker;
   commands?: CapabilityMarker;
   config?: CapabilityMarker;
@@ -465,7 +463,7 @@ interface CapabilityMarker {
 }
 ```
 
-descriptor 用显式 marker object，给以后扩字段留空间；不能使用 TypeScript 的 `{}`，因为它会接受几乎所有非 nullish 值。行为仍由 `Steerable`、`ContextCompactable`、`CommandDiscoverable`、`SessionConfigurable`、`Interactive` 等接口承载。契约测试校验“声明支持就必须实现对应接口”。`/compact` 形成一个无 `user_message` 的 driven control turn：Codex 映射 `thread/compact/start`，Claude 映射内建 `/compact`，过程与终态仍走统一事件流水线。
+descriptor 用显式 marker object，给以后扩字段留空间；不能使用 TypeScript 的 `{}`，因为它会接受几乎所有非 nullish 值。行为仍由 `ContextCompactable`、`CommandDiscoverable`、`SessionConfigurable`、`Interactive` 等接口承载。契约测试校验“声明支持就必须实现对应接口”。`/compact` 形成一个无 `user_message` 的 driven control turn：Codex 映射 `thread/compact/start`，Claude 映射内建 `/compact`，过程与终态仍走统一事件流水线。
 
 ### 4.5 Dynamic command
 

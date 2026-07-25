@@ -14,20 +14,6 @@ import type {
 } from "../interaction/types.ts";
 import type { HarnessResumeState } from "./resume.ts";
 
-/**
- * 能力包装器：表达 adapter 是否支持某个可选能力。
- *
- * - `supported: true` - adapter 实现了该能力，返回实际结果
- * - `supported: false` - adapter 不支持该能力，controller 应降级处理
- *
- * 使用场景：
- * - steer: Claude 不支持 → controller 降级为 follow-up
- * - 其他可选能力可以复用此模式
- */
-export type Capability<T> =
-  | { supported: true; value: T }
-  | { supported: false; reason?: string };
-
 export interface HarnessSessionRef {
   harness: string;
   harnessSessionId: string;
@@ -48,14 +34,14 @@ export interface OpenOptions {
 }
 
 /**
- * 一轮输入。ID 都由 controller 分配（design §4.10.1）：turnId 在入队时分配（steer 的
- * expectedTurnId 引用它）；harness 侧各自的 turn/message id 只进 raw 或 adapter
+ * 一轮输入。ID 都由 controller 分配（design §4.10.1）：新 turn 在入队时分配 turnId；
+ * same-turn send 复用当前 turnId。harness 侧各自的 turn/message id 只进 raw 或 adapter
  * 内部映射，不进 controller 契约。
  *
  * 普通 prompt 的 `user_message` / `state_update(running)` 由 controller 在出队时落盘
- * （用户输入是 BatonSession 的事实，不等 harness 冷启动；且 submit 的 blocks 可能
+ * （用户输入是 BatonSession 的事实，不等 harness 冷启动；且新 turn 的 blocks 可能
  * 含 <baton-sync> prepend，不能进正典历史）——adapter **不得**为 prompt 重复发这两个
- * 事件；messageId 仅供 steer 成功路径发 delivery:"steer" 的 user_message upsert。
+ * 事件；messageId 仅供 same-turn send 成功路径发 delivery:"steer" 的 user_message upsert。
  */
 export interface PromptInput {
   /** baton turn ID（t_ 前缀），本 turn 所有事件携带它 */
@@ -65,7 +51,7 @@ export interface PromptInput {
   blocks: PromptBlock[];
   /**
    * 跨 harness catch-up 注入（不属于用户输入正文，不进正典历史）。仅当 adapter 声明
-   * `capabilities.sync` 时由 controller 传入，adapter 用原生 side-channel 随本次 submit
+   * `capabilities.sync` 时由 controller 传入，adapter 用原生 side-channel 随本次 sendTurn
    * 送达（codex: `turn/start.additionalContext`）——独立注入 user message 会污染原生
    * 历史，text prepend 则把注入混进用户消息并暴露给 UserPromptSubmit hook。
    * 契约：与本 turn 一起送达；admission 失败视为未送达（controller 水位不动，下次重注入）。
@@ -73,10 +59,23 @@ export interface PromptInput {
   syncBlocks?: PromptBlock[];
 }
 
-/** submit 的回执：只代表 admission 通过，不代表 turn 完成（design §4.1） */
+/** control turn admission 的回执：只代表请求被接受，不代表 turn 完成（design §4.1） */
 export interface PromptReceipt {
   accepted: true;
 }
+
+/**
+ * `sendTurn` 的 admission 结果。Adapter 以自己的原生运行态决定实际投递：
+ *
+ * - `new_turn`：没有活跃 turn，已接受开启新 turn 的责任；
+ * - `steer`：输入已进入 `input.turnId` 对应的当前 turn；
+ * - `rejected`：未接受输入，Controller 可安全降级为 queued follow-up。
+ *
+ * `rejected` 路径不得发事件。throw 同样只允许发生在接受责任之前。
+ */
+export type SendTurnReceipt =
+  | { accepted: true; effective: "new_turn" | "steer" }
+  | { accepted: false; effective: "rejected"; reason?: string };
 
 /**
  * 能力标记：用显式 marker object 而不是 TypeScript `{}`（`{}` 会接受几乎所有非 nullish 值），
@@ -88,8 +87,8 @@ export interface CapabilityMarker {
 
 /**
  * 可展示的能力 descriptor（design §4.4）：声明"这个 adapter 支持哪些可选能力"，
- * 供 controller/UI 决策（如不支持 image 时 admission 报错、不展示 steer 选项）。
- * 行为仍由可选接口承载（ModelConfigurable、EffortConfigurable、Steerable/CommandDiscoverable/
+ * 供 controller/UI 决策（如不支持 image 时 admission 报错）。
+ * 行为仍由可选接口承载（ModelConfigurable、EffortConfigurable、CommandDiscoverable/
  * SessionConfigurable/interaction handler）；契约测试保证"声明支持就必须实现对应接口"。
  */
 export interface AdapterCapabilities {
@@ -99,13 +98,12 @@ export interface AdapterCapabilities {
     embeddedResource?: CapabilityMarker;
     resourceLink?: CapabilityMarker;
   };
-  steer?: CapabilityMarker;
   /** 声明后必须实现 ContextCompactable：可请求 harness 压缩当前原生会话。 */
   compact?: CapabilityMarker;
   /**
-   * submit 原生承载 `PromptInput.syncBlocks`（side-channel 注入）。与 ContextSynchronizable
+   * sendTurn 原生承载 `PromptInput.syncBlocks`（side-channel 注入）。与 ContextSynchronizable
    * 互斥使用：syncContext 是"急切注入、resolve 即送达"（水位立即推进）；sync 是"随下一次
-   * submit 送达"（水位在 admission 通过后推进，语义同 prepend 路径）。都未声明时 controller
+   * sendTurn 送达"（水位在 admission 通过后推进，语义同 prepend 路径）。都未声明时 controller
    * 回落为把 sync 块 prepend 进 prompt 文本。
    */
   sync?: CapabilityMarker;
@@ -123,11 +121,11 @@ export interface AdapterCapabilities {
 }
 
 /**
- * Adapter 生命周期（ACP v2 风格，design §4.1）：open 时绑定事件出口，submit 只确认接收，
+ * Adapter 生命周期（ACP v2 风格，design §4.1）：open 时绑定事件出口，sendTurn 只确认接收，
  * turn 进展与终结全部经 sink 的事件报告；controller 以 state event 驱动 busy/idle，
  * 不以任何 Promise 生命周期推断。
  *
- * 终态硬性约定：每个被 submit 接受的 turn，adapter 在**任何退出路径**（正常结束、
+ * 终态硬性约定：每个被 sendTurn 以 `new_turn` 接受的 turn，adapter 在**任何退出路径**（正常结束、
  * wire fatal error、子进程退出、transport close）都必须恰好报告或合成一次
  * `state_update(idle)`；错误路径先发 `_baton_error_update` 再发 idle。重复/迟到的
  * 物理终态允许存在，由 controller 按 baton turn id 幂等 finalize。
@@ -138,12 +136,16 @@ export interface HarnessAdapter {
   /** 建立（或恢复）harness session 并绑定事件出口；此后包括 harness 主动事件在内都经 sink 上报 */
   open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef>;
   /**
-   * 提交一轮输入；throw 只表示 Adapter 尚未接受投递责任；resolve 仅代表 admission
-   * 通过，此后的失败必须经事件流给出终态。入参是闭合的 PromptBlock（非开放
-   * ContentBlock）：不支持的 block 类型必须在 admission 前报带类型的明确错误，
-   * 禁止静默丢弃（design §4.2）。
+   * 发送输入。Adapter 根据自己的活跃 turn 决定开启新 turn、same-turn steer 或拒绝：
+   * - 无活跃 turn 时，接受后必须返回 `new_turn`；
+   * - `input.turnId` 与活跃 Baton turn 一致时，可以返回 `steer`；
+   * - 活跃 turn 不匹配、不可 steer 或原生协议拒绝时返回 `rejected`，不得擅自并行开 turn。
+   *
+   * throw 只表示 Adapter 尚未接受投递责任；resolve 为 accepted 后的失败必须经事件流
+   * 给出终态。入参是闭合的 PromptBlock（非开放 ContentBlock）：不支持的 block 类型
+   * 必须在 admission 前报带类型的明确错误，禁止静默丢弃（design §4.2）。
    */
-  submit(ref: HarnessSessionRef, input: PromptInput): Promise<PromptReceipt>;
+  sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt>;
   /** 请求中断当前 turn；确认以最终 `idle/cancelled` 事件为准，发出后仍接受在途 update */
   cancel(ref: HarnessSessionRef): Promise<void>;
   close(ref: HarnessSessionRef): Promise<void>;
@@ -288,43 +290,6 @@ export interface ApprovalRoutable {
 
 export function isApprovalRoutable(adapter: HarnessAdapter): adapter is HarnessAdapter & ApprovalRoutable {
   return typeof (adapter as Partial<ApprovalRoutable>).approvalRoute === "function";
-}
-
-/**
- * steer 的回执：成功注入或被拒绝。
- * - `steer`: 成功注入当前 turn
- * - `rejected`: turn 已过期或 harness 拒绝（controller 降级为 follow-up）
- *
- * 只有 wire/transport 故障才 throw。
- */
-export interface SteerReceipt {
-  effective: "steer" | "rejected";
-}
-
-/**
- * Steer 操作的完整返回类型，使用 Capability 包装。
- * 如果 adapter 不支持 steer，返回 `supported: false`。
- */
-export type SteerResult = Capability<SteerReceipt>;
-
-/**
- * 可选能力（design §4.3）：把输入注入当前活跃 turn 的下一个安全边界，不新开 turn。
- *
- * 契约：
- * - 返回 `supported: false` 表示 adapter 不支持 steer，controller 会自动降级为 follow-up
- * - `expectedTurnId` 恒为 baton turn id；到 harness turn id 的映射留在 adapter 内部，
- *   不进 controller 词汇。expectedTurnId 与 adapter 当前 active turn 不符必须返回 rejected
- *   （防 race：用户提交时看到的 turn 已结束，不能把输入注入新 turn）。
- * - `input.turnId` 即被注入的 turn；effective:"steer" 时 adapter 负责发 delivery:"steer"
- *   的 user_message upsert（信封 turnId 绑定该 turn），rejected 时不得发任何事件。
- * - 声明 capabilities.steer 才可被 controller 调用；契约测试钉住"声明即实现"。
- */
-export interface Steerable {
-  steer(ref: HarnessSessionRef, input: PromptInput, expectedTurnId: string): Promise<SteerResult>;
-}
-
-export function isSteerable(adapter: HarnessAdapter): adapter is HarnessAdapter & Steerable {
-  return typeof (adapter as Partial<Steerable>).steer === "function";
 }
 
 /**
