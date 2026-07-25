@@ -1,0 +1,23 @@
+src/plugin/manager.ts
+  s_7bf5b2feeb69fc::t_7c2ce250d25c4e 535-544
+src/tui/protocol.ts
+  s_7bf5b2feeb69fc::t_8c9bada9140b01 686-704,706
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ce7d12919a27a19f7160057eb5ef652163442a96",
+  "prompts": {},
+  "sessions": {
+    "s_7bf5b2feeb69fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "828b8d06-2da7-4013-9dcb-058e9e26176f",
+        "model": "unknown"
+      },
+      "human_author": "liqiankun.1111 <liqiankun.1111@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
