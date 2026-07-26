@@ -1,11 +1,14 @@
 import type { Resource } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
 import type { BoardPresentation } from "./board.ts";
+import type { Output as InteractionOutput } from "./interaction.ts";
 
-export type PluginOutput = {
-  readonly kind: "proposed-input";
-  readonly text: string;
-};
+export type PluginOutput =
+  | {
+      readonly kind: "proposed-input";
+      readonly text: string;
+    }
+  | InteractionOutput;
 
 export interface ReconcileResult {
   readonly output?: PluginOutput;

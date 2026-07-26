@@ -1,6 +1,7 @@
 import type {
   Controller as PluginController,
   ControllerSource,
+  Output as PluginInteractionOutput,
 } from "@qiankun01/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
@@ -61,6 +62,26 @@ export type ReconcileProposal =
   | PluginResourceReconcileProposal
   | BuiltinResourceReconcileProposal;
 
+export interface PluginResourceReconcileInteraction {
+  readonly key: ReconcileKey;
+  readonly basedOnGeneration: number;
+  readonly basedOnResourceVersion?: number;
+  readonly basedOnRevision?: never;
+  readonly request: PluginInteractionOutput;
+}
+
+export interface BuiltinResourceReconcileInteraction {
+  readonly key: ReconcileKey;
+  readonly basedOnGeneration?: never;
+  readonly basedOnResourceVersion?: never;
+  readonly basedOnRevision: number;
+  readonly request: PluginInteractionOutput;
+}
+
+export type ReconcileInteraction =
+  | PluginResourceReconcileInteraction
+  | BuiltinResourceReconcileInteraction;
+
 export interface ScheduledReconcile {
   readonly key: ReconcileKey;
   readonly nextReconcileAt: Date;
@@ -75,10 +96,11 @@ export interface ControllerOptions<TSpec, TStatus> {
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: () => BatonSnapshot;
+  snapshot?: (key: ReconcileKey) => BatonSnapshot;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   onProposal(proposal: ReconcileProposal): Promise<void> | void;
+  onInteraction?(interaction: ReconcileInteraction): Promise<void> | void;
   /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
@@ -136,6 +158,7 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 
 interface ReconcileExecution {
   proposal?: ReconcileProposal;
+  interaction?: ReconcileInteraction;
   nextReconcileAt: Date | null;
 }
 
@@ -151,11 +174,14 @@ export class Controller<TSpec, TStatus> {
   private readonly resourceKind: string;
   private readonly reconcileResource: PluginController<TSpec, TStatus>["reconcile"];
   private readonly now: () => Date;
-  private readonly snapshot: () => BatonSnapshot;
+  private readonly snapshot: (key: ReconcileKey) => BatonSnapshot;
   private readonly executeWithCapacity: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
   private readonly onProposal: ControllerOptions<TSpec, TStatus>["onProposal"];
+  private readonly onInteraction: NonNullable<
+    ControllerOptions<TSpec, TStatus>["onInteraction"]
+  >;
   private readonly queue: ReconcileQueue;
   private closed = false;
 
@@ -172,6 +198,11 @@ export class Controller<TSpec, TStatus> {
     this.executeWithCapacity =
       options.executeWithCapacity ?? (async (execute) => await execute());
     this.onProposal = options.onProposal;
+    this.onInteraction =
+      options.onInteraction ??
+      (() => {
+        throw new Error("plugin Controller has no Interaction publisher");
+      });
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -183,6 +214,9 @@ export class Controller<TSpec, TStatus> {
           if (this.closed) throw new Error("plugin Controller is closed");
           const execution = await this.reconcile(key);
           if (execution.proposal) await this.onProposal(execution.proposal);
+          if (execution.interaction) {
+            await this.onInteraction(execution.interaction);
+          }
           options.onReconcileSuccess?.(key, execution.nextReconcileAt);
         }),
       maxConcurrency: options.maxConcurrency,
@@ -249,7 +283,7 @@ export class Controller<TSpec, TStatus> {
         const resource = deepFreeze(
           this.store.get<TSpec, TStatus>(this.resourceKind, key.resourceId),
         );
-        const baton = deepFreeze(this.snapshot());
+        const baton = deepFreeze(this.snapshot(key));
         if (baton.session.batonSessionId !== this.scope.batonSessionId) {
           throw new Error(
             `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
@@ -282,15 +316,26 @@ export class Controller<TSpec, TStatus> {
           { expectedResourceVersion: latest.metadata.resourceVersion },
         );
 
+        const output = result.output;
         return {
           nextReconcileAt,
-          ...(result.output
+          ...(output?.kind === "proposed-input"
             ? {
                 proposal: Object.freeze({
                   key,
                   basedOnGeneration: resource.metadata.generation,
                   basedOnResourceVersion: latest.metadata.resourceVersion,
-                  text: result.output.text,
+                  text: output.text,
+                }),
+              }
+            : {}),
+          ...(output?.kind === "interaction"
+            ? {
+                interaction: Object.freeze({
+                  key,
+                  basedOnGeneration: resource.metadata.generation,
+                  basedOnResourceVersion: latest.metadata.resourceVersion,
+                  request: output,
                 }),
               }
             : {}),

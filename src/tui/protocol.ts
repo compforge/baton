@@ -144,7 +144,11 @@ function interactionView(interaction: Interaction): InteractionView {
           id: prompt.questionId,
           header: prompt.header,
           question: prompt.question,
-          options: prompt.options,
+          options: prompt.options?.map((option) => ({
+            label: option.label,
+            description: option.description,
+            ...(option.preview === undefined ? {} : { preview: option.preview }),
+          })),
           multiSelect: prompt.multiSelect,
           allowOther: prompt.allowOther,
           secret: prompt.secret,
@@ -680,9 +684,26 @@ export class BatonChatProtocol implements ChatProtocol {
         outcome: response.optionId === "trust" ? "trusted" : "skipped",
       };
     } else if (response.kind === "question" && interaction?.kind === "question") {
-      resolution = { kind: "question", outcome: "answered", answers: response.answers };
+      const answers = Object.fromEntries(
+        interaction.questions.map((question) => [
+          question.questionId,
+          (response.answers[question.questionId] ?? []).map((value) => {
+            const option = question.options?.find(
+              (candidate) =>
+                candidate.optionId === value || candidate.label === value,
+            );
+            return option?.optionId ?? value;
+          }),
+        ]),
+      );
+      resolution = { kind: "question", outcome: "answered", answers };
     }
-    if (!resolution || !this.controller.resolveInteraction(id, resolution)) {
+    const resolved =
+      resolution &&
+      (interaction?.requester.type === "plugin"
+        ? await this.plugins.resolveInteraction(id, resolution)
+        : this.controller.resolveInteraction(id, resolution));
+    if (!resolved) {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
       this.toast = { text: "interaction request is no longer pending", tone: "info" };
       this.changed();

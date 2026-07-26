@@ -1128,6 +1128,99 @@ describe("interaction eventization: pending projects from the event stream", () 
     }
   });
 
+  test("Plugin question routes stable optionId through Plugin Manager", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-question-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      session.append({
+        source: {
+          type: "plugin",
+          pluginInstanceId: "reqloop_default",
+        },
+        kind: "interaction.opened",
+        payload: {
+          kind: "question",
+          interactionId: "ix_plugin",
+          requester: {
+            type: "plugin",
+            pluginInstanceId: "reqloop_default",
+          },
+          pluginContext: {
+            decisionKey: "associate-pr",
+            resourceKind: "ReqLoopRun",
+            resourceId: "run_1",
+            resourceOwner: "plugin",
+          },
+          questions: [
+            {
+              questionId: "decision",
+              header: "Associate pull request",
+              question: "Choose a requirement",
+              options: [
+                {
+                  optionId: "req_1",
+                  label: "REQ-1",
+                  description: "First requirement",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      expect(protocol.getView().interactions?.[0]).toMatchObject({
+        id: "ix_plugin",
+        kind: "question",
+        requester: "reqloop_default",
+        question: {
+          questions: [
+            {
+              options: [
+                {
+                  label: "REQ-1",
+                  description: "First requirement",
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      let resolution: unknown;
+      const internals = protocol as unknown as {
+        controller: { resolveInteraction(): boolean };
+        plugins: {
+          resolveInteraction(id: string, value: unknown): Promise<boolean>;
+        };
+      };
+      internals.controller.resolveInteraction = () => {
+        throw new Error("Plugin Interaction must not route to Harness");
+      };
+      internals.plugins.resolveInteraction = async (_id, value) => {
+        resolution = value;
+        return true;
+      };
+      await protocol.resolveInteraction("ix_plugin", {
+        kind: "question",
+        answers: { decision: ["REQ-1"] },
+      });
+      expect(resolution).toEqual({
+        kind: "question",
+        outcome: "answered",
+        answers: { decision: ["req_1"] },
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("hook trust Interaction uses the approval primitive but keeps its own resolution kind", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-hook-trust-"));
     try {

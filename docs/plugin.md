@@ -1,7 +1,7 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> Resource / Controller / Proposal / Board presentation / 动态唤醒 / Controller cron Source、`baton.turn` Baton-owned Resource
+> Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 / Controller cron Source、`baton.turn` Baton-owned Resource
 > 派生与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
 > `/reload-plugins` 与 Plugin Command 已经落地；Resource Context source、配置编辑 UI 和权限审阅仍按真实产品入口增量
@@ -20,8 +20,8 @@ Baton Plugin 要让一个扩展在不进入 Baton core 的前提下：
 1. 通过稳定、只读的 Baton-owned Resource 感知 Baton 内部事实；
 2. 需要长期收敛时，定义自己的 Resource，以 `spec` 表达期望、以 `status` 表达观测；
 3. 根据最新 Baton-owned / Plugin-owned Resource 和外部状态执行 reconcile；
-4. 产生可由人审核的推荐输入；未来也可请求 Baton 受控调用 Harness；
-5. 在 Baton 重启后从 Event Ledger、Resource 和 Proposal 恢复工作。
+4. 产生可由人审核的推荐输入，或请求用户对当前 Resource 作出持久决定；
+5. 在 Baton 重启后从 Event Ledger、Resource、Proposal 和 Interaction 恢复工作。
 
 Plugin 不是一组随意拼接的回调。它既是可交付的能力包，也是用户级可配置、在各
 BatonSession 中拥有独立运行态的领域参与者。Baton 负责控制面一致性，Plugin 负责自己的领域模型和外部系统适配。
@@ -77,7 +77,7 @@ manifest 先声明 `manifestVersion + pluginId + version + entry` 和可选展�
 三方 Plugin 只依赖独立的 `@qiankun01/baton-plugin` 类型包。它与 Baton 宿主位于同一
 monorepo，便于契约、宿主适配和测试原子演进，但独立版本化和发布；其中只包含
 `PluginPackage`、`PluginActivationContext`、Resource/Controller、
-`BatonSnapshot` 和 `PluginOutput` 等作者契约。Manager、Binding、Controller、Store、
+`BatonSnapshot`、`PluginOutput` 和 Interaction 等作者契约。Manager、Binding、Controller、Store、
 Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 自己也消费这份公共
 契约，不维护第二套同名类型。
 
@@ -506,10 +506,24 @@ interface Controller<TSpec, TStatus> {
   ): BoardPresentation | undefined;
 }
 
-type PluginOutput = {
-  kind: "proposed-input";
-  text: string;
-};
+type PluginOutput =
+  | {
+      kind: "proposed-input";
+      text: string;
+    }
+  | {
+      kind: "interaction";
+      decisionKey: string;
+      title: string;
+      prompt: string;
+      options?: Array<{
+        optionId: string;
+        label: string;
+        description?: string;
+        role?: "default" | "reject";
+      }>;
+      allowOther?: boolean;
+    };
 
 type ReconcileResult = {
   output?: PluginOutput;
@@ -522,7 +536,7 @@ Plugin 自有 Resource 的读写通过 `PluginActivationContext.resources` 提�
 `BatonSnapshot` 始终只读，不混入 mutation capability。Baton-owned Resource 不接受 status patch。
 
 `PluginOutput.kind` 是 Baton 定义的封闭联合，每个 kind 对应明确的校验、权限、持久化和 UI
-生命周期。首个 `proposed-input` 只是准备交给 Harness 的文本建议，不创建 Baton 内核
+生命周期。`proposed-input` 只是准备交给 Harness 的文本建议，不创建 Baton 内核
 Interaction 或另一套审批状态机。Baton 把持久 Proposal 投影为 InteractionDock 中的非阻塞
 suggested input；用户显式采用后才进入 composer，可编辑后提交，也可直接丢弃。只有提交后，
 它才成为普通 Input，继续走现有 Input → Attempt → Harness 路径。Baton 从本次 Resource 自动取得 resource
@@ -531,13 +545,22 @@ identity 与水位，再结合文本摘要给 Proposal 生成稳定内部身份�
 可以各自产生一次建议；Baton-owned Resource Proposal 使用 `basedOnRevision`。这些 Manager 管理的
 信息不由 Plugin 回填，旧版只有 `basedOnGeneration` 的持久 Proposal 继续按原身份读取。
 
+`interaction` 用于“PR/MR 关联哪个 Requirement”“是否关闭 Requirement”等必须由用户决定、
+且回答仍归原 Resource 消费的阻塞协作。`decisionKey` 在该 Resource 内稳定；选项用稳定
+`optionId` 表达领域值，`role: "reject"` 只提示展示语义，Plugin 不依赖选项位置。Baton 将问题
+写入 Event Ledger 后才展示；用户回答同样先持久化，再重新 enqueue 原 Resource。下一次
+reconcile 从只包含当前 Resource 决议的 `BatonSnapshot.pluginInteractions` 读取结果，不注册
+选项 callback，也不在内存 Promise 中保存 continuation。无选项时是自由文本，有选项时是单选；
+`allowOther` 可额外接受用户输入值。
+
 Manager 在通知 UI 前先持久化 Proposal，接收方按 `proposalId` 幂等投影。`resolution` 缺省即
 待处理，首次 `submitted | dismissed` 终结后不再改变；因此同一状态下被丢弃或提交的建议不会
 反复出现。进程重启时，Manager 重新投影尚无 resolution 的 Proposal。首期 Controller 不主动
 启动、恢复或选择 Harness。
 
 从边界上看，Controller 产出的是受 Baton 接管的 **Plugin Output**，不是直接执行宿主动作。
-当前唯一 Output kind 是 `proposed-input`，Manager 将它持久化成 Proposal。未来若增加
+当前 Output kind 是 `proposed-input` 和 `interaction`：前者持久化成 Proposal，后者进入统一
+Interaction opened/resolved 生命周期。未来若增加
 `requestHarnessWork`，也必须先转成 Baton 的 Intent / Attempt，经过路由、权限、并发、上下文
 交付和回执链路；Plugin 永远不直接取得或调用 `HarnessAdapter`。
 
@@ -585,7 +608,9 @@ Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一。首�
 Resource、Receipt 和审计历史继续保留。
 
 新 Session 或进程重启后，Baton 从用户级启用配置重建当前 Session 的 Binding，先恢复待处理
-Proposal，再扫描 Resource 和 `nextReconcileAt`，将未完成对象重新 enqueue。Package 升级不会
+Proposal 和 Plugin Interaction，再扫描 Resource 和 `nextReconcileAt`，将未完成对象重新 enqueue。
+Plugin 发起的待决 Interaction 不会像失去 Harness resolver 的交互那样在 crash recovery 中自动
+取消；其 continuation 是持久 Resource key。Package 升级不会
 静默覆盖 Session 运行数据；
 确需 Resource schema migration 时由新版本显式声明并产生可审计结果。
 
@@ -737,8 +762,9 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
    Baton 动态合并补全并渲染 message/picker，选择值再路由回同一 Plugin handler。
    manifest 的 `command | resource` 声明校验仍随后补齐；多实例出现前保持单一路由，
    多个 active instance 时 fail closed。
-6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
-   提交后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar，
+6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock；`interaction`
+   Output 已接入 Event Ledger、同 Resource 决议 Snapshot、TUI 回答和重新 reconcile。用户采用、
+   编辑并提交 proposed input 后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar，
    后续再接可选 Resource Context source，跑通完整 Requirement Loop。
 7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。

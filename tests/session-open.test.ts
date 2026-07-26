@@ -227,6 +227,45 @@ describe("crash recovery on open", () => {
     });
   });
 
+  test("dangling Plugin Interactions remain pending for Resource reconcile", () => {
+    const h = store.createSession({ cwd: "/repo" });
+    h.append({
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      kind: "interaction.opened",
+      payload: {
+        kind: "question",
+        interactionId: "ix_plugin",
+        requester: {
+          type: "plugin",
+          pluginInstanceId: "reqloop_default",
+        },
+        pluginContext: {
+          decisionKey: "associate-pr",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_1",
+          resourceOwner: "plugin",
+          basedOnGeneration: 1,
+        },
+        questions: [
+          {
+            questionId: "decision",
+            header: "Associate pull request",
+            question: "Choose a requirement",
+          },
+        ],
+      },
+    });
+
+    const result = openBatonSession(store, {
+      cwd: "/repo",
+      sessionId: h.id,
+    });
+    expect(result.recovered).toBe(false);
+    expect(
+      result.session.loadState().interactions.get("ix_plugin")?.resolution,
+    ).toBeUndefined();
+  });
+
   test("dangling hook trust Interactions are cancelled", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });

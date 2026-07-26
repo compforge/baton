@@ -69,7 +69,7 @@ async function resolveInteraction(interaction: Interaction): Promise<Interaction
     const values = question.multiSelect ? answer.split(",").map((value) => value.trim()).filter(Boolean) : [answer];
     answers[question.questionId] = values.map((value) => {
       const option = question.options?.[Number(value) - 1];
-      return option?.label ?? value;
+      return option?.optionId ?? option?.label ?? value;
     });
   }
   return { kind: "question", outcome: "answered", answers };
