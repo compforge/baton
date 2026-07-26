@@ -8,6 +8,9 @@ import type {
   PluginPackage,
   PluginSessionContext,
   ResourceContribution,
+  ToastMessage,
+  ToastSink,
+  ToastTone,
 } from "@qiankun01/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
 import type { PluginResourceClient } from "./resource-client.ts";
@@ -21,6 +24,9 @@ export type {
   PluginPackage,
   PluginSessionContext,
   ResourceContribution,
+  ToastMessage,
+  ToastSink,
+  ToastTone,
 } from "@qiankun01/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(
@@ -34,6 +40,7 @@ type BuiltinResourceRegistrar = <K extends BuiltinResourceKind>(
 interface PluginRegistrars {
   registerResource: ResourceRegistrar;
   watchBuiltinResource: BuiltinResourceRegistrar;
+  showToast(message: ToastMessage): void;
 }
 
 function nonEmpty(name: string, value: string): void {
@@ -59,6 +66,7 @@ export class PluginBinding implements PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
   readonly resources: PluginResourceClient;
+  readonly toast: ToastSink;
   private readonly registrars: PluginRegistrars;
   private readonly cleanups: Array<() => Promise<void> | void> = [];
   private sealed = false;
@@ -75,6 +83,12 @@ export class PluginBinding implements PluginActivationContext {
     this.session = Object.freeze({ ...session });
     this.registrars = registrars;
     this.resources = resources;
+    this.toast = Object.freeze({
+      show: (message: ToastMessage) => {
+        if (this.closed) throw new Error("plugin Binding is closed");
+        this.registrars.showToast(message);
+      },
+    });
   }
 
   registerResource<TSpec, TStatus>(

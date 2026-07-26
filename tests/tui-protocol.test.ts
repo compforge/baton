@@ -226,6 +226,12 @@ describe("BatonChatProtocol Board", () => {
       internals.changed();
       expect(protocol.getView().sidecar).toBeUndefined();
       expect(protocol.getView().footer).not.toContain("board:");
+      await protocol.command("board", "");
+      expect(protocol.getView().toast).toEqual({
+        text: "Board has no items",
+        tone: "info",
+      });
+      expect(session.readEvents()).toHaveLength(0);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -288,7 +294,7 @@ describe("BatonChatProtocol plugins command", () => {
       expect(session.readEvents()).toHaveLength(0);
       await expect(protocol.command("plugins", "extra")).rejects.toThrow("/plugins takes no arguments");
       await protocol.command("reload-plugins", "");
-      expect(protocol.getView().status).toEqual({
+      expect(protocol.getView().toast).toEqual({
         text: "Reloaded 0 plugin instances",
         tone: "info",
       });
@@ -423,7 +429,7 @@ describe("BatonChatProtocol harness commands", () => {
 
       await protocol.command("compact", "");
       expect(compacted).toEqual(["codex"]);
-      expect(protocol.getView().status?.text).toBe("codex context compacted");
+      expect(protocol.getView().toast?.text).toBe("codex context compacted");
 
       await protocol.submit("/c ambiguous");
       expect(submitted).toHaveLength(4);
@@ -1042,7 +1048,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       await protocol.resolveInteraction("ix_1", { kind: "approval", optionId: "allow" });
       view = protocol.getView();
       expect(view.interactions).toHaveLength(1); // 卡片消失只由 resolved 事件驱动
-      expect(view.status?.text).toContain("no longer pending");
+      expect(view.toast?.text).toContain("no longer pending");
 
       // resolved 落盘 → 卡片消失
       session.append({
@@ -1288,13 +1294,13 @@ describe("BatonChatProtocol steer submit", () => {
 
       await protocol.submit("prefer approach B");
       expect(calls).toEqual(["sendTurn"]);
-      expect(protocol.getView().status?.text).toContain("steering");
+      expect(protocol.getView().toast?.text).toContain("steering");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("rejected steer degrades honestly: status says follow-up, not steer", async () => {
+  test("rejected steer degrades honestly: toast says follow-up, not steer", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-steer-degrade-"));
     try {
       const protocol = protocolWith(root);
@@ -1321,7 +1327,7 @@ describe("BatonChatProtocol steer submit", () => {
 
       const submitted = protocol.submit("prefer approach B");
       await Bun.sleep(1); // 让 protocol 走到降级状态提示、停在等待 outcome 处
-      const degraded = protocol.getView().status?.text;
+      const degraded = protocol.getView().toast?.text;
       expect(degraded).toContain("queued as follow-up");
       expect(degraded).not.toContain("steering");
       resolveOutcome?.("completed");

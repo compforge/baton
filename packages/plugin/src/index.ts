@@ -10,6 +10,9 @@ export type {
   PluginInstance,
   PluginPackage,
   PluginSessionContext,
+  ToastMessage,
+  ToastSink,
+  ToastTone,
 } from "./package.ts";
 
 export type {

@@ -1,7 +1,7 @@
 // session picker：baton resume / fork 无 id 时的前置会话选择屏（词汇对齐 codex CLI 的
 // resume_picker）。不预先打开任何会话，选中才 resume / fork——锁与 crash recovery 只
 // 发生在被选中的目标上。这是 baton 侧组件（它理解 SessionMeta）；渲染复用 opentui 的
-// <select>（自带 ↑↓/Enter）。chat-tui 的 Picker 是"通用选项浮层"这个机制，与这里的
+// <select>（自带 ↑↓/Enter）。chat-tui 的 Picker 是 Interaction Dock 中的通用选择机制，与这里的
 // "选会话"业务概念不同层；将来会话内入口若与启动入口合流（codex 的 LaunchContext
 // 语义），统一收敛到本文件。
 // Enter 选中、Esc/Ctrl+C 取消退出；Tab 切换 list/tree。
@@ -31,7 +31,7 @@ export interface SessionPickerProps {
 }
 
 /**
- * SessionMeta → select 行的唯一投影，启动 picker 与 /sessions 浮层共用。
+ * SessionMeta → select 行的唯一投影，启动 picker 与 /sessions Interaction Dock 共用。
  * currentSessionId 用于会话内入口标记当前会话（启动入口没有"当前"）。
  * mode=tree 时按 fork 谱系铺行并加缩进前缀；默认 list 保持传入顺序（时间序）。
  */

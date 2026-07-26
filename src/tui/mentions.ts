@@ -1,5 +1,5 @@
 // @ 引用候选（纯逻辑，可单测）：按 id 前缀或标题子串匹配 BatonSession。
-// 触发识别与浮层交互归 chat-tui，这里只提供 baton 对象的候选源。
+// 触发识别与 Interaction Dock 归 chat-tui，这里只提供 baton 对象的候选源。
 
 import type { Candidate } from "chat-tui";
 
