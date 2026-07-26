@@ -49,8 +49,17 @@ function validateCommandResult(
     throw new Error(`/${command.name} returned an unsupported result`);
   }
   nonEmptyCommandText(`/${command.name} picker title`, result.title);
-  if (result.options.length === 0) {
+  if (
+    result.options.length === 0 &&
+    result.search?.mode !== "remote"
+  ) {
     throw new Error(`/${command.name} picker must contain at least one option`);
+  }
+  if (result.search?.placeholder !== undefined) {
+    nonEmptyCommandText(
+      `/${command.name} picker search placeholder`,
+      result.search.placeholder,
+    );
   }
   const values = new Set<string>();
   for (const option of result.options) {

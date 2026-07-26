@@ -3,12 +3,21 @@ export interface PluginCommandInput {
   readonly argument: string;
   /** Set when the user selects an option returned by an earlier invocation. */
   readonly selectedValue?: string;
+  /** Set when a remote-search picker asks the command for a fresh result page. */
+  readonly searchQuery?: string;
 }
 
 export interface PluginCommandOption {
   readonly name: string;
   readonly description?: string;
   readonly value: string;
+}
+
+export interface PluginCommandPickerSearch {
+  readonly mode: "local" | "remote";
+  /** Query represented by this result. Used to initialize or refresh the field. */
+  readonly query?: string;
+  readonly placeholder?: string;
 }
 
 export type PluginCommandResult =
@@ -20,6 +29,7 @@ export type PluginCommandResult =
       readonly kind: "picker";
       readonly title: string;
       readonly options: readonly PluginCommandOption[];
+      readonly search?: PluginCommandPickerSearch;
     };
 
 /**

@@ -604,6 +604,11 @@ Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一。首�
 命令一旦开始执行，后续 Resource、Event 和 Board 条目都携带明确的
 `pluginInstanceId`，不能依赖“当前 Plugin”之类的隐式全局状态。
 
+Command 返回的 Picker 可以声明本地过滤或远端搜索。本地模式只过滤当前 options；远端模式把
+查询词通过同一个 Command 的 `searchQuery` 再次路由到原 PluginInstance。Baton 负责防抖并丢弃
+被更新查询取代的响应，Plugin 负责调用领域 Connector 并返回新的 Picker 快照；查询词是短寿命
+用户 intent，不写 Resource。远端搜索允许空 options，以便保留搜索框和“无匹配”状态。
+
 ### 2.5 Disable、崩溃与升级
 
 全局禁用 Plugin 时，当前操作所在的 Baton 关闭其 Binding，撤销运行期注册和 due timer，并
@@ -762,7 +767,8 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
 4. 已建立本地 / Git Marketplace 注册、仓内 Package 发现、版本化不可变安装和进程内加载；
    用户身份统一为 `plugin@marketplace`，同名 Package 按 Marketplace 隔离。
 5. 已以 reqloop 的 `/requirements` 接通 Command：Package 在 Binding 激活期注册，
-   Baton 动态合并补全并渲染 message/picker，选择值再路由回同一 Plugin handler。
+   Baton 动态合并补全并渲染 message/picker，选择值再路由回同一 Plugin handler；Picker
+   支持本地过滤或防抖后的远端 Command 搜索，并丢弃过期响应。
    manifest 的 `command | resource` 声明校验仍随后补齐；多实例出现前保持单一路由，
    多个 active instance 时 fail closed。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock；`interaction`

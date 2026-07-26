@@ -11,6 +11,7 @@ import type {
   DiffOp,
   InteractionResponse,
   InteractionView,
+  PickerSearchView,
   RunStatusItem,
   TranscriptBlockContent,
   TranscriptBlockStatus,
@@ -72,6 +73,7 @@ import { setTerminalTabTitle } from "./terminal-title.ts";
 // 还会挤占 composer 的终端光标刷新。只合并高频、可安全追加的流式事件；Interaction、终态和
 // 完整快照仍立即发布，并顺带冲刷此前积累的 chunk，避免交互卡片被延迟。
 const STREAM_VIEW_FRAME_MS = 33;
+const PICKER_SEARCH_DEBOUNCE_MS = 250;
 const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "agent_message_chunk",
   "agent_thought_chunk",
@@ -288,6 +290,12 @@ interface PendingPicker {
   id: string;
   title: string;
   options: Array<{ name: string; description: string; value: string }>;
+  search?: PickerSearchView;
+  onSearch?: (query: string) => Promise<{
+    title: string;
+    options: Array<{ name: string; description: string; value: string }>;
+    search: PickerSearchView;
+  }>;
   onSelect: (value: string) => void | Promise<void>;
 }
 
@@ -302,6 +310,8 @@ export class BatonChatProtocol implements ChatProtocol {
   private toast: ToastMessage | null = null;
   private commandOutput: TranscriptItem | null = null;
   private picker: PendingPicker | null = null;
+  private pickerSearchTimer: ReturnType<typeof setTimeout> | undefined;
+  private pickerSearchRevision = 0;
   private boardMode: "auto" | "open" | "hidden" = "auto";
   private nextPickerId = 1;
   private listeners = new Set<() => void>();
@@ -632,6 +642,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   /** 优雅退出：先关掉 agent 子进程再退（对应 /exit、双击 Ctrl+C、Ctrl+D） */
   async exit(): Promise<void> {
+    this.cancelPickerSearch();
     this.toast = { text: "Exiting…", tone: "info" };
     this.changed();
     await this.controller.close();
@@ -645,6 +656,7 @@ export class BatonChatProtocol implements ChatProtocol {
   resolvePicker(id: string, value: string | null): void {
     const picker = this.picker;
     if (!picker || picker.id !== id) return;
+    this.cancelPickerSearch();
     this.picker = null;
     this.changed();
     if (value === null) return;
@@ -656,6 +668,80 @@ export class BatonChatProtocol implements ChatProtocol {
         this.changed();
       }
     })();
+  }
+
+  searchPicker(id: string, query: string): void {
+    const picker = this.picker;
+    if (
+      !picker ||
+      picker.id !== id ||
+      picker.search?.mode !== "remote" ||
+      !picker.onSearch
+    ) {
+      return;
+    }
+    if (picker.search.query === query && !picker.search.loading) return;
+
+    this.cancelPickerSearch();
+    const revision = this.pickerSearchRevision;
+    const search = picker.onSearch;
+    this.picker = {
+      ...picker,
+      options: [],
+      search: {
+        ...picker.search,
+        query,
+        loading: true,
+      },
+    };
+    this.changed();
+    this.pickerSearchTimer = setTimeout(() => {
+      this.pickerSearchTimer = undefined;
+      void (async () => {
+        try {
+          const result = await search(query);
+          if (
+            this.pickerSearchRevision !== revision ||
+            this.picker?.id !== id
+          ) {
+            return;
+          }
+          this.picker = {
+            ...this.picker,
+            title: result.title,
+            options: result.options,
+            search: {
+              ...result.search,
+              query: result.search.query ?? query,
+              loading: false,
+            },
+          };
+          this.changed();
+        } catch (error) {
+          if (
+            this.pickerSearchRevision !== revision ||
+            this.picker?.id !== id
+          ) {
+            return;
+          }
+          const currentSearch = this.picker.search;
+          if (!currentSearch) return;
+          this.picker = {
+            ...this.picker,
+            search: {
+              ...currentSearch,
+              query,
+              loading: false,
+            },
+          };
+          this.toast = {
+            text: error instanceof Error ? error.message : String(error),
+            tone: "error",
+          };
+          this.changed();
+        }
+      })();
+    }, PICKER_SEARCH_DEBOUNCE_MS);
   }
 
   async resolveInteraction(id: string, response: InteractionResponse): Promise<void> {
@@ -1014,8 +1100,17 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private openPicker(picker: Omit<PendingPicker, "id">): void {
+    this.cancelPickerSearch();
     this.picker = { ...picker, id: `pk_${this.nextPickerId++}` };
     this.changed();
+  }
+
+  private cancelPickerSearch(): void {
+    if (this.pickerSearchTimer !== undefined) {
+      clearTimeout(this.pickerSearchTimer);
+      this.pickerSearchTimer = undefined;
+    }
+    this.pickerSearchRevision += 1;
   }
 
   private async runPluginCommand(
@@ -1056,6 +1151,41 @@ export class BatonChatProtocol implements ChatProtocol {
         ...option,
         description: option.description ?? option.value,
       })),
+      ...(result.search
+        ? {
+          search: {
+            ...result.search,
+            loading: false,
+          },
+        }
+        : {}),
+      ...(result.search?.mode === "remote"
+        ? {
+          onSearch: async (query: string) => {
+            const next = await this.plugins.executeCommand(name, {
+              argument,
+              searchQuery: query,
+            });
+            if (
+              !next ||
+              next.kind !== "picker" ||
+              next.search?.mode !== "remote"
+            ) {
+              throw new Error(
+                `/${name} remote search must return a remote-search picker`,
+              );
+            }
+            return {
+              title: next.title,
+              options: next.options.map((option) => ({
+                ...option,
+                description: option.description ?? option.value,
+              })),
+              search: next.search,
+            };
+          },
+        }
+        : {}),
       onSelect: async (value) => {
         await this.runPluginCommand(name, argument, value);
       },
@@ -1243,7 +1373,12 @@ export class BatonChatProtocol implements ChatProtocol {
         tag: turn.harnessTargetId,
       })),
       picker: this.picker
-        ? { id: this.picker.id, title: this.picker.title, options: this.picker.options }
+        ? {
+          id: this.picker.id,
+          title: this.picker.title,
+          options: this.picker.options,
+          ...(this.picker.search ? { search: this.picker.search } : {}),
+        }
         : null,
       interactions,
       sidecar:

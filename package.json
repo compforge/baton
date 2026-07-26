@@ -43,7 +43,7 @@
     "@opentui/react": "^0.4.5",
     "@qiankun01/baton-plugin": "workspace:*",
     "bun": "^1.3.14",
-    "chat-tui": "github:qiankunli/chat-tui#dec7de1b2f09b08269a54825f84e86ec70719ac7",
+    "chat-tui": "github:qiankunli/chat-tui#c4b5af08903d83814ad9984a7a64828003e5f285",
     "cron-parser": "^5.6.2",
     "react": "^19.2.7",
     "yaml": "^2.9.0"
