@@ -32,6 +32,7 @@ import {
   type PluginPackage,
   pluginPackageKey,
   type ResourceContribution,
+  type ResourceSchedule,
   type ToastMessage,
   type ToastTone,
   validatePluginPackage,
@@ -41,6 +42,10 @@ import {
   ReconcileCapacity,
   ReconcileDueQueue,
 } from "./queue.ts";
+import {
+  ResourceScheduleQueue,
+  validateResourceSchedules,
+} from "./schedule.ts";
 import { PluginResourceStore } from "./resource.ts";
 import { createPluginResourceClient } from "./resource-client.ts";
 import {
@@ -78,6 +83,8 @@ export interface ControllerDefinition<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceKind: string;
   reconciler: Reconciler<TSpec, TStatus>;
+  /** Fixed recurring wakeups; every tick enqueues current Resources of this kind. */
+  schedules?: readonly ResourceSchedule[];
   /** 当前 Controller 内不同 Resource 的并发数；默认 1。 */
   maxConcurrency?: number;
   now?: () => Date;
@@ -159,9 +166,11 @@ export interface PluginReloadResult {
 
 interface ManagedController {
   scope: ReconcileScope;
+  readonly schedules?: readonly ResourceSchedule[];
   enqueue(key: ReconcileKey): Promise<void>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
+  resourceKeys?(): ReconcileKey[];
   initialReconciles?(): ReconcileKey[];
   /** PluginResource 持久化 due time；Builtin Resource 靠 ledger replay 在重启后重新唤醒。 */
   setNextReconcileAt?(key: ReconcileKey, next: Date): void;
@@ -214,6 +223,7 @@ export class Manager {
   private readonly suspendedControllers = new Set<string>();
   private readonly now: () => Date;
   private readonly dueQueue: ReconcileDueQueue;
+  private readonly scheduleQueue: ResourceScheduleQueue;
   private started = false;
   private starting?: Promise<void>;
   private closed = false;
@@ -281,6 +291,10 @@ export class Manager {
         });
       },
     });
+    this.scheduleQueue = new ResourceScheduleQueue({
+      now: this.now,
+      onDue: (scope) => this.enqueueScheduledResources(scope),
+    });
     if (options.session) {
       this.builtinProjection = new BuiltinResourceProjection({
         session: options.session,
@@ -307,6 +321,7 @@ export class Manager {
         `plugin Controller batonSessionId must be ${this.proposals.batonSessionId}, got ${definition.store.batonSessionId}`,
       );
     }
+    validateResourceSchedules(definition.schedules, this.now());
     const controller = new Controller({
       ...definition,
       snapshot: this.snapshot,
@@ -730,6 +745,7 @@ export class Manager {
     this.started = true;
     for (const controller of controllers) {
       if (this.controllers.get(reconcileScopeId(controller.scope)) !== controller) continue;
+      this.activateResourceSchedules(controller);
       this.enqueueInitial(controller);
     }
   }
@@ -862,6 +878,7 @@ export class Manager {
     this.retries.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
+    this.scheduleQueue.close();
     this.unsubscribeBuiltinProjection?.();
     this.builtinProjection?.close();
     if (errors.length === 1) throw errors[0];
@@ -915,7 +932,7 @@ export class Manager {
     }
   }
 
-  private restoreSchedules(controller: ManagedController): void {
+  private restoreDueReconciles(controller: ManagedController): void {
     for (const entry of controller.scheduledReconciles()) {
       this.dueQueue.schedule(entry.key, entry.nextReconcileAt);
     }
@@ -936,7 +953,8 @@ export class Manager {
     if (suspended) this.suspendedControllers.add(id);
     try {
       if (this.started && !suspended) {
-        this.restoreSchedules(controller);
+        this.activateResourceSchedules(controller);
+        this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }
     } catch (error) {
@@ -944,6 +962,7 @@ export class Manager {
       this.suspendedControllers.delete(id);
       controller.close();
       this.dueQueue.removeScope(controller.scope);
+      this.scheduleQueue.removeScope(controller.scope);
       throw error;
     }
     let active = true;
@@ -956,6 +975,7 @@ export class Manager {
         this.suspendedControllers.delete(id);
         controller.close();
         this.dueQueue.removeScope(controller.scope);
+        this.scheduleQueue.removeScope(controller.scope);
         for (const [keyId, retry] of this.retries) {
           if (sameReconcileScope(retry.key, controller.scope)) this.retries.delete(keyId);
         }
@@ -965,6 +985,28 @@ export class Manager {
 
   private enqueueInitial(controller: ManagedController): void {
     for (const key of controller.initialReconciles?.() ?? []) {
+      void controller.enqueue(key).catch(() => {
+        // Queue callback has already scheduled retry and reported diagnostics.
+      });
+    }
+  }
+
+  private activateResourceSchedules(controller: ManagedController): void {
+    if (!controller.schedules?.length) return;
+    this.scheduleQueue.register(controller.scope, controller.schedules);
+  }
+
+  private enqueueScheduledResources(scope: ReconcileScope): void {
+    if (!this.started || this.closed) return;
+    const controller = this.controllers.get(reconcileScopeId(scope));
+    if (
+      !controller ||
+      this.suspendedControllers.has(reconcileScopeId(scope)) ||
+      !sameReconcileScope(controller.scope, scope)
+    ) {
+      return;
+    }
+    for (const key of controller.resourceKeys?.() ?? []) {
       void controller.enqueue(key).catch(() => {
         // Queue callback has already scheduled retry and reported diagnostics.
       });
@@ -996,7 +1038,8 @@ export class Manager {
       const id = reconcileScopeId(controller.scope);
       if (!this.suspendedControllers.delete(id)) continue;
       if (this.started) {
-        this.restoreSchedules(controller);
+        this.activateResourceSchedules(controller);
+        this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }
     }

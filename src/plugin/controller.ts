@@ -1,3 +1,5 @@
+import type { ResourceSchedule } from "@qiankun01/baton-plugin";
+
 import type { PluginResource } from "./resource.ts";
 import { PluginResourceStore } from "./resource.ts";
 import { ReconcileQueue } from "./queue.ts";
@@ -76,6 +78,7 @@ export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceKind: string;
   reconciler: Reconciler<TSpec, TStatus>;
+  schedules?: readonly ResourceSchedule[];
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
@@ -149,6 +152,7 @@ interface ReconcileExecution {
  */
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
+  readonly schedules: readonly ResourceSchedule[];
   private readonly store: PluginResourceStore;
   private readonly resourceKind: string;
   private readonly reconciler: Reconciler<TSpec, TStatus>;
@@ -166,6 +170,7 @@ export class Controller<TSpec, TStatus> {
     this.store = options.store;
     this.resourceKind = options.resourceKind;
     this.reconciler = options.reconciler;
+    this.schedules = Object.freeze([...(options.schedules ?? [])]);
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ?? (() => emptyBatonSnapshot(options.store.batonSessionId));
@@ -220,6 +225,15 @@ export class Controller<TSpec, TStatus> {
         }),
       ];
     });
+  }
+
+  resourceKeys(): ReconcileKey[] {
+    return this.store.list(this.resourceKind).map((resource) =>
+      ownedKey({
+        ...this.scope,
+        resourceId: resource.metadata.resourceId,
+      }),
+    );
   }
 
   setNextReconcileAt(key: ReconcileKey, next: Date): void {

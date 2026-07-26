@@ -1,7 +1,7 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> PluginResource / Reconcile / Proposal / Board projection / 动态唤醒、`baton.turn` Builtin Resource
+> PluginResource / Reconcile / Proposal / Board projection / 动态唤醒 / Resource cron schedules、`baton.turn` Builtin Resource
 > 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
 > `/reload-plugins` 与 Plugin Command 已经落地；Context projection、配置编辑 UI 和权限审阅仍按真实产品入口增量
@@ -277,7 +277,7 @@ Plugin 的扩展点收束为少量明确能力：
 | kind | 作用 | 返回或产生 |
 |---|---|---|
 | `command` | 用户直接发起的入口 | 创建、选择或修改 Resource |
-| `resource` | 声明和控制一种 PluginResource | schema、reconcile、Board projection、可选 Context projection |
+| `resource` | 声明和控制一种 PluginResource | schema、reconcile、固定 cron schedules、Board projection、可选 Context projection |
 | `builtin-watch` | 消费 Baton 只读投影 | reconcile、Plugin Output |
 
 Manifest 中保存可序列化的 `ContributionDeclaration`；Binding 以相同的 `kind + id` 注册运行期
@@ -285,10 +285,17 @@ handler。Baton 在激活时校验二者一致，既能让安装者提前看见�
 写进 manifest。
 
 Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可写 Resource。首期也不提供
-Monitor、EventSource、Schedule、Action 或通用 Hook：Builtin watch、领域收敛和定时重查分别
-使用 `watchBuiltinResource`、`registerResource` 与 `requeueAfter`。只有 webhook、关闭 TUI
+Monitor、EventSource、Action 或通用 Hook：Builtin watch、领域收敛、一次性动态重查和固定
+周期观察分别使用 `watchBuiltinResource`、`registerResource`、`requeueAfter` 与 Resource
+Contribution 的 `schedules`。只有 webhook、关闭 TUI
 后的持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，
 才增加对应的窄接口。
+
+每份 Resource Contribution 可以声明多个 `scheduleId + cron + timeZone`。Schedule 只在当前
+Binding 活跃时运行；同一时刻到期的多个 schedule 先按 Resource scope 合并，再将该 kind 的
+全部当前 Resource key 放入既有 reconcile queue。它不直接调用 Plugin callback、不修改
+status，也不把 tick 写成领域 Event。重启后从当前时间的下一次 occurrence 继续，不补放历史
+tick；关闭 TUI 后仍需准时运行时再引入 daemon。
 
 Resource Contribution 可以附带 `BoardProjector`，把当前 Resource 派生为零到多个通用
 Board 条目：
@@ -435,7 +442,8 @@ BatonSession 和 PluginInstance scope。单个 Instance 激活失败只关闭并
 
 ### 2.2 Resource watch 与 Reconciler
 
-Builtin 投影、PluginResource 创建或 `spec` 更新、启动恢复、外部观察或计时到期都只表示
+Builtin 投影、PluginResource 创建或 `spec` 更新、启动恢复、外部观察、Resource schedule
+或动态计时到期都只表示
 “某个对象可能需要重新检查”。Baton 将同一对象的重复触发合并成 reconcile key：
 
 ```text
@@ -449,7 +457,7 @@ Reconciler 不把触发原因当成一条必须执行一次的命令。它根据
 外部状态，比较 `spec` 与 `status`，执行当前仍需要的收敛动作：
 
 ```text
-Builtin projection / PluginResource change / startup / timer due
+Builtin projection / PluginResource change / startup / schedule or timer due
                          │
                          ▼
 enqueue(pluginInstanceId, resourceOwner, resourceKind, resourceId)
@@ -531,6 +539,11 @@ Manager 使用按 key 的指数退避并把下一次 retry 同样写入 `nextRec
 time 不反写投影；进程内仍使用相同 due queue，重启后由 ledger 全量重放再次入队。不引入语义
 模糊的 `requeue: boolean`。
 
+Resource Contribution 的 `schedules` 表达与单次 reconcile 结果无关的固定周期职责，例如每
+五分钟检查活跃 PR 状态。Baton 使用显式 IANA `timeZone` 计算 cron occurrence；tick 到期后
+枚举该 Contribution 的当前 Resource 并复用同一 keyed queue。固定 schedule 与
+`requeueAfter` 相互独立：前者持续存在，后者仍由某个 Resource 的本次 reconcile 动态决定。
+
 Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部系统，因为副作用本来就是“使实际状态
 靠近 spec”的一部分，而不是返回值的一部分。前提是当前 `spec` 或已记录的用户决定已经授权该
 变化，且 manifest 声明了对应权限。可能已生效却拿不到回执的操作必须使用稳定 operation key，
@@ -540,8 +553,6 @@ Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部
 
 - webhook、长连接、文件监听或无 Resource 的持续观察出现后，再增加只负责 enqueue 的
   EventSource，不恢复一套 Monitor 状态机；
-- calendar cron、时区和 misfire 语义出现后，再增加 Schedule；普通轮询继续使用
-  `requeueAfter`；
 - 无法自然表达成 desired state、又需要被独立调用的命令出现后，再增加 Action，并复用
   Intent / Attempt / Receipt；
 - 需要关闭 TUI 后继续实时推进时，再引入 daemon，复用同一 Resource store 和 reconcile queue。
@@ -595,7 +606,7 @@ Operator 模型可以帮助区分这些职责，但 Board 不直接等于 CRD：
 | spec / status | 人认可的 Loop Contract / Reconciler 观测状态 |
 | Controller / Reconciler | Builtin watch 或 Resource Contribution 中的 `reconcile()` |
 | watch / work queue | Builtin / Plugin Resource 变化与 keyed reconcile queue |
-| periodic resync | `RequeueAfter` → 持久化 `nextReconcileAt` |
+| dynamic recheck / periodic resync | `RequeueAfter` → 持久化 `nextReconcileAt` / Resource cron schedule |
 | API mutation | Reconciler 更新 status、调用 Plugin Connector |
 | kubectl / status view | Board projection |
 
@@ -704,7 +715,8 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
 1. 已建立 Package、Instance、Binding 的可信进程内最小契约：启动恢复启用 Instance，激活失败
    整体回滚，解绑和退出统一关闭。
 2. 已建立 PluginResource 通用信封与存储、同 key 不并发的 reconcile queue、持久 Proposal，
-   以及 `requeueAfter` due time；运行数据全部归当前 BatonSession。
+   `requeueAfter` due time 与 Resource Contribution 固定 cron schedules；三种唤醒都进入同一
+   keyed queue，运行数据全部归当前 BatonSession。
 3. 已建立 `_baton_turn_summary` → `baton.turn` 的只读 Builtin Resource 投影，
    `watchBuiltinResource` 复用同一 queue、退避和 Proposal 管线；启动 replay 与 live append
    使用同一资源 key。

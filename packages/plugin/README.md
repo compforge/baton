@@ -32,6 +32,11 @@ const plugin: PluginPackage = {
     context.registerResource({
       resourceKind: "Example",
       reconciler: { async reconcile() {} },
+      schedules: [{
+        scheduleId: "periodic-refresh",
+        cron: "*/5 * * * *",
+        timeZone: "UTC",
+      }],
       board: {
         project(resource) {
           return [{
@@ -54,3 +59,8 @@ routing are intentionally excluded.
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource
 status and an optional Board projection; do not emit a toast on every reconcile.
+
+Resource schedules are recurring wakeups. When a cron expression is due, Baton
+enqueues every current Resource of that contribution through the same keyed
+reconcile queue used by Resource changes and `requeueAfterMs`. Schedules never
+run a separate callback or mutate Resource status directly.

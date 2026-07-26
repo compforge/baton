@@ -51,8 +51,8 @@ Loop ≈ resource(spec + status) + reconcile
 Observe → Recommend → Manual approval → Scoped automation
 ```
 
-`spec` 保存人认可的 Contract，`status` 保存 Reconciler 的当前观测；Resource、Harness 结果和
-`requeueAfter` 只负责提示“应该重新检查”。首期 Reconciler 可更新自有 status，并返回一段由人
+`spec` 保存人认可的 Contract，`status` 保存 Reconciler 的当前观测；Resource、Harness 结果、
+Resource schedules 和 `requeueAfter` 只负责提示“应该重新检查”。首期 Reconciler 可更新自有 status，并返回一段由人
 审核、编辑后交给 Harness 的文本，不要求业务一开始就被穷举成 DSL。详细契约见
 [Baton Plugin 设计](./plugin.md)。
 
@@ -179,14 +179,15 @@ BatonPlugin
 └── plugin resources
     ├── spec / status schema
     ├── reconcile
+    ├── schedules[]          固定 cron 周期唤醒
     ├── Board projection
     └── Context projection?   可选
 ```
 
-当前运行时已有 Plugin Command、PluginResource register 与 Builtin Resource watch；manifest
+当前运行时已有 Plugin Command、PluginResource register、Resource cron schedules 与 Builtin Resource watch；manifest
 declaration 校验随 Contribution 审阅入口补齐。Reconciler 是两种 Controller 共用的处理语义，不要求 Plugin
-必须先创建可写 Resource。Monitor、EventSource、Schedule 和 Action 等到
-`requeueAfter + desired state` 无法覆盖真实场景时再引入。Plugin 可以在一个内聚的 loop 内部
+必须先创建可写 Resource。固定周期观察使用 Resource Contribution 的 schedules，一次性动态
+重查使用 `requeueAfter`；Monitor、EventSource 和 Action 等到两者无法覆盖真实场景时再引入。Plugin 可以在一个内聚的 loop 内部
 组合多个外部系统；跨 Plugin 编排统一回到 Baton，不直接互调。
 
 ### Baton Plugin 与 Harness Plugin
@@ -309,7 +310,7 @@ PluginResource 用 `spec` 保存人认可的 Contract，用 `status` 保存 Reco
 `pluginInstanceId + resourceOwner + resourceKind + resourceId`，Baton 合并同一 key 的重复唤醒：
 
 ```text
-Builtin projection / PluginResource change / startup / timer due
+Builtin projection / PluginResource change / startup / schedule or timer due
                          │
                          ▼
 keyed reconcile queue
@@ -333,9 +334,8 @@ Reconciler 可以调用自己 Plugin 的 Connector，使实际状态靠近已授
 重启后恢复。Builtin Resource 的 due time 只存在于进程队列，重启时由 ledger replay 再次
 enqueue。错误都由 Baton 退避重试，空结果等待新事实。
 
-Monitor、EventSource、Schedule 和 Action 都不进入首期。webhook、长连接或无 Resource 的观察
-出现后再增加只负责 enqueue 的 EventSource；calendar cron、时区和 misfire 出现后再增加
-Schedule；无法表达成 desired state 的独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进
+Monitor、EventSource 和 Action 都不进入首期。webhook、长连接或无 Resource 的观察
+出现后再增加只负责 enqueue 的 EventSource；无法表达成 desired state 的独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进
 时，再让 daemon 复用同一 Resource store 和 reconcile queue。
 
 ## 6. Board、Context 与 BatonSession
@@ -541,7 +541,7 @@ devloop（Harness Plugin）
 
 - **留在 devloop**：agent loop 约束，以及交付、阻塞等开发结果的判定；
 - **交给 Harness 边界**：通过 adapter 或窄化 event bridge，把宿主内信号归一成 HarnessEvent；
-- **移交 Baton**：事件持久化、Resource、reconcile queue、`requeueAfter`、session 路由、Board 与
+- **移交 Baton**：事件持久化、Resource、reconcile queue、Resource schedules、`requeueAfter`、session 路由、Board 与
   Harness 调度；
 - **逐步退休**：依赖单一宿主的易失 notifier、waiter re-arm 和 agent 手工建立唤醒的步骤。
 
@@ -615,12 +615,12 @@ DevelopmentOutcome
 2. 建立 PluginPackage/PluginInstance/PluginBinding，以及 PluginResource 通用信封与存储；
 3. 将 `_baton_turn_summary` 投影为只读 `baton.turn`，让 Plugin 从启动 replay 和 live
    append 感知 Baton 内部事实；
-4. 建立同 key 不并发的 reconcile queue，并将 PluginResource 的 `requeueAfter` 持久化为
-   `nextReconcileAt`；
+4. 建立同 key 不并发的 reconcile queue，将 PluginResource 的 `requeueAfter` 持久化为
+   `nextReconcileAt`，并让 Resource Contribution 的固定 cron schedules 进入同一队列；
 5. 接通 Board/Context projection 和 `proposed-input` Output，用 reqloop + 安装了 devloop 的 Harness
    跑通用户审核文本后驱动的 Requirement Loop；
-6. 真实场景无法由轮询、desired state 或当前进程覆盖时，再依次引入 EventSource、Schedule、
-   Action 或 daemon；
+6. 真实场景无法由固定 schedules、动态轮询、desired state 或当前进程覆盖时，再依次引入
+   EventSource、Action 或 daemon；
 7. 真实工作区证明必须由 Reconciler 主动续跑 Harness 时，再扩展受控调用；它复用既有
    Input/Attempt 投递与路由，不伪装成易失的 `monitor Input`。
 
@@ -663,8 +663,9 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
 18. Project、BatonSession 与 HarnessTarget 分别承担会话组织、loop/历史归属和执行位置，不能
     继续由 cwd、Harness 名称或隐式“当前值”混用。
 19. Baton core 不内建通用 LoopRun；具体 run、checkpoint 和完成条件由领域 Plugin 拥有。
-20. `requeueAfter` 是首期唯一时间触发；PluginResource 将它持久化为 `nextReconcileAt`，
-    Builtin Resource 由 ledger replay 恢复；Monitor 和 Schedule 等到真实语义超出该模型后再引入。
+20. Resource cron schedule 表达 Contribution 固有的固定周期职责，`requeueAfter` 表达某个
+    Resource 动态决定的一次性重查；二者都只 enqueue 同一 keyed reconcile。schedule 仅在
+    Binding 活跃时运行，关闭 TUI 后的准时执行留给 daemon。
 
 ## 12. 待继续讨论
 
@@ -677,7 +678,7 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
    排队、steer 或取消？
 6. Board scope 与 resource reference 如何设计，才能支持多 repo 和多个并行 loop？
 7. PluginResource 的 identity、spec/status schema、status patch 冲突和 migration 如何定义？
-8. 哪些场景不能由 `requeueAfter` 覆盖，足以引入 EventSource 或 Schedule？
+8. 哪些场景不能由 Resource schedules 或 `requeueAfter` 覆盖，足以引入 EventSource？
 9. 什么可靠性或实时性指标足以触发 Baton daemon？
 10. 不同 Harness 分别用 custom event、hook 还是 `baton emit` 传递 DevelopmentOutcome，才能
     兼顾原生能力、可靠性和最小耦合？

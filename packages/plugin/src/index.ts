@@ -30,6 +30,7 @@ export type {
   Reconciler,
   ResourceContribution,
   ResourceReconciler,
+  ResourceSchedule,
 } from "./reconcile.ts";
 
 export type {

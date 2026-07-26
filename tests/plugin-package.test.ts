@@ -66,11 +66,68 @@ function reqloopPackage(
   };
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs: number = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
+    await Bun.sleep(5);
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("Plugin Package lifecycle", () => {
+  test("activates Resource schedules through the public Contribution contract", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    resourceStore(root, "reqloop_default").create({
+      kind: "ReqLoopRun",
+      resourceId: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    let runs = 0;
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((context) => {
+          context.registerResource({
+            resourceKind: "ReqLoopRun",
+            schedules: [{
+              scheduleId: "poll-pr-state",
+              cron: "* * * * * *",
+              timeZone: "UTC",
+            }],
+            reconciler: {
+              async reconcile() {
+                runs += 1;
+              },
+            },
+          });
+        }),
+      ],
+      now: () => now,
+      onProposal() {},
+    });
+
+    await manager.start();
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await waitFor(() => runs === 1);
+    await manager.deactivateInstance("reqloop_default");
+    await manager.close();
+  });
+
   test("projects active PluginResources into Board items and invalidates on status changes", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);

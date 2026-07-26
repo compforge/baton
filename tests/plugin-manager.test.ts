@@ -456,6 +456,88 @@ describe("plugin Manager", () => {
     registration.close();
   });
 
+  test("cron schedules enqueue every current Resource through the keyed queue", async () => {
+    const root = testRoot();
+    const resources = store(root, "reqloop_default");
+    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "ReqLoopRun", "run_2");
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    const runs: string[] = [];
+    const manager = new Manager({
+      proposals: proposalStore(root),
+      onProposal() {},
+      now: () => now,
+    });
+    const registration = manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceKind: "ReqLoopRun",
+      schedules: [
+        {
+          scheduleId: "poll-pr-state",
+          cron: "* * * * * *",
+          timeZone: "UTC",
+        },
+        {
+          scheduleId: "poll-requirement-state",
+          cron: "* * * * * *",
+          timeZone: "UTC",
+        },
+      ],
+      reconciler: {
+        async reconcile(_baton, resource) {
+          runs.push(resource.metadata.resourceId);
+        },
+      },
+    });
+
+    await manager.start();
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await waitFor(() => runs.length === 2);
+    expect(runs.sort()).toEqual(["run_1", "run_2"]);
+    expect(
+      resources.list("ReqLoopRun").every(
+        (resource) => resource.metadata.nextReconcileAt === undefined,
+      ),
+    ).toBe(true);
+
+    registration.close();
+    await manager.close();
+  });
+
+  test("stops Resource schedules when their Controller registration closes", async () => {
+    const root = testRoot();
+    const resources = store(root, "reqloop_default");
+    createResource(resources, "ReqLoopRun", "run_1");
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    let runs = 0;
+    const manager = new Manager({
+      proposals: proposalStore(root),
+      onProposal() {},
+      now: () => now,
+    });
+    const registration = manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceKind: "ReqLoopRun",
+      schedules: [{
+        scheduleId: "poll-pr-state",
+        cron: "* * * * * *",
+        timeZone: "UTC",
+      }],
+      reconciler: {
+        async reconcile() {
+          runs += 1;
+        },
+      },
+    });
+
+    await manager.start();
+    registration.close();
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await Bun.sleep(30);
+    expect(runs).toBe(0);
+    await manager.close();
+  });
+
   test("persists error backoff so another Manager can recover the retry", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
