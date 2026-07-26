@@ -34,7 +34,7 @@ On top of these, three directions are on the roadmap (**none implemented yet**):
 
 baton is one bidirectional pipeline: chat-tui carries `intent`/`render` only, the controller owns the `Input` lifecycle + the driven-turn queue, adapters translate each harness's wire to a single normalized event stream, and `session.jsonl` persists it. The event stream is the sole source of truth; the UI is a projection.
 
-![baton kernel: one bidirectional pipeline](docs/kernel-pipeline.svg)
+![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
 See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, invariants, the pipeline, and the harness extension contract.
 

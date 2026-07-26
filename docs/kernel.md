@@ -71,7 +71,7 @@ HarnessTarget、PluginInstance 等配置对象使用
 
 **开发次序：两个边界的形态先钉死，中间处理慢慢打磨。** 先定死 Input 域的入站形态（当前 user 输入按 kind 区分 prompt / interaction resolution / control，未来可增加 monitor / external event source）和 Harness 域的 I/O 形态（harness→baton：归一 Event 或 Interaction draft；baton→harness：capability 操作与 Interaction resolution）。这两个边界一旦稳定，baton 的**中间处理**（Controller 调度、queue、reduce、projection）就能渐进重构而不惊动边界契约——接入方（chat-tui）与 harness（adapter）不被中间打磨波及。这也是内核纪律钉在**边界**（§4 扩展契约、§2 不变量）、而演进（§5）主要作用于中间与概念提升的原因。
 
-![baton 内核：一条双向流水线（用户→baton 有 Input、Interaction resolution 与 Control；baton→用户 render 分 transcript、Interaction 浮层和 status；中间 Controller+queue、event/turn 单通道、Adapter 的 capability 出站与归一入站、session.jsonl 持久化）](kernel-pipeline.svg)
+![baton 内核：一条双向流水线（用户→baton 有 Input、Interaction resolution 与 Control；baton→用户 render 分 transcript、Interaction 浮层和 status；中间 Controller+queue、event/turn 单通道、Adapter 的 capability 出站与归一入站、session.jsonl 持久化）](kernel-pipeline_v1.svg)
 
 两点要害：入站归一箭头标注的 `driven + observed`——`Adapter → event` 路径同时承载用户驱动与 harness 自发两种 turn，独立于是否有待决 Input（单通道真相，不变量 #1）；Input 经 composer+queue 被调度成 turn，而 Interaction 在浮层被 resolve，就地解开等待方，不进入输入队列（见 §6）。
 
