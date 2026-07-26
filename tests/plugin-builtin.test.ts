@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import {
   BATON_TURN_RESOURCE_KIND,
-  BuiltinResourceProjection,
+  BatonResourceIndex,
 } from "../src/plugin/builtin.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager } from "../src/plugin/manager.ts";
@@ -66,13 +66,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("Baton Resource projections", () => {
-  test("projects completed turns from ledger replay and live events as frozen snapshots", () => {
+describe("Baton Resource index", () => {
+  test("indexes completed turns from ledger replay and live events as frozen Resources", () => {
     const session = testSession();
     const replayed = appendTurn(session, "t_replayed", "existing question");
-    const projection = new BuiltinResourceProjection({ session });
+    const resources = new BatonResourceIndex({ session });
 
-    const existing = projection.get(BATON_TURN_RESOURCE_KIND, "t_replayed");
+    const existing = resources.get(BATON_TURN_RESOURCE_KIND, "t_replayed");
     expect(existing.metadata).toEqual({
       batonSessionId: session.id,
       resourceId: "t_replayed",
@@ -91,18 +91,18 @@ describe("Baton Resource projections", () => {
     expect(Object.isFrozen(existing.data)).toBe(true);
 
     const observed: string[] = [];
-    projection.subscribe((resource) => {
+    resources.subscribe((resource) => {
       observed.push(resource.metadata.resourceId);
     });
     appendTurn(session, "t_live", "new question");
 
     expect(observed).toEqual(["t_live"]);
     expect(
-      projection
+      resources
         .list(BATON_TURN_RESOURCE_KIND)
         .map((resource) => resource.metadata.resourceId),
     ).toEqual(["t_replayed", "t_live"]);
-    projection.close();
+    resources.close();
   });
 
   test("lets a Plugin watch turns and produce revision-based Proposals", async () => {

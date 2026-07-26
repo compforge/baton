@@ -127,7 +127,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
-  test("prints active Resources into Board items and invalidates on status changes", async () => {
+  test("presents active Resources as Board items and invalidates on status changes", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);
     instances.create({
@@ -155,7 +155,7 @@ describe("Plugin Package lifecycle", () => {
           >({
             resourceKind: "ReqLoopRun",
             async reconcile() {},
-            print(resource) {
+            present(resource) {
               return {
                 title: resource.spec.requirement,
                 status: resource.status.phase,

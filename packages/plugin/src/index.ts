@@ -1,6 +1,6 @@
 export type {
+  BoardPresentation,
   BoardItemTone,
-  ResourcePrint,
 } from "./board.ts";
 
 export type {

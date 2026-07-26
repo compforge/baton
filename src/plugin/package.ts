@@ -1,4 +1,5 @@
 import type {
+  BoardPresentation,
   BoardItemTone,
   Command,
   Controller,
@@ -10,7 +11,6 @@ import type {
   PluginPackage,
   PluginSessionContext,
   Resource,
-  ResourcePrint,
   ToastMessage,
   ToastSink,
   ToastTone,
@@ -19,6 +19,7 @@ import type { PluginInstance } from "./instance.ts";
 import type { ResourceClient } from "./resource-client.ts";
 
 export type {
+  BoardPresentation,
   BoardItemTone,
   Command,
   Controller,
@@ -30,7 +31,6 @@ export type {
   PluginPackage,
   PluginSessionContext,
   Resource,
-  ResourcePrint,
   ToastMessage,
   ToastSink,
   ToastTone,

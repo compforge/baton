@@ -5,8 +5,8 @@ export type BoardItemTone =
   | "warning"
   | "error";
 
-/** Plugin 对一份 Resource 的 Board 展示；返回 undefined 即不展示。 */
-export interface ResourcePrint {
+/** Plugin 对一份 Resource 的 Board 展示内容；身份与归属由 Baton 补齐。 */
+export interface BoardPresentation {
   readonly title: string;
   readonly status?: string;
   readonly detail?: string;

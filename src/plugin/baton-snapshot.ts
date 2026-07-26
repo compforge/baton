@@ -60,7 +60,7 @@ export interface BatonPendingInteractionSnapshot {
 /**
  * Plugin reconcile 开始时冻结的 BatonSession 只读视图。
  *
- * Snapshot 只暴露 Plugin 做当前决策所需的稳定投影；内部 Controller、Store、HarnessBinding
+ * Snapshot 只暴露 Plugin 做当前决策所需的稳定视图；内部 Controller、Store、HarnessBinding
  * 和其他可变 owner 不穿透这条边界。
  */
 export interface BatonSnapshot {
@@ -91,7 +91,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Host-side projector; Plugin packages only consume the resulting BatonSnapshot type. */
+/** Host-side snapshot builder; Plugin packages only consume the resulting BatonSnapshot type. */
 export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonSnapshot {
   const latestTurn = options.state.turnSummaries.at(-1);
   return deepFreeze({

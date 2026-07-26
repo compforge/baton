@@ -46,7 +46,7 @@ const plugin: PluginPackage = {
       async reconcile(_baton, resource: Example) {
         // Observe current facts and patch status through context.resources.
       },
-      print(resource) {
+      present(resource) {
         return {
           title: resource.spec.title,
           status: resource.status.phase,
@@ -65,7 +65,7 @@ routing are intentionally excluded.
 
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource
-status and an optional Board projection; do not emit a toast on every reconcile.
+status and an optional Board presentation; do not emit a toast on every reconcile.
 
 Controller cron Sources are recurring wakeups. When a cron expression is due,
 Baton enqueues every current Resource of that Controller through the same keyed

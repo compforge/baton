@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { printBoardSource } from "../src/plugin/board.ts";
+import { presentBoardSource } from "../src/plugin/board.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
 const roots: string[] = [];
@@ -26,8 +26,8 @@ afterEach(() => {
   }
 });
 
-describe("Plugin Board print", () => {
-  test("prints at most one Board item per Resource and hides undefined results", () => {
+describe("Plugin Board presentation", () => {
+  test("presents at most one Board item per Resource and hides undefined results", () => {
     const resources = store();
     resources.create({
       kind: "ReqLoopRun",
@@ -43,13 +43,13 @@ describe("Plugin Board print", () => {
     });
 
     expect(
-      printBoardSource<{ title: string }, { phase: string }>({
+      presentBoardSource<{ title: string }, { phase: string }>({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceKind: "ReqLoopRun",
         list: () =>
           resources.list<{ title: string }, { phase: string }>("ReqLoopRun"),
-        print(resource) {
+        present(resource) {
           if (resource.status.phase === "closed") return undefined;
           return {
             title: resource.spec.title,
@@ -74,7 +74,7 @@ describe("Plugin Board print", () => {
     ]);
   });
 
-  test("isolates a broken Resource print as a diagnostic item", () => {
+  test("isolates a broken Resource presentation as a diagnostic item", () => {
     const resources = store();
     resources.create({
       kind: "ReqLoopRun",
@@ -83,12 +83,12 @@ describe("Plugin Board print", () => {
     });
 
     expect(
-      printBoardSource({
+      presentBoardSource({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceKind: "ReqLoopRun",
         list: () => resources.list("ReqLoopRun"),
-        print() {
+        present() {
           throw new Error("connector unavailable");
         },
       }),
@@ -104,7 +104,7 @@ describe("Plugin Board print", () => {
         resourceKind: "ReqLoopRun",
         resourceId: "run_1",
         title: "ReqLoopRun/run_1",
-        status: "print failed",
+        status: "presentation failed",
         detail: "connector unavailable",
         tone: "error",
       },

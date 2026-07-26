@@ -22,7 +22,7 @@ export interface ReconcileScope {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
   readonly resourceKind: string;
-  /** 旧 key 缺省为 plugin；baton 表示只读 Builtin Resource 投影。 */
+  /** 旧 key 缺省为 plugin；baton 表示只读 Baton-owned Resource。 */
   readonly resourceOwner?: ReconcileResourceOwner;
 }
 
@@ -71,7 +71,7 @@ export interface ControllerOptions<TSpec, TStatus> {
   resourceKind: string;
   sources?: readonly ControllerSource[];
   reconcile: PluginController<TSpec, TStatus>["reconcile"];
-  print?: PluginController<TSpec, TStatus>["print"];
+  present?: PluginController<TSpec, TStatus>["present"];
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
@@ -146,7 +146,7 @@ interface ReconcileExecution {
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
   readonly sources: readonly ControllerSource[];
-  readonly print?: PluginController<TSpec, TStatus>["print"];
+  readonly present?: PluginController<TSpec, TStatus>["present"];
   private readonly store: PluginResourceStore;
   private readonly resourceKind: string;
   private readonly reconcileResource: PluginController<TSpec, TStatus>["reconcile"];
@@ -165,7 +165,7 @@ export class Controller<TSpec, TStatus> {
     this.resourceKind = options.resourceKind;
     this.reconcileResource = options.reconcile;
     this.sources = Object.freeze([...(options.sources ?? [])]);
-    this.print = options.print;
+    this.present = options.present;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ?? (() => emptyBatonSnapshot(options.store.batonSessionId));

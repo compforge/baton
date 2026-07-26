@@ -283,7 +283,7 @@ export class PluginSettingsStore {
 }
 
 /**
- * 将全局 enablement 投影成当前 BatonSession 的运行时 Instance。
+ * 根据全局 enablement 创建当前 BatonSession 的运行时 Instance。
  * Instance id 由 plugin@marketplace 稳定派生，Resource/Proposal 仍落在当前 session。
  */
 export class GlobalPluginInstanceStore implements PluginInstanceRepository {

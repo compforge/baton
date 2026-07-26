@@ -92,7 +92,7 @@ observed state、长期推进外部状态时，才需要自有 Resource。
 Baton 拥有控制面，而不拥有各领域：
 
 - 接收、持久化、去重并路由事件；
-- 从 Event Ledger 投影只读 Baton-owned Resource，供 Plugin 以 level-based 方式观察 Baton 行为；
+- 从 Event Ledger 派生只读 Baton-owned Resource，供 Plugin 以 level-based 方式观察 Baton 行为；
 - 装载 Plugin，注册 Command 与 Controller；
 - 持久化 Resource、合并 reconcile key 并恢复 `nextReconcileAt`；
 - 将用户确认的 `proposed-input` Plugin Output 作为普通 Input 委托给合适的 Harness；
@@ -122,7 +122,7 @@ Plugin 是 Baton 唯一的通用扩展、安装和运行单元。一个 Plugin �
 几个外部系统。
 
 运行时可把 Plugin Manager / Controller 理解成 Baton 内部对象的消费者：Manager 把 Event
-Ledger 投影成稳定、只读的 Baton-owned Resource，Controller 重新读取最新 snapshot 并产出
+Ledger 派生成稳定、只读的 Baton-owned Resource，Controller 重新读取最新 snapshot 并产出
 Plugin Output。当前 Output 是给用户的 Proposal；未来可以是受 Baton 管控的 Harness work
 request，但不能是直接 Adapter 调用。
 
@@ -164,7 +164,7 @@ PluginPackage
 ```
 
 同一个包可以有多个实例，例如 `deploy@dev`、`deploy@prod`、
-`requirement@company-a`。Resource、Event 和 Board projection 都引用 `pluginInstanceId`，
+`requirement@company-a`。Resource、Event 和 Board 条目都引用 `pluginInstanceId`，
 避免把账号、环境和安装包身份混在一起。
 
 Package 是不可变交付物，Instance 是 BatonSession 中的配置身份，Binding 拥有当前进程中的
@@ -180,7 +180,7 @@ BatonPlugin
     ├── resourceKind
     ├── reconcile
     ├── sources[]          固定 cron 周期唤醒
-    └── print?             决定 Resource 是否显示到 Board
+    └── present?           决定 Resource 是否显示到 Board
 ```
 
 当前运行时已有 Plugin Command、Resource Controller 与 Controller cron Sources；Controller
@@ -219,7 +219,7 @@ Plugin 可以注册 `/requirements` 等 slash command。命令 handler 操作 Re
 
 - 列表、表单和选择项由 Baton 渲染；
 - 选中或输入需求后创建、恢复或修改 Resource；
-- Board 和 Context 由对应 Controller 投影；
+- Board 由 Controller presentation 生成，Context 由对应 Resource Context source 提供；
 - 需要智能判断时由 Controller 返回 `kind: "proposed-input"` 的 Plugin Output，用户提交后
   进入普通 Input 路径。
 
@@ -289,32 +289,32 @@ source emit draft
 ```
 
 先持久化再分发。`emit` 成功只表示 Baton 已可靠接收事实；Controller 仍要重新读取 Resource 和
-外部状态。高频 message/tool delta 可以进入 session ledger 和 projection，但默认不逐条触发
+外部状态。高频 message/tool delta 可以进入 session ledger 和界面状态，但默认不逐条触发
 Plugin，避免回调风暴。
 
 对 Plugin 而言，Event 不是必须逐条处理的 callback 参数。Plugin Manager 先把选定的内部事实
-投影成有稳定 kind、identity 和 revision 的只读 Baton-owned Resource，再把 key 放入 workqueue；
+转换成有稳定 kind、identity 和 revision 的只读 Baton-owned Resource，再把 key 放入 workqueue；
 Controller 执行时读取最新 snapshot。首个 `baton.turn` 来自
-`_baton_turn_summary`，启动 replay 与 live append 使用同一投影和队列。用户和 Plugin 都不能
+`_baton_turn_summary`，启动 replay 与 live append 使用同一 Resource index 和队列。用户和 Plugin 都不能
 修改 Baton-owned Resource；需要 desired state 时使用 Resource。
 
 ## 5. Resource、Controller 与 RequeueAfter
 
 Resource kind 位于同一所有权注册表：Baton 启动时先注册 `baton.*` kind，例如从 Event Ledger
-投影出的只读 `baton.turn`；Plugin 随后声明自己的 kind。Plugin 可以为 Baton kind 注册
+派生出的只读 `baton.turn`；Plugin 随后声明自己的 kind。Plugin 可以为 Baton kind 注册
 Controller 进行观察，但不能重新声明或修改它；不同 Plugin 也不能声明同名 kind。同一 Plugin
 的多个 Instance 复用同一 kind 定义，各自的 Resource 数据仍按 `pluginInstanceId` 隔离。
 
-Plugin 创建的 Resource 用 `spec` 保存人认可的 Contract，用 `status` 保存 Controller 的观测。Baton
-投影、Resource 创建或 spec 更新、启动恢复和计时到期都映射为
+Plugin 创建的 Resource 用 `spec` 保存人认可的 Contract，用 `status` 保存 Controller 的观测。
+Baton-owned Resource 更新、Resource 创建或 spec 更新、启动恢复和计时到期都映射为
 `pluginInstanceId + resourceKind + resourceId`，Baton 合并同一 key 的重复唤醒：
 
 同一 Controller 可以管理多份同 kind Resource，因此一个 BatonSession 可以同时承载多个活跃
 loop run。Baton 不定义跨业务的 `phase` 或 `metadata.lifecycle`；Plugin 在自己的 `status`
-中表达业务阶段，Controller 的 `print(resource)` 决定每份 Resource 是否进入 Board。
+中表达业务阶段，Controller 的 `present(resource)` 决定每份 Resource 是否进入 Board。
 
 ```text
-Baton-owned projection / Resource change / startup / schedule or timer due
+Baton-owned Resource update / Resource change / startup / schedule or timer due
                          │
                          ▼
 keyed reconcile queue
@@ -346,14 +346,14 @@ Monitor、EventSource 和 Action 都不进入首期。webhook、长连接或无 
 
 ### Board 是共享协作面
 
-一期 `BoardView` 直接从 Resource 和带 provenance 的协作事实投影，不先建设一份可独立
+一期 `BoardView` 直接从 Resource 和带 provenance 的协作事实生成，不先建设一份可独立
 演化的 Board 数据库。长期出现跨 Resource、跨 owner 的独立整理需求后，再引入持久化、可查询的
 `BoardState`。Board 不只是 UI，也不是某个 Plugin 的私有状态；它是 Baton、Plugin 与多个
 Harness 交换协作信息的公共平面：
 
-当前最小切片由 Controller 的 `print()` 落地：Plugin 把每份
-Resource 派生为至多一个条目，Baton 补齐 owner、Resource reference 和最终身份，再投影到
-chat-tui 的可选右侧 Sidecar。`print` 返回 `undefined` 时该 Resource 不显示；全部隐藏时不渲染
+当前最小切片由 Controller 的 `present()` 落地：Plugin 把每份
+Resource 派生为至多一个条目，Baton 补齐 owner、Resource reference 和最终身份，再展示到
+chat-tui 的可选右侧 Sidecar。`present` 返回 `undefined` 时该 Resource 不显示；全部隐藏时不渲染
 Sidecar。这条链路没有另建
 可写 BoardState，仍以 Resource 为事实来源。
 
@@ -363,11 +363,11 @@ Sidecar。这条链路没有另建
 
 1. 向用户展示目标、进度、结果、blocker 和待处理事项；
 2. 作为 ContextComposer 为目标 Harness 选择和编译 context 的主要来源；
-3. 允许 Plugin 投影结构化信息，并读取指定 scope 的 snapshot 参与 Reconcile；
+3. 允许 Plugin 展示结构化信息，并读取指定 scope 的 snapshot 参与 Reconcile；
 4. Baton 同时驱动多个 Harness 时，承载各 Harness 可共享的目标、进度、交付物和交接状态。
 
-Baton core 不拥有 Requirement、Deployment 等领域对象。Plugin 从 Resource 投影领域条目；
-Harness 的进度和结果则由 adapter 先归一成事件，再关联 Resource 并投影进 Board：
+Baton core 不拥有 Requirement、Deployment 等领域对象。Plugin 从 Resource 生成领域条目；
+Harness 的进度和结果则由 adapter 先归一成事件，再关联 Resource 并展示进 Board：
 
 ```text
 BoardItem
@@ -399,7 +399,7 @@ Resource 或外部系统作为各自事实的真相源。
 
 Event routing、Plugin 私有状态、Harness 原生 session 和 Resource lookup 仍各自存在。Board
 适合放可共享、可归属、可整理的信息或受控引用；secret、大体积原始材料和只对单次 turn 有效的
-内容不必进入 Board，可以在 ContextComposer 交付时通过对应 Resource 的 Context projection
+内容不必进入 Board，可以在 ContextComposer 交付时通过对应 Resource 的 Context source
 按需补充。
 
 ### 操作授权与渐进式信任
@@ -437,7 +437,7 @@ interaction.resolved
 ```
 
 Controller 持有 Interaction identity 和 opened/resolved 生命周期。Harness 的 tool approval
-已归一到该模型，Plugin 不另造一套“Board 审批”。Permission 状态可以投影进 Board，方便用户
+已归一到该模型，Plugin 不另造一套“Board 审批”。Permission 状态可以展示进 Board，方便用户
 统一查看，但 BoardItem 本身不是授权凭证；对 Plugin 而言，授权后的 spec revision 才是
 Controller 可以收敛的 desired state，实际结果进入 status。
 
@@ -457,7 +457,7 @@ Baton / Plugin / Harness Events
                        BatonSession 记录
 ```
 
-BoardView、BoardSnapshot 和 ContextBundle 是同一协作状态针对不同消费者的投影。ContextBundle
+BoardView、BoardSnapshot 和 ContextBundle 是同一协作状态面向不同消费者的视图。ContextBundle
 针对某个 Harness、session 和 turn 按 scope、受众、freshness 和预算编译；不能把整个 Board
 文本无差别塞进 prompt。大体积证据优先在 Board 保存 resource reference，由 Harness 按需读取。
 
@@ -465,7 +465,7 @@ BoardView、BoardSnapshot 和 ContextBundle 是同一协作状态针对不同消
 
 > **Board 更新 ≠ Context 已交付 ≠ Harness 被唤醒。**
 
-Board 变化先更新投影；ContextComposer 只在用户提交 `proposed-input` Output，或未来调度准备续跑时
+Board 变化先更新展示视图；ContextComposer 只在用户提交 `proposed-input` Output，或未来调度准备续跑时
 编译所需增量；是否创建 turn 首期只由用户 Input 决定。
 
 ### Context 交付
@@ -488,7 +488,7 @@ Deploy、Review、Repair 和 Completion 拆成五个 Plugin。
 
 reqloop 将 Requirement、Deployment、Verdict 等抽象为自己的领域概念，并用内部 Connector
 适配具体平台。Baton 只看到 reqloop 注册的 command 和 ReqLoopRun Controller；
-schema、reconcile、Board projection 与可选 Context projection 都收在该 Resource 下。详细设计
+schema、reconcile、Board presentation 与可选 Context source 都收在该 Resource 下。详细设计
 见 [reqloop 领域设计](https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md)。
 
 1. 用户启用并配置随 Baton 交付的 reqloop，通过 `/requirements` 创建或恢复 ReqLoopRun；
@@ -512,7 +512,7 @@ loop 等多个场景复用，再将对应能力提取为独立 Baton Plugin；�
 Resource 与 Event 边界，不直接调用内部接口。
 
 这条链路展示了 Plugin 的本质：它通过 Resource `spec/status` 和 Reconcile 交付一条完整 loop；
-Baton 提供持久化、定时唤醒、Board/Context 投影和 Harness Input 运行时。
+Baton 提供持久化、定时唤醒、Board presentation、Resource Context source 和 Harness Input 运行时。
 
 ## 8. devloop 下沉为 Harness Plugin
 
@@ -589,7 +589,7 @@ scope / placement
                               ▼
 Loop 产品能力
 DevelopmentOutcome
-  → Baton-owned Resource projection / Resource(spec / status)
+  → Baton-owned Resource / Resource(spec / status)
   → Reconcile(BatonSnapshot, Resource) + PluginOutput + RequeueAfter
   → 未来受控 Harness 调用
   → daemon
@@ -618,11 +618,11 @@ DevelopmentOutcome
 
 1. devloop 在 Harness 内提供稳定 DevelopmentOutcome；Harness 边界归一成 Baton Event；
 2. 建立 PluginPackage/PluginInstance/PluginBinding，以及 Resource 通用信封与存储；
-3. 将 `_baton_turn_summary` 投影为只读 `baton.turn`，让 Plugin 从启动 replay 和 live
+3. 将 `_baton_turn_summary` 转换为只读 `baton.turn`，让 Plugin 从启动 replay 和 live
    append 感知 Baton 内部事实；
 4. 建立同 key 不并发的 reconcile queue，将 Resource 的 `requeueAfter` 持久化为
    `nextReconcileAt`，并让 Controller cron Sources 进入同一队列；
-5. 接通 Board/Context projection 和 `proposed-input` Output，用 reqloop + 安装了 devloop 的 Harness
+5. 接通 Board presentation、Resource Context source 和 `proposed-input` Output，用 reqloop + 安装了 devloop 的 Harness
    跑通用户审核文本后驱动的 Requirement Loop；
 6. 真实场景无法由固定 Sources、动态轮询、desired state 或当前进程覆盖时，再依次引入
    EventSource、Action 或 daemon；
@@ -645,20 +645,20 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
    runtime。
 5. Resource 用 `spec` 表达用户认可的 Contract，用 `status` 表达 Controller 观测；
    generation / observedGeneration 显式表示收敛水位。
-6. Baton-owned Resource 是 Event Ledger 的只读、可重放投影；用户和 Plugin 都不能修改，也不
+6. Baton-owned Resource 从 Event Ledger 只读派生且可重放；用户和 Plugin 都不能修改，也不
    另建持久真相。
 7. 首期 Controller 返回 `PluginOutput(kind: "proposed-input")` 和 `requeueAfterMs`；提交文本的
    owner 仍是用户。
 8. 未来若实现主动 Harness 调用，Plugin 也不能直接持有 Harness runtime，必须复用 Baton
    Input/Attempt 投递路径。
-9. Event 先持久化再投影 Baton-owned Resource 并触发 Reconcile，触发本身不是必须执行一次的命令。
+9. Event 先持久化，再更新 Baton-owned Resource 并触发 Reconcile；触发本身不是必须执行一次的命令。
 10. Board 是带 owner、scope、revision 和 provenance 的共享协作读模型，不是领域真相源或全局
    可变字典。
-11. Plugin 只能修改自己的 Resource status 与 Board projection；Controller 可以调用自己的
-    Connector 收敛已授权 spec，但不能扩大权限或 scope。Plugin 可发 session-scoped、非持久化
+11. Plugin 只能修改自己的 Resource status；Board presentation 只能从 Resource 派生。Controller
+    可以调用自己的 Connector 收敛已授权 spec，但不能扩大权限或 scope。Plugin 可发 session-scoped、非持久化
     Toast 作为状态迁移或显式操作的瞬时反馈，不能用它代替 Resource / Board。
 12. Board 更新、Context 交付和 Harness 唤醒是三个独立状态转换。
-13. Harness tool 与敏感 spec 更新共用 Baton Permission 语义；Board 只投影决策，不持有授权。
+13. Harness tool 与敏感 spec 更新共用 Baton Permission 语义；Board 只展示决策，不持有授权。
 14. 时间触发不自动获得副作用权限；Controller 只能收敛已经授权的 spec。
 15. Context 只通过 Harness 支持的通道交付，不修改其原生 session 文件。
 16. Event 是可重放事实；wake 与 invalidation signal 只提示读取权威状态，不能直接驱动

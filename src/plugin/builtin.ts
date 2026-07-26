@@ -46,7 +46,7 @@ export type BuiltinResourceKind = keyof BuiltinResourceDataMap;
 export interface BuiltinResourceMetadata {
   readonly batonSessionId: string;
   readonly resourceId: string;
-  /** 产生当前投影的 ledger seq；Builtin Resource 自身不另设持久真相。 */
+  /** 产生当前 Resource 的 ledger seq；Baton-owned Resource 自身不另设持久真相。 */
   readonly revision: number;
   readonly sourceEventId: string;
   readonly observedAt: string;
@@ -67,7 +67,7 @@ type BuiltinSession = Pick<
   "id" | "dir" | "readEvents" | "subscribe"
 >;
 
-export interface BuiltinResourceProjectionOptions {
+export interface BatonResourceIndexOptions {
   session: BuiltinSession;
 }
 
@@ -104,9 +104,9 @@ function turnResource(
 }
 
 /**
- * Event Ledger 的只读、level-based Plugin 投影。它不创建第二份事实，也不提供 patch API。
+ * Event Ledger 派生出的只读 Baton Resource 索引。它不创建第二份事实，也不提供 patch API。
  */
-export class BuiltinResourceProjection {
+export class BatonResourceIndex {
   readonly batonSessionId: string;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly turns = new Map<
@@ -117,7 +117,7 @@ export class BuiltinResourceProjection {
   private readonly unsubscribeSession: () => void;
   private closed = false;
 
-  constructor(options: BuiltinResourceProjectionOptions) {
+  constructor(options: BatonResourceIndexOptions) {
     this.batonSessionId = options.session.id;
     this.session = Object.freeze({
       id: options.session.id,
@@ -149,7 +149,7 @@ export class BuiltinResourceProjection {
   }
 
   subscribe(listener: (resource: AnyBuiltinResource) => void): () => void {
-    if (this.closed) throw new Error("builtin resource projection is closed");
+    if (this.closed) throw new Error("Baton resource index is closed");
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -179,7 +179,7 @@ export class BuiltinResourceProjection {
 }
 
 export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
-  projection: BuiltinResourceProjection;
+  resources: BatonResourceIndex;
   pluginInstanceId: string;
   resourceKind: K;
   sources?: readonly ControllerSource[];
@@ -214,13 +214,13 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 }
 
 /**
- * 一个 Plugin 对一种 Baton Builtin Resource 的只读 Controller。
- * 重放和 live event 最终都只入同一 keyed queue，Controller 每次重新读取最新投影。
+ * 一个 Plugin 对一种 Baton-owned Resource 的只读 Controller。
+ * 重放和 live event 最终都只入同一 keyed queue，Controller 每次重新读取最新 Resource。
  */
 export class BuiltinController<K extends BuiltinResourceKind> {
   readonly scope: ReconcileScope;
   readonly sources: readonly ControllerSource[];
-  private readonly projection: BuiltinResourceProjection;
+  private readonly resources: BatonResourceIndex;
   private readonly resourceKind: K;
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
@@ -233,18 +233,18 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     if (!options.pluginInstanceId.trim()) {
       throw new Error("pluginInstanceId must not be empty");
     }
-    this.projection = options.projection;
+    this.resources = options.resources;
     this.resourceKind = options.resourceKind;
     this.sources = Object.freeze([...(options.sources ?? [])]);
-    this.projection.list(options.resourceKind);
+    this.resources.list(options.resourceKind);
     this.reconcileResource = options.reconcile;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ??
-      (() => emptyBatonSnapshot(options.projection.batonSessionId));
+      (() => emptyBatonSnapshot(options.resources.batonSessionId));
     this.onProposal = options.onProposal;
     this.scope = Object.freeze({
-      batonSessionId: options.projection.batonSessionId,
+      batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
       resourceKind: options.resourceKind,
       resourceOwner: "baton",
@@ -255,7 +255,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       execute: (key) =>
         executeWithCapacity(async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
-          const resource = this.projection.get(this.resourceKind, key.resourceId);
+          const resource = this.resources.get(this.resourceKind, key.resourceId);
           const baton = deepFreeze(this.snapshot());
           if (baton.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
@@ -302,7 +302,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   }
 
   initialReconciles(): ReconcileKey[] {
-    return this.projection.list(this.resourceKind).map((resource) =>
+    return this.resources.list(this.resourceKind).map((resource) =>
       Object.freeze({
         ...this.scope,
         resourceId: resource.metadata.resourceId,

@@ -11,7 +11,7 @@ import {
   type BuiltinResource,
   type BuiltinControllerOptions,
   type BuiltinResourceKind,
-  BuiltinResourceProjection,
+  BatonResourceIndex,
 } from "./builtin.ts";
 import {
   type Proposal,
@@ -50,7 +50,7 @@ import { PluginResourceStore } from "./resource.ts";
 import { createResourceClient } from "./resource-client.ts";
 import {
   type BoardItem,
-  printBoardSource,
+  presentBoardSource,
 } from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
 import {
@@ -100,8 +100,8 @@ export interface ManagerOptions {
   maxTotalConcurrency?: number;
   proposals: ProposalStore;
   /**
-   * 开启 Builtin Resource 投影时传完整 SessionHandle。只持有 ProposalStore 的调用方
-   * 仍可使用 PluginResource Controller，但不能注册 Builtin watch。
+   * 启用 Baton-owned Resource 时传完整 SessionHandle。只持有 ProposalStore 的调用方
+   * 仍可使用 Plugin Resource Controller，但不能观察 Baton-owned Resource。
    */
   session?: Pick<SessionHandle, "id" | "dir" | "readEvents" | "subscribe">;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
@@ -118,7 +118,7 @@ export interface ManagerOptions {
   ): Promise<PluginPackage>;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
-  /** Board 数据或可用 Projection 变化；宿主据此重建展示快照。 */
+  /** Board 展示内容变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
   /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
   onToast?(toast: PluginToast): void;
@@ -132,9 +132,9 @@ export interface ManagerOptions {
     maxDelayMs?: number;
   };
   now?: () => Date;
-  /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败投影到 UI 或诊断日志。 */
+  /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败展示到 UI 或诊断日志。 */
   onActivationError?(failure: PluginActivationFailure): void;
-  /** 自动重试已安排；宿主可将错误投影到 UI 或诊断日志。 */
+  /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
 }
 
@@ -174,7 +174,7 @@ interface RetryState {
 
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
-  project(): readonly BoardItem[];
+  present(): readonly BoardItem[];
 }
 
 function positiveDelay(name: string, value: number): void {
@@ -210,8 +210,8 @@ export class Manager {
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
   private readonly proposals: ProposalStore;
-  private readonly builtinProjection?: BuiltinResourceProjection;
-  private readonly unsubscribeBuiltinProjection?: () => void;
+  private readonly batonResources?: BatonResourceIndex;
+  private readonly unsubscribeBatonResources?: () => void;
   private readonly onProposal: ManagerOptions["onProposal"];
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onToast: ManagerOptions["onToast"];
@@ -298,10 +298,10 @@ export class Manager {
       onDue: (scope) => this.enqueueCronSourceResources(scope),
     });
     if (options.session) {
-      this.builtinProjection = new BuiltinResourceProjection({
+      this.batonResources = new BatonResourceIndex({
         session: options.session,
       });
-      this.unsubscribeBuiltinProjection = this.builtinProjection.subscribe((resource) => {
+      this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
         this.enqueueBuiltinResource(resource);
       });
     }
@@ -352,15 +352,15 @@ export class Manager {
     suspended: boolean,
   ): ControllerRegistration {
     if (this.closed) throw new Error("plugin Manager is closed");
-    if (!this.builtinProjection) {
+    if (!this.batonResources) {
       throw new Error(
-        "plugin Manager requires a SessionHandle to watch Builtin Resources",
+        "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
     validateControllerSources(definition.sources, this.now());
     const controller = new BuiltinController({
       ...definition,
-      projection: this.builtinProjection,
+      resources: this.batonResources,
       snapshot: this.snapshot,
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
@@ -676,7 +676,7 @@ export class Manager {
     const items: BoardItem[] = [];
     for (const source of this.boardSources.values()) {
       if (!this.bindings.has(source.pluginInstanceId)) continue;
-      items.push(...source.project());
+      items.push(...source.present());
     }
     return Object.freeze(items);
   }
@@ -696,14 +696,14 @@ export class Manager {
     return this.proposals.resolve(proposalId, outcome);
   }
 
-  getResourceProjection<K extends BuiltinResourceKind>(
+  getBatonResource<K extends BuiltinResourceKind>(
     kind: K,
     resourceId: string,
   ): BuiltinResource<K> {
-    if (!this.builtinProjection) {
-      throw new Error("builtin resource projection is not available");
+    if (!this.batonResources) {
+      throw new Error("Baton-owned resources are not available");
     }
-    return this.builtinProjection.get(kind, resourceId);
+    return this.batonResources.get(kind, resourceId);
   }
 
   private async publishProposal(draft: ReconcileProposal): Promise<void> {
@@ -860,19 +860,19 @@ export class Manager {
       pluginInstanceId,
       resourceKind: pluginController.resourceKind,
     });
-    if (pluginController.print) {
+    if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
-      const print = pluginController.print;
+      const present = pluginController.present;
       this.boardSources.set(sourceId, {
         pluginInstanceId,
-        project: () =>
-          printBoardSource({
+        present: () =>
+          presentBoardSource({
             pluginId,
             pluginInstanceId,
             resourceKind: pluginController.resourceKind,
             list: () =>
               store.list<TSpec, TStatus>(pluginController.resourceKind),
-            print,
+            present,
           }),
       });
     }
@@ -886,7 +886,7 @@ export class Manager {
     pluginInstanceId: string,
     pluginController: PluginResourceController<TSpec, TStatus>,
   ): () => void {
-    if (!this.builtinProjection) {
+    if (!this.batonResources) {
       throw new Error(
         `Resource kind ${pluginController.resourceKind} requires a SessionHandle`,
       );
@@ -916,24 +916,24 @@ export class Manager {
       resourceKind,
       resourceOwner: "baton",
     });
-    if (pluginController.print) {
+    if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
-      const print = pluginController.print;
+      const present = pluginController.present;
       this.boardSources.set(sourceId, {
         pluginInstanceId,
-        project: () =>
-          printBoardSource({
+        present: () =>
+          presentBoardSource({
             pluginId,
             pluginInstanceId,
             resourceKind,
             list: () =>
-              this.builtinProjection!.list(resourceKind).map((resource) =>
+              this.batonResources!.list(resourceKind).map((resource) =>
                 this.exposeBatonResource<TSpec, TStatus>(
                   pluginInstanceId,
                   resource,
                 ),
               ),
-            print,
+            present,
           }),
       });
     }
@@ -1037,8 +1037,8 @@ export class Manager {
     this.suspendedControllers.clear();
     this.dueQueue.close();
     this.cronSourceQueue.close();
-    this.unsubscribeBuiltinProjection?.();
-    this.builtinProjection?.close();
+    this.unsubscribeBatonResources?.();
+    this.batonResources?.close();
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "could not close plugin Manager");
   }
@@ -1047,7 +1047,7 @@ export class Manager {
     try {
       this.onActivationError?.(Object.freeze(failure));
     } catch {
-      // Diagnostic projection must not keep healthy Plugin instances from starting.
+      // Diagnostic reporting must not keep healthy Plugin instances from starting.
     }
   }
 
@@ -1247,7 +1247,7 @@ export class Manager {
     try {
       this.onReconcileError?.(Object.freeze(failure));
     } catch {
-      // Diagnostic projection must not break retry scheduling.
+      // Diagnostic reporting must not break retry scheduling.
     }
   }
 }

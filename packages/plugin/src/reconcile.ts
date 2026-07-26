@@ -1,6 +1,6 @@
 import type { Resource } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
-import type { ResourcePrint } from "./board.ts";
+import type { BoardPresentation } from "./board.ts";
 
 export type PluginOutput = {
   readonly kind: "proposed-input";
@@ -32,7 +32,7 @@ export interface Controller<TSpec, TStatus> {
     baton: Readonly<BatonSnapshot>,
     resource: Readonly<Resource<TSpec, TStatus>>,
   ): Promise<ReconcileResult | void>;
-  print?(
+  present?(
     resource: Readonly<Resource<TSpec, TStatus>>,
-  ): ResourcePrint | undefined;
+  ): BoardPresentation | undefined;
 }
