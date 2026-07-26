@@ -1,4 +1,7 @@
-import type { ResourceSchedule } from "@qiankun01/baton-plugin";
+import type {
+  Controller as PluginController,
+  ControllerSource,
+} from "@qiankun01/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
 import { PluginResourceStore } from "./resource.ts";
@@ -34,22 +37,11 @@ export interface ReconcileResult {
   requeueAfterMs?: number;
 }
 
-export interface ResourceReconciler<TResource> {
-  reconcile(
-    baton: Readonly<BatonSnapshot>,
-    resource: Readonly<TResource>,
-  ): Promise<ReconcileResult | void>;
-}
-
-export type Reconciler<TSpec, TStatus> = ResourceReconciler<
-  PluginResource<TSpec, TStatus>
->;
-
 export interface PluginResourceReconcileProposal {
   readonly key: ReconcileKey;
   readonly basedOnGeneration: number;
   /**
-   * Reconciler 产出建议时看到的最新 Resource revision。
+   * Controller 产出建议时看到的最新 Resource revision。
    * 同一 spec generation 下的不同外部 observation 必须能形成不同 Proposal。
    */
   readonly basedOnResourceVersion?: number;
@@ -77,8 +69,9 @@ export interface ScheduledReconcile {
 export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceKind: string;
-  reconciler: Reconciler<TSpec, TStatus>;
-  schedules?: readonly ResourceSchedule[];
+  sources?: readonly ControllerSource[];
+  reconcile: PluginController<TSpec, TStatus>["reconcile"];
+  print?: PluginController<TSpec, TStatus>["print"];
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
@@ -147,15 +140,16 @@ interface ReconcileExecution {
 }
 
 /**
- * 单个 Plugin Resource Kind 的控制器：拥有 Reconciler、独立队列、局部并发和执行边界。
+ * 单个 Plugin Resource Kind 的控制器：拥有 reconcile、独立队列、局部并发和执行边界。
  * Manager 只负责注册、路由和所有 Controller 共享的总容量。
  */
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
-  readonly schedules: readonly ResourceSchedule[];
+  readonly sources: readonly ControllerSource[];
+  readonly print?: PluginController<TSpec, TStatus>["print"];
   private readonly store: PluginResourceStore;
   private readonly resourceKind: string;
-  private readonly reconciler: Reconciler<TSpec, TStatus>;
+  private readonly reconcileResource: PluginController<TSpec, TStatus>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: () => BatonSnapshot;
   private readonly executeWithCapacity: NonNullable<
@@ -169,8 +163,9 @@ export class Controller<TSpec, TStatus> {
     if (!options.resourceKind.trim()) throw new Error("resourceKind must not be empty");
     this.store = options.store;
     this.resourceKind = options.resourceKind;
-    this.reconciler = options.reconciler;
-    this.schedules = Object.freeze([...(options.schedules ?? [])]);
+    this.reconcileResource = options.reconcile;
+    this.sources = Object.freeze([...(options.sources ?? [])]);
+    this.print = options.print;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ?? (() => emptyBatonSnapshot(options.store.batonSessionId));
@@ -261,7 +256,7 @@ export class Controller<TSpec, TStatus> {
           );
         }
         const result = validatedResult(
-          await this.reconciler.reconcile(baton, resource),
+          await this.reconcileResource(baton, resource),
         );
         const now = this.now();
         if (Number.isNaN(now.getTime())) {

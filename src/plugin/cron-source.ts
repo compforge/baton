@@ -1,19 +1,22 @@
 import { CronExpressionParser } from "cron-parser";
 
-import type { ResourceSchedule } from "@qiankun01/baton-plugin";
+import type {
+  ControllerSource,
+  CronSource,
+} from "@qiankun01/baton-plugin";
 import type { ReconcileScope } from "./controller.ts";
 import {
   reconcileScopeId,
   sameReconcileScope,
 } from "./reconcile-scope.ts";
 
-interface ScheduledResourceScope {
+interface ScheduledControllerScope {
   readonly scope: ReconcileScope;
-  readonly schedule: ResourceSchedule;
+  readonly source: CronSource;
   nextAtMs: number;
 }
 
-export interface ResourceScheduleQueueOptions {
+export interface CronSourceQueueOptions {
   now?: () => Date;
   onDue(scope: ReconcileScope): void;
 }
@@ -30,90 +33,93 @@ function timestamp(now: () => Date): number {
 
 function scheduleEntryId(
   scope: ReconcileScope,
-  scheduleId: string,
+  sourceId: string,
 ): string {
-  return JSON.stringify([reconcileScopeId(scope), scheduleId]);
+  return JSON.stringify([reconcileScopeId(scope), sourceId]);
 }
 
-export function nextResourceScheduleAt(
-  schedule: ResourceSchedule,
+export function nextCronSourceAt(
+  source: CronSource,
   currentDate: Date,
 ): Date {
   try {
-    return CronExpressionParser.parse(schedule.cron, {
+    return CronExpressionParser.parse(source.cron, {
       currentDate,
-      tz: schedule.timeZone,
+      tz: source.timeZone,
     }).next().toDate();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `invalid Resource schedule ${schedule.scheduleId}: ${detail}`,
+      `invalid Controller cron source ${source.sourceId}: ${detail}`,
     );
   }
 }
 
-export function validateResourceSchedules(
-  schedules: readonly ResourceSchedule[] | undefined,
+export function validateControllerSources(
+  sources: readonly ControllerSource[] | undefined,
   currentDate: Date,
 ): void {
-  if (!schedules) return;
+  if (!sources) return;
   const ids = new Set<string>();
-  for (const schedule of schedules) {
-    if (!schedule.scheduleId.trim()) {
-      throw new Error("Resource schedule scheduleId must not be empty");
+  for (const source of sources) {
+    if (source.type !== "cron") {
+      throw new Error(`unsupported Controller source type: ${String(source.type)}`);
     }
-    if (ids.has(schedule.scheduleId)) {
+    if (!source.sourceId.trim()) {
+      throw new Error("Controller cron sourceId must not be empty");
+    }
+    if (ids.has(source.sourceId)) {
       throw new Error(
-        `Resource scheduleId already registered: ${schedule.scheduleId}`,
+        `Controller sourceId already registered: ${source.sourceId}`,
       );
     }
-    ids.add(schedule.scheduleId);
-    if (!schedule.cron.trim()) {
+    ids.add(source.sourceId);
+    if (!source.cron.trim()) {
       throw new Error(
-        `Resource schedule ${schedule.scheduleId} cron must not be empty`,
+        `Controller cron source ${source.sourceId} cron must not be empty`,
       );
     }
-    if (!schedule.timeZone.trim()) {
+    if (!source.timeZone.trim()) {
       throw new Error(
-        `Resource schedule ${schedule.scheduleId} timeZone must not be empty`,
+        `Controller cron source ${source.sourceId} timeZone must not be empty`,
       );
     }
-    nextResourceScheduleAt(schedule, currentDate);
+    nextCronSourceAt(source, currentDate);
   }
 }
 
 /**
- * Process-local cron wakeups. A tick is a coalescible signal: it is reduced to
- * one Resource scope before Manager enumerates keys into the normal workqueue.
+ * Process-local cron Sources. A tick is a coalescible signal: it is reduced to
+ * one Controller scope before Manager enumerates Resource keys into its queue.
  */
-export class ResourceScheduleQueue {
-  private readonly entries = new Map<string, ScheduledResourceScope>();
+export class CronSourceQueue {
+  private readonly entries = new Map<string, ScheduledControllerScope>();
   private readonly now: () => Date;
-  private readonly onDue: ResourceScheduleQueueOptions["onDue"];
+  private readonly onDue: CronSourceQueueOptions["onDue"];
   private timer?: ReturnType<typeof setTimeout>;
 
-  constructor(options: ResourceScheduleQueueOptions) {
+  constructor(options: CronSourceQueueOptions) {
     this.now = options.now ?? (() => new Date());
     this.onDue = options.onDue;
   }
 
   register(
     scope: ReconcileScope,
-    schedules: readonly ResourceSchedule[],
+    sources: readonly ControllerSource[],
   ): void {
     const now = new Date(timestamp(this.now));
-    validateResourceSchedules(schedules, now);
-    for (const schedule of schedules) {
-      const id = scheduleEntryId(scope, schedule.scheduleId);
+    validateControllerSources(sources, now);
+    for (const source of sources) {
+      const id = scheduleEntryId(scope, source.sourceId);
       if (this.entries.has(id)) {
         throw new Error(
-          `Resource schedule already active: ${schedule.scheduleId}`,
+          `Controller source already active: ${source.sourceId}`,
         );
       }
       this.entries.set(id, {
         scope,
-        schedule,
-        nextAtMs: nextResourceScheduleAt(schedule, now).getTime(),
+        source,
+        nextAtMs: nextCronSourceAt(source, now).getTime(),
       });
     }
     this.arm();
@@ -157,8 +163,8 @@ export class ResourceScheduleQueue {
     const dueScopes = new Map<string, ReconcileScope>();
     for (const entry of this.entries.values()) {
       if (entry.nextAtMs > nowMs) continue;
-      entry.nextAtMs = nextResourceScheduleAt(
-        entry.schedule,
+      entry.nextAtMs = nextCronSourceAt(
+        entry.source,
         new Date(nowMs),
       ).getTime();
       dueScopes.set(reconcileScopeId(entry.scope), entry.scope);

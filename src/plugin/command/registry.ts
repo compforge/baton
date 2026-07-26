@@ -1,5 +1,5 @@
 import type {
-  PluginCommandContribution,
+  Command,
   PluginCommandInput,
   PluginCommandResult,
 } from "../package.ts";
@@ -13,7 +13,7 @@ export interface AvailablePluginCommand {
 }
 
 interface ManagedPluginCommand extends AvailablePluginCommand {
-  readonly contributions: Map<string, PluginCommandContribution>;
+  readonly handlers: Map<string, Command>;
 }
 
 interface PluginCommandRegistryOptions {
@@ -84,51 +84,51 @@ export class PluginCommandRegistry {
 
   register(
     instance: PluginInstance,
-    contribution: PluginCommandContribution,
+    registered: Command,
   ): () => void {
-    commandIdentifier("plugin commandId", contribution.commandId);
-    commandIdentifier("plugin command name", contribution.name);
-    nonEmptyCommandText("plugin command description", contribution.description);
-    if (this.reservedNames.has(contribution.name)) {
-      throw new Error(`plugin command name is reserved by Baton: /${contribution.name}`);
+    commandIdentifier("plugin commandId", registered.commandId);
+    commandIdentifier("plugin command name", registered.name);
+    nonEmptyCommandText("plugin command description", registered.description);
+    if (this.reservedNames.has(registered.name)) {
+      throw new Error(`plugin command name is reserved by Baton: /${registered.name}`);
     }
-    const key = pluginCommandKey(instance.pluginId, contribution.commandId);
-    const owner = this.commandKeysByName.get(contribution.name);
+    const key = pluginCommandKey(instance.pluginId, registered.commandId);
+    const owner = this.commandKeysByName.get(registered.name);
     if (owner && owner !== key) {
-      throw new Error(`plugin command name is already registered: /${contribution.name}`);
+      throw new Error(`plugin command name is already registered: /${registered.name}`);
     }
     let command = this.commands.get(key);
     if (command) {
       if (
-        command.name !== contribution.name ||
-        command.description !== contribution.description
+        command.name !== registered.name ||
+        command.description !== registered.description
       ) {
         throw new Error(
-          `plugin command definition differs across instances: ${instance.pluginId}/${contribution.commandId}`,
+          `plugin command definition differs across instances: ${instance.pluginId}/${registered.commandId}`,
         );
       }
-      if (command.contributions.has(instance.pluginInstanceId)) {
+      if (command.handlers.has(instance.pluginInstanceId)) {
         throw new Error(
-          `plugin command already registered by ${instance.pluginInstanceId}: ${contribution.commandId}`,
+          `plugin command already registered by ${instance.pluginInstanceId}: ${registered.commandId}`,
         );
       }
     } else {
       command = {
         pluginId: instance.pluginId,
-        commandId: contribution.commandId,
-        name: contribution.name,
-        description: contribution.description,
-        contributions: new Map(),
+        commandId: registered.commandId,
+        name: registered.name,
+        description: registered.description,
+        handlers: new Map(),
       };
       this.commands.set(key, command);
-      this.commandKeysByName.set(contribution.name, key);
+      this.commandKeysByName.set(registered.name, key);
     }
-    command.contributions.set(instance.pluginInstanceId, contribution);
+    command.handlers.set(instance.pluginInstanceId, registered);
     return () => {
       const current = this.commands.get(key);
       if (!current) return;
-      current.contributions.delete(instance.pluginInstanceId);
-      if (current.contributions.size === 0) {
+      current.handlers.delete(instance.pluginInstanceId);
+      if (current.handlers.size === 0) {
         this.commands.delete(key);
         if (this.commandKeysByName.get(current.name) === key) {
           this.commandKeysByName.delete(current.name);
@@ -142,9 +142,9 @@ export class PluginCommandRegistry {
     const commands: AvailablePluginCommand[] = [];
     for (const command of this.commands.values()) {
       if (
-        [...command.contributions.keys()].some(this.isInstanceActive)
+        [...command.handlers.keys()].some(this.isInstanceActive)
       ) {
-        const { contributions: _contributions, ...available } = command;
+        const { handlers: _handlers, ...available } = command;
         commands.push(Object.freeze(available));
       }
     }
@@ -160,7 +160,7 @@ export class PluginCommandRegistry {
     const key = this.commandKeysByName.get(name);
     const command = key ? this.commands.get(key) : undefined;
     if (!command) throw new Error(`Unknown plugin command: /${name}`);
-    const active = [...command.contributions.entries()].filter(
+    const active = [...command.handlers.entries()].filter(
       ([pluginInstanceId]) => this.isInstanceActive(pluginInstanceId),
     );
     if (active.length === 0) {

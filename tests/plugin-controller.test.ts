@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 import {
   Controller,
+  type ControllerOptions,
   type ReconcileKey,
   type ReconcileProposal,
-  type Reconciler,
 } from "../src/plugin/controller.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
@@ -71,8 +71,8 @@ describe("plugin Controller", () => {
       resourceId: "run_1",
       spec: { requirement: "ship it" },
     });
-    const reconciler: Reconciler<Spec, Status> = {
-      async reconcile(baton, resource) {
+    const reconcile: ControllerOptions<Spec, Status>["reconcile"] =
+      async (baton, resource) => {
         expect(Object.isFrozen(baton)).toBe(true);
         expect(Object.isFrozen(resource)).toBe(true);
         expect(Object.isFrozen(resource.spec)).toBe(true);
@@ -92,13 +92,12 @@ describe("plugin Controller", () => {
           },
           requeueAfterMs: 5_000,
         };
-      },
-    };
+      };
     const proposals: ReconcileProposal[] = [];
     const controller = new Controller({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler,
+      reconcile,
       now: () => new Date("2026-07-25T00:00:00.000Z"),
       onProposal(proposal) {
         proposals.push(proposal);
@@ -139,7 +138,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: { async reconcile() {} },
+      async reconcile() {},
       onProposal() {},
     });
 
@@ -159,8 +158,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile() {
+      async reconcile() {
           entered.resolve();
           await release.promise;
           return {
@@ -170,7 +168,6 @@ describe("plugin Controller", () => {
             },
           };
         },
-      },
       onProposal() {},
     });
 
@@ -197,25 +194,24 @@ describe("plugin Controller", () => {
     let runs = 0;
     let active = 0;
     let maximumActive = 0;
-    const reconciler: Reconciler<Spec, Status> = {
-      async reconcile() {
+    const reconcile: ControllerOptions<Spec, Status>["reconcile"] =
+      async () => {
         runs += 1;
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         if (runs === 1) await gate.promise;
         active -= 1;
-      },
-    };
+      };
     const firstController = new Controller({
       store: firstStore,
       resourceKind: "ReqLoopRun",
-      reconciler,
+      reconcile,
       onProposal() {},
     });
     const secondController = new Controller({
       store: secondStore,
       resourceKind: "ReqLoopRun",
-      reconciler,
+      reconcile,
       onProposal() {},
     });
 
@@ -241,12 +237,10 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile() {
+      async reconcile() {
           runs += 1;
           if (runs === 1) await gate.promise;
         },
-      },
       onProposal() {},
     });
 
@@ -275,12 +269,10 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile(_baton, resource) {
+      async reconcile(_baton, resource) {
           seen.push(resource.metadata.resourceId);
           if (resource.metadata.resourceId === "run_1") await gate.promise;
         },
-      },
       onProposal() {},
     });
 
@@ -307,11 +299,9 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile() {
+      async reconcile() {
           await gate.promise;
         },
-      },
       onProposal() {},
     });
 
@@ -341,12 +331,10 @@ describe("plugin Controller", () => {
       store: resources,
       resourceKind: "ReqLoopRun",
       maxConcurrency: 2,
-      reconciler: {
-        async reconcile(_baton, resource) {
+      async reconcile(_baton, resource) {
           started.push(resource.metadata.resourceId);
           await gate.promise;
         },
-      },
       onProposal() {},
     });
 
@@ -373,13 +361,11 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile(_baton, resource) {
+      async reconcile(_baton, resource) {
           if (resource.metadata.resourceId === "run_1") {
             throw new Error("connector unavailable");
           }
         },
-      },
       onProposal() {},
     });
 
@@ -401,12 +387,10 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: {
-        async reconcile(_baton, resource) {
+      async reconcile(_baton, resource) {
           await gate.promise;
           seen.push(resource.metadata.resourceId);
         },
-      },
       onProposal() {},
     });
     const mutable = key();
@@ -426,15 +410,14 @@ describe("plugin Controller", () => {
       resourceId: "run_1",
       spec: { requirement: "ship it" },
     });
-    const invalid: Reconciler<Spec, Status> = {
-      async reconcile() {
+    const invalid: ControllerOptions<Spec, Status>["reconcile"] =
+      async () => {
         return { requeueAfterMs: 0 };
-      },
-    };
+      };
     const controller = new Controller({
       store: resources,
       resourceKind: "ReqLoopRun",
-      reconciler: invalid,
+      reconcile: invalid,
       onProposal() {},
     });
 
@@ -449,7 +432,7 @@ describe("plugin Controller", () => {
         new Controller({
           store: resources,
           resourceKind: "ReqLoopRun",
-          reconciler: invalid,
+          reconcile: invalid,
           maxConcurrency: 0,
           onProposal() {},
         }),

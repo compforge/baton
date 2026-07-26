@@ -2,8 +2,17 @@ export * from "./event/ids.ts";
 export * from "./event/types.ts";
 export * from "./interaction/types.ts";
 export * from "./plugin/baton-snapshot.ts";
-export * from "./plugin/builtin.ts";
-export * from "./plugin/controller.ts";
+export {
+  Controller as ResourceControllerRuntime,
+  type BuiltinResourceReconcileProposal,
+  type ControllerOptions,
+  type PluginResourceReconcileProposal,
+  type ReconcileKey,
+  type ReconcileProposal,
+  type ReconcileResourceOwner,
+  type ReconcileScope,
+  type ScheduledReconcile,
+} from "./plugin/controller.ts";
 export * from "./plugin/instance.ts";
 export * from "./plugin/identity.ts";
 export * from "./plugin/manager.ts";

@@ -8,7 +8,6 @@ import {
   type BuiltinResourceReconcileProposal,
   type ReconcileKey,
   type ReconcileResult,
-  type ResourceReconciler,
   type ReconcileScope,
   type ScheduledReconcile,
 } from "./controller.ts";
@@ -19,6 +18,7 @@ import {
   type BatonSnapshot,
 } from "./baton-snapshot.ts";
 import { validatePluginOutput } from "./output.ts";
+import type { ControllerSource } from "./package.ts";
 
 export const BATON_TURN_RESOURCE_KIND = "baton.turn" as const;
 
@@ -61,9 +61,6 @@ export interface BuiltinResource<K extends BuiltinResourceKind = BuiltinResource
 export type AnyBuiltinResource = {
   [K in BuiltinResourceKind]: BuiltinResource<K>;
 }[BuiltinResourceKind];
-
-export type BuiltinReconciler<K extends BuiltinResourceKind> =
-  ResourceReconciler<BuiltinResource<K>>;
 
 type BuiltinSession = Pick<
   SessionHandle,
@@ -185,7 +182,11 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   projection: BuiltinResourceProjection;
   pluginInstanceId: string;
   resourceKind: K;
-  reconciler: BuiltinReconciler<K>;
+  sources?: readonly ControllerSource[];
+  reconcile(
+    baton: Readonly<BatonSnapshot>,
+    resource: Readonly<BuiltinResource<K>>,
+  ): Promise<ReconcileResult | void>;
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
@@ -214,13 +215,14 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 
 /**
  * 一个 Plugin 对一种 Baton Builtin Resource 的只读 Controller。
- * 重放和 live event 最终都只入同一 keyed queue，Reconciler 每次重新读取最新投影。
+ * 重放和 live event 最终都只入同一 keyed queue，Controller 每次重新读取最新投影。
  */
 export class BuiltinController<K extends BuiltinResourceKind> {
   readonly scope: ReconcileScope;
+  readonly sources: readonly ControllerSource[];
   private readonly projection: BuiltinResourceProjection;
   private readonly resourceKind: K;
-  private readonly reconciler: BuiltinReconciler<K>;
+  private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: () => BatonSnapshot;
   private readonly onProposal: BuiltinControllerOptions<K>["onProposal"];
@@ -233,8 +235,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     }
     this.projection = options.projection;
     this.resourceKind = options.resourceKind;
+    this.sources = Object.freeze([...(options.sources ?? [])]);
     this.projection.list(options.resourceKind);
-    this.reconciler = options.reconciler;
+    this.reconcileResource = options.reconcile;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ??
@@ -260,7 +263,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
             );
           }
           const result = validatedResult(
-            await this.reconciler.reconcile(baton, resource),
+            await this.reconcileResource(baton, resource),
           );
           const now = this.now();
           if (Number.isNaN(now.getTime())) {
@@ -305,6 +308,10 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         resourceId: resource.metadata.resourceId,
       }),
     );
+  }
+
+  resourceKeys(): ReconcileKey[] {
+    return this.initialReconciles();
   }
 
   scheduledReconciles(): ScheduledReconcile[] {

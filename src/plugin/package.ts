@@ -1,58 +1,52 @@
 import type {
-  BuiltinResourceContribution,
-  BuiltinResourceKind,
-  BoardItemDraft,
   BoardItemTone,
-  BoardProjector,
-  PluginCommandContribution,
+  Command,
+  Controller,
+  ControllerSource,
+  CronSource,
   PluginCommandInput,
   PluginCommandResult,
   PluginActivationContext,
   PluginPackage,
   PluginSessionContext,
-  ResourceContribution,
-  ResourceSchedule,
+  Resource,
+  ResourcePrint,
   ToastMessage,
   ToastSink,
   ToastTone,
 } from "@qiankun01/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
-import type { PluginResourceClient } from "./resource-client.ts";
+import type { ResourceClient } from "./resource-client.ts";
 
 export type {
-  BoardItemDraft,
   BoardItemTone,
-  BoardProjector,
-  BuiltinResourceContribution,
-  PluginCommandContribution,
+  Command,
+  Controller,
+  ControllerSource,
+  CronSource,
   PluginCommandInput,
   PluginCommandResult,
   PluginActivationContext,
   PluginPackage,
   PluginSessionContext,
-  ResourceContribution,
-  ResourceSchedule,
+  Resource,
+  ResourcePrint,
   ToastMessage,
   ToastSink,
   ToastTone,
 } from "@qiankun01/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(
-  contribution: ResourceContribution<TSpec, TStatus>,
+  controller: Controller<TSpec, TStatus>,
 ) => () => void;
 
 type CommandRegistrar = (
-  contribution: PluginCommandContribution,
-) => () => void;
-
-type BuiltinResourceRegistrar = <K extends BuiltinResourceKind>(
-  contribution: BuiltinResourceContribution<K>,
+  command: Command,
 ) => () => void;
 
 interface PluginRegistrars {
   registerCommand: CommandRegistrar;
-  registerResource: ResourceRegistrar;
-  watchBuiltinResource: BuiltinResourceRegistrar;
+  registerController: ResourceRegistrar;
   showToast(message: ToastMessage): void;
 }
 
@@ -78,7 +72,7 @@ export function validatePluginPackage(plugin: PluginPackage): void {
 export class PluginBinding implements PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
-  readonly resources: PluginResourceClient;
+  readonly resources: ResourceClient;
   readonly toast: ToastSink;
   private readonly registrars: PluginRegistrars;
   private readonly cleanups: Array<() => Promise<void> | void> = [];
@@ -90,7 +84,7 @@ export class PluginBinding implements PluginActivationContext {
     instance: PluginInstance,
     session: PluginSessionContext,
     registrars: PluginRegistrars,
-    resources: PluginResourceClient,
+    resources: ResourceClient,
   ) {
     this.instance = instance;
     this.session = Object.freeze({ ...session });
@@ -104,31 +98,20 @@ export class PluginBinding implements PluginActivationContext {
     });
   }
 
-  registerResource<TSpec, TStatus>(
-    contribution: ResourceContribution<TSpec, TStatus>,
+  registerController<TSpec, TStatus>(
+    controller: Controller<TSpec, TStatus>,
   ): void {
     this.assertRegistering();
-    if (!contribution.resourceKind.trim()) {
+    if (!controller.resourceKind.trim()) {
       throw new Error("resourceKind must not be empty");
     }
-    const close = this.registrars.registerResource(contribution);
+    const close = this.registrars.registerController(controller);
     this.cleanups.push(close);
   }
 
-  registerCommand(contribution: PluginCommandContribution): void {
+  registerCommand(command: Command): void {
     this.assertRegistering();
-    const close = this.registrars.registerCommand(contribution);
-    this.cleanups.push(close);
-  }
-
-  watchBuiltinResource<K extends BuiltinResourceKind>(
-    contribution: BuiltinResourceContribution<K>,
-  ): void {
-    this.assertRegistering();
-    if (!contribution.resourceKind.trim()) {
-      throw new Error("resourceKind must not be empty");
-    }
-    const close = this.registrars.watchBuiltinResource(contribution);
+    const close = this.registrars.registerCommand(command);
     this.cleanups.push(close);
   }
 

@@ -1,10 +1,6 @@
-import type {
-  BuiltinResource,
-  BuiltinResourceKind,
-  PluginResource,
-} from "./resource.ts";
+import type { Resource } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
-import type { BoardProjector } from "./board.ts";
+import type { ResourcePrint } from "./board.ts";
 
 export type PluginOutput = {
   readonly kind: "proposed-input";
@@ -16,46 +12,27 @@ export interface ReconcileResult {
   readonly requeueAfterMs?: number;
 }
 
-export interface ResourceReconciler<TResource> {
-  reconcile(
-    baton: Readonly<BatonSnapshot>,
-    resource: Readonly<TResource>,
-  ): Promise<ReconcileResult | void>;
-}
-
-export type Reconciler<TSpec, TStatus> = ResourceReconciler<
-  PluginResource<TSpec, TStatus>
->;
-
-export type BuiltinReconciler<K extends BuiltinResourceKind> =
-  ResourceReconciler<BuiltinResource<K>>;
-
-export interface ResourceSchedule {
-  /** Stable within one ResourceContribution. */
-  readonly scheduleId: string;
+export interface CronSource {
+  readonly type: "cron";
+  /** Stable within one Controller. */
+  readonly sourceId: string;
   /** Five- or six-field cron expression. */
   readonly cron: string;
   /** IANA time zone, for example "Asia/Shanghai" or "UTC". */
   readonly timeZone: string;
 }
 
-export interface ResourceContribution<TSpec, TStatus> {
-  readonly resourceKind: string;
-  readonly reconciler: Reconciler<TSpec, TStatus>;
-  /**
-   * Recurring wakeups for every current Resource of this kind.
-   * A due schedule only enqueues normal keyed reconcile work.
-   */
-  readonly schedules?: readonly ResourceSchedule[];
-  /** Optional derived read model for Baton's shared Board. */
-  readonly board?: BoardProjector<TSpec, TStatus>;
-  readonly maxConcurrency?: number;
-}
+export type ControllerSource = CronSource;
 
-export interface BuiltinResourceContribution<
-  K extends BuiltinResourceKind,
-> {
-  readonly resourceKind: K;
-  readonly reconciler: BuiltinReconciler<K>;
+export interface Controller<TSpec, TStatus> {
+  readonly resourceKind: string;
+  readonly sources?: readonly ControllerSource[];
   readonly maxConcurrency?: number;
+  reconcile(
+    baton: Readonly<BatonSnapshot>,
+    resource: Readonly<Resource<TSpec, TStatus>>,
+  ): Promise<ReconcileResult | void>;
+  print?(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+  ): ResourcePrint | undefined;
 }

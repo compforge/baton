@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import type { ReconcileScope } from "../src/plugin/controller.ts";
 import {
-  nextResourceScheduleAt,
-  ResourceScheduleQueue,
-  validateResourceSchedules,
-} from "../src/plugin/schedule.ts";
+  CronSourceQueue,
+  nextCronSourceAt,
+  validateControllerSources,
+} from "../src/plugin/cron-source.ts";
 
 const scope: ReconcileScope = {
   batonSessionId: "bs_test",
@@ -24,12 +24,13 @@ async function waitFor(
   }
 }
 
-describe("Plugin Resource schedules", () => {
+describe("Controller cron Sources", () => {
   test("calculates cron occurrences in the declared time zone", () => {
     expect(
-      nextResourceScheduleAt(
+      nextCronSourceAt(
         {
-          scheduleId: "daily-close-check",
+          type: "cron",
+          sourceId: "daily-close-check",
           cron: "0 9 * * *",
           timeZone: "Asia/Shanghai",
         },
@@ -40,59 +41,65 @@ describe("Plugin Resource schedules", () => {
 
   test("validates duplicate ids, cron expressions, and time zones", () => {
     expect(() =>
-      validateResourceSchedules(
+      validateControllerSources(
         [
           {
-            scheduleId: "poll",
+            type: "cron",
+            sourceId: "poll",
             cron: "*/5 * * * *",
             timeZone: "UTC",
           },
           {
-            scheduleId: "poll",
+            type: "cron",
+            sourceId: "poll",
             cron: "0 * * * *",
             timeZone: "UTC",
           },
         ],
         new Date("2026-07-26T00:00:00.000Z"),
       ),
-    ).toThrow("Resource scheduleId already registered: poll");
+    ).toThrow("Controller sourceId already registered: poll");
     expect(() =>
-      validateResourceSchedules(
+      validateControllerSources(
         [{
-          scheduleId: "poll",
+          type: "cron",
+          sourceId: "poll",
           cron: "not-a-cron",
           timeZone: "UTC",
         }],
         new Date("2026-07-26T00:00:00.000Z"),
       ),
-    ).toThrow("invalid Resource schedule poll");
+    ).toThrow("invalid Controller cron source poll");
     expect(() =>
-      validateResourceSchedules(
+      validateControllerSources(
         [{
-          scheduleId: "poll",
+          type: "cron",
+          sourceId: "poll",
           cron: "*/5 * * * *",
           timeZone: "Mars/Olympus",
         }],
         new Date("2026-07-26T00:00:00.000Z"),
       ),
-    ).toThrow("invalid Resource schedule poll");
+    ).toThrow("invalid Controller cron source poll");
   });
 
-  test("coalesces schedules due for the same Resource scope", async () => {
+  test("coalesces cron Sources due for the same Controller scope", async () => {
     let now = new Date("2026-07-26T00:00:00.990Z");
     const due: ReconcileScope[] = [];
-    const queue = new ResourceScheduleQueue({
+    const queue = new CronSourceQueue({
       now: () => now,
       onDue: (value) => due.push(value),
     });
     queue.register(scope, [
       {
-        scheduleId: "poll-pr",
+        type: "cron",
+        sourceId: "poll-pr",
         cron: "* * * * * *",
         timeZone: "UTC",
       },
       {
-        scheduleId: "poll-requirement",
+        type: "cron",
+        sourceId: "poll-requirement",
         cron: "* * * * * *",
         timeZone: "UTC",
       },
@@ -104,17 +111,18 @@ describe("Plugin Resource schedules", () => {
     queue.close();
   });
 
-  test("removes every schedule owned by a Resource scope", async () => {
+  test("removes every Source owned by a Controller scope", async () => {
     let now = new Date("2026-07-26T00:00:00.990Z");
     let due = 0;
-    const queue = new ResourceScheduleQueue({
+    const queue = new CronSourceQueue({
       now: () => now,
       onDue: () => {
         due += 1;
       },
     });
     queue.register(scope, [{
-      scheduleId: "poll",
+      type: "cron",
+      sourceId: "poll",
       cron: "* * * * * *",
       timeZone: "UTC",
     }]);

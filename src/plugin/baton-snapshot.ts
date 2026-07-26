@@ -8,7 +8,9 @@ import type {
 import type { SessionState } from "../store/reduce.ts";
 
 type SnapshotReadonly<T> =
-  T extends (...args: never[]) => unknown
+  T extends string | number | boolean | bigint | symbol | null | undefined
+    ? T
+    : T extends (...args: never[]) => unknown
     ? T
     : T extends readonly (infer Item)[]
       ? readonly SnapshotReadonly<Item>[]

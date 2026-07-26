@@ -1,19 +1,19 @@
-import type { PluginResource } from "./resource.ts";
+import type { Resource } from "@qiankun01/baton-plugin";
 import { PluginResourceStore } from "./resource.ts";
 
-export interface PluginResourceClient {
+export interface ResourceClient {
   get<TSpec, TStatus>(
     resourceKind: string,
     resourceId: string,
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
   list<TSpec, TStatus>(
     resourceKind?: string,
-  ): readonly Readonly<PluginResource<TSpec, TStatus>>[];
+  ): readonly Readonly<Resource<TSpec, TStatus>>[];
   /**
-   * Creates a new PluginResource with the given spec.
+   * Creates a new Plugin-owned Resource with the given spec.
    *
    * The status will be initialized to an empty object and should be set
-   * by the reconciler on the first reconciliation.
+   * by the Controller on the first reconciliation.
    */
   create<TSpec, TStatus>(
     resourceKind: string,
@@ -21,10 +21,10 @@ export interface PluginResourceClient {
       resourceId: string;
       spec: TSpec;
     },
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
   delete(resourceKind: string, resourceId: string): void;
   /**
-   * Updates the status of a PluginResource.
+   * Updates the status of a Plugin-owned Resource.
    *
    * This is the primary way to update resource state. Unlike Kubernetes where
    * users update spec and controllers update status, in Baton plugins both
@@ -34,9 +34,9 @@ export interface PluginResourceClient {
    * (only resourceVersion is), so this will not trigger a new reconciliation.
    */
   patchStatus<TSpec, TStatus>(
-    resource: Readonly<PluginResource<TSpec, TStatus>>,
+    resource: Readonly<Resource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -47,10 +47,11 @@ function deepFreeze<T>(value: T): T {
 }
 
 /** Restricts Resource reads and status writes to one PluginInstance-owned store. */
-export function createPluginResourceClient(
+export function createResourceClient(
   store: PluginResourceStore,
   onChange?: () => void,
-): PluginResourceClient {
+  assertCanCreateKind?: (resourceKind: string) => void,
+): ResourceClient {
   const changed = (): void => {
     try {
       onChange?.();
@@ -93,6 +94,7 @@ export function createPluginResourceClient(
         spec: TSpec;
       },
     ) {
+      assertCanCreateKind?.(resourceKind);
       const created = deepFreeze(
         store.create<TSpec, TStatus>({
           kind: resourceKind,
@@ -110,7 +112,7 @@ export function createPluginResourceClient(
       changed();
     },
     patchStatus<TSpec, TStatus>(
-      resource: Parameters<PluginResourceClient["patchStatus"]>[0],
+      resource: Parameters<ResourceClient["patchStatus"]>[0],
       patch: Partial<TStatus>,
     ) {
       assertOwned(resource);

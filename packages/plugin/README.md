@@ -8,9 +8,15 @@ Public, host-independent authoring contract for Baton plugins.
 
 ```ts
 import {
+  type Resource as ExampleResource,
   type PluginActivationContext,
   type PluginPackage,
 } from "@qiankun01/baton-plugin";
+
+type Example = ExampleResource<
+  { title: string },
+  { phase?: "active" | "done" }
+>;
 
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
@@ -29,21 +35,22 @@ const plugin: PluginPackage = {
         };
       },
     });
-    context.registerResource({
+    context.registerController({
       resourceKind: "Example",
-      reconciler: { async reconcile() {} },
-      schedules: [{
-        scheduleId: "periodic-refresh",
+      sources: [{
+        type: "cron",
+        sourceId: "periodic-refresh",
         cron: "*/5 * * * *",
         timeZone: "UTC",
       }],
-      board: {
-        project(resource) {
-          return [{
-            key: "summary",
-            title: resource.metadata.resourceId,
-          }];
-        },
+      async reconcile(_baton, resource: Example) {
+        // Observe current facts and patch status through context.resources.
+      },
+      print(resource) {
+        return {
+          title: resource.spec.title,
+          status: resource.status.phase,
+        };
       },
     });
   },
@@ -60,7 +67,7 @@ routing are intentionally excluded.
 caused by an operation or state transition. Ongoing state belongs in Resource
 status and an optional Board projection; do not emit a toast on every reconcile.
 
-Resource schedules are recurring wakeups. When a cron expression is due, Baton
-enqueues every current Resource of that contribution through the same keyed
-reconcile queue used by Resource changes and `requeueAfterMs`. Schedules never
-run a separate callback or mutate Resource status directly.
+Controller cron Sources are recurring wakeups. When a cron expression is due,
+Baton enqueues every current Resource of that Controller through the same keyed
+reconcile queue used by Resource changes and `requeueAfterMs`. Sources never run
+a separate callback or mutate Resource status directly.
