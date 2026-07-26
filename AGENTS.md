@@ -63,11 +63,13 @@ baton/
 │   │   ├── attempt.ts       # Controller 内部的 Harness 投递 Attempt 状态机与重放索引
 │   │   ├── turn.ts          # driven / observed Turn ledger 与幂等终态记账
 │   │   └── interaction.ts   # Interaction waiter 的 opened / resolved / cancel 生命周期
-│   ├── plugin/              # Plugin 宿主 runtime：Binding、Manager、Resource/Controller、Board、Marketplace 与 Proposal
+│   ├── plugin/              # Plugin 宿主 runtime
+│   │   ├── command/         # Plugin slash command
+│   │   └── marketplace/     # Marketplace 与 Package 交付
 │   ├── session/
 │   │   └── open.ts          # BatonSession 打开的唯一入口：新建/继续/指定 + 会话锁 + crash recovery
 │   ├── commands/
-│   │   └── registry.ts      # baton slash command 真相源：harness/model/session 生命周期
+│   │   └── registry.ts      # baton core slash command 真相源：harness/model/session 生命周期
 │   ├── store/               # 会话存储
 │   │   ├── reduce.ts        # 事件流 reduce 成会话状态（TUI 渲染与崩溃恢复的来源）
 │   │   └── store.ts         # session.jsonl 追加/读取 + meta.json + turn-summary 生成

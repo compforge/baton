@@ -13,6 +13,18 @@ const plugin: PluginPackage = {
   version: "0.1.0",
   activate(context: PluginActivationContext) {
     context.toast.show({ text: "Example plugin ready", tone: "success" });
+    context.registerCommand({
+      commandId: "examples",
+      name: "examples",
+      description: "List examples",
+      execute() {
+        return {
+          kind: "picker",
+          title: "Examples",
+          options: [{ name: "Hello", value: "hello" }],
+        };
+      },
+    });
     context.registerResource({
       resourceKind: "Example",
       reconciler: { async reconcile() {} },

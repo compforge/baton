@@ -27,6 +27,8 @@ import {
 import {
   PluginBinding,
   type BuiltinResourceContribution,
+  type PluginCommandInput,
+  type PluginCommandResult,
   type PluginPackage,
   pluginPackageKey,
   type ResourceContribution,
@@ -56,6 +58,10 @@ import {
   reconcileScopeLabel,
   sameReconcileScope,
 } from "./reconcile-scope.ts";
+import {
+  type AvailablePluginCommand,
+  PluginCommandRegistry,
+} from "./command/registry.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -118,6 +124,10 @@ export interface ManagerOptions {
   onBoardChanged?(): void;
   /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
   onToast?(toast: PluginToast): void;
+  /** Plugin command 注册或 Binding 生命周期变化；宿主据此刷新命令补全。 */
+  onCommandsChanged?(): void;
+  /** Baton core 已占用的 slash command 名称，Plugin 不得覆盖。 */
+  reservedCommandNames?: readonly string[];
   /** Reconciler 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: {
     initialDelayMs?: number;
@@ -179,6 +189,7 @@ function positiveDelay(name: string, value: number): void {
 export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
+  private readonly commandRegistry: PluginCommandRegistry;
   private readonly instances: PluginInstanceRepository;
   private readonly packages = new Map<string, PluginPackage>();
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
@@ -193,6 +204,7 @@ export class Manager {
   private readonly onProposal: ManagerOptions["onProposal"];
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onToast: ManagerOptions["onToast"];
+  private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly retryInitialDelayMs: number;
@@ -245,6 +257,13 @@ export class Manager {
     this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
+    this.onCommandsChanged = options.onCommandsChanged;
+    this.commandRegistry = new PluginCommandRegistry({
+      reservedNames: options.reservedCommandNames,
+      isInstanceActive: (pluginInstanceId) =>
+        this.bindings.has(pluginInstanceId),
+      onChanged: () => this.notifyCommandsChanged(),
+    });
     this.onActivationError = options.onActivationError;
     this.onReconcileError = options.onReconcileError;
     this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
@@ -406,6 +425,8 @@ export class Manager {
         ...(batonSession.cwd === undefined ? {} : { cwd: batonSession.cwd }),
       },
       {
+        registerCommand: (contribution) =>
+          this.commandRegistry.register(instance, contribution),
         registerResource: (contribution) =>
           this.bindResource(instance.pluginInstanceId, contribution),
         watchBuiltinResource: (contribution) =>
@@ -429,6 +450,7 @@ export class Manager {
           binding.completeActivation();
           if (this.closed) throw new Error("plugin Manager is closed");
           this.bindings.set(pluginInstanceId, binding);
+          this.notifyCommandsChanged();
           this.resumeControllers(pluginInstanceId);
           this.notifyBoardChanged();
         } catch (error) {
@@ -639,6 +661,17 @@ export class Manager {
       items.push(...source.project());
     }
     return Object.freeze(items);
+  }
+
+  listCommands(): readonly AvailablePluginCommand[] {
+    return this.commandRegistry.list();
+  }
+
+  async executeCommand(
+    name: string,
+    input: PluginCommandInput,
+  ): Promise<PluginCommandResult | undefined> {
+    return await this.commandRegistry.execute(name, input);
   }
 
   resolveProposal(proposalId: string, outcome: ProposalOutcome): Proposal {
@@ -870,6 +903,15 @@ export class Manager {
       );
     } catch {
       // UI feedback must not affect Plugin runtime state.
+    }
+  }
+
+  private notifyCommandsChanged(): void {
+    if (this.closed) return;
+    try {
+      this.onCommandsChanged?.();
+    } catch {
+      // Completion is a derived view; invalidation must not affect Plugin runtime state.
     }
   }
 

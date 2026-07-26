@@ -183,8 +183,8 @@ BatonPlugin
     └── Context projection?   可选
 ```
 
-当前运行时已有 PluginResource register 与 Builtin Resource watch；Command 等真实产品入口
-出现后再补 manifest declaration。Reconciler 是两种 Controller 共用的处理语义，不要求 Plugin
+当前运行时已有 Plugin Command、PluginResource register 与 Builtin Resource watch；manifest
+declaration 校验随 Contribution 审阅入口补齐。Reconciler 是两种 Controller 共用的处理语义，不要求 Plugin
 必须先创建可写 Resource。Monitor、EventSource、Schedule 和 Action 等到
 `requeueAfter + desired state` 无法覆盖真实场景时再引入。Plugin 可以在一个内聚的 loop 内部
 组合多个外部系统；跨 Plugin 编排统一回到 Baton，不直接互调。
@@ -213,7 +213,7 @@ Baton 放开的仍是受控调度能力，而不是 `HarnessAdapter`/Harness 的
 
 ### Slash Command
 
-Plugin 可以注册 `/requirement` 等 slash command。命令 handler 操作 Resource，而不是直接
+Plugin 可以注册 `/requirements` 等 slash command。命令 handler 操作 Resource，而不是直接
 控制 TUI：
 
 - 列表、表单和选择项由 Baton 渲染；
@@ -486,7 +486,7 @@ reqloop 将 Requirement、Deployment、Verdict 等抽象为自己的领域概念
 schema、reconcile、Board projection 与可选 Context projection 都收在该 Resource 下。详细设计
 见 [reqloop 领域设计](https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md)。
 
-1. 用户启用并配置随 Baton 交付的 reqloop，通过 `/requirement` 创建或恢复 ReqLoopRun；
+1. 用户启用并配置随 Baton 交付的 reqloop，通过 `/requirements` 创建或恢复 ReqLoopRun；
    Requirement、验收条件和完成策略进入 `spec`。
 2. ReqLoopReconciler 返回“根据需求完成开发并提交 PR”的 `proposed-input` Output；用户原样提交、编辑后
    提交或丢弃。提交后才成为普通 Input，因此仍是 user-driven turn。

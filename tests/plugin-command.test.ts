@@ -1,0 +1,128 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { PluginPackage } from "../src/plugin/package.ts";
+import { Manager } from "../src/plugin/manager.ts";
+import { PluginInstanceStore } from "../src/plugin/instance.ts";
+import { ProposalStore } from "../src/plugin/proposal.ts";
+
+const roots: string[] = [];
+
+function stores() {
+  const root = mkdtempSync(join(tmpdir(), "baton-plugin-command-"));
+  roots.push(root);
+  const session = {
+    id: "bs_test",
+    dir: join(root, "projects", "project", "sessions", "bs_test"),
+  };
+  return {
+    instances: new PluginInstanceStore({ session }),
+    proposals: new ProposalStore({ session }),
+  };
+}
+
+function requirementPackage(name = "requirements"): PluginPackage {
+  return {
+    pluginId: "qiankun/reqloop",
+    version: "1.0.0",
+    activate(context) {
+      context.registerCommand({
+        commandId: "requirements",
+        name,
+        description: "Browse requirements",
+        execute(input) {
+          if (input.selectedValue) {
+            return {
+              kind: "message",
+              text: `Requirement ${input.selectedValue}`,
+            };
+          }
+          return {
+            kind: "picker",
+            title: "Requirements",
+            options: [{ name: "Ship command support", value: "REQ-1" }],
+          };
+        },
+      });
+    },
+  };
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe("Plugin commands", () => {
+  test("register with a Binding and route picker selections back to the Plugin", async () => {
+    const { instances, proposals } = stores();
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.0.0",
+    });
+    let changes = 0;
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [requirementPackage()],
+      onProposal() {},
+      onCommandsChanged() {
+        changes += 1;
+      },
+    });
+
+    await manager.start();
+    expect(manager.listCommands()).toEqual([
+      {
+        pluginId: "qiankun/reqloop",
+        commandId: "requirements",
+        name: "requirements",
+        description: "Browse requirements",
+      },
+    ]);
+    expect(await manager.executeCommand("requirements", { argument: "" })).toEqual({
+      kind: "picker",
+      title: "Requirements",
+      options: [{ name: "Ship command support", value: "REQ-1" }],
+    });
+    expect(
+      await manager.executeCommand("requirements", {
+        argument: "",
+        selectedValue: "REQ-1",
+      }),
+    ).toEqual({
+      kind: "message",
+      text: "Requirement REQ-1",
+    });
+
+    await manager.deactivateInstance("reqloop_default");
+    expect(manager.listCommands()).toEqual([]);
+    expect(changes).toBeGreaterThanOrEqual(2);
+    await manager.close();
+  });
+
+  test("rejects Plugin commands that shadow Baton commands", async () => {
+    const { instances, proposals } = stores();
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [requirementPackage("status")],
+      reservedCommandNames: ["status"],
+      onProposal() {},
+    });
+
+    await expect(
+      manager.activateInstance("reqloop_default"),
+    ).rejects.toThrow("plugin command name is reserved by Baton: /status");
+    await manager.close();
+  });
+});

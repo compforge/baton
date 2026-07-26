@@ -6,6 +6,7 @@ import type {
   BuiltinResourceKind,
   PluginResourceClient,
 } from "./resource.ts";
+import type { PluginCommandContribution } from "./command.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
@@ -43,6 +44,7 @@ export interface PluginActivationContext {
   readonly resources: PluginResourceClient;
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;
+  registerCommand(contribution: PluginCommandContribution): void;
   registerResource<TSpec, TStatus>(
     contribution: ResourceContribution<TSpec, TStatus>,
   ): void;

@@ -5,6 +5,13 @@ export type {
 } from "./board.ts";
 
 export type {
+  PluginCommandContribution,
+  PluginCommandInput,
+  PluginCommandOption,
+  PluginCommandResult,
+} from "./command.ts";
+
+export type {
   PluginActivationContext,
   PluginConfig,
   PluginInstance,
