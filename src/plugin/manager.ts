@@ -1,6 +1,7 @@
 import {
   Controller,
   type ReconcileKey,
+  type ReconcileInteraction,
   type ReconcileProposal,
   type ReconcileScope,
   type ScheduledReconcile,
@@ -53,6 +54,8 @@ import {
   presentBoardSource,
 } from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
+import type { InteractionResolution } from "../interaction/types.ts";
+import { Store as InteractionStore } from "./interaction.ts";
 import {
   emptyBatonSnapshot,
   type BatonSnapshot,
@@ -103,7 +106,10 @@ export interface ManagerOptions {
    * 启用 Baton-owned Resource 时传完整 SessionHandle。只持有 ProposalStore 的调用方
    * 仍可使用 Plugin Resource Controller，但不能观察 Baton-owned Resource。
    */
-  session?: Pick<SessionHandle, "id" | "dir" | "readEvents" | "subscribe">;
+  session?: Pick<
+    SessionHandle,
+    "id" | "dir" | "readEvents" | "subscribe" | "append"
+  >;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
   instances?: PluginInstanceRepository;
   /** 当前进程可激活的可信、不可变 Package 版本。 */
@@ -206,6 +212,7 @@ export class Manager {
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
   private readonly loadPackage: ManagerOptions["loadPackage"];
   private readonly snapshot: () => BatonSnapshot;
+  private readonly interactions?: InteractionStore;
   private readonly bindings = new Map<string, PluginBinding>();
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
@@ -266,6 +273,9 @@ export class Manager {
     this.snapshot =
       options.snapshot ??
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
+    if (options.session) {
+      this.interactions = new InteractionStore(options.session);
+    }
     this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
@@ -326,9 +336,10 @@ export class Manager {
     validateControllerSources(definition.sources, this.now());
     const controller = new Controller({
       ...definition,
-      snapshot: this.snapshot,
+      snapshot: (key) => this.snapshotFor(key),
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
+      onInteraction: (interaction) => this.publishInteraction(interaction),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -361,9 +372,10 @@ export class Manager {
     const controller = new BuiltinController({
       ...definition,
       resources: this.batonResources,
-      snapshot: this.snapshot,
+      snapshot: (key) => this.snapshotFor(key),
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
+      onInteraction: (interaction) => this.publishInteraction(interaction),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -696,6 +708,24 @@ export class Manager {
     return this.proposals.resolve(proposalId, outcome);
   }
 
+  /**
+   * 先持久化用户决议，再唤醒原 Resource。即使当前 Controller 暂不可用，
+   * 后续激活或初始 reconcile 仍能从 Snapshot 恢复这份决议。
+   */
+  async resolveInteraction(
+    interactionId: string,
+    resolution: InteractionResolution,
+  ): Promise<boolean> {
+    const key = this.interactions?.resolve(interactionId, resolution);
+    if (!key) return false;
+    try {
+      await this.enqueue(key);
+    } catch {
+      // Resolution 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
+    }
+    return true;
+  }
+
   getBatonResource<K extends BuiltinResourceKind>(
     kind: K,
     resourceId: string,
@@ -709,6 +739,22 @@ export class Manager {
   private async publishProposal(draft: ReconcileProposal): Promise<void> {
     const proposal = this.proposals.record(draft);
     if (!proposal.resolution) await this.onProposal(proposal);
+  }
+
+  private publishInteraction(draft: ReconcileInteraction): void {
+    if (!this.interactions) {
+      throw new Error(
+        "plugin Manager requires a SessionHandle to open Interactions",
+      );
+    }
+    this.interactions.open(draft);
+  }
+
+  private snapshotFor(key: ReconcileKey): BatonSnapshot {
+    return {
+      ...this.snapshot(),
+      pluginInteractions: this.interactions?.snapshots(key) ?? [],
+    };
   }
 
   private async restoreProposals(): Promise<void> {
@@ -1039,6 +1085,7 @@ export class Manager {
     this.cronSourceQueue.close();
     this.unsubscribeBatonResources?.();
     this.batonResources?.close();
+    this.interactions?.close();
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "could not close plugin Manager");
   }

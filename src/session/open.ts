@@ -73,7 +73,8 @@ function resolveSession(
  * 崩溃残留归一化。前提：调用方已持有会话锁——否则"最后事件是 running"可能是
  * 另一个活进程正在执行，合成终态会污染活会话。
  * 收口顺序与 controller.finalize 一致（终态 → notice → summary），三类残留：
- * 悬挂审批 → resolved(cancelled)；每个未收口的 turn（driven/observed 并发崩溃时
+ * 悬挂 Harness/Baton 审批 → resolved(cancelled)；Plugin Interaction 由 Resource
+ * reconcile 恢复，不在进程重启时取消。每个未收口的 turn（driven/observed 并发崩溃时
  * 可能不止一个）→ 各补 idle(cancelled) + 中断 notice；缺 summary 的 turn
  * （含 fork 从运行中源会话复制来的半截 turn）→ 补 summary。
  */
@@ -97,13 +98,18 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   if (
     interruptedTurns.length === 0 &&
     unsummarized.length === 0 &&
-    ![...state.interactions.values()].some((interaction) => !interaction.resolution)
+    ![...state.interactions.values()].some(
+      (interaction) =>
+        !interaction.resolution &&
+        interaction.interaction.requester.type !== "plugin",
+    )
   ) {
     return recoveredAttempt;
   }
 
   for (const [interactionId, interaction] of state.interactions) {
     if (interaction.resolution) continue;
+    if (interaction.interaction.requester.type === "plugin") continue;
     const opened = events.findLast(
       (event) =>
         event.kind === "interaction.opened" &&

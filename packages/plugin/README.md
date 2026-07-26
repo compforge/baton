@@ -71,3 +71,26 @@ Controller cron Sources are recurring wakeups. When a cron expression is due,
 Baton enqueues every current Resource of that Controller through the same keyed
 reconcile queue used by Resource changes and `requeueAfterMs`. Sources never run
 a separate callback or mutate Resource status directly.
+
+A Controller can return `kind: "interaction"` when its Resource needs a durable
+user decision:
+
+```ts
+return {
+  output: {
+    kind: "interaction",
+    decisionKey: "associate-pr",
+    title: "Associate pull request",
+    prompt: "Which requirement should own this pull request?",
+    options: [
+      { optionId: "req_1", label: "REQ-1" },
+      { optionId: "reject", label: "Do not associate", role: "reject" },
+    ],
+  },
+};
+```
+
+On the next reconcile, read the result from
+`baton.pluginInteractions` by `decisionKey`. Baton persists the answer before
+re-enqueuing the same Resource, so plugins do not register option callbacks or
+hold an in-memory promise while waiting. Omit `options` for free text.

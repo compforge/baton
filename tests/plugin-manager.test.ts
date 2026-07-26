@@ -10,6 +10,7 @@ import type {
 import { Manager } from "../src/plugin/manager.ts";
 import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
+import { SessionStore } from "../src/store/store.ts";
 
 interface Spec {
   value: string;
@@ -95,6 +96,88 @@ afterEach(() => {
 });
 
 describe("plugin Manager", () => {
+  test("persists a Resource Interaction and reconciles its answer", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      kind: "ReqLoopRun",
+      resourceId: "run_1",
+      spec: { value: "run_1" },
+    });
+    const snapshots: unknown[] = [];
+    const manager = new Manager({
+      proposals: new ProposalStore({ session }),
+      session,
+      onProposal() {},
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceKind: "ReqLoopRun",
+      async reconcile(baton) {
+        const current = baton.pluginInteractions.find(
+          (interaction) => interaction.decisionKey === "associate-pr",
+        );
+        snapshots.push(current?.outcome);
+        if (current?.outcome) return;
+        return {
+          output: {
+            kind: "interaction",
+            decisionKey: "associate-pr",
+            title: "Associate pull request",
+            prompt: "Choose a requirement",
+            options: [
+              { optionId: "req_1", label: "REQ-1" },
+              {
+                optionId: "reject",
+                label: "Do not associate",
+                role: "reject",
+              },
+            ],
+          },
+        };
+      },
+    });
+    const reconcileKey = {
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceKind: "ReqLoopRun",
+      resourceId: "run_1",
+    };
+
+    await manager.enqueue(reconcileKey);
+    const interaction = [...session.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(interaction?.requester).toEqual({
+      type: "plugin",
+      pluginInstanceId: "reqloop_default",
+    });
+    expect(interaction?.kind).toBe("question");
+    expect(
+      await manager.resolveInteraction(interaction!.interactionId, {
+        kind: "question",
+        outcome: "answered",
+        answers: { decision: ["req_1"] },
+      }),
+    ).toBe(true);
+    expect(snapshots).toEqual([
+      undefined,
+      { kind: "answered", values: ["req_1"] },
+    ]);
+    expect(
+      session.loadState().interactions.get(interaction!.interactionId)
+        ?.resolution,
+    ).toEqual({
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["req_1"] },
+    });
+    await manager.close();
+  });
+
   test("routes many Plugin instances through one globally bounded capacity", async () => {
     const root = testRoot();
     const reqloopStore = store(root, "reqloop_default");

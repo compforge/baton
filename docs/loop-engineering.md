@@ -202,7 +202,7 @@ Codex / Claude Code Plugin
 
 Baton Plugin
   → 观察 loop
-  → 首期返回 proposed-input Plugin Output 给人审核
+  → 返回 proposed-input 或持久 interaction Plugin Output 给人审核
   → 未来请求 Baton 主动调度 Harness
   → Baton 选择/恢复 Harness，组装 context 并调度 turn
 ```
@@ -222,6 +222,8 @@ Plugin 可以注册 `/requirements` 等 slash command。命令 handler 操作 Re
 - Board 由 Controller presentation 生成，Context 由对应 Resource Context source 提供；
 - 需要智能判断时由 Controller 返回 `kind: "proposed-input"` 的 Plugin Output，用户提交后
   进入普通 Input 路径。
+- 需要用户作出由原 Resource 消费的领域决定时返回 `kind: "interaction"`；Baton 先持久化回答，
+  再重新 reconcile 同一 Resource。
 
 这使“查看需求并放入 Board”成为 Plugin 能力，而不是 Requirement 进入 Baton core 的理由。
 
@@ -332,8 +334,9 @@ reconcile(BatonSnapshot, latest Resource)
 Controller 可以调用自己 Plugin 的 Connector，使实际状态靠近已授权 spec；不确定外部写入使用
 稳定 operation key，并在重试前重新观察。
 
-首期 `ReconcileResult` 只有 `output?` 和 `requeueAfterMs?`，当前唯一 Output kind 是
-`proposed-input`，供人审核、编辑或丢弃，提交后才成为普通 Input；Resource 的
+首期 `ReconcileResult` 只有 `output?` 和 `requeueAfterMs?`。`proposed-input` 供人审核、编辑
+或丢弃，提交后才成为普通 Input；`interaction` 请求一个持久的单选或自由文本决定，回答先进入
+Event Ledger，再作为当前 Resource 的 Snapshot 输入触发下一次 reconcile。Resource 的
 `requeueAfterMs` 换算成持久化 `nextReconcileAt`，进程
 重启后恢复。Baton-owned Resource 的 due time 只存在于进程队列，重启时由 ledger replay 再次
 enqueue。错误都由 Baton 退避重试，空结果等待新事实。
@@ -499,11 +502,12 @@ schema、reconcile、Board presentation 与可选 Context source 都收在该 Re
    Codex/Claude Code 自己的 skill、hook、command 和权限机制，不注册为 Baton Plugin。
 4. MR 可交付时，devloop 产生结构化 DevelopmentOutcome，经 Harness adapter 或窄化的 Baton
    event bridge 归一为带 ReqLoopRun reference 的 `harness.delivery.ready`；Controller 将 PR
-   等实际交付物写入 `status`。
+   等实际交付物写入 `status`。无法自动关联时，Controller 返回 `interaction` 让用户选择
+   Requirement 或拒绝关联。
 5. `spec` 要求 review 时，Controller 调用 VerdictConnector，并通过 `requeueAfter` 轮询长耗时
    结果；收到 changes requested 后返回包含 review 意见的修复 `proposed-input` Output。
-6. 部署、review 和修复满足 completion policy 后，Controller 更新 conditions，并在已授权
-   `spec` 范围内调用 Connector 完成收尾。
+6. 部署、review 和修复满足 completion policy 后，Controller 返回 `interaction` 询问是否关闭；
+   用户确认后，Controller 在已授权范围内调用 Connector 完成收尾并更新 conditions。
 
 reqloop 可以在自己的 package 内实现 Meego/Teambition、部署平台和 review 平台 Connector，
 因为这些适配共同服务于同一条 loop。devloop 仍有独立产品和 standalone 价值，但它安装在
@@ -622,7 +626,7 @@ DevelopmentOutcome
    append 感知 Baton 内部事实；
 4. 建立同 key 不并发的 reconcile queue，将 Resource 的 `requeueAfter` 持久化为
    `nextReconcileAt`，并让 Controller cron Sources 进入同一队列；
-5. 接通 Board presentation、Resource Context source 和 `proposed-input` Output，用 reqloop + 安装了 devloop 的 Harness
+5. 接通 Board presentation、Resource Context source、`proposed-input` 和 `interaction` Output，用 reqloop + 安装了 devloop 的 Harness
    跑通用户审核文本后驱动的 Requirement Loop；
 6. 真实场景无法由固定 Sources、动态轮询、desired state 或当前进程覆盖时，再依次引入
    EventSource、Action 或 daemon；
@@ -647,8 +651,8 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
    generation / observedGeneration 显式表示收敛水位。
 6. Baton-owned Resource 从 Event Ledger 只读派生且可重放；用户和 Plugin 都不能修改，也不
    另建持久真相。
-7. 首期 Controller 返回 `PluginOutput(kind: "proposed-input")` 和 `requeueAfterMs`；提交文本的
-   owner 仍是用户。
+7. Controller 返回 `PluginOutput(kind: "proposed-input" | "interaction")` 和
+   `requeueAfterMs`；提交文本的 owner 仍是用户，Interaction 决议归请求它的 Resource。
 8. 未来若实现主动 Harness 调用，Plugin 也不能直接持有 Harness runtime，必须复用 Baton
    Input/Attempt 投递路径。
 9. Event 先持久化，再更新 Baton-owned Resource 并触发 Reconcile；触发本身不是必须执行一次的命令。

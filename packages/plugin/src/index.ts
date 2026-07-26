@@ -22,6 +22,16 @@ export type {
 } from "./package.ts";
 
 export type {
+  CancellationReason,
+  Option,
+  OptionRole,
+  Outcome,
+  Output,
+  ResourceRef,
+  Snapshot,
+} from "./interaction.ts";
+
+export type {
   Controller,
   ControllerSource,
   CronSource,

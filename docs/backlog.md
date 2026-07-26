@@ -31,3 +31,16 @@ baton v1 直接取第一条真实用户输入的首个非空行作为会话预�
 OpenCode 的同类尝试能显著减少持续闪烁，但仍可能在消息完成时留下 1–2 次高亮 settle；因此先消除 baton 当前每个事件的重复 view 通知，再判断是否值得引入 Markdown 边界切分的复杂度。参考 [OpenCode #27897](https://github.com/anomalyco/opencode/issues/27897) 与 [PR #27961](https://github.com/anomalyco/opencode/pull/27961)。
 
 **触发条件**：去重或合并投影刷新后，fenced code、列表、表格的流式输出仍能稳定复现块级闪烁，且问题可确认来自 Markdown 尾块结构重建而非特定终端。
+
+## Plugin Resource ContextSource
+
+Board 展示一份 Resource，不代表目标 Harness 已经收到它的上下文。reqloop 需要把当前 Turn
+关联的 ReqLoopRun 作为独立 ContextSource，经 ContextSnapshot、DeliveryReceipt 和
+ContextEpoch 送达 Harness；同一 BatonSession 可以同时存在多份活跃 Requirement，不能把 Board
+上的全部 Resource 无差别注入每个 Turn。
+
+后续需要同时补齐 per-turn ResourceRef / focus 选择，以及 Plugin Proposal 被用户采用后到
+Input/Turn 的 Resource provenance。Board presentation 继续只服务人类展示，不作为 Harness
+context 的文本事实源。
+
+**触发条件**：reqloop 创建 ReqLoopRun 并开始从 Requirement 驱动 Harness 开发时。

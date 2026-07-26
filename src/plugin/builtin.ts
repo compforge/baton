@@ -6,6 +6,7 @@ import type {
 import type { SessionHandle } from "../store/store.ts";
 import {
   type BuiltinResourceReconcileProposal,
+  type BuiltinResourceReconcileInteraction,
   type ReconcileKey,
   type ReconcileResult,
   type ReconcileScope,
@@ -190,10 +191,13 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: () => BatonSnapshot;
+  snapshot?: (key: ReconcileKey) => BatonSnapshot;
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   onProposal(
     proposal: BuiltinResourceReconcileProposal,
+  ): Promise<void> | void;
+  onInteraction?(
+    interaction: BuiltinResourceReconcileInteraction,
   ): Promise<void> | void;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
@@ -224,8 +228,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly resourceKind: K;
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
-  private readonly snapshot: () => BatonSnapshot;
+  private readonly snapshot: (key: ReconcileKey) => BatonSnapshot;
   private readonly onProposal: BuiltinControllerOptions<K>["onProposal"];
+  private readonly onInteraction: NonNullable<
+    BuiltinControllerOptions<K>["onInteraction"]
+  >;
   private readonly queue: ReconcileQueue;
   private closed = false;
 
@@ -243,6 +250,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       options.snapshot ??
       (() => emptyBatonSnapshot(options.resources.batonSessionId));
     this.onProposal = options.onProposal;
+    this.onInteraction =
+      options.onInteraction ??
+      (() => {
+        throw new Error("plugin BuiltinController has no Interaction publisher");
+      });
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
@@ -256,7 +268,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         executeWithCapacity(async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
-          const baton = deepFreeze(this.snapshot());
+          const baton = deepFreeze(this.snapshot(key));
           if (baton.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
               `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
@@ -273,11 +285,18 @@ export class BuiltinController<K extends BuiltinResourceKind> {
             result.requeueAfterMs === undefined
               ? null
               : new Date(now.getTime() + result.requeueAfterMs);
-          if (result.output) {
+          if (result.output?.kind === "proposed-input") {
             await this.onProposal(Object.freeze({
               key,
               basedOnRevision: resource.metadata.revision,
               text: result.output.text,
+            }));
+          }
+          if (result.output?.kind === "interaction") {
+            await this.onInteraction(Object.freeze({
+              key,
+              basedOnRevision: resource.metadata.revision,
+              request: result.output,
             }));
           }
           options.onReconcileSuccess?.(key, nextReconcileAt);

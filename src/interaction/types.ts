@@ -32,9 +32,13 @@ export interface PermissionInteraction {
 }
 
 export interface QuestionOption {
+  /** Plugin questions use a stable value; Harness-originated questions may omit it. */
+  optionId?: string;
   label: string;
   description: string;
   preview?: string;
+  /** Presentation hint only; resolution semantics belong to the requester. */
+  role?: "default" | "reject";
 }
 
 export interface QuestionPrompt {
@@ -81,9 +85,24 @@ export interface HookTrustInteraction {
 /** Producer 提交的 kind-specific 内容；Controller 在可信边界补 identity 与 requester。 */
 export type InteractionDraft = PermissionInteraction | QuestionInteraction | HookTrustInteraction;
 
+/**
+ * Durable routing owned by Baton for an Interaction emitted from Resource reconcile.
+ * decisionKey is Plugin-defined identity; the basis is provenance, not callback state.
+ */
+export interface PluginResourceInteractionContext {
+  decisionKey: string;
+  resourceKind: string;
+  resourceId: string;
+  resourceOwner: "plugin" | "baton";
+  basedOnGeneration?: number;
+  basedOnResourceVersion?: number;
+  basedOnRevision?: number;
+}
+
 export type Interaction = InteractionDraft & {
   interactionId: string;
   requester: InteractionRequester;
+  pluginContext?: PluginResourceInteractionContext;
 };
 
 /**

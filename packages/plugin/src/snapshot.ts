@@ -1,3 +1,5 @@
+import type { Snapshot as InteractionSnapshot } from "./interaction.ts";
+
 export type SessionRunState = "running" | "idle" | "requires_action";
 
 export type InputStatus =
@@ -82,6 +84,11 @@ export interface BatonSnapshot {
   readonly inputs: readonly BatonInputSnapshot[];
   readonly harnessTargets: readonly BatonHarnessTargetSnapshot[];
   readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
+  /**
+   * Durable decisions requested by the Resource currently being reconciled.
+   * Baton scopes this list to that PluginInstance and Resource before invocation.
+   */
+  readonly pluginInteractions: readonly InteractionSnapshot[];
   readonly latestTurn?: TurnSummary;
   readonly turns: readonly TurnSummary[];
 }

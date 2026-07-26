@@ -123,8 +123,10 @@ Interaction 与 Intent/Attempt 不同：Interaction 等待一个外部决定；I
 创建 ActionIntent 的 Event 以 `interaction.resolved` Event 作为 `parentEventId`，但不能用
 “用户已同意”冒充“动作已执行”。
 
-Controller 是 Interaction 的 lifecycle owner，Adapter/Plugin 只提交 typed draft 并等待
-resolution。turn cancel、timeout 和 crash recovery 都以 cancelled resolution 收口；自动
+Controller 是 Interaction 的 lifecycle owner，Adapter/Plugin 只提交 typed draft。Harness/Baton
+请求由进程内 resolver 等待 resolution，turn cancel、timeout 和 crash recovery 以 cancelled
+resolution 收口；Plugin 请求则以持久 Resource key 作为 continuation，回答后重新 reconcile，
+重启不会自动取消。自动
 reviewer 根本没有向 Baton 打开 Interaction 时，只记录独立 ApprovalReview 审计 Event，不伪造
 一段不存在的 pending 生命周期。
 
