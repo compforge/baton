@@ -50,8 +50,11 @@ import type {
 } from "../interaction/types.ts";
 import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
 import { Manager } from "../plugin/manager.ts";
+import type {
+  PluginCommandResult,
+  ToastMessage,
+} from "../plugin/package.ts";
 import { MarketplaceRegistry } from "../plugin/marketplace/index.ts";
-import type { ToastMessage } from "../plugin/package.ts";
 import {
   GlobalPluginInstanceStore,
   PluginSettingsStore,
@@ -174,8 +177,6 @@ function harnessAuthor(harness: string | undefined): string | undefined {
   if (!harness) return undefined;
   return harnessShortName(harness);
 }
-
-export const CHAT_COMMANDS: readonly CommandSpec[] = COMMANDS;
 
 export function userVisibleText(text: string): string {
   return text.replace(/<baton-(context|sync)>[\s\S]*<\/baton-\1>\s*/g, "").trim();
@@ -300,6 +301,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private boardMode: "auto" | "open" | "hidden" = "auto";
   private nextPickerId = 1;
   private listeners = new Set<() => void>();
+  private commandListeners = new Set<() => void>();
   private view: ChatViewState;
   private unsubscribeSession: () => void;
   private streamViewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -357,6 +359,10 @@ export class BatonChatProtocol implements ChatProtocol {
     return this.view;
   }
 
+  get commands(): readonly CommandSpec[] {
+    return [...COMMANDS, ...this.plugins.listCommands()];
+  }
+
   get pluginManager(): Manager {
     return this.plugins;
   }
@@ -364,6 +370,11 @@ export class BatonChatProtocol implements ChatProtocol {
   subscribe(onChange: () => void): () => void {
     this.listeners.add(onChange);
     return () => this.listeners.delete(onChange);
+  }
+
+  subscribeCommands(onChange: () => void): () => void {
+    this.commandListeners.add(onChange);
+    return () => this.commandListeners.delete(onChange);
   }
 
   // ===== 输入：TUI → baton =====
@@ -597,8 +608,12 @@ export class BatonChatProtocol implements ChatProtocol {
         if (!effort) throw new Error(`Unknown ${target} effort: ${argument}`);
         return this.configureEffort(target, effort);
       }
-      default:
-        throw new Error(`Unknown command: /${name}`);
+      default: {
+        if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
+          throw new Error(`Unknown command: /${name}`);
+        }
+        return this.runPluginCommand(name, argument);
+      }
     }
   }
 
@@ -814,6 +829,10 @@ export class BatonChatProtocol implements ChatProtocol {
         this.toast = message;
         this.changed();
       },
+      reservedCommandNames: COMMANDS.map((command) => command.name),
+      onCommandsChanged: () => {
+        this.commandsChanged();
+      },
       onActivationError: ({ pluginInstanceId, error }) => {
         this.toast = {
           text: `Plugin ${pluginInstanceId} activation failed: ${
@@ -894,6 +913,7 @@ export class BatonChatProtocol implements ChatProtocol {
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.createPluginManager();
+    this.commandsChanged();
     this.startPluginManager();
     this.changed();
   }
@@ -968,6 +988,50 @@ export class BatonChatProtocol implements ChatProtocol {
     this.changed();
   }
 
+  private async runPluginCommand(
+    name: string,
+    argument: string,
+    selectedValue?: string,
+  ): Promise<void> {
+    const command = this.plugins
+      .listCommands()
+      .find((candidate) => candidate.name === name);
+    if (!command) throw new Error(`Plugin command is not active: /${name}`);
+    const result = await this.plugins.executeCommand(name, {
+      argument,
+      ...(selectedValue === undefined ? {} : { selectedValue }),
+    });
+    this.presentPluginCommandResult(command.pluginId, name, argument, result);
+  }
+
+  private presentPluginCommandResult(
+    pluginId: string,
+    name: string,
+    argument: string,
+    result: PluginCommandResult | undefined,
+  ): void {
+    if (!result) return;
+    if (result.kind === "message") {
+      this.status = null;
+      this.commandOutput = {
+        ...this.batonTranscriptItem(`_plugin_command_${name}`, result.text),
+        author: pluginId,
+      };
+      this.changed();
+      return;
+    }
+    this.openPicker({
+      title: result.title,
+      options: result.options.map((option) => ({
+        ...option,
+        description: option.description ?? option.value,
+      })),
+      onSelect: async (value) => {
+        await this.runPluginCommand(name, argument, value);
+      },
+    });
+  }
+
   /** 高频流式事件按 renderer 帧合并；state 已同步 reduce，这里只延迟昂贵的完整 view 投影。 */
   private scheduleStreamViewChanged(): void {
     if (this.streamViewTimer !== undefined) return;
@@ -985,6 +1049,10 @@ export class BatonChatProtocol implements ChatProtocol {
     }
     this.view = this.buildView();
     for (const listener of this.listeners) listener();
+  }
+
+  private commandsChanged(): void {
+    for (const listener of this.commandListeners) listener();
   }
 
   private buildView(): ChatViewState {

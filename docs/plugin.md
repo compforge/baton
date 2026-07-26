@@ -4,7 +4,7 @@
 > PluginResource / Reconcile / Proposal / Board projection / 动态唤醒、`baton.turn` Builtin Resource
 > 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
-> `/reload-plugins` 已经落地；Command、Context projection、配置编辑 UI 和权限审阅仍按真实产品入口增量
+> `/reload-plugins` 与 Plugin Command 已经落地；Context projection、配置编辑 UI 和权限审阅仍按真实产品入口增量
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
@@ -340,7 +340,7 @@ Marketplace 详情在面板内逐层展开，不把 Plugin 管理伪装成新的
 
 `baton plugins marketplace add|list`、`baton plugins available`、`baton plugins install` 和
 `baton plugins list` 继续作为添加来源与开发验证入口；普通浏览和安装走 `/plugins`。Plugin
-自己的 `/requirement` 等 command 用来使用领域能力，`/plugins` 只负责能力的获取、配置和
+自己的 `/requirements` 等 command 用来使用领域能力，`/plugins` 只负责能力的获取、配置和
 生命周期。这些管理操作由 Baton core 执行，不注册成普通 PluginContribution，也不能被 Plugin
 自己拦截或替换。
 
@@ -551,7 +551,7 @@ Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部
 Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一。首版每个
 `plugin@marketplace` 只有一份用户级配置：没有可用配置时进入安装或启用引导，有配置时直接
 路由。未来若真实场景需要同一 Plugin 的多账号或多环境实例，再为配置增加独立身份与选择入口，
-但命令列表仍不生成多份 `/requirement`。
+但命令列表仍不生成多份 `/requirements`。
 
 命令一旦开始执行，后续 Resource、Event 和 Board projection 都携带明确的
 `pluginInstanceId`，不能依赖“当前 Plugin”之类的隐式全局状态。
@@ -710,8 +710,10 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
    使用同一资源 key。
 4. 已建立本地 / Git Marketplace 注册、仓内 Package 发现、版本化不可变安装和进程内加载；
    用户身份统一为 `plugin@marketplace`，同名 Package 按 Marketplace 隔离。
-5. 以 reqloop 的 `/requirement` 验证 Command 的真实需要，再补
-   `command | resource` 声明校验和多实例路由，不先为未接产品入口的 Command 造 handler。
+5. 已以 reqloop 的 `/requirements` 接通 Command：Package 在 Binding 激活期注册，
+   Baton 动态合并补全并渲染 message/picker，选择值再路由回同一 Plugin handler。
+   manifest 的 `command | resource` 声明校验仍随后补齐；多实例出现前保持单一路由，
+   多个 active instance 时 fail closed。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
    提交后驱动 Harness；Resource Contribution 的 `BoardProjector` 已接入可选右侧 Sidecar，
    后续再接可选 Context projection，跑通完整 Requirement Loop。

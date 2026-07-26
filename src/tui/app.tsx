@@ -2,12 +2,13 @@ import { ChatShell, type Theme } from "chat-tui";
 import {
   forwardRef,
   useImperativeHandle,
+  useEffect,
   useState,
   type ReactNode,
 } from "react";
 
 import { PluginScreen } from "./plugins/screen.tsx";
-import { BatonChatProtocol, CHAT_COMMANDS } from "./protocol.ts";
+import { BatonChatProtocol } from "./protocol.ts";
 
 export interface BatonTuiHandle {
   openPlugins(): void;
@@ -25,6 +26,15 @@ interface BatonTuiProps {
 export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
   function BatonTui(props, ref): ReactNode {
     const [screen, setScreen] = useState<"chat" | "plugins">("chat");
+    const [, setProtocolRevision] = useState(0);
+
+    useEffect(
+      () =>
+        props.protocol.subscribeCommands(() =>
+          setProtocolRevision((value) => value + 1),
+        ),
+      [props.protocol],
+    );
 
     useImperativeHandle(ref, () => ({
       openPlugins() {
@@ -47,7 +57,7 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
     return (
       <ChatShell
         protocol={props.protocol}
-        commands={CHAT_COMMANDS}
+        commands={props.protocol.commands}
         mentions={props.protocol.mentionCandidates}
         theme={props.theme}
       />

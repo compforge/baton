@@ -4,6 +4,9 @@ import type {
   BoardItemDraft,
   BoardItemTone,
   BoardProjector,
+  PluginCommandContribution,
+  PluginCommandInput,
+  PluginCommandResult,
   PluginActivationContext,
   PluginPackage,
   PluginSessionContext,
@@ -20,6 +23,9 @@ export type {
   BoardItemTone,
   BoardProjector,
   BuiltinResourceContribution,
+  PluginCommandContribution,
+  PluginCommandInput,
+  PluginCommandResult,
   PluginActivationContext,
   PluginPackage,
   PluginSessionContext,
@@ -33,11 +39,16 @@ type ResourceRegistrar = <TSpec, TStatus>(
   contribution: ResourceContribution<TSpec, TStatus>,
 ) => () => void;
 
+type CommandRegistrar = (
+  contribution: PluginCommandContribution,
+) => () => void;
+
 type BuiltinResourceRegistrar = <K extends BuiltinResourceKind>(
   contribution: BuiltinResourceContribution<K>,
 ) => () => void;
 
 interface PluginRegistrars {
+  registerCommand: CommandRegistrar;
   registerResource: ResourceRegistrar;
   watchBuiltinResource: BuiltinResourceRegistrar;
   showToast(message: ToastMessage): void;
@@ -99,6 +110,12 @@ export class PluginBinding implements PluginActivationContext {
       throw new Error("resourceKind must not be empty");
     }
     const close = this.registrars.registerResource(contribution);
+    this.cleanups.push(close);
+  }
+
+  registerCommand(contribution: PluginCommandContribution): void {
+    this.assertRegistering();
+    const close = this.registrars.registerCommand(contribution);
     this.cleanups.push(close);
   }
 
