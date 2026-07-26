@@ -82,6 +82,52 @@ afterEach(() => {
 });
 
 describe("Plugin Package lifecycle", () => {
+  test("scopes ContextProviders by Plugin name and removes them on deactivate", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((context) => {
+          context.registerContextProvider({
+            kind: "requirement",
+            search() {
+              return [{
+                id: "req_1",
+                label: "Ship it",
+              }];
+            },
+            provide(id) {
+              return id === "req_1" ? "Requirement: Ship it" : undefined;
+            },
+          });
+        }),
+      ],
+      onProposal() {},
+    });
+
+    await manager.start();
+    expect(manager.listContextCandidates("")).toEqual([{
+      group: "reqloop@requirement",
+      insert: "@reqloop.requirement:req_1",
+      label: "Ship it",
+      detail: "",
+    }]);
+    await expect(
+      manager.provideContext("@reqloop.requirement:req_1", 1_024),
+    ).resolves.toEqual(["Requirement: Ship it"]);
+
+    await manager.deactivateInstance("reqloop_default");
+    expect(manager.listContextCandidates("")).toEqual([]);
+    await manager.close();
+  });
+
   test("activates cron Sources through the public Controller contract", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);

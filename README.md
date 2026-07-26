@@ -44,7 +44,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, 
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
 - Open a previous BatonSession with `/sessions`, or start a clean one with `/new`
 - Continue the latest session in a project with `baton -c`, or open one by ID with `baton -s <id>`
-- Reference previous sessions with `@<session-id>` and inject a compact summary automatically
+- Search grouped `@` context from built-in Session and Plugin ContextProviders, then inject it into the current turn
 - Record messages, thoughts, tool calls, file changes, plans, and token usage in a unified format
 - Preserve harness startup interactions such as Codex hook trust, reusing unchanged trusted definitions with a visible notice
 - Append events to a local `session.jsonl` for state reconstruction and future references
@@ -101,7 +101,7 @@ Start the TUI and type a prompt to send it.
 /status              Show the active harness/model context usage and session information
 /sessions            Open the BatonSession picker
 /new                 Start a new BatonSession in the current project
-@bs_...               Reference another baton session
+@                      Search grouped Session and Plugin context
 Tab                   Complete a command or reference
 Esc                   Interrupt the current turn
 /exit                 Exit

@@ -27,7 +27,12 @@ import {
 import type { BatonConfig } from "../config/config.ts";
 import { loadEffortPreferences, saveEffortPreference } from "../config/effort-preferences.ts";
 import { loadModelPreferences, saveModelPreference } from "../config/model-preferences.ts";
-import { expandMentions } from "../context/mention.ts";
+import {
+  expandMentions,
+  parseMentions,
+  sessionContextProvider,
+} from "../context/mention.ts";
+import { ContextProviderRegistry } from "../context/registry.ts";
 import {
   textOf,
   type ApprovalReviewUpdate,
@@ -65,7 +70,6 @@ import { openBatonSession } from "../session/open.ts";
 import { Controller } from "../controller/index.ts";
 import { applyEvent, isTurnRunning, type SessionState, type ToolCallState } from "../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../store/store.ts";
-import { sessionMentionCandidates } from "./mentions.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "./session-picker.tsx";
 import { setTerminalTabTitle } from "./terminal-title.ts";
 
@@ -429,7 +433,30 @@ export class BatonChatProtocol implements ChatProtocol {
     if (this.session.meta.forkedFrom) this.session.setTitleIfEmpty(text);
     else this.session.setPreviewIfEmpty(text);
     if (sessionDisplayTitle(this.session.meta) !== previousTitle) this.syncTerminalTitle();
-    const { prompt } = expandMentions(this.store, text, this.config.mentionBudgetChars);
+    const legacyReferences = parseMentions(text);
+    const hasProvidedContext = this.plugins.hasContextReference(text);
+    const contextBudget = legacyReferences.length > 0 && hasProvidedContext
+      ? Math.max(1, Math.floor(this.config.mentionBudgetChars / 2))
+      : this.config.mentionBudgetChars;
+    const legacy = expandMentions(
+      this.store,
+      text,
+      contextBudget,
+    );
+    const provided = await this.plugins.provideContext(
+      text,
+      contextBudget,
+    );
+    const prompt = provided.length === 0
+      ? legacy.prompt
+      : [
+        "<baton-context>",
+        "Context explicitly referenced by the user:",
+        ...provided,
+        "</baton-context>",
+        "",
+        legacy.prompt,
+      ].join("\n\n");
     const blocks: PromptBlock[] = [{ type: "text", text: prompt }];
 
     // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
@@ -870,7 +897,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   /** @ 候选源，注入给 ChatShell */
   mentionCandidates = (prefix: string): Candidate[] =>
-    sessionMentionCandidates(this.store.listSessions(), prefix, { excludeSessionId: this.session.id });
+    this.plugins.listContextCandidates(prefix);
 
   // ===== 内部 =====
 
@@ -901,6 +928,12 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private createPluginManager(): Manager {
     const settings = new PluginSettingsStore(this.store.rootDir);
+    const context = new ContextProviderRegistry();
+    context.registerContextProvider(
+      sessionContextProvider(this.store, {
+        excludeSessionId: this.session.id,
+      }),
+    );
     return new Manager({
       session: this.session,
       proposals: new ProposalStore({ session: this.session }),
@@ -937,6 +970,7 @@ export class BatonChatProtocol implements ChatProtocol {
         this.changed();
       },
       reservedCommandNames: COMMANDS.map((command) => command.name),
+      contextProviders: context,
       onCommandsChanged: () => {
         this.commandsChanged();
       },

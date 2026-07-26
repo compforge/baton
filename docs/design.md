@@ -172,9 +172,11 @@ baton 自己启动的会话走 wire 事件（细节最全、实时最好）。�
 
 ### 5.6 @ 引用：解析发生在 baton 层，先急切后惰性
 
-composer 里 `@` 触发补全，可引用对象：BatonSession / 单个 turn / turn 的产出文件。
+composer 里 `@` 触发按 kind 分组的搜索补全。内置 Session 与 Plugin 都通过
+ContextProvider Registry 提供候选和当前 turn 的只读上下文；Plugin kind 自动限定为
+`<pluginName>@<kind>`。
 
-- **MVP（急切）**：发送时读目标的 turn-summary 生成紧凑摘要，以"用户提供的材料"身份拼进目标 agent 的 prompt（归属清晰："以下是 Claude 会话摘要"）。摘要有 token 预算上限（进 config）。零额外机制；代价是快照语义 + prompt 变大，量级可控（tutti 踩的"prompt 爆炸"坑主要在文件夹递归展开，不在会话摘要）。
+- **MVP（急切）**：发送时调用选中 Provider，把 Session turn-summary、Requirement 等对象生成紧凑摘要，以"用户提供的材料"身份拼进目标 agent 的 prompt。上下文有统一预算上限（进 config），只作用于当前 turn；代价是快照语义 + prompt 变大，量级可控。
 - **二期（惰性）**：@ 只注入 `mention://` URI；`baton install` 时往 agent 的 AGENTS.md 托管块注入用法说明，agent 看到 URI 自己调 `baton context get <uri> --json` 回查（CLI 与常驻进程走本地 IPC 或直接读 jsonl）。换来执行时最新上下文 + 按需拉取深度。tutti 的路由表（`tutti-runtime.md`）是现成模板。
 
 ### 5.7 审批闭环

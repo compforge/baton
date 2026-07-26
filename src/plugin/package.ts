@@ -2,6 +2,7 @@ import type {
   BoardPresentation,
   BoardItemTone,
   Command,
+  ContextProvider,
   Controller,
   ControllerSource,
   CronSource,
@@ -23,6 +24,7 @@ export type {
   BoardPresentation,
   BoardItemTone,
   Command,
+  ContextProvider,
   Controller,
   ControllerSource,
   CronSource,
@@ -46,8 +48,13 @@ type CommandRegistrar = (
   command: Command,
 ) => () => void;
 
+type ContextProviderRegistrar = (
+  provider: ContextProvider,
+) => () => void;
+
 interface PluginRegistrars {
   registerCommand: CommandRegistrar;
+  registerContextProvider: ContextProviderRegistrar;
   registerController: ResourceRegistrar;
   showToast(message: ToastMessage): void;
 }
@@ -114,6 +121,12 @@ export class PluginBinding implements PluginActivationContext {
   registerCommand(command: Command): void {
     this.assertRegistering();
     const close = this.registrars.registerCommand(command);
+    this.cleanups.push(close);
+  }
+
+  registerContextProvider(provider: ContextProvider): void {
+    this.assertRegistering();
+    const close = this.registrars.registerContextProvider(provider);
     this.cleanups.push(close);
   }
 

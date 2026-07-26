@@ -11,6 +11,8 @@ export type {
   PluginCommandResult,
 } from "./command.ts";
 
+export type { ContextProvider } from "./context.ts";
+
 export type {
   PluginActivationContext,
   PluginConfig,

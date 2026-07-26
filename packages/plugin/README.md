@@ -40,6 +40,28 @@ const plugin: PluginPackage = {
         };
       },
     });
+    context.registerContextProvider({
+      kind: "example",
+      search(query) {
+        return context.resources
+          .list<{ title: string }, { phase?: "active" | "done" }>("Example")
+          .filter((resource) =>
+            resource.spec.title.toLowerCase().includes(query.toLowerCase())
+          )
+          .map((resource) => ({
+            id: resource.metadata.resourceId,
+            label: resource.spec.title,
+            detail: resource.status.phase,
+          }));
+      },
+      provide(id, { maxChars }) {
+        const resource = context.resources.get<
+          { title: string },
+          { phase?: "active" | "done" }
+        >("Example", id);
+        return `Example: ${resource.spec.title}`.slice(0, maxChars);
+      },
+    });
     context.registerController({
       resourceKind: "Example",
       sources: [{
@@ -71,6 +93,13 @@ routing are intentionally excluded.
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource
 status and an optional Board presentation; do not emit a toast on every reconcile.
+
+`registerContextProvider` exposes searchable, read-only context that a user can
+explicitly add to one Harness turn with `@`. `kind` is local to the Package;
+Baton qualifies it as `<pluginName>@<kind>`, groups picker candidates by that
+identity, and removes the registration with the Plugin Binding. Keep `search`
+local and side-effect free; `provide` runs only after the user selects a
+reference and submits the turn.
 
 Controller cron Sources are recurring wakeups. When a cron expression is due,
 Baton first runs the Source's optional `discover` hook, then enqueues every
