@@ -1,11 +1,12 @@
-// @ 引用的急切解析（MVP，design §5.6）：发送时把目标会话的 turn-summary 压成紧凑文本，
-// 以"用户提供的材料"身份拼进目标 agent 的 prompt。二期换 mention:// 句柄 + CLI 惰性回查。
+// @ 引用的急切解析（design §5.6）：ContextProvider 统一产生当前 turn 的只读材料；
+// 本文件保留 Session 摘要与旧 @bs_ token 的兼容展开。
 
 import type { TurnSummary } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../store/store.ts";
+import type { ContextProvider } from "@qiankun01/baton-plugin";
 
-/** @bs_<ULID>：MVP 只支持引用整个 BatonSession */
+/** @bs_<ULID>：ContextProvider 上线前的 Session token，继续兼容已有输入。 */
 const MENTION_PATTERN = /@(bs_[0-9A-HJKMNP-TV-Z]{26})/g;
 
 // 摘要 token 预算的初值拍 4KB 字符（design 开放问题 #4），超限丢最旧的 turn
@@ -185,4 +186,40 @@ export function expandMentions(
     text,
   ].join("\n\n");
   return { prompt, mentions };
+}
+
+/** Built-in explicit context; Plugin providers use the same registration path. */
+export function sessionContextProvider(
+  store: SessionStore,
+  options: {
+    readonly excludeSessionId?: string;
+  } = {},
+): ContextProvider {
+  return {
+    kind: "session",
+    search(query) {
+      const normalized = query.toLowerCase();
+      return store
+        .listSessions()
+        .filter((session) =>
+          session.batonSessionId !== options.excludeSessionId
+        )
+        .filter((session) =>
+          session.batonSessionId.toLowerCase().startsWith(normalized) ||
+          (
+            normalized !== "" &&
+            sessionDisplayTitle(session).toLowerCase().includes(normalized)
+          )
+        )
+        .map((session) => ({
+          id: session.batonSessionId,
+          label: `@${session.batonSessionId.slice(0, 12)}…`,
+          detail: sessionDisplayTitle(session),
+        }));
+    },
+    provide(id, { maxChars }) {
+      if (id === options.excludeSessionId) return undefined;
+      return buildSessionContext(store, id, maxChars);
+    },
+  };
 }

@@ -56,7 +56,8 @@ baton/
 │   │       └── adapter.ts   # codex app-server 接入：事件翻译、审批、usage 差分（fast-submit 语义）
 │   ├── context/
 │   │   ├── delivery.ts      # ContextSource/Snapshot/Receipt 与可重放 ContextEpoch
-│   │   └── mention.ts       # @ 引用急切解析：turn-summary → 紧凑摘要 → 注入 prompt（预算截断）
+│   │   ├── mention.ts       # @ 引用急切解析与内置 Session ContextProvider
+│   │   └── registry.ts      # 内置 / Plugin ContextProvider 注册、搜索与引用路由
 │   ├── controller/
 │   │   ├── index.ts         # Controller 公共入口：Harness 编排、事件入口与跨生命周期主流程
 │   │   ├── input.ts         # Input 队列、身份、recall 与只读快照
@@ -82,8 +83,7 @@ baton/
 │       ├── plugins/         # /plugins 底部管理面：Marketplace / Package 浏览、详情与安装
 │       ├── session-picker.tsx # session picker：resume/fork 无 id 的前置会话选择屏（不经过 protocol）
 │       ├── protocol.ts      # ChatProtocol 实现：controller/store → 视图投影，intents → controller 操作
-│       ├── theme.ts         # baton 配色：按 author 区分 agent 颜色（harness 语义不进 chat-tui）
-│       └── mentions.ts      # @ 候选源（BatonSession 匹配）
+│       └── theme.ts         # baton 配色：按 author 区分 agent 颜色（harness 语义不进 chat-tui）
 └── tests/                   # bun test 单测
 ```
 
@@ -99,6 +99,7 @@ baton/
 - **BatonSession、HarnessTarget 与 HarnessSession 分属三层**：BatonSession 是用户拥有、跨 harness、可持久恢复的逻辑历史；HarnessTarget 是具体执行与状态实例坐标；HarnessSession 只是该 Target 启动出的私有执行状态。`HarnessBinding`、原生 session、同步水位、偏好 / 授权与 Target-scoped 投影状态一律按 `harnessTargetId` 隔离；Target ID 必须经显式 resolver 找到完整 Target，未知值 fail closed，不能从 Harness 名称、alias 或 wire key 猜实例；Adapter 工厂再按 `target.harness` 选择协议实现。driven turn 在 BatonSession 内全局串行；harness 自发的 observed turn 与队列正交，见 `docs/kernel.md` §3。
 - **事件流是统一历史的合并真相源，UI 是投影**：每条 Event 必须有稳定 `eventId`、单一 `scope` 和显式事实 `source`；归属、来源与 `harness*` / `turnId` 等执行坐标正交。Adapter 只提交事实内容，`source`、Harness 与 HarnessTarget 由绑定它的宿主入口统一补齐，不能由 Adapter 自报。`session.jsonl` 记录可重放事件，TUI 状态由 reduce 重建——live 投影经 `SessionHandle.subscribe` 订阅事件流，与 resume 同一条 reduce 路径，不允许旁路投影通道（曾因 per-turn 回调这条第二通道静默丢掉 observed turn 的回复）；`meta.json` 保存定位与恢复元数据，不替代事件历史。HarnessSession 原生 resume 是加速路径，不是正确性的前提。
 - **Plugin 通过 Resource / Controller 的统一 reconcile 路径工作**：Resource kind 全局唯一，Baton 启动时先注册只读 `baton.*` kind，Plugin 可用同一个 `registerController` 观察但不能覆盖或修改；Plugin 自有 Resource 保存 `spec/status`。Resource 变化、`requeueAfter` 和 Controller cron Source 最终都只 enqueue 同一 keyed reconcile；Source 的可选 discovery 只能创建该 Controller 管理的缺失 Resource，status 与 Output 仍只由逐 Resource reconcile 收敛。Plugin 不必先创建 Resource、更不必是 loop。
+- **显式上下文通过 ContextProvider 统一注册**：Baton 内置与 Plugin 都使用 `registerContextProvider`；内置 kind 保持单词，Plugin Binding 自动限定为 `<pluginName>@<kind>`。`@` Picker 按最终 kind 分组搜索，选中内容只注入当前 turn，不等同于持久 ContextSource delivery。
 - **Plugin 启用身份是用户级 `plugin@marketplace`**：`~/.baton/plugin.yaml` 保存版本、enabled 和 config；新 BatonSession 启动时加载，运行中的 Session 通过 `/reload-plugins` 重建 Binding。Package 缓存按 marketplace 隔离，Resource、Proposal 与 Connector 运行态仍严格归当前 BatonSession。
 - **三方 Plugin 只依赖公共类型包**：`packages/plugin` 不包含 Manager、Binding、Controller、Store、Marketplace 或 Harness runtime；Baton 宿主也消费同一份契约，避免内外两套 API 漂移。领域 Plugin 独立版本化并通过 Marketplace 交付。
 - **Board 是带归属的派生读模型**：Plugin 通过 Controller 的 `present(resource)` 决定每份 Resource 是否展示，Baton 补齐 owner 与 Resource 身份；业务 phase 只属于 Plugin status，Baton 不定义通用 lifecycle。无数据时 UI 完全隐藏，Board 不成为 Resource 或外部系统之外的新真相源。整体边界见 `docs/loop-engineering.md` §6。

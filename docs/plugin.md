@@ -4,7 +4,8 @@
 > Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 / Controller cron Source、`baton.turn` Baton-owned Resource
 > 派生与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
-> `/reload-plugins` 与 Plugin Command 已经落地；Resource Context source、配置编辑 UI 和权限审阅仍按真实产品入口增量
+> `/reload-plugins`、Plugin Command 与显式 ContextProvider 已经落地；持久 Resource Context
+> source、配置编辑 UI 和权限审阅仍按真实产品入口增量
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
@@ -76,7 +77,7 @@ manifest 先声明 `manifestVersion + pluginId + version + entry` 和可选展�
 
 三方 Plugin 只依赖独立的 `@qiankun01/baton-plugin` 类型包。它与 Baton 宿主位于同一
 monorepo，便于契约、宿主适配和测试原子演进，但独立版本化和发布；其中只包含
-`PluginPackage`、`PluginActivationContext`、Resource/Controller、
+`PluginPackage`、`PluginActivationContext`、Resource/Controller、ContextProvider、
 `BatonSnapshot`、`PluginOutput` 和 Interaction 等作者契约。Manager、Binding、Controller、Store、
 Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 自己也消费这份公共
 契约，不维护第二套同名类型。
@@ -108,6 +109,7 @@ Binding 是临时生命周期，不持久化业务事实。把运行期注册收
 整体回滚，禁用或升级时不会留下旧版本回调。
 
 当前 `PluginActivationContext` 开放按当前 Instance 收口的 `registerController`、
+`registerContextProvider`、
 session-scoped 的 `toast`，以及非 Resource 资源的 `onClose`
 cleanup。激活完成后 Binding 被封口，不能异步偷注册新 handler；关闭时按注册逆序撤销；
 Plugin 先登记底层 Connector cleanup、再登记依赖它的 handler，即可保证 handler 先停、
@@ -281,7 +283,15 @@ Plugin 的扩展点收束为少量明确能力：
 | API | 作用 | 返回或产生 |
 |---|---|---|
 | `registerCommand` | 用户直接发起的入口 | 创建、选择或修改 Resource |
+| `registerContextProvider` | 用户在输入中显式选择的只读上下文 | 按 kind 分组的搜索候选与当前 turn context |
 | `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、cron Sources、Board presentation、Plugin Output |
+
+ContextProvider 是显式、单 turn 的上下文入口。Baton 内置和 Plugin 使用相同注册方法：内置
+Provider 保持 `session` 这类单词 kind；Plugin Binding 把局部 kind 自动限定为
+`<pluginName>@<kind>`，例如 `reqloop@requirement`。Registry 按最终 kind 保证唯一、分组搜索，
+并在 Binding 关闭时只撤销该 Plugin 的注册。搜索只读取本地状态；用户选择并提交后才调用
+`provide`，返回文本受统一预算约束且不能产生外部副作用。它暂不创建持久 ContextSource /
+Receipt；需要追踪可靠投递或跨 turn 水位时再进入 Context delivery。
 
 未来 manifest 可以保存可序列化的能力声明，Binding 再注册对应的运行期 Command / Controller。
 Baton 在激活时校验二者一致，既能让安装者提前看见能力和风险，又不把函数或进程细节写进
@@ -701,7 +711,7 @@ Baton 自己的 Instance、Event 和 Attempt 语义”，而不是复制其中�
 Manager 只向 Plugin 暴露完成已注册能力所需的窄入口：
 
 - 当前 BatonSession、PluginInstance 和 Binding 的不可伪造身份；
-- Command / Controller 注册和关闭生命周期；
+- Command / Controller / ContextProvider 注册和关闭生命周期；
 - 当前 Baton-owned / Plugin-owned Resource 的只读 snapshot、仅限自有 Resource 的受控 status patch，
   以及可信 Board presentation / Resource Context source 入口；
 - session-scoped、非持久化的 Toast 输出；持续状态仍归 Resource status / Board；
@@ -773,8 +783,9 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
    多个 active instance 时 fail closed。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock；`interaction`
    Output 已接入 Event Ledger、同 Resource 决议 Snapshot、TUI 回答和重新 reconcile。用户采用、
-   编辑并提交 proposed input 后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar，
-   后续再接可选 Resource Context source，跑通完整 Requirement Loop。
+   编辑并提交 proposed input 后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar。
+   内置 Session 与 Plugin 已通过同一个 ContextProvider Registry 接入分组 `@` 搜索和单 turn
+   急切上下文；后续再把需要可靠水位的来源接入持久 Resource Context source。
 7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Controller 主动启动 Harness 后，再设计受控调用；首期只允许用户把

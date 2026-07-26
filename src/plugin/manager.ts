@@ -70,6 +70,7 @@ import {
   type AvailablePluginCommand,
   PluginCommandRegistry,
 } from "./command/registry.ts";
+import { ContextProviderRegistry } from "../context/registry.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -132,6 +133,8 @@ export interface ManagerOptions {
   onCommandsChanged?(): void;
   /** Baton core 已占用的 slash command 名称，Plugin 不得覆盖。 */
   reservedCommandNames?: readonly string[];
+  /** Baton-owned and Plugin-provided explicit context share one registry. */
+  contextProviders?: ContextProviderRegistry;
   /** Controller reconcile 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: {
     initialDelayMs?: number;
@@ -198,6 +201,12 @@ function positiveDelay(name: string, value: number): void {
   }
 }
 
+function pluginName(pluginId: string): string {
+  const name = pluginId.split("/").at(-1);
+  if (!name) throw new Error(`pluginId has no name: ${pluginId}`);
+  return name;
+}
+
 /**
  * Plugin 域统一入口：注册和路由 Controller，并限制所有 Plugin 的进程总并发。
  */
@@ -216,6 +225,7 @@ export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
   private readonly commandRegistry: PluginCommandRegistry;
+  private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
   private readonly packages = new Map<string, PluginPackage>();
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
@@ -292,6 +302,8 @@ export class Manager {
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
     this.onCommandsChanged = options.onCommandsChanged;
+    this.contextProviders =
+      options.contextProviders ?? new ContextProviderRegistry();
     this.commandRegistry = new PluginCommandRegistry({
       reservedNames: options.reservedCommandNames,
       isInstanceActive: (pluginInstanceId) =>
@@ -471,6 +483,11 @@ export class Manager {
       {
         registerCommand: (command) =>
           this.commandRegistry.register(instance, command),
+        registerContextProvider: (provider) =>
+          this.contextProviders.registerContextProvider(
+            provider,
+            pluginName(instance.pluginId),
+          ),
         registerController: (controller) =>
           this.bindController(instance, controller),
         showToast: (message) =>
@@ -537,6 +554,23 @@ export class Manager {
 
   listInstances(): PluginInstance[] {
     return this.instances.list();
+  }
+
+  listContextCandidates(prefix: string): ReturnType<
+    ContextProviderRegistry["candidates"]
+  > {
+    return this.contextProviders.candidates(prefix);
+  }
+
+  hasContextReference(input: string): boolean {
+    return this.contextProviders.hasReference(input);
+  }
+
+  provideContext(
+    input: string,
+    maxChars: number,
+  ): Promise<readonly string[]> {
+    return this.contextProviders.provide(input, maxChars);
   }
 
   /**

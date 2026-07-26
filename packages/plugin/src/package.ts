@@ -1,6 +1,7 @@
 import type { Controller } from "./reconcile.ts";
 import type { ResourceClient } from "./resource.ts";
 import type { Command } from "./command.ts";
+import type { ContextProvider } from "./context.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
@@ -39,6 +40,7 @@ export interface PluginActivationContext {
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;
   registerCommand(command: Command): void;
+  registerContextProvider(provider: ContextProvider): void;
   registerController<TSpec, TStatus>(
     controller: Controller<TSpec, TStatus>,
   ): void;

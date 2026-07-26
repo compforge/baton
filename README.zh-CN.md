@@ -44,7 +44,7 @@ baton 是一条双向流水线：chat-tui 只承载 `intent`/`render`，controll
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
 - 使用 `baton -c` 继续当前项目最近会话，或用 `baton -s <id>` 打开指定会话
-- 使用 `@<session-id>` 引用历史会话，并自动注入紧凑摘要
+- 使用分组可搜索的 `@` 上下文，引用内置 Session 或 Plugin 提供的对象并注入当前 turn
 - 统一记录消息、思考、工具调用、文件改动、计划和 token usage
 - 保留 Codex hook trust 等 harness 启动交互；已信任且未变化的定义会自动复用并明确留痕
 - 将事件追加写入本地 `session.jsonl`，支持状态重建和后续引用
@@ -101,7 +101,7 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 /status              查看当前 harness/model 的上下文用量和会话信息
 /sessions            打开 BatonSession 选择器
 /new                 在当前项目新建 BatonSession
-@bs_...               引用另一个 baton 会话
+@                      分组搜索 Session 和 Plugin 上下文
 Tab                   补全命令或引用
 Esc                   中断当前 turn
 /exit                 退出
