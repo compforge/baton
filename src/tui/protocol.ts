@@ -1012,7 +1012,7 @@ export class BatonChatProtocol implements ChatProtocol {
   ): void {
     if (!result) return;
     if (result.kind === "message") {
-      this.status = null;
+      this.toast = null;
       this.commandOutput = {
         ...this.batonTranscriptItem(`_plugin_command_${name}`, result.text),
         author: pluginId,

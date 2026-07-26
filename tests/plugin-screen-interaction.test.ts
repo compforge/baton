@@ -55,9 +55,11 @@ function protocol(options: {
   return {
     marketplace,
     pluginManager,
+    commands: [],
     mentionCandidates: () => [],
     getView: () => view,
     subscribe: () => () => {},
+    subscribeCommands: () => () => {},
     submit: () => {},
     command: () => {},
     cancel: () => {},
