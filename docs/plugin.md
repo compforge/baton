@@ -107,9 +107,15 @@ Binding 是临时生命周期，不持久化业务事实。把运行期注册收
 整体回滚，禁用或升级时不会留下旧版本回调。
 
 当前 `PluginActivationContext` 开放按当前 Instance 收口的 `registerResource`、
-`watchBuiltinResource`，以及非 Resource 资源的 `onClose` cleanup。激活完成后 Binding 被
-封口，不能异步偷注册新 handler；关闭时按注册逆序撤销；Plugin 先登记底层 Connector cleanup、
-再登记依赖它的 handler，即可保证 handler 先停、Connector 后关。
+`watchBuiltinResource`、session-scoped 的 `toast`，以及非 Resource 资源的 `onClose`
+cleanup。激活完成后 Binding 被封口，不能异步偷注册新 handler；关闭时按注册逆序撤销；
+Plugin 先登记底层 Connector cleanup、再登记依赖它的 handler，即可保证 handler 先停、
+Connector 后关。
+
+Toast 是不落 Event Ledger 的短寿命操作回执；Board 是从 Resource 派生、可持续观察的当前状态。
+Plugin 可以在显式操作或状态迁移时调用 `context.toast.show()`，但 reconcile 会重复执行，不能在
+每次 reconcile 时无条件发 Toast。持续异常、进度和待处理事项应进入 Resource status，再由
+Board 投影；首次进入异常等边沿变化可以额外发一次 Toast 提醒。
 
 #### PluginResource
 
@@ -643,6 +649,7 @@ Manager 只向 Plugin 暴露完成 Contribution 契约所需的窄入口：
 - Contribution 注册和关闭生命周期；
 - 当前 Builtin / Plugin Resource 的只读 snapshot、仅限自有 PluginResource 的受控 status patch，
   以及可信 Board/Context projection 入口；
+- session-scoped、非持久化的 Toast 输出；持续状态仍归 Resource status / Board；
 - 按 declaration 与权限注入的配置和 secret；
 - 受 timeout、取消和输出预算约束的执行上下文。
 

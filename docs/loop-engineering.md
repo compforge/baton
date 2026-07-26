@@ -650,7 +650,8 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
 10. Board 是带 owner、scope、revision 和 provenance 的共享协作读模型，不是领域真相源或全局
    可变字典。
 11. Plugin 只能修改自己的 Resource status 与 Board projection；Reconciler 可以调用自己的
-    Connector 收敛已授权 spec，但不能扩大权限或 scope。
+    Connector 收敛已授权 spec，但不能扩大权限或 scope。Plugin 可发 session-scoped、非持久化
+    Toast 作为状态迁移或显式操作的瞬时反馈，不能用它代替 Resource / Board。
 12. Board 更新、Context 交付和 Harness 唤醒是三个独立状态转换。
 13. Harness tool 与敏感 spec 更新共用 Baton Permission 语义；Board 只投影决策，不持有授权。
 14. 时间触发不自动获得副作用权限；Reconciler 只能收敛已经授权的 spec。

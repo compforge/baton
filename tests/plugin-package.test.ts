@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
-import { Manager } from "../src/plugin/manager.ts";
+import { Manager, type PluginToast } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
   PluginActivationContext,
@@ -171,11 +171,16 @@ describe("Plugin Package lifecycle", () => {
       status: { phase: "pending" },
     });
     let context: PluginActivationContext | undefined;
+    const toasts: PluginToast[] = [];
     const manager = new Manager({
       instances,
       proposals,
       packages: [reqloopPackage((activation) => {
         context = activation;
+        activation.toast.show({
+          text: "Connector ready",
+          tone: "success",
+        });
       })],
       snapshot: () => {
         const snapshot = emptyBatonSnapshot("bs_test");
@@ -185,6 +190,9 @@ describe("Plugin Package lifecycle", () => {
         };
       },
       onProposal() {},
+      onToast(toast) {
+        toasts.push(toast);
+      },
     });
 
     await manager.start();
@@ -193,6 +201,18 @@ describe("Plugin Package lifecycle", () => {
       cwd: root,
     });
     expect(Object.isFrozen(context!.session)).toBe(true);
+    expect(Object.isFrozen(context!.toast)).toBe(true);
+    expect(toasts).toEqual([
+      {
+        pluginInstanceId: "reqloop_default",
+        message: {
+          text: "Connector ready",
+          tone: "success",
+        },
+      },
+    ]);
+    expect(Object.isFrozen(toasts[0])).toBe(true);
+    expect(Object.isFrozen(toasts[0]!.message)).toBe(true);
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }

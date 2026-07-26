@@ -1,6 +1,6 @@
 // baton 对 chat-tui 的接入层：实现 ChatProtocol，把 Controller / SessionStore
 // 的状态投影成视图快照，把 TUI intents 翻译成 controller 操作。
-// UI 语义（补全、分层 Ctrl+C、浮层交互）都在 chat-tui；这里只有 baton 的业务编排。
+// UI 语义（补全、分层 Ctrl+C、Interaction Dock）都在 chat-tui；这里只有 baton 的业务编排。
 
 import type {
   BlockTone,
@@ -12,7 +12,6 @@ import type {
   InteractionResponse,
   InteractionView,
   RunStatusItem,
-  StatusMessage,
   TranscriptBlockContent,
   TranscriptBlockStatus,
   TranscriptItem,
@@ -52,6 +51,7 @@ import type {
 import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
 import { Manager } from "../plugin/manager.ts";
 import { MarketplaceRegistry } from "../plugin/marketplace/index.ts";
+import type { ToastMessage } from "../plugin/package.ts";
 import {
   GlobalPluginInstanceStore,
   PluginSettingsStore,
@@ -294,11 +294,11 @@ export class BatonChatProtocol implements ChatProtocol {
   private plugins: Manager;
   /** 当前输入与控制命令的具体配置目标；默认 Target ID 与 Harness ID 相同。 */
   private harnessTargetId: string;
-  private status: StatusMessage | null = null;
+  private toast: ToastMessage | null = null;
   private commandOutput: TranscriptItem | null = null;
   private picker: PendingPicker | null = null;
   private boardMode: "auto" | "open" | "hidden" = "auto";
-  private nextOverlayId = 1;
+  private nextPickerId = 1;
   private listeners = new Set<() => void>();
   private view: ChatViewState;
   private unsubscribeSession: () => void;
@@ -329,7 +329,7 @@ export class BatonChatProtocol implements ChatProtocol {
       cwd: this.session.meta.cwd,
     });
     if (opened.recovered) {
-      this.status = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
+      this.toast = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
     }
     this.controller = this.createController();
     // 投影单通道：live 与 resume 走同一条 reduce 路径（loadState 补历史 + subscribe 跟增量），
@@ -371,7 +371,7 @@ export class BatonChatProtocol implements ChatProtocol {
   async submit(text: string): Promise<void> {
     const route = parseHarnessRoute(text);
     if (route?.kind === "ambiguous") {
-      this.status = null;
+      this.toast = null;
       this.commandOutput = this.batonTranscriptItem(
         "_baton_harness_route_error",
         `Error: harness prefix "/${route.token}" is ambiguous; matches ${route.harnesses.join(", ")}. Use a longer harness name or alias.`,
@@ -381,7 +381,7 @@ export class BatonChatProtocol implements ChatProtocol {
     }
     if (route?.kind === "matched") {
       this.harnessTargetId = route.harness;
-      this.status = null;
+      this.toast = null;
       this.commandOutput = null;
       this.changed();
       if (!route.message) return;
@@ -398,7 +398,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.recordHistory(text);
     this.resetHistoryNav();
     const target = this.harnessTargetId;
-    this.status = null;
+    this.toast = null;
     this.commandOutput = null;
     const previousTitle = sessionDisplayTitle(this.session.meta);
     if (this.session.meta.forkedFrom) this.session.setTitleIfEmpty(text);
@@ -411,22 +411,22 @@ export class BatonChatProtocol implements ChatProtocol {
     // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
     const sent = await this.controller.sendTurn(target, blocks, options);
     if (sent.effective === "steer") {
-      this.status = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
+      this.toast = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
       this.changed();
       return;
     }
     if (sent.reason) {
-      this.status = {
+      this.toast = {
         text: `${target} same-turn send rejected (${sent.reason}); queued as follow-up`,
         tone: "info",
       };
     } else if (sent.queued) {
-      this.status = { text: `${target} turn queued`, tone: "info" };
+      this.toast = { text: `${target} turn queued`, tone: "info" };
     }
     this.changed();
     const outcome = await sent.outcome;
-    if (outcome === "completed" && this.status?.tone !== "error") {
-      this.status = null;
+    if (outcome === "completed" && this.toast?.tone !== "error") {
+      this.toast = null;
       this.changed();
     }
   }
@@ -436,7 +436,7 @@ export class BatonChatProtocol implements ChatProtocol {
     const harness = parseHarness(name);
     if (harness) {
       this.harnessTargetId = harness;
-      this.status = null;
+      this.toast = null;
       this.changed();
       if (argument) await this.submitMessage(argument);
       return;
@@ -464,7 +464,7 @@ export class BatonChatProtocol implements ChatProtocol {
       }
       case "status": {
         if (argument) throw new Error("/status takes no arguments");
-        this.status = null;
+        this.toast = null;
         this.commandOutput = this.sessionStatusItem();
         this.changed();
         return;
@@ -472,9 +472,9 @@ export class BatonChatProtocol implements ChatProtocol {
       case "compact": {
         if (argument) throw new Error("/compact takes no arguments");
         const target = this.harnessTargetId;
-        this.status = null;
+        this.toast = null;
         await this.controller.compactContext(target);
-        this.status = { text: `${target} context compacted`, tone: "info" };
+        this.toast = { text: `${target} context compacted`, tone: "info" };
         this.changed();
         return;
       }
@@ -514,7 +514,10 @@ export class BatonChatProtocol implements ChatProtocol {
           throw new Error(`/board takes 'open', 'hide', or 'auto' (got: ${argument})`);
         }
         this.boardMode = mode === "hide" ? "hidden" : mode;
-        this.status = null;
+        this.toast =
+          mode === "open" && this.plugins.listBoardItems().length === 0
+            ? { text: "Board has no items", tone: "info" }
+            : null;
         this.changed();
         return;
       }
@@ -526,11 +529,11 @@ export class BatonChatProtocol implements ChatProtocol {
       }
       case "reload-plugins": {
         if (argument) throw new Error("/reload-plugins takes no arguments");
-        this.status = { text: "Reloading plugins…", tone: "info" };
+        this.toast = { text: "Reloading plugins…", tone: "info" };
         this.changed();
         const result = await this.plugins.reload();
         if (result.failures.length === 0) {
-          this.status = {
+          this.toast = {
             text: `Reloaded ${result.activated.length} plugin instance${result.activated.length === 1 ? "" : "s"}`,
             tone: "info",
           };
@@ -540,7 +543,7 @@ export class BatonChatProtocol implements ChatProtocol {
               `${pluginInstanceId}: ${error instanceof Error ? error.message : String(error)}`,
             )
             .join("; ");
-          this.status = {
+          this.toast = {
             text: `Reloaded ${result.activated.length}; ${result.failures.length} failed — ${failures}`,
             tone: "error",
           };
@@ -610,7 +613,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   /** 优雅退出：先关掉 agent 子进程再退（对应 /exit、双击 Ctrl+C、Ctrl+D） */
   async exit(): Promise<void> {
-    this.status = { text: "Exiting…", tone: "info" };
+    this.toast = { text: "Exiting…", tone: "info" };
     this.changed();
     await this.controller.close();
     await this.plugins.close();
@@ -630,7 +633,7 @@ export class BatonChatProtocol implements ChatProtocol {
       try {
         await picker.onSelect(value);
       } catch (error) {
-        this.status = { text: error instanceof Error ? error.message : String(error), tone: "error" };
+        this.toast = { text: error instanceof Error ? error.message : String(error), tone: "error" };
         this.changed();
       }
     })();
@@ -642,7 +645,7 @@ export class BatonChatProtocol implements ChatProtocol {
         .listPendingProposals()
         .find((proposal) => proposal.proposalId === id);
       if (!pending) {
-        this.status = { text: "plugin suggestion is no longer pending", tone: "info" };
+        this.toast = { text: "plugin suggestion is no longer pending", tone: "info" };
         this.changed();
         return;
       }
@@ -666,7 +669,7 @@ export class BatonChatProtocol implements ChatProtocol {
     }
     if (!resolution || !this.controller.resolveInteraction(id, resolution)) {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
-      this.status = { text: "interaction request is no longer pending", tone: "info" };
+      this.toast = { text: "interaction request is no longer pending", tone: "info" };
       this.changed();
     }
   }
@@ -677,7 +680,7 @@ export class BatonChatProtocol implements ChatProtocol {
     // 召回队列是另一种取回动作，结束进行中的历史浏览，避免游标错位。
     this.resetHistoryNav();
     this.harnessTargetId = recalled.harnessTargetId;
-    this.status = { text: `Recalled queued message for ${recalled.harnessTargetId}; edit and resend`, tone: "info" };
+    this.toast = { text: `Recalled queued message for ${recalled.harnessTargetId}; edit and resend`, tone: "info" };
     this.changed();
     return { text: userVisibleText(textOf(recalled.blocks)) };
   }
@@ -807,8 +810,12 @@ export class BatonChatProtocol implements ChatProtocol {
       onBoardChanged: () => {
         this.changed();
       },
+      onToast: ({ message }) => {
+        this.toast = message;
+        this.changed();
+      },
       onActivationError: ({ pluginInstanceId, error }) => {
-        this.status = {
+        this.toast = {
           text: `Plugin ${pluginInstanceId} activation failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -836,7 +843,7 @@ export class BatonChatProtocol implements ChatProtocol {
             // 如果获取失败，使用默认的 resourceId
           }
         }
-        this.status = {
+        this.toast = {
           text: `Plugin reconcile failed for ${resourceLabel}: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -849,7 +856,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private startPluginManager(): void {
     void this.plugins.start().catch((error) => {
-      this.status = {
+      this.toast = {
         text: `Could not start plugins: ${error instanceof Error ? error.message : String(error)}`,
         tone: "error",
       };
@@ -883,7 +890,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.state = next.session.loadState();
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(next.session);
-    this.status = next.recovered
+    this.toast = next.recovered
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.createPluginManager();
@@ -896,7 +903,7 @@ export class BatonChatProtocol implements ChatProtocol {
     saveModelPreference(this.store.rootDir, target, model.id);
     if (model.id === "default") delete this.modelPreferences[target];
     else this.modelPreferences[target] = model.id;
-    this.status = { text: `${target} model: ${model.label} (takes effect next turn)`, tone: "info" };
+    this.toast = { text: `${target} model: ${model.label} (takes effect next turn)`, tone: "info" };
     this.changed();
   }
 
@@ -905,7 +912,7 @@ export class BatonChatProtocol implements ChatProtocol {
     saveEffortPreference(this.store.rootDir, target, effort.id);
     if (effort.id === "default") delete this.effortPreferences[target];
     else this.effortPreferences[target] = effort.id;
-    this.status = { text: `${target} effort: ${effort.label} (takes effect next turn)`, tone: "info" };
+    this.toast = { text: `${target} effort: ${effort.label} (takes effect next turn)`, tone: "info" };
     this.changed();
   }
 
@@ -939,7 +946,7 @@ export class BatonChatProtocol implements ChatProtocol {
     return { type: "message", id, role: "agent", author: "baton", text, format: "plain" };
   }
 
-  /** /sessions 会话内切换浮层；行投影与启动 session picker 共用 sessionPickerOptions */
+  /** /sessions 会话内切换 Picker；行投影与启动 session picker 共用 sessionPickerOptions */
   private openSessionsPicker(mode: SessionPickerMode = "list"): void {
     this.openPicker({
       title: `Select BatonSession${mode === "tree" ? " (tree)" : ""}`,
@@ -957,7 +964,7 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private openPicker(picker: Omit<PendingPicker, "id">): void {
-    this.picker = { ...picker, id: `pk_${this.nextOverlayId++}` };
+    this.picker = { ...picker, id: `pk_${this.nextPickerId++}` };
     this.changed();
   }
 
@@ -1149,7 +1156,7 @@ export class BatonChatProtocol implements ChatProtocol {
               sections: [...boardSections.values()],
             }
           : undefined,
-      status: this.status,
+      toast: this.toast,
       footer: `session: ${this.session.id}  in:${v.usage.inputTokens} out:${v.usage.outputTokens}  turns:${v.turnSummaries.length}  queue:${this.controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${boardItems.length > 0 ? `  board:${boardItems.length}` : ""}  cwd:${this.session.meta.cwd}`,
       // ↑ 召回提示只在"可召回"时出现：交互发生地是 composer（placeholder 天然只在空输入时可见）
       // busy 时由 Adapter 决定 same-turn send 或由 Controller 保序排队。

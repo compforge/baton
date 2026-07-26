@@ -30,6 +30,8 @@ import {
   type PluginPackage,
   pluginPackageKey,
   type ResourceContribution,
+  type ToastMessage,
+  type ToastTone,
   validatePluginPackage,
 } from "./package.ts";
 import {
@@ -55,6 +57,13 @@ import {
   sameReconcileScope,
 } from "./reconcile-scope.ts";
 
+const TOAST_TONES = new Set<ToastTone>([
+  "info",
+  "success",
+  "warning",
+  "error",
+]);
+
 export interface ControllerRegistration {
   close(): void;
 }
@@ -75,6 +84,11 @@ export interface BuiltinControllerDefinition<K extends BuiltinResourceKind> {
   /** 当前 Controller 内不同 Builtin Resource 的并发数；默认 1。 */
   maxConcurrency?: number;
   now?: () => Date;
+}
+
+export interface PluginToast {
+  readonly pluginInstanceId: string;
+  readonly message: ToastMessage;
 }
 
 export interface ManagerOptions {
@@ -102,6 +116,8 @@ export interface ManagerOptions {
   onProposal(proposal: Proposal): Promise<void> | void;
   /** Board 数据或可用 Projection 变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
+  /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
+  onToast?(toast: PluginToast): void;
   /** Reconciler 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: {
     initialDelayMs?: number;
@@ -176,6 +192,7 @@ export class Manager {
   private readonly unsubscribeBuiltinProjection?: () => void;
   private readonly onProposal: ManagerOptions["onProposal"];
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
+  private readonly onToast: ManagerOptions["onToast"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly retryInitialDelayMs: number;
@@ -227,6 +244,7 @@ export class Manager {
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
     this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
+    this.onToast = options.onToast;
     this.onActivationError = options.onActivationError;
     this.onReconcileError = options.onReconcileError;
     this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
@@ -392,6 +410,8 @@ export class Manager {
           this.bindResource(instance.pluginInstanceId, contribution),
         watchBuiltinResource: (contribution) =>
           this.bindBuiltinResource(instance.pluginInstanceId, contribution),
+        showToast: (message) =>
+          this.notifyToast(instance.pluginInstanceId, message),
       },
       createPluginResourceClient(
         new PluginResourceStore({
@@ -829,6 +849,27 @@ export class Manager {
       this.onBoardChanged?.();
     } catch {
       // Board is a derived view; consumer invalidation must not affect Plugin runtime state.
+    }
+  }
+
+  private notifyToast(
+    pluginInstanceId: string,
+    message: ToastMessage,
+  ): void {
+    const text = message.text.trim();
+    if (!text) throw new Error("toast text must not be empty");
+    if (!TOAST_TONES.has(message.tone)) {
+      throw new Error(`unsupported toast tone: ${message.tone}`);
+    }
+    try {
+      this.onToast?.(
+        Object.freeze({
+          pluginInstanceId,
+          message: Object.freeze({ text, tone: message.tone }),
+        }),
+      );
+    } catch {
+      // UI feedback must not affect Plugin runtime state.
     }
   }
 

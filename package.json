@@ -42,7 +42,7 @@
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
     "bun": "^1.3.14",
-    "chat-tui": "github:qiankunli/chat-tui#be98e35375b85dbe46b5bef13134257230b4191e",
+    "chat-tui": "github:qiankunli/chat-tui#dec7de1b2f09b08269a54825f84e86ec70719ac7",
     "react": "^19.2.7",
     "yaml": "^2.9.0"
   }
