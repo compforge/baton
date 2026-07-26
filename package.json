@@ -18,6 +18,7 @@
   "files": [
     "src",
     "config.yaml.example",
+    "docs/assets/baton-icon.png",
     "README.md",
     "README.zh-CN.md"
   ],

@@ -1,8 +1,15 @@
-# baton
+<p align="center">
+  <img src="docs/assets/baton-icon.png" alt="baton 图标" width="144" />
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<h1 align="center">baton</h1>
 
-> 像传递接力棒一样，在 coding agents 之间传递上下文。
+<p align="center"><strong>像传递接力棒一样，在 coding agents 之间传递上下文。</strong></p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
 baton 是一个以持久、harness-independent 会话为内核的 terminal-native coding-agent workspace，受 [tutti](https://github.com/tutti-os/tutti) 启发。当前，你可以在同一个 TUI 中使用 Claude Code 和 Codex，并在切换 agent 时自然延续上下文。由于 BatonSession 由 baton 而不是任何 harness 持有，这套基础能力可以从 agent 接力进一步演进到多 agent 协作与编排。Claude Code 和 Codex 是首批内置 harness，不是封闭支持列表。
 
