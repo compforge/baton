@@ -90,11 +90,6 @@ describe("Plugin Package lifecycle", () => {
       pluginId: "qiankun/reqloop",
       packageVersion: "1.2.0",
     });
-    resourceStore(root, "reqloop_default").create({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
-      spec: { requirement: "ship it" },
-    });
     let now = new Date("2026-07-26T00:00:00.990Z");
     let runs = 0;
     const manager = new Manager({
@@ -109,10 +104,16 @@ describe("Plugin Package lifecycle", () => {
               sourceId: "poll-pr-state",
               cron: "* * * * * *",
               timeZone: "UTC",
+              discover() {
+                context.resources.create("ReqLoopRun", {
+                  resourceId: "run_1",
+                  spec: { requirement: "ship it" },
+                });
+              },
             }],
             async reconcile() {
-                runs += 1;
-              },
+              runs += 1;
+            },
           });
         }),
       ],

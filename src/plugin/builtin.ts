@@ -233,6 +233,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly onInteraction: NonNullable<
     BuiltinControllerOptions<K>["onInteraction"]
   >;
+  private readonly executeWithCapacity: NonNullable<
+    BuiltinControllerOptions<K>["executeWithCapacity"]
+  >;
   private readonly queue: ReconcileQueue;
   private closed = false;
 
@@ -261,11 +264,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       resourceKind: options.resourceKind,
       resourceOwner: "baton",
     });
-    const executeWithCapacity =
+    this.executeWithCapacity =
       options.executeWithCapacity ?? (async <T>(execute: () => Promise<T>) => await execute());
     this.queue = new ReconcileQueue({
       execute: (key) =>
-        executeWithCapacity(async () => {
+        this.executeWithCapacity(async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
           const baton = deepFreeze(this.snapshot(key));
@@ -313,6 +316,14 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       return Promise.reject(error);
     }
     return this.queue.enqueue(Object.freeze({ ...key, resourceOwner: "baton" }));
+  }
+
+  async discover(source: ControllerSource): Promise<void> {
+    if (!source.discover) return;
+    await this.executeWithCapacity(async () => {
+      if (this.closed) throw new Error("plugin Controller is closed");
+      await source.discover!();
+    });
   }
 
   close(): void {

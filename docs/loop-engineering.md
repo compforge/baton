@@ -673,7 +673,8 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
     继续由 cwd、Harness 名称或隐式“当前值”混用。
 19. Baton core 不内建通用 LoopRun；具体 run、checkpoint 和完成条件由领域 Plugin 拥有。
 20. Controller cron Source 表达 Controller 固有的固定周期职责，`requeueAfter` 表达某个
-    Resource 动态决定的一次性重查；二者都只 enqueue 同一 keyed reconcile。Source 仅在
+    Resource 动态决定的一次性重查；二者最终都只 enqueue 同一 keyed reconcile。Source 可先
+    发现并创建该 Controller 管理的缺失 Resource，但不更新 status 或产生 Output；Source 仅在
     Binding 活跃时运行，关闭 TUI 后的准时执行留给 daemon。
 
 ## 12. 待继续讨论

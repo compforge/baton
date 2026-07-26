@@ -142,6 +142,8 @@ export interface ManagerOptions {
   onActivationError?(failure: PluginActivationFailure): void;
   /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
+  /** Controller Source 发现失败；本次 tick 跳过，下一次 cron 继续重试。 */
+  onControllerSourceError?(failure: ControllerSourceFailure): void;
 }
 
 export interface PluginActivationFailure {
@@ -156,6 +158,12 @@ export interface ReconcileFailure {
   readonly nextRetryAt?: string;
 }
 
+export interface ControllerSourceFailure {
+  readonly scope: ReconcileScope;
+  readonly sourceId: string;
+  readonly error: unknown;
+}
+
 export interface PluginReloadResult {
   readonly activated: readonly string[];
   readonly failures: readonly PluginActivationFailure[];
@@ -164,6 +172,7 @@ export interface PluginReloadResult {
 interface ManagedController {
   scope: ReconcileScope;
   readonly sources?: readonly ControllerSource[];
+  discover?(source: ControllerSource): Promise<void>;
   enqueue(key: ReconcileKey): Promise<void>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
@@ -225,9 +234,12 @@ export class Manager {
   private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
+  private readonly onControllerSourceError:
+    ManagerOptions["onControllerSourceError"];
   private readonly retryInitialDelayMs: number;
   private readonly retryMaxDelayMs: number;
   private readonly retries = new Map<string, RetryState>();
+  private readonly activeSourceScopes = new Set<string>();
   /** Binding 激活完成前注册项可回滚，但不能提前消费 Event 或产生 Output。 */
   private readonly suspendedControllers = new Set<string>();
   private readonly now: () => Date;
@@ -288,6 +300,7 @@ export class Manager {
     });
     this.onActivationError = options.onActivationError;
     this.onReconcileError = options.onReconcileError;
+    this.onControllerSourceError = options.onControllerSourceError;
     this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
     this.retryMaxDelayMs = options.retryBackoff?.maxDelayMs ?? 60_000;
     positiveDelay("retryBackoff.initialDelayMs", this.retryInitialDelayMs);
@@ -305,7 +318,8 @@ export class Manager {
     });
     this.cronSourceQueue = new CronSourceQueue({
       now: this.now,
-      onDue: (scope) => this.enqueueCronSourceResources(scope),
+      onDue: (scope, sources) =>
+        this.enqueueCronSourceResources(scope, sources),
     });
     if (options.session) {
       this.batonResources = new BatonResourceIndex({
@@ -1080,6 +1094,7 @@ export class Manager {
     this.controllers.clear();
     this.boardSources.clear();
     this.retries.clear();
+    this.activeSourceScopes.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
     this.cronSourceQueue.close();
@@ -1201,13 +1216,50 @@ export class Manager {
     this.cronSourceQueue.register(controller.scope, controller.sources);
   }
 
-  private enqueueCronSourceResources(scope: ReconcileScope): void {
+  private enqueueCronSourceResources(
+    scope: ReconcileScope,
+    sources: readonly ControllerSource[],
+  ): void {
     if (!this.started || this.closed) return;
     const controller = this.controllers.get(reconcileScopeId(scope));
     if (
       !controller ||
       this.suspendedControllers.has(reconcileScopeId(scope)) ||
       !sameReconcileScope(controller.scope, scope)
+    ) {
+      return;
+    }
+    const scopeId = reconcileScopeId(scope);
+    if (this.activeSourceScopes.has(scopeId)) return;
+    this.activeSourceScopes.add(scopeId);
+    void this.runControllerSources(controller, sources).finally(() => {
+      this.activeSourceScopes.delete(scopeId);
+    });
+  }
+
+  private async runControllerSources(
+    controller: ManagedController,
+    sources: readonly ControllerSource[],
+  ): Promise<void> {
+    for (const source of sources) {
+      try {
+        await controller.discover?.(source);
+      } catch (error) {
+        try {
+          this.onControllerSourceError?.(Object.freeze({
+            scope: controller.scope,
+            sourceId: source.sourceId,
+            error,
+          }));
+        } catch {
+          // Source diagnostics must not block reconciliation of known Resources.
+        }
+      }
+    }
+    if (
+      this.closed ||
+      this.controllers.get(reconcileScopeId(controller.scope)) !== controller ||
+      this.suspendedControllers.has(reconcileScopeId(controller.scope))
     ) {
       return;
     }

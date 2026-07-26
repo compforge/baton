@@ -295,10 +295,12 @@ Monitor、EventSource、Action 或通用 Hook：观察 Baton kind 与领域收�
 才增加对应的窄接口。
 
 每个 Controller 可以声明多个 cron Source：`type: "cron" + sourceId + cron + timeZone`。
-Source 只在当前 Binding 活跃时运行；同一时刻到期的多个 Source 先按 Controller scope 合并，
-再将该 kind 的全部当前 Resource key 放入既有 reconcile queue。它不直接调用 Plugin callback、不修改
-status，也不把 tick 写成领域 Event。重启后从当前时间的下一次 occurrence 继续，不补放历史
-tick；关闭 TUI 后仍需准时运行时再引入 daemon。
+Source 只在当前 Binding 活跃时运行；同一时刻到期的多个 Source 先按 Controller scope 合并。
+Source 可用可选 `discover` 从外部系统列出新对象并创建该 Controller 管理的缺失 Resource；
+Baton 随后枚举该 kind 的全部当前 Resource key，放入既有 reconcile queue。`discover` 不修改
+status、不产生 Plugin Output，也不把 tick 写成领域 Event，具体状态仍由逐 Resource 的
+`reconcile` 收敛。重启后从当前时间的下一次 occurrence 继续，不补放历史 tick；关闭 TUI 后
+仍需准时运行时再引入 daemon。
 
 Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多一个通用 Board 条目：
 
@@ -575,7 +577,8 @@ time 不反写 Resource；进程内仍使用相同 due queue，重启后由 ledg
 
 Controller 的 cron `sources` 表达与单次 reconcile 结果无关的固定周期职责，例如每
 五分钟检查活跃 PR 状态。Baton 使用显式 IANA `timeZone` 计算 cron occurrence；tick 到期后
-枚举该 Controller 的当前 Resource 并复用同一 keyed queue。固定 Source 与
+先运行可选 `discover` 物化缺失 Resource，再枚举该 Controller 的当前 Resource 并复用同一
+keyed queue。固定 Source 与
 `requeueAfter` 相互独立：前者持续存在，后者仍由某个 Resource 的本次 reconcile 动态决定。
 
 Controller 可以调用 Plugin 自己的 Connector、文件或脚本修改外部系统，因为副作用本来就是“使实际状态

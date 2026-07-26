@@ -68,9 +68,11 @@ caused by an operation or state transition. Ongoing state belongs in Resource
 status and an optional Board presentation; do not emit a toast on every reconcile.
 
 Controller cron Sources are recurring wakeups. When a cron expression is due,
-Baton enqueues every current Resource of that Controller through the same keyed
-reconcile queue used by Resource changes and `requeueAfterMs`. Sources never run
-a separate callback or mutate Resource status directly.
+Baton first runs the Source's optional `discover` hook, then enqueues every
+current Resource of that Controller through the same keyed reconcile queue used
+by Resource changes and `requeueAfterMs`. Discovery may create missing
+same-kind Resources; status changes and outputs still belong exclusively to
+`reconcile`.
 
 A Controller can return `kind: "interaction"` when its Resource needs a durable
 user decision:
