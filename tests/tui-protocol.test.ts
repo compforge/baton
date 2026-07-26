@@ -53,6 +53,135 @@ describe("BatonChatProtocol exit", () => {
   });
 });
 
+describe("BatonChatProtocol picker search", () => {
+  test("debounces remote queries and discards stale responses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-picker-search-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const calls: string[] = [];
+      let resolveFirst: ((value: {
+        title: string;
+        options: Array<{
+          name: string;
+          description: string;
+          value: string;
+        }>;
+        search: {
+          mode: "remote";
+          query: string;
+        };
+      }) => void) | undefined;
+      const first = new Promise<{
+        title: string;
+        options: Array<{
+          name: string;
+          description: string;
+          value: string;
+        }>;
+        search: {
+          mode: "remote";
+          query: string;
+        };
+      }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const internals = protocol as unknown as {
+        openPicker(picker: {
+          title: string;
+          options: Array<{
+            name: string;
+            description: string;
+            value: string;
+          }>;
+          search: {
+            mode: "remote";
+            query: string;
+          };
+          onSearch(query: string): Promise<{
+            title: string;
+            options: Array<{
+              name: string;
+              description: string;
+              value: string;
+            }>;
+            search: {
+              mode: "remote";
+              query: string;
+            };
+          }>;
+          onSelect(value: string): void;
+        }): void;
+      };
+      internals.openPicker({
+        title: "Requirements",
+        options: [],
+        search: { mode: "remote", query: "" },
+        async onSearch(query) {
+          calls.push(query);
+          if (query === "first") return await first;
+          return {
+            title: "Requirements",
+            options: [{
+              name: "Second result",
+              description: "REQ-2",
+              value: "REQ-2",
+            }],
+            search: { mode: "remote", query },
+          };
+        },
+        onSelect() {},
+      });
+      const pickerId = protocol.getView().picker!.id;
+
+      protocol.searchPicker(pickerId, "ignored");
+      protocol.searchPicker(pickerId, "first");
+      await Bun.sleep(300);
+      expect(calls).toEqual(["first"]);
+      protocol.searchPicker(pickerId, "second");
+      await Bun.sleep(300);
+      expect(calls).toEqual(["first", "second"]);
+      expect(protocol.getView().picker).toMatchObject({
+        search: {
+          mode: "remote",
+          query: "second",
+          loading: false,
+        },
+        options: [{ value: "REQ-2" }],
+      });
+
+      resolveFirst?.({
+        title: "Requirements",
+        options: [{
+          name: "Stale result",
+          description: "REQ-1",
+          value: "REQ-1",
+        }],
+        search: { mode: "remote", query: "first" },
+      });
+      await Bun.sleep(0);
+      expect(protocol.getView().picker?.options).toEqual([
+        {
+          name: "Second result",
+          description: "REQ-2",
+          value: "REQ-2",
+        },
+      ]);
+
+      protocol.resolvePicker(pickerId, null);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("BatonChatProtocol session preview", () => {
   test("captures the first raw user input before mention expansion", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-preview-"));

@@ -7,6 +7,7 @@ export type {
   Command,
   PluginCommandInput,
   PluginCommandOption,
+  PluginCommandPickerSearch,
   PluginCommandResult,
 } from "./command.ts";
 

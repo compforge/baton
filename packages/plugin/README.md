@@ -31,6 +31,11 @@ const plugin: PluginPackage = {
         return {
           kind: "picker",
           title: "Examples",
+          search: {
+            mode: "remote",
+            query: "",
+            placeholder: "Search examples",
+          },
           options: [{ name: "Hello", value: "hello" }],
         };
       },
@@ -91,6 +96,12 @@ return {
   },
 };
 ```
+
+A command can return `search.mode: "local"` to let chat-tui filter its current
+options, or `"remote"` to receive later query text in
+`PluginCommandInput.searchQuery`. Baton debounces remote queries and ignores
+responses superseded by a newer query. A remote result may contain no options;
+return the same remote-search picker shape so the field stays open.
 
 On the next reconcile, read the result from
 `baton.pluginInteractions` by `decisionKey`. Baton persists the answer before

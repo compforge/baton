@@ -50,6 +50,35 @@ function requirementPackage(name = "requirements"): PluginPackage {
   };
 }
 
+function searchableRequirementPackage(): PluginPackage {
+  return {
+    pluginId: "qiankun/searchable-reqloop",
+    version: "1.0.0",
+    activate(context) {
+      context.registerCommand({
+        commandId: "requirements",
+        name: "search-requirements",
+        description: "Search requirements",
+        execute(input) {
+          const query = input.searchQuery ?? input.argument;
+          return {
+            kind: "picker",
+            title: "Requirements",
+            search: {
+              mode: "remote",
+              query,
+              placeholder: "Search requirements",
+            },
+            options: query === "missing"
+              ? []
+              : [{ name: `Result for ${query}`, value: "REQ-1" }],
+          };
+        },
+      });
+    },
+  };
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -123,6 +152,44 @@ describe("Plugin commands", () => {
     await expect(
       manager.activateInstance("reqloop_default"),
     ).rejects.toThrow("plugin command name is reserved by Baton: /status");
+    await manager.close();
+  });
+
+  test("routes remote search queries and permits an empty result page", async () => {
+    const { instances, proposals } = stores();
+    instances.create({
+      pluginInstanceId: "searchable_reqloop",
+      pluginId: "qiankun/searchable-reqloop",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [searchableRequirementPackage()],
+      onProposal() {},
+    });
+
+    await manager.start();
+    expect(
+      await manager.executeCommand("search-requirements", {
+        argument: "",
+        searchQuery: "recovery",
+      }),
+    ).toMatchObject({
+      kind: "picker",
+      search: { mode: "remote", query: "recovery" },
+      options: [{ name: "Result for recovery", value: "REQ-1" }],
+    });
+    expect(
+      await manager.executeCommand("search-requirements", {
+        argument: "",
+        searchQuery: "missing",
+      }),
+    ).toMatchObject({
+      kind: "picker",
+      search: { mode: "remote", query: "missing" },
+      options: [],
+    });
     await manager.close();
   });
 });
