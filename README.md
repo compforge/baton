@@ -1,8 +1,15 @@
-# baton
+<p align="center">
+  <img src="docs/assets/baton-icon.png" alt="baton icon" width="144" />
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<h1 align="center">baton</h1>
 
-> Pass context between coding agents like a baton.
+<p align="center"><strong>Pass context between coding agents like a baton.</strong></p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
 baton is a terminal-native workspace for coding agents, built around durable, harness-independent sessions and inspired by [tutti](https://github.com/tutti-os/tutti). Today, it lets you use Claude Code and Codex in one TUI and switch between them without carrying context. Because BatonSession is owned by baton rather than any harness, the same foundation can grow from agent handoffs into multi-agent collaboration and orchestration. Claude Code and Codex are the first bundled harnesses, not a closed support list.
 

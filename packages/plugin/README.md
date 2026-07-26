@@ -1,4 +1,8 @@
-# @qiankun01/baton-plugin
+<p align="center">
+  <img src="https://raw.githubusercontent.com/qiankunli/baton/main/docs/assets/baton-icon.png" alt="baton icon" width="112" />
+</p>
+
+<h1 align="center">@qiankun01/baton-plugin</h1>
 
 Public, host-independent authoring contract for Baton plugins.
 
