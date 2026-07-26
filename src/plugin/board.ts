@@ -1,9 +1,8 @@
 import type {
-  BoardItemDraft,
+  BoardPresentation,
   BoardItemTone,
-  BoardProjector,
+  Resource,
 } from "./package.ts";
-import type { PluginResourceStore } from "./resource.ts";
 
 export interface BoardItem {
   readonly id: string;
@@ -21,57 +20,52 @@ export interface BoardSource<TSpec = unknown, TStatus = unknown> {
   readonly pluginId: string;
   readonly pluginInstanceId: string;
   readonly resourceKind: string;
-  readonly store: PluginResourceStore;
-  readonly projector: BoardProjector<TSpec, TStatus>;
+  readonly list: () => readonly Readonly<Resource<TSpec, TStatus>>[];
+  readonly present: (
+    resource: Readonly<Resource<TSpec, TStatus>>,
+  ) => BoardPresentation | undefined;
 }
 
 function nonEmpty(name: string, value: string): void {
   if (!value.trim()) throw new Error(`${name} must not be empty`);
 }
 
-function projectDraft(
-  source: BoardSource,
+function presentResource<TSpec, TStatus>(
+  source: BoardSource<TSpec, TStatus>,
   resourceId: string,
-  draft: BoardItemDraft,
+  presentation: BoardPresentation,
 ): BoardItem {
-  nonEmpty("Board item key", draft.key);
-  nonEmpty("Board item title", draft.title);
+  nonEmpty("Board item title", presentation.title);
   return Object.freeze({
     id: JSON.stringify([
       source.pluginInstanceId,
       source.resourceKind,
       resourceId,
-      draft.key,
     ]),
     pluginId: source.pluginId,
     pluginInstanceId: source.pluginInstanceId,
     resourceKind: source.resourceKind,
     resourceId,
-    title: draft.title,
-    ...(draft.status === undefined ? {} : { status: draft.status }),
-    ...(draft.detail === undefined ? {} : { detail: draft.detail }),
-    ...(draft.tone === undefined ? {} : { tone: draft.tone }),
+    title: presentation.title,
+    ...(presentation.status === undefined ? {} : { status: presentation.status }),
+    ...(presentation.detail === undefined ? {} : { detail: presentation.detail }),
+    ...(presentation.tone === undefined ? {} : { tone: presentation.tone }),
   });
 }
 
-/** 单个 Projection 的失败只生成一条诊断项，不遮掉其它 Plugin 的 Board。 */
-export function projectBoardSource(source: BoardSource): readonly BoardItem[] {
+/** 单个 Resource 的展示失败只生成一条诊断项，不遮掉其它 Plugin 的 Board。 */
+export function presentBoardSource<TSpec, TStatus>(
+  source: BoardSource<TSpec, TStatus>,
+): readonly BoardItem[] {
   const items: BoardItem[] = [];
-  for (const resource of source.store.list(source.resourceKind)) {
+  for (const resource of source.list()) {
     try {
-      const drafts = source.projector.project(resource);
-      const keys = new Set<string>();
-      const resourceItems: BoardItem[] = [];
-      for (const draft of drafts) {
-        if (keys.has(draft.key)) {
-          throw new Error(`duplicate Board item key: ${draft.key}`);
-        }
-        keys.add(draft.key);
-        resourceItems.push(
-          projectDraft(source, resource.metadata.resourceId, draft),
+      const presentation = source.present(resource);
+      if (presentation) {
+        items.push(
+          presentResource(source, resource.metadata.resourceId, presentation),
         );
       }
-      items.push(...resourceItems);
     } catch (error) {
       const resourceId = resource.metadata.resourceId;
       items.push(
@@ -80,14 +74,13 @@ export function projectBoardSource(source: BoardSource): readonly BoardItem[] {
             source.pluginInstanceId,
             source.resourceKind,
             resourceId,
-            "__projection_error",
           ]),
           pluginId: source.pluginId,
           pluginInstanceId: source.pluginInstanceId,
           resourceKind: source.resourceKind,
           resourceId,
           title: `${source.resourceKind}/${resourceId}`,
-          status: "projection failed",
+          status: "presentation failed",
           detail: error instanceof Error ? error.message : String(error),
           tone: "error",
         }),

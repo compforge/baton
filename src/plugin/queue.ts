@@ -171,7 +171,7 @@ export class ReconcileQueue {
 
 /**
  * Manager 级动态唤醒队列。所有 Controller 共享一个 timer；持久真相仍在
- * PluginResource.metadata.nextReconcileAt，当前 Map 只负责本进程唤醒。
+ * Resource.metadata.nextReconcileAt，当前 Map 只负责本进程唤醒。
  */
 export class ReconcileDueQueue {
   private readonly entries = new Map<string, DueReconcile>();

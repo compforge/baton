@@ -847,7 +847,7 @@ export class BatonChatProtocol implements ChatProtocol {
         // 为 baton.turn 提供更友好的展示信息
         if (key.resourceKind === "baton.turn") {
           try {
-            const turnResource = this.plugins.getBuiltinResource(
+            const turnResource = this.plugins.getBatonResource(
               "baton.turn",
               key.resourceId,
             );

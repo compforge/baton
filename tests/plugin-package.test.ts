@@ -66,12 +66,68 @@ function reqloopPackage(
   };
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs: number = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
+    await Bun.sleep(5);
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("Plugin Package lifecycle", () => {
-  test("projects active PluginResources into Board items and invalidates on status changes", async () => {
+  test("activates cron Sources through the public Controller contract", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    resourceStore(root, "reqloop_default").create({
+      kind: "ReqLoopRun",
+      resourceId: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    let runs = 0;
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((context) => {
+          context.registerController({
+            resourceKind: "ReqLoopRun",
+            sources: [{
+              type: "cron",
+              sourceId: "poll-pr-state",
+              cron: "* * * * * *",
+              timeZone: "UTC",
+            }],
+            async reconcile() {
+                runs += 1;
+              },
+          });
+        }),
+      ],
+      now: () => now,
+      onProposal() {},
+    });
+
+    await manager.start();
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await waitFor(() => runs === 1);
+    await manager.deactivateInstance("reqloop_default");
+    await manager.close();
+  });
+
+  test("presents active Resources as Board items and invalidates on status changes", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);
     instances.create({
@@ -93,22 +149,17 @@ describe("Plugin Package lifecycle", () => {
       packages: [
         reqloopPackage((activation) => {
           context = activation;
-          activation.registerResource<
+          activation.registerController<
             { requirement: string },
             { phase: string }
           >({
             resourceKind: "ReqLoopRun",
-            reconciler: { async reconcile() {} },
-            board: {
-              project(resource) {
-                return [
-                  {
-                    key: "summary",
-                    title: resource.spec.requirement,
-                    status: resource.status.phase,
-                  },
-                ];
-              },
+            async reconcile() {},
+            present(resource) {
+              return {
+                title: resource.spec.requirement,
+                status: resource.status.phase,
+              };
             },
           });
         }),
@@ -126,7 +177,6 @@ describe("Plugin Package lifecycle", () => {
           "reqloop_default",
           "ReqLoopRun",
           "run_1",
-          "summary",
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
@@ -225,6 +275,12 @@ describe("Plugin Package lifecycle", () => {
     expect(() =>
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
     ).toThrow("outside reqloop_default");
+    expect(() =>
+      context!.resources.create("baton.turn", {
+        resourceId: "forged_turn",
+        spec: {},
+      }),
+    ).toThrow("Resource kind is reserved by Baton: baton.turn");
     await manager.close();
   });
 
@@ -257,13 +313,11 @@ describe("Plugin Package lifecycle", () => {
       packages: [
         reqloopPackage((context) => {
           activated.push(context.instance.pluginInstanceId);
-          context.registerResource({
+          context.registerController({
             resourceKind: "ReqLoopRun",
-            reconciler: {
-              async reconcile(_baton, resource) {
+            async reconcile(_baton, resource) {
                 reconciled.push(resource.metadata.pluginInstanceId);
               },
-            },
           });
         }),
       ],
@@ -284,6 +338,46 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
+  test("keeps one owner for each Plugin-defined Resource kind", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "first",
+      pluginId: "example/first",
+      packageVersion: "1.0.0",
+    });
+    instances.create({
+      pluginInstanceId: "second",
+      pluginId: "example/second",
+      packageVersion: "1.0.0",
+    });
+    const controllerPackage = (pluginId: string): PluginPackage => ({
+      pluginId,
+      version: "1.0.0",
+      activate(context) {
+        context.registerController({
+          resourceKind: "SharedRun",
+          async reconcile() {},
+        });
+      },
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        controllerPackage("example/first"),
+        controllerPackage("example/second"),
+      ],
+      onProposal() {},
+    });
+
+    await manager.activateInstance("first");
+    await expect(manager.activateInstance("second")).rejects.toThrow(
+      "Resource kind SharedRun is already registered by example/first",
+    );
+    await manager.close();
+  });
+
   test("deactivation closes registrations and custom cleanup in reverse order", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);
@@ -301,9 +395,9 @@ describe("Plugin Package lifecycle", () => {
           context.onClose(() => {
             closed.push("connector");
           });
-          context.registerResource({
+          context.registerController({
             resourceKind: "ReqLoopRun",
-            reconciler: { async reconcile() {} },
+            async reconcile() {},
           });
           context.onClose(() => {
             closed.push("subscription");
@@ -342,9 +436,9 @@ describe("Plugin Package lifecycle", () => {
           context.onClose(() => {
             closed.push("connector");
           });
-          context.registerResource({
+          context.registerController({
             resourceKind: "ReqLoopRun",
-            reconciler: { async reconcile() {} },
+            async reconcile() {},
           });
           throw new Error("activation failed");
         }),
@@ -414,9 +508,9 @@ describe("Plugin Package lifecycle", () => {
     await manager.activateInstance("reqloop_default");
 
     expect(() =>
-      captured?.registerResource({
+      captured?.registerController({
         resourceKind: "LateResource",
-        reconciler: { async reconcile() {} },
+        async reconcile() {},
       }),
     ).toThrow("plugin Binding activation is complete");
     expect(
@@ -448,9 +542,9 @@ describe("Plugin Package lifecycle", () => {
           context.onClose(() => {
             cleanups += 1;
           });
-          context.registerResource({
+          context.registerController({
             resourceKind: "ReqLoopRun",
-            reconciler: { async reconcile() {} },
+            async reconcile() {},
           });
         }),
       ],
@@ -508,9 +602,9 @@ describe("Plugin Package lifecycle", () => {
           if (context.instance.pluginInstanceId === "broken") {
             throw new Error("connector config is invalid");
           }
-          context.registerResource({
+          context.registerController({
             resourceKind: "ReqLoopRun",
-            reconciler: { async reconcile() {} },
+            async reconcile() {},
           });
         }),
       ],

@@ -8,9 +8,15 @@ Public, host-independent authoring contract for Baton plugins.
 
 ```ts
 import {
+  type Resource as ExampleResource,
   type PluginActivationContext,
   type PluginPackage,
 } from "@qiankun01/baton-plugin";
+
+type Example = ExampleResource<
+  { title: string },
+  { phase?: "active" | "done" }
+>;
 
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
@@ -29,16 +35,22 @@ const plugin: PluginPackage = {
         };
       },
     });
-    context.registerResource({
+    context.registerController({
       resourceKind: "Example",
-      reconciler: { async reconcile() {} },
-      board: {
-        project(resource) {
-          return [{
-            key: "summary",
-            title: resource.metadata.resourceId,
-          }];
-        },
+      sources: [{
+        type: "cron",
+        sourceId: "periodic-refresh",
+        cron: "*/5 * * * *",
+        timeZone: "UTC",
+      }],
+      async reconcile(_baton, resource: Example) {
+        // Observe current facts and patch status through context.resources.
+      },
+      present(resource) {
+        return {
+          title: resource.spec.title,
+          status: resource.status.phase,
+        };
       },
     });
   },
@@ -53,4 +65,9 @@ routing are intentionally excluded.
 
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource
-status and an optional Board projection; do not emit a toast on every reconcile.
+status and an optional Board presentation; do not emit a toast on every reconcile.
+
+Controller cron Sources are recurring wakeups. When a cron expression is due,
+Baton enqueues every current Resource of that Controller through the same keyed
+reconcile queue used by Resource changes and `requeueAfterMs`. Sources never run
+a separate callback or mutate Resource status directly.

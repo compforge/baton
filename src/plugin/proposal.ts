@@ -26,7 +26,7 @@ export interface ProposalResolution {
 }
 
 /**
- * Reconciler 建议给用户的持久文本草稿。resolution 缺省即待处理，不另造 pending 状态字段。
+ * Controller 建议给用户的持久文本草稿。resolution 缺省即待处理，不另造 pending 状态字段。
  */
 export type Proposal = ReconcileProposal & {
   readonly proposalId: string;

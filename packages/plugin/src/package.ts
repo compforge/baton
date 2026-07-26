@@ -1,12 +1,6 @@
-import type {
-  BuiltinResourceContribution,
-  ResourceContribution,
-} from "./reconcile.ts";
-import type {
-  BuiltinResourceKind,
-  PluginResourceClient,
-} from "./resource.ts";
-import type { PluginCommandContribution } from "./command.ts";
+import type { Controller } from "./reconcile.ts";
+import type { ResourceClient } from "./resource.ts";
+import type { Command } from "./command.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
@@ -41,15 +35,12 @@ export interface ToastSink {
 export interface PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
-  readonly resources: PluginResourceClient;
+  readonly resources: ResourceClient;
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;
-  registerCommand(contribution: PluginCommandContribution): void;
-  registerResource<TSpec, TStatus>(
-    contribution: ResourceContribution<TSpec, TStatus>,
-  ): void;
-  watchBuiltinResource<K extends BuiltinResourceKind>(
-    contribution: BuiltinResourceContribution<K>,
+  registerCommand(command: Command): void;
+  registerController<TSpec, TStatus>(
+    controller: Controller<TSpec, TStatus>,
   ): void;
   onClose(cleanup: () => Promise<void> | void): void;
 }

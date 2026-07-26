@@ -1,10 +1,6 @@
-import type {
-  BuiltinResource,
-  BuiltinResourceKind,
-  PluginResource,
-} from "./resource.ts";
+import type { Resource } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
-import type { BoardProjector } from "./board.ts";
+import type { BoardPresentation } from "./board.ts";
 
 export type PluginOutput = {
   readonly kind: "proposed-input";
@@ -16,32 +12,27 @@ export interface ReconcileResult {
   readonly requeueAfterMs?: number;
 }
 
-export interface ResourceReconciler<TResource> {
+export interface CronSource {
+  readonly type: "cron";
+  /** Stable within one Controller. */
+  readonly sourceId: string;
+  /** Five- or six-field cron expression. */
+  readonly cron: string;
+  /** IANA time zone, for example "Asia/Shanghai" or "UTC". */
+  readonly timeZone: string;
+}
+
+export type ControllerSource = CronSource;
+
+export interface Controller<TSpec, TStatus> {
+  readonly resourceKind: string;
+  readonly sources?: readonly ControllerSource[];
+  readonly maxConcurrency?: number;
   reconcile(
     baton: Readonly<BatonSnapshot>,
-    resource: Readonly<TResource>,
+    resource: Readonly<Resource<TSpec, TStatus>>,
   ): Promise<ReconcileResult | void>;
-}
-
-export type Reconciler<TSpec, TStatus> = ResourceReconciler<
-  PluginResource<TSpec, TStatus>
->;
-
-export type BuiltinReconciler<K extends BuiltinResourceKind> =
-  ResourceReconciler<BuiltinResource<K>>;
-
-export interface ResourceContribution<TSpec, TStatus> {
-  readonly resourceKind: string;
-  readonly reconciler: Reconciler<TSpec, TStatus>;
-  /** Optional derived read model for Baton's shared Board. */
-  readonly board?: BoardProjector<TSpec, TStatus>;
-  readonly maxConcurrency?: number;
-}
-
-export interface BuiltinResourceContribution<
-  K extends BuiltinResourceKind,
-> {
-  readonly resourceKind: K;
-  readonly reconciler: BuiltinReconciler<K>;
-  readonly maxConcurrency?: number;
+  present?(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+  ): BoardPresentation | undefined;
 }

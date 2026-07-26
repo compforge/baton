@@ -1,10 +1,10 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> PluginResource / Reconcile / Proposal / Board projection / 动态唤醒、`baton.turn` Builtin Resource
-> 投影与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
+> Resource / Controller / Proposal / Board presentation / 动态唤醒 / Controller cron Source、`baton.turn` Baton-owned Resource
+> 派生与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
-> `/reload-plugins` 与 Plugin Command 已经落地；Context projection、配置编辑 UI 和权限审阅仍按真实产品入口增量
+> `/reload-plugins` 与 Plugin Command 已经落地；Resource Context source、配置编辑 UI 和权限审阅仍按真实产品入口增量
 > 实现。
 > Loop 控制面的整体位置见
 > [Loop Engineering](./loop-engineering.md)，reqloop 的领域设计见
@@ -17,16 +17,16 @@
 
 Baton Plugin 要让一个扩展在不进入 Baton core 的前提下：
 
-1. 通过稳定、只读的 Builtin Resource 感知 Baton 内部事实；
-2. 需要长期收敛时，定义自己的 PluginResource，以 `spec` 表达期望、以 `status` 表达观测；
-3. 根据最新 Builtin / Plugin Resource 和外部状态执行 reconcile；
+1. 通过稳定、只读的 Baton-owned Resource 感知 Baton 内部事实；
+2. 需要长期收敛时，定义自己的 Resource，以 `spec` 表达期望、以 `status` 表达观测；
+3. 根据最新 Baton-owned / Plugin-owned Resource 和外部状态执行 reconcile；
 4. 产生可由人审核的推荐输入；未来也可请求 Baton 受控调用 Harness；
-5. 在 Baton 重启后从 Event Ledger、PluginResource 和 Proposal 恢复工作。
+5. 在 Baton 重启后从 Event Ledger、Resource 和 Proposal 恢复工作。
 
 Plugin 不是一组随意拼接的回调。它既是可交付的能力包，也是用户级可配置、在各
 BatonSession 中拥有独立运行态的领域参与者。Baton 负责控制面一致性，Plugin 负责自己的领域模型和外部系统适配。
 Plugin 也不必等于一个 loop：例如“分析刚完成的用户问题并推荐合适 Harness”的 Plugin，只需
-观察 `baton.turn` 并产生 Proposal，不必先创建一份 PluginResource。
+观察 `baton.turn` 并产生 Proposal，不必先创建一份 Resource。
 
 本文不决定 Harness Plugin 如何报告 `DevelopmentOutcome`。无论未来使用 Harness 原生事件、
 Hook bridge 还是受控命令，进入 Baton 后都必须先归一成带可信来源的 Event；Baton Plugin 只
@@ -42,10 +42,10 @@ Hook bridge 还是受控命令，进入 Baton 后都必须先归一成带可信�
 
 Baton core 不导入 Requirement、Deployment、Review 等 Plugin 领域类型。Plugin 也不能持有
 Controller、HarnessAdapter、EventStore、BoardState 或 TUI 的裸句柄。跨 Plugin 协作统一经过
-Baton 的 Resource、Event 和 Contribution 路径，不直接调用彼此的内部接口。
+Baton 的 Resource、Event 和受控输出路径，不直接调用彼此的内部接口。
 
 一个 Plugin 包未来可以附带 Harness 实现，但 Harness 仍按独立的 Harness 契约注册和运行，
-不进入普通 `PluginContribution`。
+不进入普通 Plugin Controller。
 
 ### 1.3 运行模型
 
@@ -53,7 +53,8 @@ Baton 的 Resource、Event 和 Contribution 路径，不直接调用彼此的内
 PluginPackage
     └── PluginInstance
           └── PluginBinding
-                └── PluginContribution[]
+                ├── Command[]
+                └── Controller[]
 ```
 
 #### PluginPackage
@@ -62,7 +63,7 @@ PluginPackage
 
 - 稳定的 `pluginId`、版本和 manifest 版本；
 - 展示信息、配置 schema 和 secret 声明；
-- 可安装前审阅的 Contribution 与权限声明；
+- 可安装前审阅的能力与权限声明；
 - 激活入口及其所需的只读资源。
 
 Package 版本目录只读。同一版本一旦安装便不原地修改；升级产生新的 Package 版本，避免运行中
@@ -70,22 +71,22 @@ Package 版本目录只读。同一版本一旦安装便不原地修改；升级
 
 当前可信进程内实现把运行契约收窄为 `pluginId + version + activate(context)`。Package
 manifest 先声明 `manifestVersion + pluginId + version + entry` 和可选展示信息；配置 schema、
-Contribution 与权限声明等到对应的安装审阅和运行期校验入口出现时再扩展，不先造无人消费的
+能力与权限声明等到对应的安装审阅和运行期校验入口出现时再扩展，不先造无人消费的
 字段。
 
 三方 Plugin 只依赖独立的 `@qiankun01/baton-plugin` 类型包。它与 Baton 宿主位于同一
 monorepo，便于契约、宿主适配和测试原子演进，但独立版本化和发布；其中只包含
-`PluginPackage`、`PluginActivationContext`、Resource/Reconciler、Builtin Resource、
+`PluginPackage`、`PluginActivationContext`、Resource/Controller、
 `BatonSnapshot` 和 `PluginOutput` 等作者契约。Manager、Binding、Controller、Store、
 Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 自己也消费这份公共
 契约，不维护第二套同名类型。
 
 #### PluginInstance
 
-`PluginInstance` 是一份用户级 Plugin 配置在某个 BatonSession 中的运行时投影，包含：
+`PluginInstance` 是一份用户级 Plugin 配置在某个 BatonSession 中的运行时实例，包含：
 
 - 稳定的 `plugin@marketplace` 身份、派生 `pluginInstanceId` 和 Package 版本引用；
-- 当前投影所属的 `batonSessionId`；
+- 当前实例所属的 `batonSessionId`；
 - 启用状态、配置、secret 绑定和权限策略；
 - 当前 Session 内独立的可写数据位置。
 
@@ -94,7 +95,7 @@ Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 
 互相覆盖。多账号、多环境实例等到出现真实配置路由需求后再扩展，不复用 marketplace 冒充环境。
 
 用户级配置只保存版本、enabled、config 及后续的 secret/权限引用。Connector cursor、缓存或
-确实私有的运行材料仍归当前 BatonSession；可驱动 loop 的领域状态进入 Plugin Resource 的
+确实私有的运行材料仍归当前 BatonSession；可驱动 loop 的领域状态进入 Plugin-owned Resource 的
 `spec/status`；外部平台仍是其领域事实的来源。不能把一份不透明的
 `private runtime state` 变成 Baton 无法恢复、无法审计的第二真相源。
 
@@ -106,8 +107,8 @@ Marketplace、持久化与 Harness runtime 均留在 Baton 私有实现。Baton 
 Binding 是临时生命周期，不持久化业务事实。把运行期注册收口到 Binding，可以保证激活失败时
 整体回滚，禁用或升级时不会留下旧版本回调。
 
-当前 `PluginActivationContext` 开放按当前 Instance 收口的 `registerResource`、
-`watchBuiltinResource`、session-scoped 的 `toast`，以及非 Resource 资源的 `onClose`
+当前 `PluginActivationContext` 开放按当前 Instance 收口的 `registerController`、
+session-scoped 的 `toast`，以及非 Resource 资源的 `onClose`
 cleanup。激活完成后 Binding 被封口，不能异步偷注册新 handler；关闭时按注册逆序撤销；
 Plugin 先登记底层 Connector cleanup、再登记依赖它的 handler，即可保证 handler 先停、
 Connector 后关。
@@ -115,68 +116,71 @@ Connector 后关。
 Toast 是不落 Event Ledger 的短寿命操作回执；Board 是从 Resource 派生、可持续观察的当前状态。
 Plugin 可以在显式操作或状态迁移时调用 `context.toast.show()`，但 reconcile 会重复执行，不能在
 每次 reconcile 时无条件发 Toast。持续异常、进度和待处理事项应进入 Resource status，再由
-Board 投影；首次进入异常等边沿变化可以额外发一次 Toast 提醒。
+Board presentation；首次进入异常等边沿变化可以额外发一次 Toast 提醒。
 
-#### PluginResource
+#### Resource
 
 Plugin 用类似 CRD 的方式声明领域 Resource schema；Baton 持久化通用信封，但不理解
 `spec/status` 内部字段：
 
 ```text
-PluginResource<TSpec, TStatus>
+Resource<TSpec, TStatus>
 ├── metadata      identity / owner / generation / resourceVersion
 ├── spec          用户认可的期望状态与 Loop Contract
-└── status        Reconciler 观测到的当前状态、条件和结果引用
+└── status        Controller 观测到的当前状态、条件和结果引用
 ```
 
 `spec` 与 `status` 的区分是 Loop 的声明性边界：
 
 - `spec` 回答“希望这条 loop 最终怎样”，由用户直接编辑，或接受 Harness / Plugin 的建议后更新；
-- `status` 回答“现在实际怎样”，由 Reconciler 根据 Baton、Harness 和外部系统事实更新；
+- `status` 回答“现在实际怎样”，由 Controller 根据 Baton、Harness 和外部系统事实更新；
 - `metadata.generation` 随 `spec` 变化递增，`status.observedGeneration` 表示当前状态基于哪版
   Contract；
 - `status` 原则上应能重新观测或重新计算，不能藏入唯一凭据或不可恢复的工作；
-- Board 是 Resource 和其他协作事实的人类可读投影与操作面，不是 Resource 本身或另一份真相源。
+- Board 是 Resource 和其他协作事实的人类可读展示与操作面，不是 Resource 本身或另一份真相源。
 
 用户、Harness 和外部系统都可以带来新事实，但不直接任意改写同一份对象：用户认可的决定进入
-`spec`，Harness 与外部系统的产出作为带 provenance 的 observation 进入，Reconciler 统一收敛
+`spec`，Harness 与外部系统的产出作为带 provenance 的 observation 进入，Controller 统一收敛
 `status`。未来一个 Loop 启动多个 Harness 时，各自产出仍汇入同一个 Resource / Board，不形成
 多个并列状态机。
 
-#### BuiltinResource
+一个 Controller 管理一个 `resourceKind`，同一 BatonSession 内可以同时存在多份该 kind 的
+Resource；例如 reqloop 可以同时维护多个仍存活的 `ReqLoopRun`。Baton 不为 Resource 定义
+通用 `phase` 或 `metadata.lifecycle`：业务阶段属于 Plugin 自己的 `status`，是否出现在 Board
+则由 Controller 的 `present(resource)` 决定。
 
-Builtin Resource 是 Baton 把内部事实投影给 Plugin 的只读观察面，不是另一份持久真相，也不是
-允许用户或 Plugin 修改的 CRD：
+#### Baton 注册的 Resource kind
+
+Baton 也会把内部事实注册成普通 Resource kind，供 Plugin 只读观察。它们不是另一份持久真相，
+也不允许用户或 Plugin 修改：
 
 ```text
 Session Event Ledger                     Plugin runtime
         │
-        └── project ──▶ BuiltinResource snapshot ──▶ keyed reconcile
+        └── project ──▶ Resource snapshot ──▶ keyed reconcile
               replay + live             read-only
 ```
 
 Event envelope 与 payload 继续保持稳定并作为唯一事实来源；Plugin Manager 在消费 Event 时，
-按领域语义投影成 level-based snapshot。Plugin 收到 wake 后只拿资源 key，执行时重新读取最新
+按领域语义转换成 level-based snapshot。Plugin 收到 wake 后只拿资源 key，执行时重新读取最新
 snapshot，因此 replay、live event 和重复通知都走同一个队列语义。
 
-首个 kind 是 `baton.turn`：每条 `_baton_turn_summary` 投影成一份以 `turnId` 为
-`resourceId` 的只读对象，`metadata.revision` 取产生投影的 ledger `seq`，data 包含
+首个 kind 是 `baton.turn`：每条 `_baton_turn_summary` 转换成一份以 `turnId` 为
+`resourceId` 的只读对象，`metadata.resourceVersion` 取产生该 Resource 的 ledger `seq`，status 包含
 `TurnSummary` 与 Harness 执行坐标。Plugin 不能 patch 它；如果需要保存自己的期望或观测，
-再创建 PluginResource。
+再创建 Resource。
 
 ```ts
 activate(context) {
-  context.watchBuiltinResource({
+  context.registerController({
     resourceKind: "baton.turn",
-    reconciler: {
-      async reconcile(baton, resource) {
-        return {
-          output: {
-            kind: "proposed-input",
-            text: `Suggested next input for: ${resource.data.userText}`,
-          },
-        };
-      },
+    async reconcile(baton, resource) {
+      return {
+        output: {
+          kind: "proposed-input",
+          text: `Suggested next input for: ${resource.status.userText}`,
+        },
+      };
     },
   });
 }
@@ -184,35 +188,35 @@ activate(context) {
 
 这与 Kubernetes 的关键区别是：Kubernetes controller 通常 watch 内置 Pod 和自己的 CR，
 因为 Pod 是实际干活的核心对象；Baton 的内部事实已经存在于 Event Ledger，所以不要求为了
-Plugin 再定义一套可写 API 对象。Builtin Resource 只是稳定 Plugin API 上的只读投影。
+Plugin 再定义一套可写 API 对象。Baton-owned Resource 只是稳定 Plugin API 上的只读视图。
 
-#### PluginResourceClient API 设计
+#### ResourceClient API 设计
 
-`PluginResourceClient` 提供 Plugin 操作自己 PluginResource 的接口，设计时参考了 Kubernetes 
+`ResourceClient` 提供 Plugin 操作自己 Resource 的接口，设计时参考了 Kubernetes
 controller-runtime，但根据 Baton Plugin 的实际场景做了调整。
 
 **核心方法**：
 
 ```typescript
-interface PluginResourceClient {
+interface ResourceClient {
   // 读取操作
-  get<TSpec, TStatus>(kind: string, id: string): PluginResource<TSpec, TStatus>;
-  list<TSpec, TStatus>(kind?: string): PluginResource<TSpec, TStatus>[];
+  get<TSpec, TStatus>(kind: string, id: string): Resource<TSpec, TStatus>;
+  list<TSpec, TStatus>(kind?: string): Resource<TSpec, TStatus>[];
   
   // 创建资源（spec 固定，status 初始化为空对象）
   create<TSpec, TStatus>(kind: string, init: {
     resourceId: string;
     spec: TSpec;
-  }): PluginResource<TSpec, TStatus>;
+  }): Resource<TSpec, TStatus>;
   
   // 删除资源
   delete(kind: string, id: string): void;
   
   // 更新状态（唯一的状态更新方式）
   patchStatus<TSpec, TStatus>(
-    resource: PluginResource<TSpec, TStatus>,
+    resource: Resource<TSpec, TStatus>,
     patch: Partial<TStatus>
-  ): PluginResource<TSpec, TStatus>;
+  ): Resource<TSpec, TStatus>;
 }
 ```
 
@@ -270,48 +274,51 @@ counter = await context.resources.patchStatus(counter, {
 
 这个设计简化了 API，明确了 spec（配置）与 status（状态）的边界，避免了常见的误用模式。
 
-#### PluginContribution
+#### Command 与 Controller
 
 Plugin 的扩展点收束为少量明确能力：
 
-| kind | 作用 | 返回或产生 |
+| API | 作用 | 返回或产生 |
 |---|---|---|
-| `command` | 用户直接发起的入口 | 创建、选择或修改 Resource |
-| `resource` | 声明和控制一种 PluginResource | schema、reconcile、Board projection、可选 Context projection |
-| `builtin-watch` | 消费 Baton 只读投影 | reconcile、Plugin Output |
+| `registerCommand` | 用户直接发起的入口 | 创建、选择或修改 Resource |
+| `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、cron Sources、Board presentation、Plugin Output |
 
-Manifest 中保存可序列化的 `ContributionDeclaration`；Binding 以相同的 `kind + id` 注册运行期
-handler。Baton 在激活时校验二者一致，既能让安装者提前看见能力和风险，又不把函数或进程细节
-写进 manifest。
+未来 manifest 可以保存可序列化的能力声明，Binding 再注册对应的运行期 Command / Controller。
+Baton 在激活时校验二者一致，既能让安装者提前看见能力和风险，又不把函数或进程细节写进
+manifest。
 
 Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可写 Resource。首期也不提供
-Monitor、EventSource、Schedule、Action 或通用 Hook：Builtin watch、领域收敛和定时重查分别
-使用 `watchBuiltinResource`、`registerResource` 与 `requeueAfter`。只有 webhook、关闭 TUI
+Monitor、EventSource、Action 或通用 Hook：观察 Baton kind 与领域收敛都使用
+`registerController`，一次性动态重查和固定周期观察分别使用 `requeueAfter` 与 Controller
+的 `sources`。只有 webhook、关闭 TUI
 后的持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，
 才增加对应的窄接口。
 
-Resource Contribution 可以附带 `BoardProjector`，把当前 Resource 派生为零到多个通用
-Board 条目：
+每个 Controller 可以声明多个 cron Source：`type: "cron" + sourceId + cron + timeZone`。
+Source 只在当前 Binding 活跃时运行；同一时刻到期的多个 Source 先按 Controller scope 合并，
+再将该 kind 的全部当前 Resource key 放入既有 reconcile queue。它不直接调用 Plugin callback、不修改
+status，也不把 tick 写成领域 Event。重启后从当前时间的下一次 occurrence 继续，不补放历史
+tick；关闭 TUI 后仍需准时运行时再引入 daemon。
+
+Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多一个通用 Board 条目：
 
 ```ts
-context.registerResource({
+context.registerController({
   resourceKind: "ReqLoopRun",
-  reconciler,
-  board: {
-    project(resource) {
-      return [{
-        key: "summary",
-        title: resource.spec.title,
-        status: resource.status.phase,
-      }];
-    },
+  reconcile,
+  present(resource) {
+    if (resource.status.phase === "closed") return undefined;
+    return {
+      title: resource.spec.title,
+      status: resource.status.phase,
+    };
   },
 });
 ```
 
-`key` 只需在单个 Resource 内稳定且唯一。Baton 统一补齐 PluginInstance、Resource reference
-和最终条目身份；Projection 不写盘、不接收 BoardState，也不能成为第二份业务真相。没有有效
-条目时 Board 在 UI 中完全隐藏；单个 Resource 投影失败会显示归属明确的诊断条目，不遮掉其它
+Baton 统一补齐 PluginInstance、Resource reference 和最终条目身份；`present` 不写盘、不接收
+BoardState，也不能成为第二份业务真相。返回 `undefined` 的 Resource 不显示；没有有效条目时
+Board 在 UI 中完全隐藏。单个 Resource presentation 失败会显示归属明确的诊断条目，不遮掉其它
 Plugin 的 Board。
 
 ### 1.4 Marketplace 与 `/plugins`
@@ -341,7 +348,7 @@ Marketplace 详情在面板内逐层展开，不把 Plugin 管理伪装成新的
 `baton plugins marketplace add|list`、`baton plugins available`、`baton plugins install` 和
 `baton plugins list` 继续作为添加来源与开发验证入口；普通浏览和安装走 `/plugins`。Plugin
 自己的 `/requirements` 等 command 用来使用领域能力，`/plugins` 只负责能力的获取、配置和
-生命周期。这些管理操作由 Baton core 执行，不注册成普通 PluginContribution，也不能被 Plugin
+生命周期。这些管理操作由 Baton core 执行，不注册成普通 Plugin Command / Controller，也不能被 Plugin
 自己拦截或替换。
 
 安装入口采用 Claude/Codex 都容易理解的默认：安装成功即在用户级配置中启用；用户也可从
@@ -356,7 +363,7 @@ Marketplace 详情在面板内逐层展开，不把 Plugin 管理伪装成新的
 
 Marketplace 是长期的 Package 发现与分发层，负责搜索、版本、来源、信任信息、安装、升级和
 卸载。它交付不可变的 PluginPackage 后便退出运行链路，不拥有 Plugin 配置、Binding、
-权限策略、PluginResource 或 reconcile due time。用户入口会在安装成功后另行写入全局
+权限策略、Resource 或 reconcile due time。用户入口会在安装成功后另行写入全局
 enabled 配置；这仍不等于批准其 Connector 权限。
 
 用户可操作的 Plugin 身份是 `plugin@marketplace`；`pluginId` 仍应使用 owner namespace，
@@ -418,41 +425,47 @@ discover / install PluginPackage
   → create or update PluginInstance
   → validate config and secret bindings
   → activate PluginBinding
-  → register declared PluginContribution
-  → replay Builtin Resource / restore PluginResource / resume due reconcile
+  → register declared Command / Controller
+  → replay Baton-registered Resource / restore Plugin Resource / resume due reconcile
 ```
 
-激活采用 all-or-nothing：任一必要 Contribution 注册失败，当前 Binding 整体关闭，不留下部分
+激活采用 all-or-nothing：任一必要 Command / Controller 注册失败，当前 Binding 整体关闭，不留下部分
 可用状态。首期不做运行中无感热升级；更新 Package 后通过 `/reload-plugins` 或下一次启动重新
 绑定，优先保证单机多进程场景下的身份和恢复语义清晰。
 
 `MarketplaceRegistry.load()` 从安装目录加载并复核 Package 身份；`Manager` 从用户级
 `plugin.yaml` 读取启用配置，以精确
 `pluginId + marketplace + packageVersion` 找到 Package，再为当前 Session 创建 Binding。Package 不接收 Store、Controller
-或可伪造的 owner；`registerResource` 与 `watchBuiltinResource` 都由 Binding 自动补齐
+或可伪造的 owner；`registerController` 由 Binding 自动补齐
 BatonSession 和 PluginInstance scope。单个 Instance 激活失败只关闭并报告该 Binding，不阻断其他 Plugin 的恢复；Manager
 退出或 Instance 解绑时，Binding 统一撤销注册和动态唤醒。
 
-### 2.2 Resource watch 与 Reconciler
+Resource kind 使用 BatonSession 内的所有权注册表。Baton 启动时先注册 `baton.*` kind；Plugin
+随后可以为这些 kind 挂 Controller，但不能重新声明或通过 `ResourceClient` 创建、删除、修改
+它们。Plugin 第一次声明其它 kind 时取得所有权，同一 Plugin 的多个 Instance 可以复用；
+不同 Plugin 再声明同名 kind 会激活失败。这样无需公开一套平行的 Resource 类型，也不会
+让第三方覆盖 Baton 的 Resource。
 
-Builtin 投影、PluginResource 创建或 `spec` 更新、启动恢复、外部观察或计时到期都只表示
+### 2.2 Resource 与 Controller
+
+Baton-owned Resource 更新、Resource 创建或 `spec` 更新、启动恢复、外部观察、Controller cron Source
+或动态计时到期都只表示
 “某个对象可能需要重新检查”。Baton 将同一对象的重复触发合并成 reconcile key：
 
 ```text
-batonSessionId + pluginInstanceId + resourceOwner + resourceKind + resourceId
+batonSessionId + pluginInstanceId + resourceKind + resourceId
 ```
 
-`resourceOwner` 缺省为 `plugin` 以兼容已有 PluginResource key；Builtin watch 显式使用
-`baton`，因此同名 kind 也不会串路由。
+kind 的所有权在 Controller 激活前已确定，因此 reconcile key 不需要向 Plugin 暴露额外标记。
 
-Reconciler 不把触发原因当成一条必须执行一次的命令。它根据 key 重新读取 Resource 和必要的
+Controller 不把触发原因当成一条必须执行一次的命令。它根据 key 重新读取 Resource 和必要的
 外部状态，比较 `spec` 与 `status`，执行当前仍需要的收敛动作：
 
 ```text
-Builtin projection / PluginResource change / startup / timer due
+Baton-owned Resource update / Resource change / startup / schedule or timer due
                          │
                          ▼
-enqueue(pluginInstanceId, resourceOwner, resourceKind, resourceId)
+enqueue(pluginInstanceId, resourceKind, resourceId)
                          │ same key coalesces
                          ▼
 reconcile(BatonSnapshot, latest Resource)
@@ -462,29 +475,35 @@ reconcile(BatonSnapshot, latest Resource)
                          └── return { output?, requeueAfterMs? }
 ```
 
-`Manager` 按 `batonSessionId + pluginInstanceId + resourceOwner + resourceKind` 注册和路由
+`Manager` 按 `batonSessionId + pluginInstanceId + resourceKind` 注册和路由
 `Controller`。参考
 controller-runtime 的分工，每个 Controller 拥有独立 workqueue，隔离重复 key、dirty
 follow-up 和局部并发；Manager 统一持有一个动态唤醒队列、错误退避和 Baton 级总容量，避免
 Plugin 数量增长时 timer 与执行并发随 Resource 数量线性放大。注册关闭后，该 Scope 的 pending
 任务和动态唤醒一并撤销，不会误投到其他 Plugin。
 
-Controller 另外持有同 PluginResource 的跨进程 reconcile 锁，保证本机多个 Baton 进程不会
+Controller 另外持有同 Resource 的跨进程 reconcile 锁，保证本机多个 Baton 进程不会
 同时执行它。该锁不阻塞用户更新 `spec`：Controller 在写回 status 和 due time 时检查
 `resourceVersion`，基于旧 Contract 的结果会冲突失败，再由最新 Resource 触发下一轮
-reconcile。Builtin Resource 来自当前 Session 的不可变 Event Ledger，不提供 status patch；
+reconcile。Baton-owned Resource 来自当前 Session 的不可变 Event Ledger，不提供 status patch；
 启动时重放已有 snapshot，运行中订阅同一 `SessionHandle` 的 live append。
 
 首期接口保持窄小。`BatonSnapshot` 是每次执行前冻结的 BatonSession 当前态，
-`Resource` 是触发 key 对应的最新 level-based 对象；Builtin 与 Plugin Resource 共用同一
-调用形状，Plugin 根据 `resource.kind` 区分：
+`Resource` 是触发 key 对应的最新 level-based 对象。Plugin 自有 Resource 使用
+`Controller<TSpec, TStatus>`；Baton-owned Resource 保持只读，但沿用相同的 reconcile 调用语义：
 
 ```ts
-interface Reconciler<Resource> {
+interface Controller<TSpec, TStatus> {
+  resourceKind: string;
+  sources?: ControllerSource[];
+  maxConcurrency?: number;
   reconcile(
     baton: Readonly<BatonSnapshot>,
-    resource: Readonly<Resource>,
+    resource: Readonly<Resource<TSpec, TStatus>>,
   ): Promise<ReconcileResult | void>;
+  present?(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+  ): BoardPresentation | undefined;
 }
 
 type PluginOutput = {
@@ -499,39 +518,44 @@ type ReconcileResult = {
 ```
 
 Plugin 自有 Resource 的读写通过 `PluginActivationContext.resources` 提供的 Instance-scoped
-`PluginResourceClient` 完成，类似 controller-runtime Reconciler 持有的 Client；
-`BatonSnapshot` 始终只读，不混入 mutation capability。Builtin Resource 不接受 status patch。
+`ResourceClient` 完成，类似 controller-runtime Controller 持有的 Client；
+`BatonSnapshot` 始终只读，不混入 mutation capability。Baton-owned Resource 不接受 status patch。
 
 `PluginOutput.kind` 是 Baton 定义的封闭联合，每个 kind 对应明确的校验、权限、持久化和 UI
 生命周期。首个 `proposed-input` 只是准备交给 Harness 的文本建议，不创建 Baton 内核
 Interaction 或另一套审批状态机。Baton 把持久 Proposal 投影为 InteractionDock 中的非阻塞
 suggested input；用户显式采用后才进入 composer，可编辑后提交，也可直接丢弃。只有提交后，
 它才成为普通 Input，继续走现有 Input → Attempt → Harness 路径。Baton 从本次 Resource 自动取得 resource
-identity 与水位，再结合文本摘要给 Proposal 生成稳定内部身份；PluginResource Proposal 使用
+identity 与水位，再结合文本摘要给 Proposal 生成稳定内部身份；Resource Proposal 使用
 `basedOnGeneration + basedOnResourceVersion`，因此同一 Contract 下的不同外部 observation
-可以各自产生一次建议；Builtin Resource Proposal 使用 `basedOnRevision`。这些 Manager 管理的
+可以各自产生一次建议；Baton-owned Resource Proposal 使用 `basedOnRevision`。这些 Manager 管理的
 信息不由 Plugin 回填，旧版只有 `basedOnGeneration` 的持久 Proposal 继续按原身份读取。
 
 Manager 在通知 UI 前先持久化 Proposal，接收方按 `proposalId` 幂等投影。`resolution` 缺省即
 待处理，首次 `submitted | dismissed` 终结后不再改变；因此同一状态下被丢弃或提交的建议不会
-反复出现。进程重启时，Manager 重新投影尚无 resolution 的 Proposal。首期 Reconciler 不主动
+反复出现。进程重启时，Manager 重新投影尚无 resolution 的 Proposal。首期 Controller 不主动
 启动、恢复或选择 Harness。
 
-从边界上看，Reconciler 产出的是受 Baton 接管的 **Plugin Output**，不是直接执行宿主动作。
+从边界上看，Controller 产出的是受 Baton 接管的 **Plugin Output**，不是直接执行宿主动作。
 当前唯一 Output kind 是 `proposed-input`，Manager 将它持久化成 Proposal。未来若增加
 `requestHarnessWork`，也必须先转成 Baton 的 Intent / Attempt，经过路由、权限、并发、上下文
 交付和回执链路；Plugin 永远不直接取得或调用 `HarnessAdapter`。
 
-`requeueAfter` 是这个 Resource 的一次性动态定时唤醒。对 PluginResource，Baton 将它换算成持久化的
+`requeueAfter` 是这个 Resource 的一次性动态定时唤醒。对 Resource，Baton 将它换算成持久化的
 `nextReconcileAt`；Manager 只保留一个进程内 timer，总是唤醒当前最早到期的一批 key。进程
 重启后，已到期的 Resource 立即入队，未到期的恢复到动态唤醒队列。空返回会清除旧的 due time，
 表示等待 Resource、Input 或 Harness 事实发生变化，不需要独立 Monitor。错误通过抛出表达，
 Manager 使用按 key 的指数退避并把下一次 retry 同样写入 `nextReconcileAt`，因此 retry 不因进程
-退出而丢失；一次成功 reconcile 会重置该 key 的失败计数。Builtin Resource 本身只读，due
-time 不反写投影；进程内仍使用相同 due queue，重启后由 ledger 全量重放再次入队。不引入语义
+退出而丢失；一次成功 reconcile 会重置该 key 的失败计数。Baton-owned Resource 本身只读，due
+time 不反写 Resource；进程内仍使用相同 due queue，重启后由 ledger 全量重放再次入队。不引入语义
 模糊的 `requeue: boolean`。
 
-Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部系统，因为副作用本来就是“使实际状态
+Controller 的 cron `sources` 表达与单次 reconcile 结果无关的固定周期职责，例如每
+五分钟检查活跃 PR 状态。Baton 使用显式 IANA `timeZone` 计算 cron occurrence；tick 到期后
+枚举该 Controller 的当前 Resource 并复用同一 keyed queue。固定 Source 与
+`requeueAfter` 相互独立：前者持续存在，后者仍由某个 Resource 的本次 reconcile 动态决定。
+
+Controller 可以调用 Plugin 自己的 Connector、文件或脚本修改外部系统，因为副作用本来就是“使实际状态
 靠近 spec”的一部分，而不是返回值的一部分。前提是当前 `spec` 或已记录的用户决定已经授权该
 变化，且 manifest 声明了对应权限。可能已生效却拿不到回执的操作必须使用稳定 operation key，
 重试前重新观察外部状态，不能因一次超时盲目重复执行。
@@ -540,8 +564,6 @@ Reconciler 可以调用 Plugin 自己的 Connector、文件或脚本修改外部
 
 - webhook、长连接、文件监听或无 Resource 的持续观察出现后，再增加只负责 enqueue 的
   EventSource，不恢复一套 Monitor 状态机；
-- calendar cron、时区和 misfire 语义出现后，再增加 Schedule；普通轮询继续使用
-  `requeueAfter`；
 - 无法自然表达成 desired state、又需要被独立调用的命令出现后，再增加 Action，并复用
   Intent / Attempt / Receipt；
 - 需要关闭 TUI 后继续实时推进时，再引入 daemon，复用同一 Resource store 和 reconcile queue。
@@ -553,7 +575,7 @@ Command 的产品身份属于 Package，以 `pluginId + commandId` 唯一。首�
 路由。未来若真实场景需要同一 Plugin 的多账号或多环境实例，再为配置增加独立身份与选择入口，
 但命令列表仍不生成多份 `/requirements`。
 
-命令一旦开始执行，后续 Resource、Event 和 Board projection 都携带明确的
+命令一旦开始执行，后续 Resource、Event 和 Board 条目都携带明确的
 `pluginInstanceId`，不能依赖“当前 Plugin”之类的隐式全局状态。
 
 ### 2.5 Disable、崩溃与升级
@@ -582,26 +604,26 @@ Loop ≈ resource(spec + status) + reconcile
                  change / result / requeueAfter
 ```
 
-“Contract + Cron”的声明性方向是对的，但可以进一步落成 PluginResource：Contract 进入 `spec`，
-执行事实进入 `status`，Reconciler 用代码表达不适合经济地写成 DSL 的判断，`requeueAfter`
-表达下一次动态检查。不需要 desired state 的 Plugin 则可直接 watch Builtin Resource。
+“Contract + Cron”的声明性方向是对的，但可以进一步落成 Resource：Contract 进入 `spec`，
+执行事实进入 `status`，Controller 用代码表达不适合经济地写成 DSL 的判断，`requeueAfter`
+表达下一次动态检查。不需要 desired state 的 Plugin 则可直接 watch Baton-owned Resource。
 Operator 模型可以帮助区分这些职责，但 Board 不直接等于 CRD：
 
 | Kubernetes Operator | Baton |
 |---|---|
-| Pod 等内置对象 | Event Ledger 投影出的只读 Builtin Resource，例如 `baton.turn` |
+| Pod 等内置对象 | Event Ledger 派生出的只读 Baton-owned Resource，例如 `baton.turn` |
 | CRD | Plugin 声明的 Resource kind 与 `spec/status` schema |
-| CR | 一个具体的 PluginResource，例如某次 ReqLoopRun |
-| spec / status | 人认可的 Loop Contract / Reconciler 观测状态 |
-| Controller / Reconciler | Builtin watch 或 Resource Contribution 中的 `reconcile()` |
-| watch / work queue | Builtin / Plugin Resource 变化与 keyed reconcile queue |
-| periodic resync | `RequeueAfter` → 持久化 `nextReconcileAt` |
-| API mutation | Reconciler 更新 status、调用 Plugin Connector |
-| kubectl / status view | Board projection |
+| CR | 一个具体的 Resource，例如某次 ReqLoopRun |
+| spec / status | 人认可的 Loop Contract / Controller 观测状态 |
+| Controller / Controller | Baton-owned kind Controller 或 Controller 中的 `reconcile()` |
+| watch / work queue | Baton-owned / Plugin-owned Resource 变化与 keyed reconcile queue |
+| dynamic recheck / periodic resync | `RequeueAfter` → 持久化 `nextReconcileAt` / Controller cron Source |
+| API mutation | Controller 更新 status、调用 Plugin Connector |
+| kubectl / status view | Board presentation |
 
 Board 可以展示和编辑 desired state、observed state、condition、证据与待决事项；用户认可的
-编辑更新 `spec`，Harness 和外部系统产出作为 observation 进入，再由 Reconciler 更新 `status`。
-一期 Board 可以直接从 Resource 投影，不先建设一份可独立演化的 Board 数据库。
+编辑更新 `spec`，Harness 和外部系统产出作为 observation 进入，再由 Controller 更新 `status`。
+一期 Board 可以直接从 Resource 生成展示内容，不先建设一份可独立演化的 Board 数据库。
 
 一期只打通最小的人驱动闭环：
 
@@ -615,9 +637,9 @@ Reconcile
   → Harness 产出回到 Resource / Board
 ```
 
-长期可以让 Reconciler 通过 Baton 的受控能力主动启动一个或多个 Harness，例如先把用户需求
+长期可以让 Controller 通过 Baton 的受控能力主动启动一个或多个 Harness，例如先把用户需求
 文字整理成结构化 Requirement，再让不同 agent 分别开发、review 或验证；各 Harness 的产出都
-回写为 observation，由 Reconciler 更新同一个 Resource / Board。这个能力不进入首期，也暂不
+回写为 observation，由 Controller 更新同一个 Resource / Board。这个能力不进入首期，也暂不
 为它提前命名独立的顶层 Intent 类型。
 
 ### 3.2 从现有 Plugin 体系吸收什么
@@ -643,12 +665,12 @@ Baton 自己的 Instance、Event 和 Attempt 语义”，而不是复制其中�
 
 ### 3.3 Plugin 运行时是窄能力边界
 
-Manager 只向 Plugin 暴露完成 Contribution 契约所需的窄入口：
+Manager 只向 Plugin 暴露完成已注册能力所需的窄入口：
 
 - 当前 BatonSession、PluginInstance 和 Binding 的不可伪造身份；
-- Contribution 注册和关闭生命周期；
-- 当前 Builtin / Plugin Resource 的只读 snapshot、仅限自有 PluginResource 的受控 status patch，
-  以及可信 Board/Context projection 入口；
+- Command / Controller 注册和关闭生命周期；
+- 当前 Baton-owned / Plugin-owned Resource 的只读 snapshot、仅限自有 Resource 的受控 status patch，
+  以及可信 Board presentation / Resource Context source 入口；
 - session-scoped、非持久化的 Toast 输出；持续状态仍归 Resource status / Board；
 - 按 declaration 与权限注入的配置和 secret；
 - 受 timeout、取消和输出预算约束的执行上下文。
@@ -664,14 +686,14 @@ Baton 不宣称提供安全隔离；窄 Plugin 契约的目的首先是稳定架
 
 本地 / Git Marketplace 先解决真实 Plugin 的开发、发现和不可变交付。远程 JSON、npm、
 自动更新、卸载、签名、依赖解析和独立进程协议留到实际分发与信任需求出现后再做；届时可以让
-进程适配层实现同一 Binding / Contribution 契约，不需要推翻 Instance / Binding 模型。
+进程适配层实现同一 Binding / Controller 契约，不需要推翻 Instance / Binding 模型。
 
 ### 3.5 目录兑现领域边界
 
-Plugin core 不为每种 Contribution 建平级子目录；Marketplace 自身有独立的内部子域：
+Plugin core 不为每种注册能力建平级子目录；Marketplace 自身有独立的内部子域：
 
 ```text
-src/plugin/                 # Baton Plugin 领域：Package / Instance / Binding / Contribution
+src/plugin/                 # Baton Plugin 领域：Package / Instance / Binding / Controller
 └── marketplace/            # Marketplace manifest、注册、发现、安装与加载
 reqloop repository          # 独立 Marketplace，只依赖 Baton 公开 Plugin 契约
 ```
@@ -696,17 +718,18 @@ PluginPackage 与启用配置是用户级资产；Plugin 运行数据仍跟随 B
 ```
 
 Project 只负责组织和发现 BatonSession，不拥有 Plugin runtime。Manager、Controller、Binding
-和队列是进程态；恢复时从用户级启用配置和当前 Session 的 Event Ledger、PluginResource、
-Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
+和队列是进程态；恢复时从用户级启用配置和当前 Session 的 Event Ledger、Resource、
+Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
 
 ### 3.6 增量落地
 
 1. 已建立 Package、Instance、Binding 的可信进程内最小契约：启动恢复启用 Instance，激活失败
    整体回滚，解绑和退出统一关闭。
-2. 已建立 PluginResource 通用信封与存储、同 key 不并发的 reconcile queue、持久 Proposal，
-   以及 `requeueAfter` due time；运行数据全部归当前 BatonSession。
-3. 已建立 `_baton_turn_summary` → `baton.turn` 的只读 Builtin Resource 投影，
-   `watchBuiltinResource` 复用同一 queue、退避和 Proposal 管线；启动 replay 与 live append
+2. 已建立 Resource 通用信封与存储、同 key 不并发的 reconcile queue、持久 Proposal，
+   `requeueAfter` due time 与 Controller cron Sources；三种唤醒都进入同一
+   keyed queue，运行数据全部归当前 BatonSession。
+3. 已建立 `_baton_turn_summary` → `baton.turn` 的只读 Baton-owned Resource，
+   `registerController` 复用同一 queue、退避和 Proposal 管线；启动 replay 与 live append
    使用同一资源 key。
 4. 已建立本地 / Git Marketplace 注册、仓内 Package 发现、版本化不可变安装和进程内加载；
    用户身份统一为 `plugin@marketplace`，同名 Package 按 Marketplace 隔离。
@@ -715,11 +738,11 @@ Proposal 重建。Builtin Resource 不在 `plugins/` 下另存副本。
    manifest 的 `command | resource` 声明校验仍随后补齐；多实例出现前保持单一路由，
    多个 active instance 时 fail closed。
 6. `proposed-input` Output 已经通过持久 Proposal 投影到 InteractionDock，用户采用、编辑并
-   提交后驱动 Harness；Resource Contribution 的 `BoardProjector` 已接入可选右侧 Sidecar，
-   后续再接可选 Context projection，跑通完整 Requirement Loop。
+   提交后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar，
+   后续再接可选 Resource Context source，跑通完整 Requirement Loop。
 7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
    后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
-8. 真实 loop 证明必须由 Reconciler 主动启动 Harness 后，再设计受控调用；首期只允许用户把
+8. 真实 loop 证明必须由 Controller 主动启动 Harness 后，再设计受控调用；首期只允许用户把
    `proposed-input` Output 提交成普通 Input。
 9. `/plugins` 首期管理面已接入 Marketplace 浏览、Package 搜索 / 详情 / 安装、用户级
    Plugin 启停和加载错误；新 Session 自动加载，`/reload-plugins` 已接入当前 Session 的 Binding 重建。真实分发

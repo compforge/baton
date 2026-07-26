@@ -26,7 +26,7 @@ export type PluginCommandResult =
  * Package-owned slash command. Baton owns completion and rendering; the Plugin
  * owns the domain query and interprets any selected value.
  */
-export interface PluginCommandContribution {
+export interface Command {
   readonly commandId: string;
   readonly name: string;
   readonly description: string;

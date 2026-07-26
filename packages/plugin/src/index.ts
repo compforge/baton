@@ -1,11 +1,10 @@
 export type {
-  BoardItemDraft,
+  BoardPresentation,
   BoardItemTone,
-  BoardProjector,
 } from "./board.ts";
 
 export type {
-  PluginCommandContribution,
+  Command,
   PluginCommandInput,
   PluginCommandOption,
   PluginCommandResult,
@@ -23,25 +22,20 @@ export type {
 } from "./package.ts";
 
 export type {
-  BuiltinReconciler,
-  BuiltinResourceContribution,
+  Controller,
+  ControllerSource,
+  CronSource,
   PluginOutput,
   ReconcileResult,
-  Reconciler,
-  ResourceContribution,
-  ResourceReconciler,
 } from "./reconcile.ts";
 
 export type {
   BatonTurnResourceData,
+  BatonTurnResource,
   BatonTurnResourceKind,
-  BuiltinResource,
-  BuiltinResourceDataMap,
-  BuiltinResourceKind,
-  BuiltinResourceMetadata,
-  PluginResource,
-  PluginResourceClient,
-  PluginResourceMetadata,
+  Resource,
+  ResourceClient,
+  ResourceMetadata,
 } from "./resource.ts";
 
 export type {

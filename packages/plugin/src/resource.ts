@@ -1,6 +1,6 @@
 import type { TurnSummary } from "./snapshot.ts";
 
-export interface PluginResourceMetadata {
+export interface ResourceMetadata {
   readonly resourceId: string;
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
@@ -11,36 +11,36 @@ export interface PluginResourceMetadata {
   readonly nextReconcileAt?: string;
 }
 
-export interface PluginResource<
+export interface Resource<
   TSpec = Record<string, unknown>,
   TStatus = Record<string, unknown>,
 > {
   readonly kind: string;
-  readonly metadata: PluginResourceMetadata;
+  readonly metadata: ResourceMetadata;
   readonly spec: TSpec;
   readonly status: TStatus;
 }
 
-export interface PluginResourceClient {
+export interface ResourceClient {
   get<TSpec, TStatus>(
     resourceKind: string,
     resourceId: string,
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
   list<TSpec, TStatus>(
     resourceKind?: string,
-  ): readonly Readonly<PluginResource<TSpec, TStatus>>[];
+  ): readonly Readonly<Resource<TSpec, TStatus>>[];
   create<TSpec, TStatus>(
     resourceKind: string,
     init: {
       resourceId: string;
       spec: TSpec;
     },
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
   delete(resourceKind: string, resourceId: string): void;
   patchStatus<TSpec, TStatus>(
-    resource: Readonly<PluginResource<TSpec, TStatus>>,
+    resource: Readonly<Resource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
-  ): Readonly<PluginResource<TSpec, TStatus>>;
+  ): Readonly<Resource<TSpec, TStatus>>;
 }
 
 export type BatonTurnResourceKind = "baton.turn";
@@ -51,24 +51,10 @@ export type BatonTurnResourceData = TurnSummary & {
   readonly harnessSessionId?: string;
 };
 
-export interface BuiltinResourceDataMap {
-  "baton.turn": BatonTurnResourceData;
-}
-
-export type BuiltinResourceKind = keyof BuiltinResourceDataMap;
-
-export interface BuiltinResourceMetadata {
-  readonly batonSessionId: string;
-  readonly resourceId: string;
-  readonly revision: number;
-  readonly sourceEventId: string;
-  readonly observedAt: string;
-}
-
-export interface BuiltinResource<
-  K extends BuiltinResourceKind = BuiltinResourceKind,
-> {
-  readonly kind: K;
-  readonly metadata: BuiltinResourceMetadata;
-  readonly data: BuiltinResourceDataMap[K];
-}
+/** Read-only Resource shape exposed by the Baton-owned `baton.turn` kind. */
+export type BatonTurnResource = Resource<
+  Record<string, never>,
+  BatonTurnResourceData
+> & {
+  readonly kind: BatonTurnResourceKind;
+};

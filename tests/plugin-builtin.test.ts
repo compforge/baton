@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import {
   BATON_TURN_RESOURCE_KIND,
-  BuiltinResourceProjection,
+  BatonResourceIndex,
 } from "../src/plugin/builtin.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager } from "../src/plugin/manager.ts";
@@ -66,13 +66,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("Baton Builtin Resources", () => {
-  test("projects completed turns from ledger replay and live events as frozen snapshots", () => {
+describe("Baton Resource index", () => {
+  test("indexes completed turns from ledger replay and live events as frozen Resources", () => {
     const session = testSession();
     const replayed = appendTurn(session, "t_replayed", "existing question");
-    const projection = new BuiltinResourceProjection({ session });
+    const resources = new BatonResourceIndex({ session });
 
-    const existing = projection.get(BATON_TURN_RESOURCE_KIND, "t_replayed");
+    const existing = resources.get(BATON_TURN_RESOURCE_KIND, "t_replayed");
     expect(existing.metadata).toEqual({
       batonSessionId: session.id,
       resourceId: "t_replayed",
@@ -91,18 +91,18 @@ describe("Baton Builtin Resources", () => {
     expect(Object.isFrozen(existing.data)).toBe(true);
 
     const observed: string[] = [];
-    projection.subscribe((resource) => {
+    resources.subscribe((resource) => {
       observed.push(resource.metadata.resourceId);
     });
     appendTurn(session, "t_live", "new question");
 
     expect(observed).toEqual(["t_live"]);
     expect(
-      projection
+      resources
         .list(BATON_TURN_RESOURCE_KIND)
         .map((resource) => resource.metadata.resourceId),
     ).toEqual(["t_replayed", "t_live"]);
-    projection.close();
+    resources.close();
   });
 
   test("lets a Plugin watch turns and produce revision-based Proposals", async () => {
@@ -121,21 +121,22 @@ describe("Baton Builtin Resources", () => {
       pluginId: "example/router",
       version: "1.0.0",
       activate(context) {
-        context.watchBuiltinResource({
+        context.registerController<
+          Record<string, never>,
+          { userText?: string }
+        >({
           resourceKind: BATON_TURN_RESOURCE_KIND,
-          reconciler: {
-            async reconcile(baton, resource) {
+          async reconcile(baton, resource) {
               expect(Object.isFrozen(baton)).toBe(true);
               expect(baton.session.batonSessionId).toBe(session.id);
               reconciled.push(resource.metadata.resourceId);
               return {
                 output: {
                   kind: "proposed-input",
-                  text: `Route: ${resource.data.userText}`,
+                  text: `Route: ${resource.status.userText}`,
                 },
               };
             },
-          },
         });
       },
     };
@@ -179,7 +180,7 @@ describe("Baton Builtin Resources", () => {
     await manager.close();
   });
 
-  test("retries a failed Builtin reconcile through the shared due queue", async () => {
+  test("retries a failed Baton Resource reconcile through the shared due queue", async () => {
     const session = testSession();
     appendTurn(session, "t_retry", "retry me");
     const instances = new PluginInstanceStore({ session });
@@ -200,14 +201,12 @@ describe("Baton Builtin Resources", () => {
         pluginId: "example/router",
         version: "1.0.0",
         activate(context) {
-          context.watchBuiltinResource({
+          context.registerController({
             resourceKind: BATON_TURN_RESOURCE_KIND,
-            reconciler: {
-              async reconcile() {
+            async reconcile() {
                 runs += 1;
                 if (runs === 1) throw new Error("temporary failure");
               },
-            },
           });
         },
       }],
@@ -223,7 +222,7 @@ describe("Baton Builtin Resources", () => {
     await manager.close();
   });
 
-  test("does not run a Builtin watch before its Binding activation completes", async () => {
+  test("does not run a Baton Resource Controller before its Binding activation completes", async () => {
     const session = testSession();
     appendTurn(session, "t_waiting", "wait for activation");
     const instances = new PluginInstanceStore({ session });
@@ -244,13 +243,11 @@ describe("Baton Builtin Resources", () => {
         pluginId: "example/router",
         version: "1.0.0",
         async activate(context) {
-          context.watchBuiltinResource({
+          context.registerController({
             resourceKind: BATON_TURN_RESOURCE_KIND,
-            reconciler: {
-              async reconcile() {
+            async reconcile() {
                 runs += 1;
               },
-            },
           });
           registered.resolve();
           await finishActivation.promise;

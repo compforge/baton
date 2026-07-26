@@ -257,7 +257,7 @@ export class PluginResourceStore {
   }
 
   /**
-   * 只串行化同一 Resource 的 Reconciler，不阻止用户并发更新 spec。
+   * 只串行化同一 Resource 的 Controller，不阻止用户并发更新 spec。
    * Controller 仍须用 resourceVersion 拒绝基于旧 snapshot 的 status 或调度写入。
    */
   withReconcileLock<T>(

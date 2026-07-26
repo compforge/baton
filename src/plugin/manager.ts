@@ -3,15 +3,15 @@ import {
   type ReconcileKey,
   type ReconcileProposal,
   type ReconcileScope,
-  type Reconciler,
   type ScheduledReconcile,
 } from "./controller.ts";
 import {
+  BATON_TURN_RESOURCE_KIND,
   BuiltinController,
-  type BuiltinReconciler,
   type BuiltinResource,
+  type BuiltinControllerOptions,
   type BuiltinResourceKind,
-  BuiltinResourceProjection,
+  BatonResourceIndex,
 } from "./builtin.ts";
 import {
   type Proposal,
@@ -26,12 +26,13 @@ import {
 } from "./instance.ts";
 import {
   PluginBinding,
-  type BuiltinResourceContribution,
+  type Controller as PluginResourceController,
+  type ControllerSource,
   type PluginCommandInput,
   type PluginCommandResult,
   type PluginPackage,
+  type Resource,
   pluginPackageKey,
-  type ResourceContribution,
   type ToastMessage,
   type ToastTone,
   validatePluginPackage,
@@ -41,11 +42,15 @@ import {
   ReconcileCapacity,
   ReconcileDueQueue,
 } from "./queue.ts";
+import {
+  CronSourceQueue,
+  validateControllerSources,
+} from "./cron-source.ts";
 import { PluginResourceStore } from "./resource.ts";
-import { createPluginResourceClient } from "./resource-client.ts";
+import { createResourceClient } from "./resource-client.ts";
 import {
   type BoardItem,
-  projectBoardSource,
+  presentBoardSource,
 } from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
 import {
@@ -74,23 +79,16 @@ export interface ControllerRegistration {
   close(): void;
 }
 
-export interface ControllerDefinition<TSpec, TStatus> {
+export interface ControllerDefinition<TSpec, TStatus>
+  extends PluginResourceController<TSpec, TStatus> {
   store: PluginResourceStore;
-  resourceKind: string;
-  reconciler: Reconciler<TSpec, TStatus>;
-  /** 当前 Controller 内不同 Resource 的并发数；默认 1。 */
-  maxConcurrency?: number;
   now?: () => Date;
 }
 
-export interface BuiltinControllerDefinition<K extends BuiltinResourceKind> {
-  pluginInstanceId: string;
-  resourceKind: K;
-  reconciler: BuiltinReconciler<K>;
-  /** 当前 Controller 内不同 Builtin Resource 的并发数；默认 1。 */
-  maxConcurrency?: number;
-  now?: () => Date;
-}
+type BuiltinControllerDefinition<K extends BuiltinResourceKind> = Pick<
+  BuiltinControllerOptions<K>,
+  "pluginInstanceId" | "resourceKind" | "sources" | "reconcile" | "maxConcurrency" | "now"
+>;
 
 export interface PluginToast {
   readonly pluginInstanceId: string;
@@ -102,8 +100,8 @@ export interface ManagerOptions {
   maxTotalConcurrency?: number;
   proposals: ProposalStore;
   /**
-   * 开启 Builtin Resource 投影时传完整 SessionHandle。只持有 ProposalStore 的调用方
-   * 仍可使用 PluginResource Controller，但不能注册 Builtin watch。
+   * 启用 Baton-owned Resource 时传完整 SessionHandle。只持有 ProposalStore 的调用方
+   * 仍可使用 Plugin Resource Controller，但不能观察 Baton-owned Resource。
    */
   session?: Pick<SessionHandle, "id" | "dir" | "readEvents" | "subscribe">;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
@@ -120,7 +118,7 @@ export interface ManagerOptions {
   ): Promise<PluginPackage>;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
-  /** Board 数据或可用 Projection 变化；宿主据此重建展示快照。 */
+  /** Board 展示内容变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
   /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
   onToast?(toast: PluginToast): void;
@@ -128,15 +126,15 @@ export interface ManagerOptions {
   onCommandsChanged?(): void;
   /** Baton core 已占用的 slash command 名称，Plugin 不得覆盖。 */
   reservedCommandNames?: readonly string[];
-  /** Reconciler 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
+  /** Controller reconcile 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: {
     initialDelayMs?: number;
     maxDelayMs?: number;
   };
   now?: () => Date;
-  /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败投影到 UI 或诊断日志。 */
+  /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败展示到 UI 或诊断日志。 */
   onActivationError?(failure: PluginActivationFailure): void;
-  /** 自动重试已安排；宿主可将错误投影到 UI 或诊断日志。 */
+  /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
 }
 
@@ -159,9 +157,11 @@ export interface PluginReloadResult {
 
 interface ManagedController {
   scope: ReconcileScope;
+  readonly sources?: readonly ControllerSource[];
   enqueue(key: ReconcileKey): Promise<void>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
+  resourceKeys?(): ReconcileKey[];
   initialReconciles?(): ReconcileKey[];
   /** PluginResource 持久化 due time；Builtin Resource 靠 ledger replay 在重启后重新唤醒。 */
   setNextReconcileAt?(key: ReconcileKey, next: Date): void;
@@ -174,7 +174,7 @@ interface RetryState {
 
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
-  project(): readonly BoardItem[];
+  present(): readonly BoardItem[];
 }
 
 function positiveDelay(name: string, value: number): void {
@@ -187,6 +187,17 @@ function positiveDelay(name: string, value: number): void {
  * Plugin 域统一入口：注册和路由 Controller，并限制所有 Plugin 的进程总并发。
  */
 export class Manager {
+  /** Baton claims its Resource kinds before any Plugin Binding can register. */
+  private readonly resourceKindOwners = new Map<string, {
+    readonly owner: "baton" | string;
+    controllers: number;
+    claimedByResource: boolean;
+  }>([
+    [
+      BATON_TURN_RESOURCE_KIND,
+      { owner: "baton", controllers: 0, claimedByResource: true },
+    ],
+  ]);
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
   private readonly commandRegistry: PluginCommandRegistry;
@@ -199,8 +210,8 @@ export class Manager {
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
   private readonly proposals: ProposalStore;
-  private readonly builtinProjection?: BuiltinResourceProjection;
-  private readonly unsubscribeBuiltinProjection?: () => void;
+  private readonly batonResources?: BatonResourceIndex;
+  private readonly unsubscribeBatonResources?: () => void;
   private readonly onProposal: ManagerOptions["onProposal"];
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onToast: ManagerOptions["onToast"];
@@ -214,6 +225,7 @@ export class Manager {
   private readonly suspendedControllers = new Set<string>();
   private readonly now: () => Date;
   private readonly dueQueue: ReconcileDueQueue;
+  private readonly cronSourceQueue: CronSourceQueue;
   private started = false;
   private starting?: Promise<void>;
   private closed = false;
@@ -281,11 +293,15 @@ export class Manager {
         });
       },
     });
+    this.cronSourceQueue = new CronSourceQueue({
+      now: this.now,
+      onDue: (scope) => this.enqueueCronSourceResources(scope),
+    });
     if (options.session) {
-      this.builtinProjection = new BuiltinResourceProjection({
+      this.batonResources = new BatonResourceIndex({
         session: options.session,
       });
-      this.unsubscribeBuiltinProjection = this.builtinProjection.subscribe((resource) => {
+      this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
         this.enqueueBuiltinResource(resource);
       });
     }
@@ -307,6 +323,7 @@ export class Manager {
         `plugin Controller batonSessionId must be ${this.proposals.batonSessionId}, got ${definition.store.batonSessionId}`,
       );
     }
+    validateControllerSources(definition.sources, this.now());
     const controller = new Controller({
       ...definition,
       snapshot: this.snapshot,
@@ -324,7 +341,7 @@ export class Manager {
     return this.installController(controller, suspended);
   }
 
-  registerBuiltinController<K extends BuiltinResourceKind>(
+  private registerBuiltinController<K extends BuiltinResourceKind>(
     definition: BuiltinControllerDefinition<K>,
   ): ControllerRegistration {
     return this.registerBuiltinControllerInternal(definition, false);
@@ -335,14 +352,15 @@ export class Manager {
     suspended: boolean,
   ): ControllerRegistration {
     if (this.closed) throw new Error("plugin Manager is closed");
-    if (!this.builtinProjection) {
+    if (!this.batonResources) {
       throw new Error(
-        "plugin Manager requires a SessionHandle to watch Builtin Resources",
+        "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
+    validateControllerSources(definition.sources, this.now());
     const controller = new BuiltinController({
       ...definition,
-      projection: this.builtinProjection,
+      resources: this.batonResources,
       snapshot: this.snapshot,
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
@@ -425,21 +443,21 @@ export class Manager {
         ...(batonSession.cwd === undefined ? {} : { cwd: batonSession.cwd }),
       },
       {
-        registerCommand: (contribution) =>
-          this.commandRegistry.register(instance, contribution),
-        registerResource: (contribution) =>
-          this.bindResource(instance.pluginInstanceId, contribution),
-        watchBuiltinResource: (contribution) =>
-          this.bindBuiltinResource(instance.pluginInstanceId, contribution),
+        registerCommand: (command) =>
+          this.commandRegistry.register(instance, command),
+        registerController: (controller) =>
+          this.bindController(instance, controller),
         showToast: (message) =>
           this.notifyToast(instance.pluginInstanceId, message),
       },
-      createPluginResourceClient(
+      createResourceClient(
         new PluginResourceStore({
           session: this.instances.session,
           pluginInstanceId: instance.pluginInstanceId,
         }),
         () => this.notifyBoardChanged(),
+        (resourceKind) =>
+          this.claimResourceKindForCreate(instance.pluginId, resourceKind),
       ),
     );
     let activation!: Promise<void>;
@@ -658,7 +676,7 @@ export class Manager {
     const items: BoardItem[] = [];
     for (const source of this.boardSources.values()) {
       if (!this.bindings.has(source.pluginInstanceId)) continue;
-      items.push(...source.project());
+      items.push(...source.present());
     }
     return Object.freeze(items);
   }
@@ -678,14 +696,14 @@ export class Manager {
     return this.proposals.resolve(proposalId, outcome);
   }
 
-  getBuiltinResource<K extends BuiltinResourceKind>(
+  getBatonResource<K extends BuiltinResourceKind>(
     kind: K,
     resourceId: string,
   ): BuiltinResource<K> {
-    if (!this.builtinProjection) {
-      throw new Error("builtin resource projection is not available");
+    if (!this.batonResources) {
+      throw new Error("Baton-owned resources are not available");
     }
-    return this.builtinProjection.get(kind, resourceId);
+    return this.batonResources.get(kind, resourceId);
   }
 
   private async publishProposal(draft: ReconcileProposal): Promise<void> {
@@ -730,6 +748,7 @@ export class Manager {
     this.started = true;
     for (const controller of controllers) {
       if (this.controllers.get(reconcileScopeId(controller.scope)) !== controller) continue;
+      this.activateControllerSources(controller);
       this.enqueueInitial(controller);
     }
   }
@@ -788,9 +807,41 @@ export class Manager {
       : pluginPackageKey(instance.pluginId, instance.packageVersion);
   }
 
-  private bindResource<TSpec, TStatus>(
+  private bindController<TSpec, TStatus>(
+    instance: PluginInstance,
+    pluginController: PluginResourceController<TSpec, TStatus>,
+  ): () => void {
+    if (pluginController.resourceKind === BATON_TURN_RESOURCE_KIND) {
+      return this.bindBatonResourceController(
+        instance.pluginInstanceId,
+        pluginController,
+      );
+    }
+    const releaseKind = this.claimResourceKind(
+      instance.pluginId,
+      pluginController.resourceKind,
+    );
+    try {
+      const close = this.bindPluginResourceController(
+        instance.pluginInstanceId,
+        pluginController,
+      );
+      return () => {
+        try {
+          close();
+        } finally {
+          releaseKind();
+        }
+      };
+    } catch (error) {
+      releaseKind();
+      throw error;
+    }
+  }
+
+  private bindPluginResourceController<TSpec, TStatus>(
     pluginInstanceId: string,
-    contribution: ResourceContribution<TSpec, TStatus>,
+    pluginController: PluginResourceController<TSpec, TStatus>,
   ): () => void {
     const store = new PluginResourceStore({
       session: this.instances.session,
@@ -798,7 +849,7 @@ export class Manager {
     });
     const registration = this.registerControllerInternal(
       {
-        ...contribution,
+        ...pluginController,
         store,
         now: this.now,
       },
@@ -807,20 +858,21 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.proposals.batonSessionId,
       pluginInstanceId,
-      resourceKind: contribution.resourceKind,
+      resourceKind: pluginController.resourceKind,
     });
-    if (contribution.board) {
+    if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
-      const projector = contribution.board;
+      const present = pluginController.present;
       this.boardSources.set(sourceId, {
         pluginInstanceId,
-        project: () =>
-          projectBoardSource({
+        present: () =>
+          presentBoardSource({
             pluginId,
             pluginInstanceId,
-            resourceKind: contribution.resourceKind,
-            store,
-            projector,
+            resourceKind: pluginController.resourceKind,
+            list: () =>
+              store.list<TSpec, TStatus>(pluginController.resourceKind),
+            present,
           }),
       });
     }
@@ -830,19 +882,141 @@ export class Manager {
     };
   }
 
-  private bindBuiltinResource<K extends BuiltinResourceKind>(
+  private bindBatonResourceController<TSpec, TStatus>(
     pluginInstanceId: string,
-    contribution: BuiltinResourceContribution<K>,
+    pluginController: PluginResourceController<TSpec, TStatus>,
   ): () => void {
+    if (!this.batonResources) {
+      throw new Error(
+        `Resource kind ${pluginController.resourceKind} requires a SessionHandle`,
+      );
+    }
+    const resourceKind = BATON_TURN_RESOURCE_KIND;
     const registration = this.registerBuiltinControllerInternal(
       {
-        ...contribution,
         pluginInstanceId,
+        resourceKind,
+        sources: pluginController.sources,
+        maxConcurrency: pluginController.maxConcurrency,
+        reconcile: async (baton, resource) =>
+          await pluginController.reconcile(
+            baton,
+            this.exposeBatonResource<TSpec, TStatus>(
+              pluginInstanceId,
+              resource,
+            ),
+          ),
         now: this.now,
       },
       true,
     );
-    return () => registration.close();
+    const sourceId = reconcileScopeId({
+      batonSessionId: this.proposals.batonSessionId,
+      pluginInstanceId,
+      resourceKind,
+      resourceOwner: "baton",
+    });
+    if (pluginController.present) {
+      const pluginId = this.instances.get(pluginInstanceId).pluginId;
+      const present = pluginController.present;
+      this.boardSources.set(sourceId, {
+        pluginInstanceId,
+        present: () =>
+          presentBoardSource({
+            pluginId,
+            pluginInstanceId,
+            resourceKind,
+            list: () =>
+              this.batonResources!.list(resourceKind).map((resource) =>
+                this.exposeBatonResource<TSpec, TStatus>(
+                  pluginInstanceId,
+                  resource,
+                ),
+              ),
+            present,
+          }),
+      });
+    }
+    return () => {
+      this.boardSources.delete(sourceId);
+      registration.close();
+    };
+  }
+
+  private exposeBatonResource<TSpec, TStatus>(
+    pluginInstanceId: string,
+    resource: BuiltinResource<typeof BATON_TURN_RESOURCE_KIND>,
+  ): Readonly<Resource<TSpec, TStatus>> {
+    return Object.freeze({
+      kind: resource.kind,
+      metadata: Object.freeze({
+        resourceId: resource.metadata.resourceId,
+        batonSessionId: resource.metadata.batonSessionId,
+        pluginInstanceId,
+        generation: 1,
+        resourceVersion: resource.metadata.revision,
+        createdAt: resource.metadata.observedAt,
+        updatedAt: resource.metadata.observedAt,
+      }),
+      spec: Object.freeze({}) as TSpec,
+      status: resource.data as TStatus,
+    });
+  }
+
+  private claimResourceKind(pluginId: string, resourceKind: string): () => void {
+    const current = this.resourceKindOwners.get(resourceKind);
+    if (current?.owner === "baton") {
+      throw new Error(`Resource kind is reserved by Baton: ${resourceKind}`);
+    }
+    if (current && current.owner !== pluginId) {
+      throw new Error(
+        `Resource kind ${resourceKind} is already registered by ${current.owner}`,
+      );
+    }
+    if (current) {
+      current.controllers += 1;
+    } else {
+      this.resourceKindOwners.set(resourceKind, {
+        owner: pluginId,
+        controllers: 1,
+        claimedByResource: false,
+      });
+    }
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const registered = this.resourceKindOwners.get(resourceKind);
+      if (!registered || registered.owner !== pluginId) return;
+      registered.controllers -= 1;
+      if (registered.controllers === 0 && !registered.claimedByResource) {
+        this.resourceKindOwners.delete(resourceKind);
+      }
+    };
+  }
+
+  private claimResourceKindForCreate(
+    pluginId: string,
+    resourceKind: string,
+  ): void {
+    const current = this.resourceKindOwners.get(resourceKind);
+    if (current?.owner === "baton") {
+      throw new Error(`Resource kind is reserved by Baton: ${resourceKind}`);
+    }
+    if (current && current.owner !== pluginId) {
+      throw new Error(
+        `Resource kind ${resourceKind} is already registered by ${current.owner}`,
+      );
+    }
+    if (current) {
+      current.claimedByResource = true;
+      return;
+    }
+    this.resourceKindOwners.set(resourceKind, {
+      owner: pluginId,
+      controllers: 0,
+      claimedByResource: true,
+    });
   }
 
   private async closeManager(): Promise<void> {
@@ -862,8 +1036,9 @@ export class Manager {
     this.retries.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
-    this.unsubscribeBuiltinProjection?.();
-    this.builtinProjection?.close();
+    this.cronSourceQueue.close();
+    this.unsubscribeBatonResources?.();
+    this.batonResources?.close();
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "could not close plugin Manager");
   }
@@ -872,7 +1047,7 @@ export class Manager {
     try {
       this.onActivationError?.(Object.freeze(failure));
     } catch {
-      // Diagnostic projection must not keep healthy Plugin instances from starting.
+      // Diagnostic reporting must not keep healthy Plugin instances from starting.
     }
   }
 
@@ -915,7 +1090,7 @@ export class Manager {
     }
   }
 
-  private restoreSchedules(controller: ManagedController): void {
+  private restoreDueReconciles(controller: ManagedController): void {
     for (const entry of controller.scheduledReconciles()) {
       this.dueQueue.schedule(entry.key, entry.nextReconcileAt);
     }
@@ -936,7 +1111,8 @@ export class Manager {
     if (suspended) this.suspendedControllers.add(id);
     try {
       if (this.started && !suspended) {
-        this.restoreSchedules(controller);
+        this.activateControllerSources(controller);
+        this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }
     } catch (error) {
@@ -944,6 +1120,7 @@ export class Manager {
       this.suspendedControllers.delete(id);
       controller.close();
       this.dueQueue.removeScope(controller.scope);
+      this.cronSourceQueue.removeScope(controller.scope);
       throw error;
     }
     let active = true;
@@ -956,6 +1133,7 @@ export class Manager {
         this.suspendedControllers.delete(id);
         controller.close();
         this.dueQueue.removeScope(controller.scope);
+        this.cronSourceQueue.removeScope(controller.scope);
         for (const [keyId, retry] of this.retries) {
           if (sameReconcileScope(retry.key, controller.scope)) this.retries.delete(keyId);
         }
@@ -965,6 +1143,28 @@ export class Manager {
 
   private enqueueInitial(controller: ManagedController): void {
     for (const key of controller.initialReconciles?.() ?? []) {
+      void controller.enqueue(key).catch(() => {
+        // Queue callback has already scheduled retry and reported diagnostics.
+      });
+    }
+  }
+
+  private activateControllerSources(controller: ManagedController): void {
+    if (!controller.sources?.length) return;
+    this.cronSourceQueue.register(controller.scope, controller.sources);
+  }
+
+  private enqueueCronSourceResources(scope: ReconcileScope): void {
+    if (!this.started || this.closed) return;
+    const controller = this.controllers.get(reconcileScopeId(scope));
+    if (
+      !controller ||
+      this.suspendedControllers.has(reconcileScopeId(scope)) ||
+      !sameReconcileScope(controller.scope, scope)
+    ) {
+      return;
+    }
+    for (const key of controller.resourceKeys?.() ?? []) {
       void controller.enqueue(key).catch(() => {
         // Queue callback has already scheduled retry and reported diagnostics.
       });
@@ -996,7 +1196,8 @@ export class Manager {
       const id = reconcileScopeId(controller.scope);
       if (!this.suspendedControllers.delete(id)) continue;
       if (this.started) {
-        this.restoreSchedules(controller);
+        this.activateControllerSources(controller);
+        this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }
     }
@@ -1046,7 +1247,7 @@ export class Manager {
     try {
       this.onReconcileError?.(Object.freeze(failure));
     } catch {
-      // Diagnostic projection must not break retry scheduling.
+      // Diagnostic reporting must not break retry scheduling.
     }
   }
 }

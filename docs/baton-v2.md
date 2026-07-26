@@ -263,7 +263,7 @@ queued follow-up 仍不是持久工作队列。来自 Schedule、Plugin 或外�
   → dispatch / wake by stable id
   → accepted | uncertain
   → Receipt / result Event
-  → Board projection + Plugin 下一次决策
+  → Board presentation + Plugin 下一次决策
 ```
 
 Schedule 和 Hook 只产生事实、contribution 或 Intent，不拥有自己的执行状态机。进程恢复时，
@@ -316,7 +316,7 @@ Intent / Attempt       这一步是否已经被可靠地投递和执行
 BoardState             人和多个 Harness 现在需要看到什么
 ```
 
-Board 可以由前两层投影，也可贡献下一步决策所需信息，但不能替代领域聚合或执行 ledger。
+Board 可以由前两层派生，也可提供下一步决策所需信息，但不能替代领域聚合或执行 ledger。
 
 ### 3.5 先收敛内核，再开放自动 Harness Work
 

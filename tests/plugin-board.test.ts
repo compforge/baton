@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { projectBoardSource } from "../src/plugin/board.ts";
+import { presentBoardSource } from "../src/plugin/board.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
 const roots: string[] = [];
@@ -26,8 +26,55 @@ afterEach(() => {
   }
 });
 
-describe("Plugin Board projection", () => {
-  test("isolates a broken resource projection as a diagnostic item", () => {
+describe("Plugin Board presentation", () => {
+  test("presents at most one Board item per Resource and hides undefined results", () => {
+    const resources = store();
+    resources.create({
+      kind: "ReqLoopRun",
+      resourceId: "run_active",
+      spec: { title: "Ship it" },
+      status: { phase: "active" },
+    });
+    resources.create({
+      kind: "ReqLoopRun",
+      resourceId: "run_closed",
+      spec: { title: "Already shipped" },
+      status: { phase: "closed" },
+    });
+
+    expect(
+      presentBoardSource<{ title: string }, { phase: string }>({
+        pluginId: "qiankun/reqloop",
+        pluginInstanceId: "reqloop_default",
+        resourceKind: "ReqLoopRun",
+        list: () =>
+          resources.list<{ title: string }, { phase: string }>("ReqLoopRun"),
+        present(resource) {
+          if (resource.status.phase === "closed") return undefined;
+          return {
+            title: resource.spec.title,
+            status: resource.status.phase,
+          };
+        },
+      }),
+    ).toEqual([
+      {
+        id: JSON.stringify([
+          "reqloop_default",
+          "ReqLoopRun",
+          "run_active",
+        ]),
+        pluginId: "qiankun/reqloop",
+        pluginInstanceId: "reqloop_default",
+        resourceKind: "ReqLoopRun",
+        resourceId: "run_active",
+        title: "Ship it",
+        status: "active",
+      },
+    ]);
+  });
+
+  test("isolates a broken Resource presentation as a diagnostic item", () => {
     const resources = store();
     resources.create({
       kind: "ReqLoopRun",
@@ -36,18 +83,13 @@ describe("Plugin Board projection", () => {
     });
 
     expect(
-      projectBoardSource({
+      presentBoardSource({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceKind: "ReqLoopRun",
-        store: resources,
-        projector: {
-          project() {
-            return [
-              { key: "duplicate", title: "First" },
-              { key: "duplicate", title: "Second" },
-            ];
-          },
+        list: () => resources.list("ReqLoopRun"),
+        present() {
+          throw new Error("connector unavailable");
         },
       }),
     ).toEqual([
@@ -56,15 +98,14 @@ describe("Plugin Board projection", () => {
           "reqloop_default",
           "ReqLoopRun",
           "run_1",
-          "__projection_error",
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceKind: "ReqLoopRun",
         resourceId: "run_1",
         title: "ReqLoopRun/run_1",
-        status: "projection failed",
-        detail: "duplicate Board item key: duplicate",
+        status: "presentation failed",
+        detail: "connector unavailable",
         tone: "error",
       },
     ]);
