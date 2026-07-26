@@ -18,7 +18,10 @@ interface ScheduledControllerScope {
 
 export interface CronSourceQueueOptions {
   now?: () => Date;
-  onDue(scope: ReconcileScope): void;
+  onDue(
+    scope: ReconcileScope,
+    sources: readonly CronSource[],
+  ): void;
 }
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -160,16 +163,30 @@ export class CronSourceQueue {
   private fire(): void {
     this.timer = undefined;
     const nowMs = timestamp(this.now);
-    const dueScopes = new Map<string, ReconcileScope>();
+    const dueScopes = new Map<string, {
+      scope: ReconcileScope;
+      sources: CronSource[];
+    }>();
     for (const entry of this.entries.values()) {
       if (entry.nextAtMs > nowMs) continue;
       entry.nextAtMs = nextCronSourceAt(
         entry.source,
         new Date(nowMs),
       ).getTime();
-      dueScopes.set(reconcileScopeId(entry.scope), entry.scope);
+      const scopeId = reconcileScopeId(entry.scope);
+      const due = dueScopes.get(scopeId);
+      if (due) {
+        due.sources.push(entry.source);
+      } else {
+        dueScopes.set(scopeId, {
+          scope: entry.scope,
+          sources: [entry.source],
+        });
+      }
     }
     this.arm();
-    for (const scope of dueScopes.values()) this.onDue(scope);
+    for (const due of dueScopes.values()) {
+      this.onDue(due.scope, Object.freeze(due.sources));
+    }
   }
 }

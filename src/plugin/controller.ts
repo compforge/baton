@@ -235,6 +235,14 @@ export class Controller<TSpec, TStatus> {
     return this.queue.enqueue(reconcileKey);
   }
 
+  async discover(source: ControllerSource): Promise<void> {
+    if (!source.discover) return;
+    await this.executeWithCapacity(async () => {
+      if (this.closed) throw new Error("plugin Controller is closed");
+      await source.discover!();
+    });
+  }
+
   close(): void {
     this.closed = true;
     this.queue.close();

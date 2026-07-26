@@ -85,10 +85,18 @@ describe("Controller cron Sources", () => {
 
   test("coalesces cron Sources due for the same Controller scope", async () => {
     let now = new Date("2026-07-26T00:00:00.990Z");
-    const due: ReconcileScope[] = [];
+    const due: Array<{
+      scope: ReconcileScope;
+      sourceIds: readonly string[];
+    }> = [];
     const queue = new CronSourceQueue({
       now: () => now,
-      onDue: (value) => due.push(value),
+      onDue: (value, sources) => {
+        due.push({
+          scope: value,
+          sourceIds: sources.map((source) => source.sourceId),
+        });
+      },
     });
     queue.register(scope, [
       {
@@ -107,7 +115,10 @@ describe("Controller cron Sources", () => {
 
     now = new Date("2026-07-26T00:00:01.000Z");
     await waitFor(() => due.length === 1);
-    expect(due).toEqual([scope]);
+    expect(due).toEqual([{
+      scope,
+      sourceIds: ["poll-pr", "poll-requirement"],
+    }]);
     queue.close();
   });
 

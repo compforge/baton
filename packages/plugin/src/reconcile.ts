@@ -23,6 +23,11 @@ export interface CronSource {
   readonly cron: string;
   /** IANA time zone, for example "Asia/Shanghai" or "UTC". */
   readonly timeZone: string;
+  /**
+   * Discovers missing Resources before this Source enqueues the Controller's
+   * current Resource set. Status still converges through reconcile().
+   */
+  readonly discover?: () => Promise<void> | void;
 }
 
 export type ControllerSource = CronSource;

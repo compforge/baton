@@ -569,6 +569,87 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
+  test("cron Sources discover Resources before enqueueing the current set", async () => {
+    const root = testRoot();
+    const resources = store(root, "reqloop_default");
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    const runs: string[] = [];
+    const manager = new Manager({
+      proposals: proposalStore(root),
+      onProposal() {},
+      now: () => now,
+    });
+    const registration = manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceKind: "ReqLoopRun",
+      sources: [{
+        type: "cron",
+        sourceId: "discover-pr",
+        cron: "* * * * * *",
+        timeZone: "UTC",
+        discover() {
+          if (resources.list("ReqLoopRun").length === 0) {
+            createResource(resources, "ReqLoopRun", "run_discovered");
+          }
+        },
+      }],
+      async reconcile(_baton, resource) {
+        runs.push(resource.metadata.resourceId);
+      },
+    });
+
+    await manager.start();
+    expect(runs).toEqual([]);
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await waitFor(() => runs.length === 1);
+    expect(runs).toEqual(["run_discovered"]);
+
+    registration.close();
+    await manager.close();
+  });
+
+  test("cron Source discovery failure does not block known Resources", async () => {
+    const root = testRoot();
+    const resources = store(root, "reqloop_default");
+    createResource(resources, "ReqLoopRun", "run_known");
+    let now = new Date("2026-07-26T00:00:00.990Z");
+    const failures: string[] = [];
+    const runs: string[] = [];
+    const manager = new Manager({
+      proposals: proposalStore(root),
+      onProposal() {},
+      onControllerSourceError(failure) {
+        failures.push(failure.sourceId);
+      },
+      now: () => now,
+    });
+    const registration = manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceKind: "ReqLoopRun",
+      sources: [{
+        type: "cron",
+        sourceId: "discover-pr",
+        cron: "* * * * * *",
+        timeZone: "UTC",
+        discover() {
+          throw new Error("forge unavailable");
+        },
+      }],
+      async reconcile(_baton, resource) {
+        runs.push(resource.metadata.resourceId);
+      },
+    });
+
+    await manager.start();
+    now = new Date("2026-07-26T00:00:01.000Z");
+    await waitFor(() => failures.length === 1 && runs.length === 1);
+    expect(failures).toEqual(["discover-pr"]);
+    expect(runs).toEqual(["run_known"]);
+
+    registration.close();
+    await manager.close();
+  });
+
   test("stops cron Sources when their Controller registration closes", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
