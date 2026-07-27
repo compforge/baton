@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ReconcileInteraction } from "../src/plugin/controller.ts";
-import { Store as PluginInteractionStore } from "../src/plugin/interaction.ts";
+import {
+  LEGACY_RESOURCE_API_VERSION,
+  Store as PluginInteractionStore,
+} from "../src/plugin/interaction.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
@@ -27,13 +30,22 @@ describe("plugin Interaction Store", () => {
     const key = {
       batonSessionId: handle.id,
       pluginInstanceId: "reqloop_default",
+      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
       resourceKind: "ReqLoopRun",
       resourceId: "run_1",
     };
+    const resource = {
+      apiVersion: key.resourceApiVersion,
+      kind: key.resourceKind,
+      namespace: key.pluginInstanceId,
+      name: key.resourceId,
+      uid: "pr_resource_uid",
+    } as const;
     const draft: ReconcileInteraction = {
       key,
+      resource,
       basedOnGeneration: 3,
-      basedOnResourceVersion: 7,
+      basedOnResourceVersion: "7",
       request: {
         kind: "interaction",
         decisionKey: "associate-pr",
@@ -72,11 +84,7 @@ describe("plugin Interaction Store", () => {
       {
         interactionId: opened.interactionId,
         decisionKey: "associate-pr",
-        resource: {
-          resourceKind: "ReqLoopRun",
-          resourceId: "run_1",
-          resourceOwner: "plugin",
-        },
+        resource,
         outcome: { kind: "answered", values: ["req_1"] },
       },
     ]);
@@ -94,5 +102,58 @@ describe("plugin Interaction Store", () => {
       }),
     ).toBeUndefined();
     restored.close();
+  });
+
+  test("projects a legacy persisted context onto the current Resource type", () => {
+    const handle = session();
+    handle.append({
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      kind: "interaction.opened",
+      payload: {
+        kind: "question",
+        interactionId: "ix_legacy",
+        requester: {
+          type: "plugin",
+          pluginInstanceId: "reqloop_default",
+        },
+        pluginContext: {
+          decisionKey: "legacy-decision",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_1",
+          resourceOwner: "plugin",
+        },
+        questions: [{
+          questionId: "decision",
+          header: "Legacy decision",
+          question: "Continue?",
+        }],
+      },
+    });
+    const key = {
+      batonSessionId: handle.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
+      resourceKind: "ReqLoopRun",
+      resourceId: "run_1",
+    };
+    const store = new PluginInteractionStore(handle);
+
+    expect(store.snapshots(key)[0]?.resource).toEqual({
+      apiVersion: key.resourceApiVersion,
+      kind: key.resourceKind,
+      namespace: key.pluginInstanceId,
+      name: key.resourceId,
+    });
+    expect(
+      store.resolve("ix_legacy", {
+        kind: "question",
+        outcome: "answered",
+        answers: { decision: ["yes"] },
+      }),
+    ).toEqual({
+      ...key,
+      resourceApiVersion: LEGACY_RESOURCE_API_VERSION,
+    });
+    store.close();
   });
 });

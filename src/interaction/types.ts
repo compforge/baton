@@ -5,6 +5,8 @@
  * kind。Event source 表示谁报告了生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
+import type { ResourceRef } from "@qiankun01/baton-plugin";
+
 export type InteractionRequester =
   | { type: "harness"; harnessTargetId: string }
   | { type: "plugin"; pluginInstanceId: string }
@@ -91,11 +93,14 @@ export type InteractionDraft = PermissionInteraction | QuestionInteraction | Hoo
  */
 export interface PluginResourceInteractionContext {
   decisionKey: string;
-  resourceKind: string;
-  resourceId: string;
+  resource?: ResourceRef;
+  /** Legacy persisted context; new Interactions always write resource. */
+  resourceKind?: string;
+  /** Legacy persisted context; new Interactions always write resource. */
+  resourceId?: string;
   resourceOwner: "plugin" | "baton";
   basedOnGeneration?: number;
-  basedOnResourceVersion?: number;
+  basedOnResourceVersion?: string;
   basedOnRevision?: number;
 }
 

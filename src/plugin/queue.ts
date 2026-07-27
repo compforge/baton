@@ -70,6 +70,7 @@ export function reconcileKeyId(key: ReconcileKey): string {
   return JSON.stringify([
     key.batonSessionId,
     key.pluginInstanceId,
+    key.resourceApiVersion,
     key.resourceKind,
     key.resourceId,
     reconcileResourceOwner(key),
@@ -171,7 +172,7 @@ export class ReconcileQueue {
 
 /**
  * Manager 级动态唤醒队列。所有 Controller 共享一个 timer；持久真相仍在
- * Resource.metadata.nextReconcileAt，当前 Map 只负责本进程唤醒。
+ * PluginResourceStore control state，当前 Map 只负责本进程唤醒。
  */
 export class ReconcileDueQueue {
   private readonly entries = new Map<string, DueReconcile>();

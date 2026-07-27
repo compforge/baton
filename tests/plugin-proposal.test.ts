@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ReconcileProposal } from "../src/plugin/controller.ts";
+import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 
 const roots: string[] = [];
@@ -22,6 +30,7 @@ function draft(
     key: {
       batonSessionId: "bs_test",
       pluginInstanceId: "reqloop_default",
+      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
       resourceKind: "ReqLoopRun",
       resourceId: "run_1",
     },
@@ -83,15 +92,15 @@ describe("ProposalStore", () => {
     const store = new ProposalStore({
       session: testSession(testRoot()),
     });
-    const observedDraft = (resourceVersion: number): ReconcileProposal => ({
+    const observedDraft = (resourceVersion: string): ReconcileProposal => ({
       key: draft().key,
       basedOnGeneration: 1,
       basedOnResourceVersion: resourceVersion,
       text: "Review requirement",
     });
-    const first = store.record(observedDraft(2));
-    const repeated = store.record(observedDraft(2));
-    const nextObservation = store.record(observedDraft(3));
+    const first = store.record(observedDraft("2"));
+    const repeated = store.record(observedDraft("2"));
+    const nextObservation = store.record(observedDraft("3"));
 
     expect(repeated).toEqual(first);
     expect(nextObservation.proposalId).not.toBe(first.proposalId);
@@ -154,7 +163,8 @@ describe("ProposalStore", () => {
         batonSessionId: "bs_test",
         pluginInstanceId: "router_default",
         resourceOwner: "baton",
-        resourceKind: "baton.turn",
+        resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
+        resourceKind: BATON_TURN_RESOURCE_TYPE.kind,
         resourceId: "t_1",
       },
       basedOnRevision: 42,
@@ -169,7 +179,65 @@ describe("ProposalStore", () => {
     expect(first.basedOnRevision).toBe(42);
     expect(reopened.record(draft)).toEqual(first);
     expect(
-      reopened.record({ ...draft, basedOnRevision: 43 }).proposalId,
+      reopened.record({
+        key: draft.key,
+        basedOnRevision: 43,
+        text: draft.text,
+      }).proposalId,
     ).not.toBe(first.proposalId);
+  });
+
+  test("reads proposals persisted before apiVersion joined the reconcile key", () => {
+    const root = testRoot();
+    const text = "Review legacy requirement";
+    const textDigest = createHash("sha256").update(text).digest("hex");
+    const legacyIdentity = JSON.stringify([
+      "bs_test",
+      "reqloop_default",
+      "ReqLoopRun",
+      "run_1",
+      1,
+      "resourceVersion",
+      2,
+      textDigest,
+    ]);
+    const proposalId = `pp_${createHash("sha256")
+      .update(legacyIdentity)
+      .digest("hex")}`;
+    const directory = join(
+      testSession(root).dir,
+      "plugins",
+      "reqloop_default",
+      "proposals",
+    );
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, `${proposalId}.json`),
+      JSON.stringify({
+        proposalId,
+        key: {
+          batonSessionId: "bs_test",
+          pluginInstanceId: "reqloop_default",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_1",
+        },
+        basedOnGeneration: 1,
+        basedOnResourceVersion: 2,
+        text,
+        createdAt: "2026-07-25T00:00:00.000Z",
+      }),
+    );
+
+    expect(new ProposalStore({ session: testSession(root) }).get(proposalId))
+      .toMatchObject({
+        proposalId,
+        key: {
+          resourceApiVersion: "legacy.baton.dev/v1alpha1",
+          resourceKind: "ReqLoopRun",
+          resourceId: "run_1",
+        },
+        text,
+        basedOnResourceVersion: "2",
+      });
   });
 });

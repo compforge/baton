@@ -7,7 +7,6 @@ import {
   type ScheduledReconcile,
 } from "./controller.ts";
 import {
-  BATON_TURN_RESOURCE_KIND,
   BuiltinController,
   type BuiltinResource,
   type BuiltinControllerOptions,
@@ -33,6 +32,9 @@ import {
   type PluginCommandResult,
   type PluginPackage,
   type Resource,
+  type ResourceType,
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
   pluginPackageKey,
   type ToastMessage,
   type ToastTone,
@@ -47,7 +49,10 @@ import {
   CronSourceQueue,
   validateControllerSources,
 } from "./cron-source.ts";
-import { PluginResourceStore } from "./resource.ts";
+import {
+  PluginResourceStore,
+  resourceTypeKey,
+} from "./resource.ts";
 import { createResourceClient } from "./resource-client.ts";
 import {
   type BoardItem,
@@ -55,7 +60,10 @@ import {
 } from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { InteractionResolution } from "../interaction/types.ts";
-import { Store as InteractionStore } from "./interaction.ts";
+import {
+  LEGACY_RESOURCE_API_VERSION,
+  Store as InteractionStore,
+} from "./interaction.ts";
 import {
   emptyBatonSnapshot,
   type BatonSnapshot,
@@ -212,13 +220,13 @@ function pluginName(pluginId: string): string {
  */
 export class Manager {
   /** Baton claims its Resource kinds before any Plugin Binding can register. */
-  private readonly resourceKindOwners = new Map<string, {
+  private readonly resourceTypeOwners = new Map<string, {
     readonly owner: "baton" | string;
     controllers: number;
     claimedByResource: boolean;
   }>([
     [
-      BATON_TURN_RESOURCE_KIND,
+      resourceTypeKey(BATON_TURN_RESOURCE_TYPE),
       { owner: "baton", controllers: 0, claimedByResource: true },
     ],
   ]);
@@ -499,8 +507,8 @@ export class Manager {
           pluginInstanceId: instance.pluginInstanceId,
         }),
         () => this.notifyBoardChanged(),
-        (resourceKind) =>
-          this.claimResourceKindForCreate(instance.pluginId, resourceKind),
+        (resourceType) =>
+          this.claimResourceTypeForCreate(instance.pluginId, resourceType),
       ),
     );
     let activation!: Promise<void>;
@@ -764,14 +772,33 @@ export class Manager {
     interactionId: string,
     resolution: InteractionResolution,
   ): Promise<boolean> {
-    const key = this.interactions?.resolve(interactionId, resolution);
-    if (!key) return false;
+    const resolvedKey = this.interactions?.resolve(interactionId, resolution);
+    if (!resolvedKey) return false;
+    const key =
+      resolvedKey.resourceApiVersion === LEGACY_RESOURCE_API_VERSION
+        ? this.resolveLegacyInteractionKey(resolvedKey)
+        : resolvedKey;
     try {
       await this.enqueue(key);
     } catch {
       // Resolution 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
     }
     return true;
+  }
+
+  private resolveLegacyInteractionKey(key: ReconcileKey): ReconcileKey {
+    const matches = [...this.controllers.values()].filter(
+      (controller) =>
+        controller.scope.pluginInstanceId === key.pluginInstanceId &&
+        controller.scope.resourceKind === key.resourceKind &&
+        reconcileResourceOwner(controller.scope) ===
+          reconcileResourceOwner(key),
+    );
+    if (matches.length !== 1) return key;
+    return Object.freeze({
+      ...key,
+      resourceApiVersion: matches[0]!.scope.resourceApiVersion,
+    });
   }
 
   getBatonResource<K extends BuiltinResourceKind>(
@@ -905,15 +932,18 @@ export class Manager {
     instance: PluginInstance,
     pluginController: PluginResourceController<TSpec, TStatus>,
   ): () => void {
-    if (pluginController.resourceKind === BATON_TURN_RESOURCE_KIND) {
+    if (
+      resourceTypeKey(pluginController.resourceType) ===
+        resourceTypeKey(BATON_TURN_RESOURCE_TYPE)
+    ) {
       return this.bindBatonResourceController(
         instance.pluginInstanceId,
         pluginController,
       );
     }
-    const releaseKind = this.claimResourceKind(
+    const releaseKind = this.claimResourceType(
       instance.pluginId,
-      pluginController.resourceKind,
+      pluginController.resourceType,
     );
     try {
       const close = this.bindPluginResourceController(
@@ -952,7 +982,8 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.proposals.batonSessionId,
       pluginInstanceId,
-      resourceKind: pluginController.resourceKind,
+      resourceApiVersion: pluginController.resourceType.apiVersion,
+      resourceKind: pluginController.resourceType.kind,
     });
     if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
@@ -960,12 +991,12 @@ export class Manager {
       this.boardSources.set(sourceId, {
         pluginInstanceId,
         present: () =>
-          presentBoardSource({
+          presentBoardSource<TSpec, TStatus>({
             pluginId,
             pluginInstanceId,
-            resourceKind: pluginController.resourceKind,
+            resourceType: pluginController.resourceType,
             list: () =>
-              store.list<TSpec, TStatus>(pluginController.resourceKind),
+              store.list<TSpec, TStatus>(pluginController.resourceType),
             present,
           }),
       });
@@ -982,10 +1013,10 @@ export class Manager {
   ): () => void {
     if (!this.batonResources) {
       throw new Error(
-        `Resource kind ${pluginController.resourceKind} requires a SessionHandle`,
+        `Resource type ${pluginController.resourceType.apiVersion}/${pluginController.resourceType.kind} requires a SessionHandle`,
       );
     }
-    const resourceKind = BATON_TURN_RESOURCE_KIND;
+    const resourceKind = BATON_TURN_RESOURCE_TYPE.kind;
     const registration = this.registerBuiltinControllerInternal(
       {
         pluginInstanceId,
@@ -1007,6 +1038,7 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.proposals.batonSessionId,
       pluginInstanceId,
+      resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       resourceKind,
       resourceOwner: "baton",
     });
@@ -1016,10 +1048,10 @@ export class Manager {
       this.boardSources.set(sourceId, {
         pluginInstanceId,
         present: () =>
-          presentBoardSource({
+          presentBoardSource<TSpec, TStatus>({
             pluginId,
             pluginInstanceId,
-            resourceKind,
+            resourceType: BATON_TURN_RESOURCE_TYPE,
             list: () =>
               this.batonResources!.list(resourceKind).map((resource) =>
                 this.exposeBatonResource<TSpec, TStatus>(
@@ -1038,39 +1070,40 @@ export class Manager {
   }
 
   private exposeBatonResource<TSpec, TStatus>(
-    pluginInstanceId: string,
-    resource: BuiltinResource<typeof BATON_TURN_RESOURCE_KIND>,
+    _pluginInstanceId: string,
+    resource: BuiltinResource<typeof BATON_TURN_RESOURCE_TYPE.kind>,
   ): Readonly<Resource<TSpec, TStatus>> {
     return Object.freeze({
+      apiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       kind: resource.kind,
       metadata: Object.freeze({
-        resourceId: resource.metadata.resourceId,
-        batonSessionId: resource.metadata.batonSessionId,
-        pluginInstanceId,
+        name: resource.metadata.resourceId,
+        namespace: BATON_SYSTEM_NAMESPACE,
+        uid: resource.metadata.sourceEventId,
         generation: 1,
-        resourceVersion: resource.metadata.revision,
-        createdAt: resource.metadata.observedAt,
-        updatedAt: resource.metadata.observedAt,
+        resourceVersion: String(resource.metadata.revision),
+        creationTimestamp: resource.metadata.observedAt,
       }),
       spec: Object.freeze({}) as TSpec,
       status: resource.data as TStatus,
     });
   }
 
-  private claimResourceKind(pluginId: string, resourceKind: string): () => void {
-    const current = this.resourceKindOwners.get(resourceKind);
+  private claimResourceType(pluginId: string, type: ResourceType): () => void {
+    const key = resourceTypeKey(type);
+    const current = this.resourceTypeOwners.get(key);
     if (current?.owner === "baton") {
-      throw new Error(`Resource kind is reserved by Baton: ${resourceKind}`);
+      throw new Error(`Resource type is reserved by Baton: ${key}`);
     }
     if (current && current.owner !== pluginId) {
       throw new Error(
-        `Resource kind ${resourceKind} is already registered by ${current.owner}`,
+        `Resource type ${key} is already registered by ${current.owner}`,
       );
     }
     if (current) {
       current.controllers += 1;
     } else {
-      this.resourceKindOwners.set(resourceKind, {
+      this.resourceTypeOwners.set(key, {
         owner: pluginId,
         controllers: 1,
         claimedByResource: false,
@@ -1080,33 +1113,34 @@ export class Manager {
     return () => {
       if (!active) return;
       active = false;
-      const registered = this.resourceKindOwners.get(resourceKind);
+      const registered = this.resourceTypeOwners.get(key);
       if (!registered || registered.owner !== pluginId) return;
       registered.controllers -= 1;
       if (registered.controllers === 0 && !registered.claimedByResource) {
-        this.resourceKindOwners.delete(resourceKind);
+        this.resourceTypeOwners.delete(key);
       }
     };
   }
 
-  private claimResourceKindForCreate(
+  private claimResourceTypeForCreate(
     pluginId: string,
-    resourceKind: string,
+    type: ResourceType,
   ): void {
-    const current = this.resourceKindOwners.get(resourceKind);
+    const key = resourceTypeKey(type);
+    const current = this.resourceTypeOwners.get(key);
     if (current?.owner === "baton") {
-      throw new Error(`Resource kind is reserved by Baton: ${resourceKind}`);
+      throw new Error(`Resource type is reserved by Baton: ${key}`);
     }
     if (current && current.owner !== pluginId) {
       throw new Error(
-        `Resource kind ${resourceKind} is already registered by ${current.owner}`,
+        `Resource type ${key} is already registered by ${current.owner}`,
       );
     }
     if (current) {
       current.claimedByResource = true;
       return;
     }
-    this.resourceKindOwners.set(resourceKind, {
+    this.resourceTypeOwners.set(key, {
       owner: pluginId,
       controllers: 0,
       claimedByResource: true,

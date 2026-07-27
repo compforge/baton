@@ -1,4 +1,4 @@
-import type { Resource } from "./resource.ts";
+import type { Resource, ResourceType } from "./resource.ts";
 import type { BatonSnapshot } from "./snapshot.ts";
 import type { BoardPresentation } from "./board.ts";
 import type { Output as InteractionOutput } from "./interaction.ts";
@@ -33,7 +33,7 @@ export interface CronSource {
 export type ControllerSource = CronSource;
 
 export interface Controller<TSpec, TStatus> {
-  readonly resourceKind: string;
+  readonly resourceType: ResourceType;
   readonly sources?: readonly ControllerSource[];
   readonly maxConcurrency?: number;
   reconcile(

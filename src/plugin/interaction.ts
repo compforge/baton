@@ -2,6 +2,10 @@ import type {
   Outcome as PublicInteractionOutcome,
   Snapshot as PublicInteractionSnapshot,
 } from "@qiankun01/baton-plugin";
+import {
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
+} from "@qiankun01/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import type {
@@ -21,6 +25,8 @@ import type {
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 
 const QUESTION_ID = "decision";
+export const LEGACY_RESOURCE_API_VERSION =
+  "legacy.baton.dev/v1alpha1";
 
 type InteractionSession = Pick<
   SessionHandle,
@@ -36,13 +42,42 @@ function interactionIdentity(
   pluginInstanceId: string,
   context: PluginResourceInteractionContext,
 ): string {
+  if (!context.resource) {
+    return JSON.stringify([
+      pluginInstanceId,
+      context.resourceOwner,
+      context.resourceKind,
+      context.resourceId,
+      context.decisionKey,
+    ]);
+  }
   return JSON.stringify([
     pluginInstanceId,
     context.resourceOwner,
-    context.resourceKind,
-    context.resourceId,
+    context.resource.apiVersion,
+    context.resource.kind,
+    context.resource.namespace,
+    context.resource.name,
+    context.resource.uid,
     context.decisionKey,
   ]);
+}
+
+function contextKind(context: PluginResourceInteractionContext): string {
+  if (context.resource) return context.resource.kind;
+  if (context.resourceOwner === "baton" && context.resourceKind === "baton.turn") {
+    return BATON_TURN_RESOURCE_TYPE.kind;
+  }
+  if (!context.resourceKind) {
+    throw new Error("plugin Interaction context has no Resource kind");
+  }
+  return context.resourceKind;
+}
+
+function contextName(context: PluginResourceInteractionContext): string {
+  const name = context.resource?.name ?? context.resourceId;
+  if (!name) throw new Error("plugin Interaction context has no Resource name");
+  return name;
 }
 
 function interactionContext(
@@ -50,8 +85,7 @@ function interactionContext(
 ): PluginResourceInteractionContext {
   return Object.freeze({
     decisionKey: draft.request.decisionKey,
-    resourceKind: draft.key.resourceKind,
-    resourceId: draft.key.resourceId,
+    resource: draft.resource,
     resourceOwner: reconcileResourceOwner(draft.key),
     ...(draft.basedOnGeneration === undefined
       ? {}
@@ -209,8 +243,10 @@ export class Store {
     return Object.freeze({
       batonSessionId: this.session.id,
       pluginInstanceId: interaction.requester.pluginInstanceId,
-      resourceKind: context.resourceKind,
-      resourceId: context.resourceId,
+      resourceApiVersion:
+        context.resource?.apiVersion ?? LEGACY_RESOURCE_API_VERSION,
+      resourceKind: contextKind(context),
+      resourceId: contextName(context),
       ...(context.resourceOwner === "plugin"
         ? {}
         : { resourceOwner: context.resourceOwner }),
@@ -228,8 +264,10 @@ export class Store {
         interaction.requester.pluginInstanceId !== key.pluginInstanceId ||
         !context ||
         context.resourceOwner !== resourceOwner ||
-        context.resourceKind !== key.resourceKind ||
-        context.resourceId !== key.resourceId
+        (context.resource !== undefined &&
+          context.resource.apiVersion !== key.resourceApiVersion) ||
+        contextKind(context) !== key.resourceKind ||
+        contextName(context) !== key.resourceId
       ) {
         continue;
       }
@@ -237,11 +275,17 @@ export class Store {
       snapshots.push(Object.freeze({
         interactionId: interaction.interactionId,
         decisionKey: context.decisionKey,
-        resource: Object.freeze({
-          resourceKind: context.resourceKind,
-          resourceId: context.resourceId,
-          resourceOwner: context.resourceOwner,
-        }),
+        resource:
+          context.resource ??
+          Object.freeze({
+            apiVersion: key.resourceApiVersion,
+            kind: key.resourceKind,
+            namespace:
+              resourceOwner === "baton"
+                ? BATON_SYSTEM_NAMESPACE
+                : key.pluginInstanceId,
+            name: key.resourceId,
+          }),
         ...(resolved === undefined ? {} : { outcome: Object.freeze(resolved) }),
       }));
     }

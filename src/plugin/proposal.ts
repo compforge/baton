@@ -17,6 +17,7 @@ import {
   type ReconcileProposal,
 } from "./controller.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
+import { validateResourceType } from "./resource.ts";
 
 export type ProposalOutcome = "submitted" | "dismissed";
 
@@ -41,6 +42,7 @@ export interface ProposalStoreOptions {
 
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const PROPOSAL_ID = /^pp_[0-9a-f]{64}$/;
+const LEGACY_RESOURCE_API_VERSION = "legacy.baton.dev/v1alpha1";
 
 function assertPathSegment(name: string, value: string): void {
   if (!PATH_SEGMENT.test(value) || value === "." || value === "..") {
@@ -54,6 +56,15 @@ function positiveInteger(name: string, value: unknown): asserts value is number 
   }
 }
 
+function opaqueResourceVersion(
+  name: string,
+  value: unknown,
+): asserts value is string {
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) {
+    throw new Error(`${name} must be an opaque positive version`);
+  }
+}
+
 function isoTimestamp(name: string, value: unknown): asserts value is string {
   if (typeof value !== "string" || !value || Number.isNaN(Date.parse(value))) {
     throw new Error(`${name} must be an ISO timestamp`);
@@ -64,23 +75,32 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function proposalId(proposal: ReconcileProposal): string {
+function proposalId(
+  proposal: ReconcileProposal,
+  legacyResourceVersion?: number,
+): string {
   const textDigest = sha256(proposal.text);
+  const versionIdentity =
+    proposal.key.resourceApiVersion === LEGACY_RESOURCE_API_VERSION
+      ? []
+      : [proposal.key.resourceApiVersion];
   if (proposal.basedOnGeneration !== undefined) {
     // 无 resourceVersion 的旧 Proposal 保留原身份，升级后已有文件仍可校验。
     const basis =
-      proposal.basedOnResourceVersion === undefined
+      proposal.basedOnResourceVersion === undefined &&
+        legacyResourceVersion === undefined
         ? [proposal.basedOnGeneration, textDigest]
         : [
             proposal.basedOnGeneration,
             "resourceVersion",
-            proposal.basedOnResourceVersion,
+            legacyResourceVersion ?? proposal.basedOnResourceVersion,
             textDigest,
           ];
     return `pp_${sha256(
       JSON.stringify([
         proposal.key.batonSessionId,
         proposal.key.pluginInstanceId,
+        ...versionIdentity,
         proposal.key.resourceKind,
         proposal.key.resourceId,
         ...basis,
@@ -92,6 +112,7 @@ function proposalId(proposal: ReconcileProposal): string {
       proposal.key.batonSessionId,
       proposal.key.pluginInstanceId,
       "baton",
+      ...versionIdentity,
       proposal.key.resourceKind,
       proposal.key.resourceId,
       proposal.basedOnRevision,
@@ -115,6 +136,7 @@ function sameKey(left: ReconcileKey, right: ReconcileKey): boolean {
   return (
     left.batonSessionId === right.batonSessionId &&
     left.pluginInstanceId === right.pluginInstanceId &&
+    left.resourceApiVersion === right.resourceApiVersion &&
     left.resourceKind === right.resourceKind &&
     left.resourceId === right.resourceId &&
     reconcileResourceOwner(left) === reconcileResourceOwner(right)
@@ -245,6 +267,7 @@ export class ProposalStore {
     const key = {
       batonSessionId: draft.key.batonSessionId,
       pluginInstanceId: draft.key.pluginInstanceId,
+      resourceApiVersion: draft.key.resourceApiVersion,
       resourceKind: draft.key.resourceKind,
       resourceId: draft.key.resourceId,
       ...(draft.key.resourceOwner === undefined
@@ -259,6 +282,10 @@ export class ProposalStore {
     })) {
       assertPathSegment(name, value);
     }
+    validateResourceType({
+      apiVersion: key.resourceApiVersion,
+      kind: key.resourceKind,
+    });
     if (key.batonSessionId !== this.batonSessionId) {
       throw new Error(
         `plugin proposal batonSessionId must be ${this.batonSessionId}, got ${key.batonSessionId}`,
@@ -268,7 +295,10 @@ export class ProposalStore {
     if (owner === "plugin") {
       positiveInteger("basedOnGeneration", draft.basedOnGeneration);
       if (draft.basedOnResourceVersion !== undefined) {
-        positiveInteger("basedOnResourceVersion", draft.basedOnResourceVersion);
+        opaqueResourceVersion(
+          "basedOnResourceVersion",
+          draft.basedOnResourceVersion,
+        );
       }
       if (draft.basedOnRevision !== undefined) {
         throw new Error("PluginResource proposal must not set basedOnRevision");
@@ -319,8 +349,26 @@ export class ProposalStore {
       if (proposal.proposalId !== expectedId) {
         throw new Error(`proposalId must be ${expectedId}`);
       }
+      const rawKey = proposal.key as Partial<ReconcileKey>;
+      const legacyKey = typeof rawKey.resourceApiVersion !== "string";
+      const legacyResourceVersion =
+        legacyKey && typeof proposal.basedOnResourceVersion === "number"
+          ? proposal.basedOnResourceVersion
+          : undefined;
       const rawDraft = {
-        key: proposal.key as ReconcileKey,
+        key: {
+          batonSessionId: rawKey.batonSessionId as string,
+          pluginInstanceId: rawKey.pluginInstanceId as string,
+          resourceApiVersion:
+            typeof rawKey.resourceApiVersion === "string"
+              ? rawKey.resourceApiVersion
+              : LEGACY_RESOURCE_API_VERSION,
+          resourceKind: rawKey.resourceKind as string,
+          resourceId: rawKey.resourceId as string,
+          ...(rawKey.resourceOwner === undefined
+            ? {}
+            : { resourceOwner: rawKey.resourceOwner }),
+        },
         text: proposal.text as string,
         ...(proposal.basedOnGeneration === undefined
           ? {}
@@ -328,14 +376,19 @@ export class ProposalStore {
         ...(proposal.basedOnResourceVersion === undefined
           ? {}
           : {
-              basedOnResourceVersion: proposal.basedOnResourceVersion as number,
+              basedOnResourceVersion: String(
+                proposal.basedOnResourceVersion,
+              ),
             }),
         ...(proposal.basedOnRevision === undefined
           ? {}
           : { basedOnRevision: proposal.basedOnRevision as number }),
       } as ReconcileProposal;
       const draft = this.validateDraft(rawDraft);
-      if (proposal.proposalId !== proposalId(draft)) {
+      if (
+        proposal.proposalId !==
+        proposalId(draft, legacyResourceVersion)
+      ) {
         throw new Error("proposalId does not match proposal content");
       }
       isoTimestamp("createdAt", proposal.createdAt);

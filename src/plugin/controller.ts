@@ -2,10 +2,15 @@ import type {
   Controller as PluginController,
   ControllerSource,
   Output as PluginInteractionOutput,
+  ResourceRef,
+  ResourceType,
 } from "@qiankun01/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
-import { PluginResourceStore } from "./resource.ts";
+import {
+  PluginResourceStore,
+  validateResourceType,
+} from "./resource.ts";
 import { ReconcileQueue } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
@@ -22,6 +27,7 @@ export type ReconcileResourceOwner = "plugin" | "baton";
 export interface ReconcileScope {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
+  readonly resourceApiVersion: string;
   readonly resourceKind: string;
   /** 旧 key 缺省为 plugin；baton 表示只读 Baton-owned Resource。 */
   readonly resourceOwner?: ReconcileResourceOwner;
@@ -45,7 +51,7 @@ export interface PluginResourceReconcileProposal {
    * Controller 产出建议时看到的最新 Resource revision。
    * 同一 spec generation 下的不同外部 observation 必须能形成不同 Proposal。
    */
-  readonly basedOnResourceVersion?: number;
+  readonly basedOnResourceVersion?: string;
   readonly basedOnRevision?: never;
   readonly text: string;
 }
@@ -64,14 +70,16 @@ export type ReconcileProposal =
 
 export interface PluginResourceReconcileInteraction {
   readonly key: ReconcileKey;
+  readonly resource: ResourceRef;
   readonly basedOnGeneration: number;
-  readonly basedOnResourceVersion?: number;
+  readonly basedOnResourceVersion?: string;
   readonly basedOnRevision?: never;
   readonly request: PluginInteractionOutput;
 }
 
 export interface BuiltinResourceReconcileInteraction {
   readonly key: ReconcileKey;
+  readonly resource: ResourceRef;
   readonly basedOnGeneration?: never;
   readonly basedOnResourceVersion?: never;
   readonly basedOnRevision: number;
@@ -89,7 +97,7 @@ export interface ScheduledReconcile {
 
 export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
-  resourceKind: string;
+  resourceType: ResourceType;
   sources?: readonly ControllerSource[];
   reconcile: PluginController<TSpec, TStatus>["reconcile"];
   present?: PluginController<TSpec, TStatus>["present"];
@@ -111,6 +119,7 @@ function ownedKey(key: ReconcileKey): ReconcileKey {
   const copy = {
     batonSessionId: key.batonSessionId,
     pluginInstanceId: key.pluginInstanceId,
+    resourceApiVersion: key.resourceApiVersion,
     resourceKind: key.resourceKind,
     resourceId: key.resourceId,
     ...(key.resourceOwner === undefined
@@ -120,6 +129,7 @@ function ownedKey(key: ReconcileKey): ReconcileKey {
   for (const [name, value] of Object.entries({
     batonSessionId: copy.batonSessionId,
     pluginInstanceId: copy.pluginInstanceId,
+    resourceApiVersion: copy.resourceApiVersion,
     resourceKind: copy.resourceKind,
     resourceId: copy.resourceId,
   })) {
@@ -171,7 +181,7 @@ export class Controller<TSpec, TStatus> {
   readonly sources: readonly ControllerSource[];
   readonly present?: PluginController<TSpec, TStatus>["present"];
   private readonly store: PluginResourceStore;
-  private readonly resourceKind: string;
+  private readonly resourceType: ResourceType;
   private readonly reconcileResource: PluginController<TSpec, TStatus>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: (key: ReconcileKey) => BatonSnapshot;
@@ -186,9 +196,9 @@ export class Controller<TSpec, TStatus> {
   private closed = false;
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
-    if (!options.resourceKind.trim()) throw new Error("resourceKind must not be empty");
+    validateResourceType(options.resourceType);
     this.store = options.store;
-    this.resourceKind = options.resourceKind;
+    this.resourceType = Object.freeze({ ...options.resourceType });
     this.reconcileResource = options.reconcile;
     this.sources = Object.freeze([...(options.sources ?? [])]);
     this.present = options.present;
@@ -206,7 +216,8 @@ export class Controller<TSpec, TStatus> {
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
-      resourceKind: options.resourceKind,
+      resourceApiVersion: options.resourceType.apiVersion,
+      resourceKind: options.resourceType.kind,
     });
     this.queue = new ReconcileQueue({
       execute: (key) =>
@@ -249,26 +260,22 @@ export class Controller<TSpec, TStatus> {
   }
 
   scheduledReconciles(): ScheduledReconcile[] {
-    return this.store.list(this.resourceKind).flatMap((resource) => {
-      const value = resource.metadata.nextReconcileAt;
-      if (value === undefined) return [];
-      return [
-        Object.freeze({
-          key: ownedKey({
-            ...this.scope,
-            resourceId: resource.metadata.resourceId,
-          }),
-          nextReconcileAt: new Date(value),
+    return this.store.scheduledReconciles(this.resourceType).map((entry) =>
+      Object.freeze({
+        key: ownedKey({
+          ...this.scope,
+          resourceId: entry.resource.metadata.name,
         }),
-      ];
-    });
+        nextReconcileAt: entry.nextReconcileAt,
+      })
+    );
   }
 
   resourceKeys(): ReconcileKey[] {
-    return this.store.list(this.resourceKind).map((resource) =>
+    return this.store.list(this.resourceType).map((resource) =>
       ownedKey({
         ...this.scope,
-        resourceId: resource.metadata.resourceId,
+        resourceId: resource.metadata.name,
       }),
     );
   }
@@ -277,7 +284,7 @@ export class Controller<TSpec, TStatus> {
     const reconcileKey = ownedKey(key);
     this.assertOwns(reconcileKey);
     this.store.setNextReconcileAt(
-      this.resourceKind,
+      this.resourceType,
       reconcileKey.resourceId,
       next,
     );
@@ -285,11 +292,11 @@ export class Controller<TSpec, TStatus> {
 
   private async reconcile(key: ReconcileKey): Promise<ReconcileExecution> {
     return await this.store.withReconcileLock(
-      this.resourceKind,
+      this.resourceType,
       key.resourceId,
       async () => {
         const resource = deepFreeze(
-          this.store.get<TSpec, TStatus>(this.resourceKind, key.resourceId),
+          this.store.get<TSpec, TStatus>(this.resourceType, key.resourceId),
         );
         const baton = deepFreeze(this.snapshot(key));
         if (baton.session.batonSessionId !== this.scope.batonSessionId) {
@@ -305,7 +312,7 @@ export class Controller<TSpec, TStatus> {
           throw new Error("plugin Controller now() returned an invalid Date");
         }
         const latest = this.store.get<TSpec, TStatus>(
-          this.resourceKind,
+          this.resourceType,
           key.resourceId,
         );
         if (latest.metadata.generation !== resource.metadata.generation) {
@@ -318,7 +325,7 @@ export class Controller<TSpec, TStatus> {
             ? null
             : new Date(now.getTime() + result.requeueAfterMs);
         this.store.setNextReconcileAt<TSpec, TStatus>(
-          this.resourceKind,
+          this.resourceType,
           key.resourceId,
           nextReconcileAt,
           { expectedResourceVersion: latest.metadata.resourceVersion },
@@ -341,6 +348,13 @@ export class Controller<TSpec, TStatus> {
             ? {
                 interaction: Object.freeze({
                   key,
+                  resource: Object.freeze({
+                    apiVersion: resource.apiVersion,
+                    kind: resource.kind,
+                    namespace: resource.metadata.namespace,
+                    name: resource.metadata.name,
+                    uid: resource.metadata.uid,
+                  }),
                   basedOnGeneration: resource.metadata.generation,
                   basedOnResourceVersion: latest.metadata.resourceVersion,
                   request: output,
@@ -356,11 +370,12 @@ export class Controller<TSpec, TStatus> {
     if (
       key.batonSessionId !== this.scope.batonSessionId ||
       key.pluginInstanceId !== this.scope.pluginInstanceId ||
+      key.resourceApiVersion !== this.scope.resourceApiVersion ||
       key.resourceKind !== this.scope.resourceKind ||
       reconcileResourceOwner(key) !== reconcileResourceOwner(this.scope)
     ) {
       throw new Error(
-        `reconcile key is outside controller scope: ${key.batonSessionId}/${key.pluginInstanceId}/${key.resourceKind}/${key.resourceId}`,
+        `reconcile key is outside controller scope: ${key.batonSessionId}/${key.pluginInstanceId}/${key.resourceApiVersion}/${key.resourceKind}/${key.resourceId}`,
       );
     }
   }

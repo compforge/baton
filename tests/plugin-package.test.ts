@@ -10,10 +10,19 @@ import type {
   PluginActivationContext,
   PluginPackage,
 } from "../src/plugin/package.ts";
+import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
 const roots: string[] = [];
+const REQ_LOOP_RUN = {
+  apiVersion: "reqloop.baton.dev/v1alpha1",
+  kind: "ReqLoopRun",
+} as const;
+
+function resourceType(kind: string) {
+  return { apiVersion: "tests.baton.dev/v1alpha1", kind };
+}
 
 function testRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "baton-plugin-package-"));
@@ -50,6 +59,7 @@ function key(pluginInstanceId: string, resourceId: string) {
   return {
     batonSessionId: "bs_test",
     pluginInstanceId,
+    resourceApiVersion: REQ_LOOP_RUN.apiVersion,
     resourceKind: "ReqLoopRun",
     resourceId,
   };
@@ -144,15 +154,15 @@ describe("Plugin Package lifecycle", () => {
       packages: [
         reqloopPackage((context) => {
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             sources: [{
               type: "cron",
               sourceId: "poll-pr-state",
               cron: "* * * * * *",
               timeZone: "UTC",
               discover() {
-                context.resources.create("ReqLoopRun", {
-                  resourceId: "run_1",
+                context.resources.create(REQ_LOOP_RUN, {
+                  name: "run_1",
                   spec: { requirement: "ship it" },
                 });
               },
@@ -183,8 +193,8 @@ describe("Plugin Package lifecycle", () => {
       packageVersion: "1.2.0",
     });
     resourceStore(root, "reqloop_default").create({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
@@ -200,7 +210,7 @@ describe("Plugin Package lifecycle", () => {
             { requirement: string },
             { phase: string }
           >({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile() {},
             present(resource) {
               return {
@@ -222,6 +232,7 @@ describe("Plugin Package lifecycle", () => {
       {
         id: JSON.stringify([
           "reqloop_default",
+          REQ_LOOP_RUN.apiVersion,
           "ReqLoopRun",
           "run_1",
         ]),
@@ -237,7 +248,7 @@ describe("Plugin Package lifecycle", () => {
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }
-    >("ReqLoopRun", "run_1");
+    >(REQ_LOOP_RUN, "run_1");
     context!.resources.patchStatus(resource, { phase: "ready" });
     expect(manager.listBoardItems()[0]?.status).toBe("ready");
     expect(boardChanges).toBeGreaterThanOrEqual(2);
@@ -256,14 +267,14 @@ describe("Plugin Package lifecycle", () => {
       packageVersion: "1.2.0",
     });
     resourceStore(root, "reqloop_default").create({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
     const foreign = resourceStore(root, "another_instance").create({
-      kind: "ReqLoopRun",
-      resourceId: "run_2",
+      type: REQ_LOOP_RUN,
+      name: "run_2",
       spec: { requirement: "do not touch" },
       status: { phase: "pending" },
     });
@@ -313,7 +324,7 @@ describe("Plugin Package lifecycle", () => {
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }
-    >("ReqLoopRun", "run_1");
+    >(REQ_LOOP_RUN, "run_1");
     expect(Object.isFrozen(resource)).toBe(true);
     const updated = context!.resources.patchStatus(resource, {
       phase: "running",
@@ -323,11 +334,11 @@ describe("Plugin Package lifecycle", () => {
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
     ).toThrow("outside reqloop_default");
     expect(() =>
-      context!.resources.create("baton.turn", {
-        resourceId: "forged_turn",
+      context!.resources.create(BATON_TURN_RESOURCE_TYPE, {
+        name: "forged_turn",
         spec: {},
       }),
-    ).toThrow("Resource kind is reserved by Baton: baton.turn");
+    ).toThrow("Resource type is reserved by Baton");
     await manager.close();
   });
 
@@ -341,8 +352,8 @@ describe("Plugin Package lifecycle", () => {
         packageVersion: "1.2.0",
       });
       resourceStore(root, pluginInstanceId).create({
-        kind: "ReqLoopRun",
-        resourceId: "run_1",
+        type: REQ_LOOP_RUN,
+        name: "run_1",
         spec: { requirement: pluginInstanceId },
       });
     }
@@ -361,9 +372,9 @@ describe("Plugin Package lifecycle", () => {
         reqloopPackage((context) => {
           activated.push(context.instance.pluginInstanceId);
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile(_baton, resource) {
-                reconciled.push(resource.metadata.pluginInstanceId);
+                reconciled.push(resource.metadata.namespace);
               },
           });
         }),
@@ -403,7 +414,7 @@ describe("Plugin Package lifecycle", () => {
       version: "1.0.0",
       activate(context) {
         context.registerController({
-          resourceKind: "SharedRun",
+          resourceType: resourceType("SharedRun"),
           async reconcile() {},
         });
       },
@@ -420,7 +431,7 @@ describe("Plugin Package lifecycle", () => {
 
     await manager.activateInstance("first");
     await expect(manager.activateInstance("second")).rejects.toThrow(
-      "Resource kind SharedRun is already registered by example/first",
+      "is already registered by example/first",
     );
     await manager.close();
   });
@@ -443,7 +454,7 @@ describe("Plugin Package lifecycle", () => {
             closed.push("connector");
           });
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
           context.onClose(() => {
@@ -484,7 +495,7 @@ describe("Plugin Package lifecycle", () => {
             closed.push("connector");
           });
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
           throw new Error("activation failed");
@@ -556,7 +567,7 @@ describe("Plugin Package lifecycle", () => {
 
     expect(() =>
       captured?.registerController({
-        resourceKind: "LateResource",
+        resourceType: resourceType("LateResource"),
         async reconcile() {},
       }),
     ).toThrow("plugin Binding activation is complete");
@@ -590,7 +601,7 @@ describe("Plugin Package lifecycle", () => {
             cleanups += 1;
           });
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
         }),
@@ -650,7 +661,7 @@ describe("Plugin Package lifecycle", () => {
             throw new Error("connector config is invalid");
           }
           context.registerController({
-            resourceKind: "ReqLoopRun",
+            resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
         }),

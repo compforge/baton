@@ -1283,8 +1283,13 @@ describe("interaction eventization: pending projects from the event stream", () 
           },
           pluginContext: {
             decisionKey: "associate-pr",
-            resourceKind: "ReqLoopRun",
-            resourceId: "run_1",
+            resource: {
+              apiVersion: "reqloop.baton.dev/v1alpha1",
+              kind: "ReqLoopRun",
+              namespace: "reqloop_default",
+              name: "run_1",
+              uid: "pr_resource_uid",
+            },
             resourceOwner: "plugin",
           },
           questions: [
@@ -1436,6 +1441,7 @@ describe("Plugin Proposal projection", () => {
         key: {
           batonSessionId: session.id,
           pluginInstanceId: "reqloop_default",
+          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
           resourceKind: "ReqLoopRun",
           resourceId: "run_1",
         },
@@ -1465,6 +1471,7 @@ describe("Plugin Proposal projection", () => {
         key: {
           batonSessionId: session.id,
           pluginInstanceId: "reqloop_default",
+          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
           resourceKind: "ReqLoopRun",
           resourceId: "run_2",
         },

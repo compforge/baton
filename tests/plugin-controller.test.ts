@@ -21,6 +21,10 @@ interface Status {
 }
 
 const roots: string[] = [];
+const REQ_LOOP_RUN = {
+  apiVersion: "reqloop.baton.dev/v1alpha1",
+  kind: "ReqLoopRun",
+} as const;
 
 function testRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "baton-plugin-controller-"));
@@ -46,6 +50,7 @@ function key(resourceId: string = "run_1"): ReconcileKey {
   return {
     batonSessionId: "bs_test",
     pluginInstanceId: "reqloop_default",
+    resourceApiVersion: REQ_LOOP_RUN.apiVersion,
     resourceKind: "ReqLoopRun",
     resourceId,
   };
@@ -67,8 +72,8 @@ describe("plugin Controller", () => {
   test("provides a frozen snapshot and persists status, wake-up, and proposal", async () => {
     const resources = store(testRoot());
     resources.create<Spec, Status>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     const reconcile: ControllerOptions<Spec, Status>["reconcile"] =
@@ -77,8 +82,8 @@ describe("plugin Controller", () => {
         expect(Object.isFrozen(resource)).toBe(true);
         expect(Object.isFrozen(resource.spec)).toBe(true);
         resources.patchStatus<Spec, Status>(
-          resource.kind,
-          resource.metadata.resourceId,
+          REQ_LOOP_RUN,
+          resource.metadata.name,
           {
             phase: "waiting_for_review",
             observedGeneration: resource.metadata.generation,
@@ -96,7 +101,7 @@ describe("plugin Controller", () => {
     const proposals: ReconcileProposal[] = [];
     const controller = new Controller({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       reconcile,
       now: () => new Date("2026-07-25T00:00:00.000Z"),
       onProposal(proposal) {
@@ -105,19 +110,21 @@ describe("plugin Controller", () => {
     });
 
     await controller.enqueue(key());
-    const saved = resources.get<Spec, Status>("ReqLoopRun", "run_1");
+    const saved = resources.get<Spec, Status>(REQ_LOOP_RUN, "run_1");
     expect(saved.status).toEqual({
       phase: "waiting_for_review",
       observedGeneration: 1,
     });
     expect(saved.metadata.generation).toBe(1);
-    expect(saved.metadata.resourceVersion).toBe(3);
-    expect(saved.metadata.nextReconcileAt).toBe("2026-07-25T00:00:05.000Z");
+    expect(saved.metadata.resourceVersion).toBe("2");
+    expect(resources.scheduledReconciles(REQ_LOOP_RUN)[0]?.nextReconcileAt).toEqual(
+      new Date("2026-07-25T00:00:05.000Z"),
+    );
     expect(proposals).toEqual([
       {
         key: key(),
         basedOnGeneration: 1,
-        basedOnResourceVersion: 2,
+        basedOnResourceVersion: "2",
         text: "Please review the implementation.",
       },
     ]);
@@ -126,38 +133,38 @@ describe("plugin Controller", () => {
   test("clears an earlier wake-up when reconcile does not request another", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     resources.setNextReconcileAt(
-      "ReqLoopRun",
+      REQ_LOOP_RUN,
       "run_1",
       new Date("2026-07-25T00:00:00.000Z"),
     );
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile() {},
       onProposal() {},
     });
 
     await controller.enqueue(key());
-    expect(resources.get("ReqLoopRun", "run_1").metadata.nextReconcileAt).toBeUndefined();
+    expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
   });
 
   test("rejects stale output when spec changes during reconcile", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "draft" },
     });
     const entered = deferred();
     const release = deferred();
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile() {
           entered.resolve();
           await release.promise;
@@ -173,7 +180,7 @@ describe("plugin Controller", () => {
 
     const running = controller.enqueue(key());
     await entered.promise;
-    resources.replaceSpec("ReqLoopRun", "run_1", { requirement: "approved revision" });
+    resources.replaceSpec(REQ_LOOP_RUN, "run_1", { requirement: "approved revision" });
     release.resolve();
 
     await expect(running).rejects.toThrow(
@@ -186,8 +193,8 @@ describe("plugin Controller", () => {
     const firstStore = store(root);
     const secondStore = store(root);
     firstStore.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     const gate = deferred();
@@ -204,13 +211,13 @@ describe("plugin Controller", () => {
       };
     const firstController = new Controller({
       store: firstStore,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       reconcile,
       onProposal() {},
     });
     const secondController = new Controller({
       store: secondStore,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       reconcile,
       onProposal() {},
     });
@@ -228,15 +235,15 @@ describe("plugin Controller", () => {
   test("coalesces triggers received during execution into one follow-up", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     const gate = deferred();
     let runs = 0;
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile() {
           runs += 1;
           if (runs === 1) await gate.promise;
@@ -259,8 +266,8 @@ describe("plugin Controller", () => {
     const resources = store(testRoot());
     for (const resourceId of ["run_1", "run_2"]) {
       resources.create<Spec>({
-        kind: "ReqLoopRun",
-        resourceId,
+        type: REQ_LOOP_RUN,
+        name: resourceId,
         spec: { requirement: resourceId },
       });
     }
@@ -268,10 +275,10 @@ describe("plugin Controller", () => {
     const seen: string[] = [];
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile(_baton, resource) {
-          seen.push(resource.metadata.resourceId);
-          if (resource.metadata.resourceId === "run_1") await gate.promise;
+          seen.push(resource.metadata.name);
+          if (resource.metadata.name === "run_1") await gate.promise;
         },
       onProposal() {},
     });
@@ -290,15 +297,15 @@ describe("plugin Controller", () => {
     const resources = store(testRoot());
     for (const resourceId of ["run_1", "run_2"]) {
       resources.create<Spec>({
-        kind: "ReqLoopRun",
-        resourceId,
+        type: REQ_LOOP_RUN,
+        name: resourceId,
         spec: { requirement: resourceId },
       });
     }
     const gate = deferred();
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile() {
           await gate.promise;
         },
@@ -320,8 +327,8 @@ describe("plugin Controller", () => {
     const resources = store(testRoot());
     for (const resourceId of ["run_1", "run_2", "run_3"]) {
       resources.create<Spec>({
-        kind: "ReqLoopRun",
-        resourceId,
+        type: REQ_LOOP_RUN,
+        name: resourceId,
         spec: { requirement: resourceId },
       });
     }
@@ -329,10 +336,10 @@ describe("plugin Controller", () => {
     const started: string[] = [];
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       maxConcurrency: 2,
       async reconcile(_baton, resource) {
-          started.push(resource.metadata.resourceId);
+          started.push(resource.metadata.name);
           await gate.promise;
         },
       onProposal() {},
@@ -353,16 +360,16 @@ describe("plugin Controller", () => {
     const resources = store(testRoot());
     for (const resourceId of ["run_1", "run_2"]) {
       resources.create<Spec>({
-        kind: "ReqLoopRun",
-        resourceId,
+        type: REQ_LOOP_RUN,
+        name: resourceId,
         spec: { requirement: resourceId },
       });
     }
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile(_baton, resource) {
-          if (resource.metadata.resourceId === "run_1") {
+          if (resource.metadata.name === "run_1") {
             throw new Error("connector unavailable");
           }
         },
@@ -378,18 +385,18 @@ describe("plugin Controller", () => {
   test("owns an immutable key snapshot", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     const gate = deferred();
     const seen: string[] = [];
     const controller = new Controller<Spec, Status>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       async reconcile(_baton, resource) {
           await gate.promise;
-          seen.push(resource.metadata.resourceId);
+          seen.push(resource.metadata.name);
         },
       onProposal() {},
     });
@@ -406,8 +413,8 @@ describe("plugin Controller", () => {
   test("rejects invalid results, capacity, and keys outside its scope", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { requirement: "ship it" },
     });
     const invalid: ControllerOptions<Spec, Status>["reconcile"] =
@@ -416,7 +423,7 @@ describe("plugin Controller", () => {
       };
     const controller = new Controller({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: REQ_LOOP_RUN,
       reconcile: invalid,
       onProposal() {},
     });
@@ -431,7 +438,7 @@ describe("plugin Controller", () => {
       () =>
         new Controller({
           store: resources,
-          resourceKind: "ReqLoopRun",
+          resourceType: REQ_LOOP_RUN,
           reconcile: invalid,
           maxConcurrency: 0,
           onProposal() {},
