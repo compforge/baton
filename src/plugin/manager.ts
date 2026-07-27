@@ -36,6 +36,7 @@ import {
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   pluginPackageKey,
+  type PluginLogEntry,
   type ToastMessage,
   type ToastTone,
   validatePluginPackage,
@@ -79,11 +80,21 @@ import {
   PluginCommandRegistry,
 } from "./command/registry.ts";
 import { ContextProviderRegistry } from "../context/registry.ts";
+import {
+  diagnosticError,
+  type DiagnosticSink,
+} from "../diagnostics.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
   "success",
   "warning",
+  "error",
+]);
+const PLUGIN_LOG_LEVELS = new Set([
+  "debug",
+  "info",
+  "warn",
   "error",
 ]);
 
@@ -117,7 +128,7 @@ export interface ManagerOptions {
    */
   session?: Pick<
     SessionHandle,
-    "id" | "dir" | "readEvents" | "subscribe" | "append"
+    "id" | "dir" | "readEvents" | "subscribe" | "append" | "diagnostic"
   >;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
   instances?: PluginInstanceRepository;
@@ -254,6 +265,7 @@ export class Manager {
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly onControllerSourceError:
     ManagerOptions["onControllerSourceError"];
+  private readonly diagnostic?: DiagnosticSink;
   private readonly retryInitialDelayMs: number;
   private readonly retryMaxDelayMs: number;
   private readonly retries = new Map<string, RetryState>();
@@ -291,6 +303,9 @@ export class Manager {
     ) {
       throw new Error("plugin Manager session and ProposalStore must own the same BatonSession");
     }
+    this.diagnostic = options.session
+      ? (entry) => options.session!.diagnostic(entry)
+      : undefined;
     for (const plugin of options.packages ?? []) {
       validatePluginPackage(plugin);
       const key = pluginPackageKey(plugin.pluginId, plugin.version);
@@ -500,6 +515,7 @@ export class Manager {
           this.bindController(instance, controller),
         showToast: (message) =>
           this.notifyToast(instance.pluginInstanceId, message),
+        writeLog: (entry) => this.writePluginLog(instance, entry),
       },
       createResourceClient(
         new PluginResourceStore({
@@ -1217,6 +1233,61 @@ export class Manager {
       );
     } catch {
       // UI feedback must not affect Plugin runtime state.
+    }
+  }
+
+  private writePluginLog(
+    instance: PluginInstance,
+    entry: PluginLogEntry,
+  ): void {
+    try {
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        !PLUGIN_LOG_LEVELS.has(entry.level)
+      ) {
+        return;
+      }
+      const message = typeof entry.message === "string"
+        ? entry.message.trim()
+        : "";
+      if (!message) return;
+      const localComponent = typeof entry.component === "string"
+        ? entry.component.trim()
+        : "";
+      const details: Record<string, string | number | boolean | null> = {};
+      if (
+        entry.details &&
+        typeof entry.details === "object" &&
+        !Array.isArray(entry.details)
+      ) {
+        for (const [key, value] of Object.entries(entry.details)) {
+          if (
+            value === null ||
+            typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean"
+          ) {
+            details[key] = value;
+          }
+        }
+      }
+      details.pluginId = instance.pluginId;
+      details.pluginInstanceId = instance.pluginInstanceId;
+      details.packageVersion = instance.packageVersion;
+      this.diagnostic?.({
+        level: entry.level,
+        component: localComponent
+          ? `plugin.${instance.pluginId}.${localComponent}`
+          : `plugin.${instance.pluginId}`,
+        message,
+        ...(entry.error === undefined
+          ? {}
+          : { error: diagnosticError(entry.error) }),
+        details,
+      });
+    } catch {
+      // Diagnostics must never affect Plugin activation or reconciliation.
     }
   }
 

@@ -37,6 +37,11 @@ const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
   activate(context: PluginActivationContext) {
+    context.logger.write({
+      level: "info",
+      component: "activation",
+      message: "Example plugin activated",
+    });
     context.toast.show({ text: "Example plugin ready", tone: "success" });
     context.registerCommand({
       commandId: "examples",
@@ -117,6 +122,12 @@ condition per `type`, and update `lastTransitionTime` only when that condition's
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource
 status and an optional Board presentation; do not emit a toast on every reconcile.
+
+`context.logger` writes best-effort diagnostics to the owning BatonSession.
+Baton adds the Plugin identity and owns the log path and persistence. Use
+structured `details` for troubleshooting context, never include secrets, and
+never use diagnostics as Resource state. Polling code should deduplicate
+repeated failures instead of writing the same message every reconcile.
 
 `registerContextProvider` exposes searchable, read-only context that a user can
 explicitly add to one Harness turn with `@`. `kind` is local to the Package;

@@ -23,7 +23,7 @@
     },
     "packages/plugin": {
       "name": "@qiankun01/baton-plugin",
-      "version": "0.1.10",
+      "version": "0.1.11",
       "devDependencies": {
         "typescript": "^5.9.0",
       },

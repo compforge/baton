@@ -10,6 +10,8 @@ import type {
   PluginCommandPickerSearch,
   PluginCommandResult,
   PluginActivationContext,
+  PluginLogEntry,
+  PluginLogger,
   PluginPackage,
   PluginSessionContext,
   Resource,
@@ -34,6 +36,8 @@ export type {
   PluginCommandPickerSearch,
   PluginCommandResult,
   PluginActivationContext,
+  PluginLogEntry,
+  PluginLogger,
   PluginPackage,
   PluginSessionContext,
   Resource,
@@ -65,6 +69,7 @@ interface PluginRegistrars {
   registerContextProvider: ContextProviderRegistrar;
   registerController: ResourceRegistrar;
   showToast(message: ToastMessage): void;
+  writeLog(entry: PluginLogEntry): void;
 }
 
 function nonEmpty(name: string, value: string): void {
@@ -91,6 +96,7 @@ export class PluginBinding implements PluginActivationContext {
   readonly session: PluginSessionContext;
   readonly resources: ResourceClient;
   readonly toast: ToastSink;
+  readonly logger: PluginLogger;
   private readonly registrars: PluginRegistrars;
   private readonly cleanups: Array<() => Promise<void> | void> = [];
   private sealed = false;
@@ -111,6 +117,12 @@ export class PluginBinding implements PluginActivationContext {
       show: (message: ToastMessage) => {
         if (this.closed) throw new Error("plugin Binding is closed");
         this.registrars.showToast(message);
+      },
+    });
+    this.logger = Object.freeze({
+      write: (entry: PluginLogEntry) => {
+        if (this.closed) throw new Error("plugin Binding is closed");
+        this.registrars.writeLog(entry);
       },
     });
   }
