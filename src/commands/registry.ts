@@ -60,7 +60,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "board",
-    description: "Open the Board sidecar ('hide' or 'auto' to change display mode)",
+    description: "Toggle the Board sidecar (or set 'open', 'hide', or 'auto')",
     scope: "baton",
     runPolicy: "always",
   },

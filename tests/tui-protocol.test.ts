@@ -410,6 +410,10 @@ describe("BatonChatProtocol Board", () => {
       expect(protocol.getView().sidecar?.mode).toBe("hidden");
       await protocol.command("board", "");
       expect(protocol.getView().sidecar?.mode).toBe("open");
+      await protocol.command("board", "");
+      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+      await protocol.command("board", "");
+      expect(protocol.getView().sidecar?.mode).toBe("open");
       protocol.dismissSidecar();
       expect(protocol.getView().sidecar?.mode).toBe("hidden");
 
