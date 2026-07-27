@@ -110,7 +110,7 @@ Binding 是临时生命周期，不持久化业务事实。把运行期注册收
 
 当前 `PluginActivationContext` 开放按当前 Instance 收口的 `registerController`、
 `registerContextProvider`、
-session-scoped 的 `toast`，以及非 Resource 资源的 `onClose`
+session-scoped 的 `toast`、`logger`，以及非 Resource 资源的 `onClose`
 cleanup。激活完成后 Binding 被封口，不能异步偷注册新 handler；关闭时按注册逆序撤销；
 Plugin 先登记底层 Connector cleanup、再登记依赖它的 handler，即可保证 handler 先停、
 Connector 后关。
@@ -119,6 +119,12 @@ Toast 是不落 Event Ledger 的短寿命操作回执；Board 是从 Resource �
 Plugin 可以在显式操作或状态迁移时调用 `context.toast.show()`，但 reconcile 会重复执行，不能在
 每次 reconcile 时无条件发 Toast。持续异常、进度和待处理事项应进入 Resource status，再由
 Board presentation；首次进入异常等边沿变化可以额外发一次 Toast 提醒。
+
+`context.logger.write()` 是 session-scoped 的旁路诊断入口。Plugin 只提交 level、局部
+component、message、error 和 JSON primitive details；Baton 自动补齐 PluginPackage /
+PluginInstance 身份，并写入当前 BatonSession 的 `session.log`。Plugin 不知道日志路径，也不能
+把日志当成 Resource 状态或 Event。日志不得包含 secret；周期 reconcile 对重复异常应按路径、
+错误指纹或状态迁移去重，避免诊断日志反过来成为噪声源。
 
 #### Resource
 
@@ -789,6 +795,7 @@ Manager 只向 Plugin 暴露完成已注册能力所需的窄入口：
 - 当前 Baton-owned / Plugin-owned Resource 的只读 snapshot、仅限自有 Resource 的受控 status patch，
   以及可信 Board presentation / Resource Context source 入口；
 - session-scoped、非持久化的 Toast 输出；持续状态仍归 Resource status / Board；
+- session-scoped、由 Baton 持久化并自动附加 Plugin 身份的结构化诊断日志；
 - 按 declaration 与权限注入的配置和 secret；
 - 受 timeout、取消和输出预算约束的执行上下文。
 

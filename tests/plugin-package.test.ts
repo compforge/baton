@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,7 @@ import type {
 import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
+import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
@@ -357,6 +358,7 @@ describe("Plugin Package lifecycle", () => {
     });
     expect(Object.isFrozen(context!.session)).toBe(true);
     expect(Object.isFrozen(context!.toast)).toBe(true);
+    expect(Object.isFrozen(context!.logger)).toBe(true);
     expect(toasts).toEqual([
       {
         pluginInstanceId: "reqloop_default",
@@ -400,6 +402,59 @@ describe("Plugin Package lifecycle", () => {
         spec: {},
       }),
     ).toThrow("Resource type is reserved by Baton");
+    await manager.close();
+  });
+
+  test("writes Plugin diagnostics to the owning BatonSession log", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: root });
+    const instances = new PluginInstanceStore({ session });
+    const proposals = new ProposalStore({ session });
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    const manager = new Manager({
+      session,
+      instances,
+      proposals,
+      packages: [reqloopPackage((activation) => {
+        activation.logger.write({
+          level: "warn",
+          component: "devloop.pull-request-source",
+          message: "Could not parse devloop PR state",
+          error: new SyntaxError("Unexpected end of JSON input"),
+          details: { path: "/repo/.devloop/pr.json" },
+        });
+      })],
+      onProposal() {},
+    });
+
+    await manager.start();
+
+    const log = JSON.parse(
+      readFileSync(join(session.dir, "session.log"), "utf8").trim(),
+    );
+    expect(log).toMatchObject({
+      batonSessionId: session.id,
+      level: "warn",
+      component:
+        "plugin.qiankun/reqloop.devloop.pull-request-source",
+      message: "Could not parse devloop PR state",
+      error: {
+        name: "SyntaxError",
+        message: "Unexpected end of JSON input",
+      },
+      details: {
+        path: "/repo/.devloop/pr.json",
+        pluginId: "qiankun/reqloop",
+        pluginInstanceId: "reqloop_default",
+        packageVersion: "1.2.0",
+      },
+    });
+    expect(session.readEvents()).toEqual([]);
+
     await manager.close();
   });
 

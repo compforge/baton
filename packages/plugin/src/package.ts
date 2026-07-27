@@ -33,12 +33,34 @@ export interface ToastSink {
   show(message: ToastMessage): void;
 }
 
+export type PluginLogLevel = "debug" | "info" | "warn" | "error";
+
+export type PluginLogDetails = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+export interface PluginLogEntry {
+  readonly level: PluginLogLevel;
+  /** Stable Plugin-local area, for example "devloop.pull-request-source". */
+  readonly component?: string;
+  readonly message: string;
+  readonly error?: unknown;
+  readonly details?: PluginLogDetails;
+}
+
+export interface PluginLogger {
+  /** Best-effort diagnostics owned and persisted by the current BatonSession. */
+  write(entry: PluginLogEntry): void;
+}
+
 export interface PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
   readonly resources: ResourceClient;
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;
+  /** Session-scoped diagnostics. Never log secrets or use logs as domain state. */
+  readonly logger: PluginLogger;
   registerCommand(command: Command): void;
   registerContextProvider(provider: ContextProvider): void;
   registerController<TSpec, TStatus>(
