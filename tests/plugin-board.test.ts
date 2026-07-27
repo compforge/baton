@@ -7,6 +7,10 @@ import { presentBoardSource } from "../src/plugin/board.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
 const roots: string[] = [];
+const REQ_LOOP_RUN = {
+  apiVersion: "reqloop.baton.dev/v1alpha1",
+  kind: "ReqLoopRun",
+} as const;
 
 function store(): PluginResourceStore {
   const root = mkdtempSync(join(tmpdir(), "baton-plugin-board-"));
@@ -30,14 +34,14 @@ describe("Plugin Board presentation", () => {
   test("presents at most one Board item per Resource and hides undefined results", () => {
     const resources = store();
     resources.create({
-      kind: "ReqLoopRun",
-      resourceId: "run_active",
+      type: REQ_LOOP_RUN,
+      name: "run_active",
       spec: { title: "Ship it" },
       status: { phase: "active" },
     });
     resources.create({
-      kind: "ReqLoopRun",
-      resourceId: "run_closed",
+      type: REQ_LOOP_RUN,
+      name: "run_closed",
       spec: { title: "Already shipped" },
       status: { phase: "closed" },
     });
@@ -46,9 +50,9 @@ describe("Plugin Board presentation", () => {
       presentBoardSource<{ title: string }, { phase: string }>({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
-        resourceKind: "ReqLoopRun",
+        resourceType: REQ_LOOP_RUN,
         list: () =>
-          resources.list<{ title: string }, { phase: string }>("ReqLoopRun"),
+          resources.list<{ title: string }, { phase: string }>(REQ_LOOP_RUN),
         present(resource) {
           if (resource.status.phase === "closed") return undefined;
           return {
@@ -61,6 +65,7 @@ describe("Plugin Board presentation", () => {
       {
         id: JSON.stringify([
           "reqloop_default",
+          REQ_LOOP_RUN.apiVersion,
           "ReqLoopRun",
           "run_active",
         ]),
@@ -77,8 +82,8 @@ describe("Plugin Board presentation", () => {
   test("isolates a broken Resource presentation as a diagnostic item", () => {
     const resources = store();
     resources.create({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: REQ_LOOP_RUN,
+      name: "run_1",
       spec: { title: "Ship it" },
     });
 
@@ -86,8 +91,8 @@ describe("Plugin Board presentation", () => {
       presentBoardSource({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
-        resourceKind: "ReqLoopRun",
-        list: () => resources.list("ReqLoopRun"),
+        resourceType: REQ_LOOP_RUN,
+        list: () => resources.list(REQ_LOOP_RUN),
         present() {
           throw new Error("connector unavailable");
         },
@@ -96,6 +101,7 @@ describe("Plugin Board presentation", () => {
       {
         id: JSON.stringify([
           "reqloop_default",
+          REQ_LOOP_RUN.apiVersion,
           "ReqLoopRun",
           "run_1",
         ]),

@@ -10,6 +10,7 @@ import {
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import type { PluginPackage } from "../src/plugin/package.ts";
+import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 
@@ -125,11 +126,11 @@ describe("Baton Resource index", () => {
           Record<string, never>,
           { userText?: string }
         >({
-          resourceKind: BATON_TURN_RESOURCE_KIND,
+          resourceType: BATON_TURN_RESOURCE_TYPE,
           async reconcile(baton, resource) {
               expect(Object.isFrozen(baton)).toBe(true);
               expect(baton.session.batonSessionId).toBe(session.id);
-              reconciled.push(resource.metadata.resourceId);
+              reconciled.push(resource.metadata.name);
               return {
                 output: {
                   kind: "proposed-input",
@@ -158,6 +159,7 @@ describe("Baton Resource index", () => {
         batonSessionId: session.id,
         pluginInstanceId: "router_default",
         resourceOwner: "baton",
+        resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
         resourceKind: BATON_TURN_RESOURCE_KIND,
         resourceId: "t_existing",
       },
@@ -202,7 +204,7 @@ describe("Baton Resource index", () => {
         version: "1.0.0",
         activate(context) {
           context.registerController({
-            resourceKind: BATON_TURN_RESOURCE_KIND,
+            resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {
                 runs += 1;
                 if (runs === 1) throw new Error("temporary failure");
@@ -244,7 +246,7 @@ describe("Baton Resource index", () => {
         version: "1.0.0",
         async activate(context) {
           context.registerController({
-            resourceKind: BATON_TURN_RESOURCE_KIND,
+            resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {
                 runs += 1;
               },

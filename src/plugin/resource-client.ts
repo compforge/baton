@@ -1,43 +1,12 @@
-import type { Resource } from "@qiankun01/baton-plugin";
+import type {
+  Resource,
+  ResourceClient as PublicResourceClient,
+  ResourceType,
+} from "@qiankun01/baton-plugin";
+
 import { PluginResourceStore } from "./resource.ts";
 
-export interface ResourceClient {
-  get<TSpec, TStatus>(
-    resourceKind: string,
-    resourceId: string,
-  ): Readonly<Resource<TSpec, TStatus>>;
-  list<TSpec, TStatus>(
-    resourceKind?: string,
-  ): readonly Readonly<Resource<TSpec, TStatus>>[];
-  /**
-   * Creates a new Plugin-owned Resource with the given spec.
-   *
-   * The status will be initialized to an empty object and should be set
-   * by the Controller on the first reconciliation.
-   */
-  create<TSpec, TStatus>(
-    resourceKind: string,
-    init: {
-      resourceId: string;
-      spec: TSpec;
-    },
-  ): Readonly<Resource<TSpec, TStatus>>;
-  delete(resourceKind: string, resourceId: string): void;
-  /**
-   * Updates the status of a Plugin-owned Resource.
-   *
-   * This is the primary way to update resource state. Unlike Kubernetes where
-   * users update spec and controllers update status, in Baton plugins both
-   * create and update their own resources.
-   *
-   * The patch is merged with the existing status. Generation is NOT incremented
-   * (only resourceVersion is), so this will not trigger a new reconciliation.
-   */
-  patchStatus<TSpec, TStatus>(
-    resource: Readonly<Resource<TSpec, TStatus>>,
-    patch: Partial<TStatus>,
-  ): Readonly<Resource<TSpec, TStatus>>;
-}
+export type ResourceClient = PublicResourceClient;
 
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -46,80 +15,79 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Restricts Resource reads and status writes to one PluginInstance-owned store. */
+/** Restricts Resource reads and status writes to one PluginInstance namespace. */
 export function createResourceClient(
   store: PluginResourceStore,
-  onChange?: () => void,
-  assertCanCreateKind?: (resourceKind: string) => void,
+  onChange?: (resource: Readonly<Resource<unknown, unknown>>) => void,
+  assertCanCreateType?: (type: ResourceType) => void,
 ): ResourceClient {
-  const changed = (): void => {
+  const changed = (
+    resource: Readonly<Resource<unknown, unknown>>,
+  ): void => {
     try {
-      onChange?.();
+      onChange?.(resource);
     } catch {
-      // Resource mutation has already committed; a UI invalidation must not turn it into failure.
+      // Resource mutation has committed; projection invalidation must not turn it into failure.
     }
   };
-  const assertOwned = (resource: {
-    kind: string;
-    metadata: {
-      batonSessionId: string;
-      pluginInstanceId: string;
-      resourceId: string;
-      resourceVersion: number;
-    };
-  }): void => {
-    if (
-      resource.metadata.batonSessionId !== store.batonSessionId ||
-      resource.metadata.pluginInstanceId !== store.pluginInstanceId
-    ) {
+  const assertOwned = (
+    resource: Readonly<Resource<unknown, unknown>>,
+  ): void => {
+    if (resource.metadata.namespace !== store.pluginInstanceId) {
       throw new Error(
-        `plugin ResourceClient cannot access ${resource.kind}/${resource.metadata.resourceId} outside ${store.pluginInstanceId}`,
+        `plugin ResourceClient cannot access ${resource.kind}/${resource.metadata.name} outside ${store.pluginInstanceId}`,
       );
     }
   };
 
   return Object.freeze({
-    get<TSpec, TStatus>(resourceKind: string, resourceId: string) {
-      return deepFreeze(store.get<TSpec, TStatus>(resourceKind, resourceId));
+    get<TSpec, TStatus>(type: ResourceType, name: string) {
+      return deepFreeze(store.get<TSpec, TStatus>(type, name));
     },
-    list<TSpec, TStatus>(resourceKind?: string) {
+    list<TSpec, TStatus>(type: ResourceType) {
       return store
-        .list<TSpec, TStatus>(resourceKind)
+        .list<TSpec, TStatus>(type)
         .map((resource) => deepFreeze(resource));
     },
     create<TSpec, TStatus>(
-      resourceKind: string,
+      type: ResourceType,
       init: {
-        resourceId: string;
+        name: string;
+        labels?: Readonly<Record<string, string>>;
+        annotations?: Readonly<Record<string, string>>;
         spec: TSpec;
       },
     ) {
-      assertCanCreateKind?.(resourceKind);
+      assertCanCreateType?.(type);
       const created = deepFreeze(
         store.create<TSpec, TStatus>({
-          kind: resourceKind,
-          resourceId: init.resourceId,
+          type,
+          name: init.name,
+          ...(init.labels === undefined ? {} : { labels: init.labels }),
+          ...(init.annotations === undefined
+            ? {}
+            : { annotations: init.annotations }),
           spec: init.spec,
         }),
       );
-      changed();
+      changed(created);
       return created;
     },
-    delete(resourceKind: string, resourceId: string) {
-      const resource = store.get(resourceKind, resourceId);
+    delete(type: ResourceType, name: string) {
+      const resource = store.get(type, name);
       assertOwned(resource);
-      store.delete(resourceKind, resourceId);
-      changed();
+      store.delete(type, name);
+      changed(resource);
     },
     patchStatus<TSpec, TStatus>(
-      resource: Parameters<ResourceClient["patchStatus"]>[0],
+      resource: Readonly<Resource<TSpec, TStatus>>,
       patch: Partial<TStatus>,
     ) {
       assertOwned(resource);
       const patched = deepFreeze(
         store.patchStatus<TSpec, TStatus>(
-          resource.kind,
-          resource.metadata.resourceId,
+          resource,
+          resource.metadata.name,
           patch,
           {
             expectedResourceVersion: resource.metadata.resourceVersion,
@@ -130,7 +98,7 @@ export function createResourceClient(
         patched.metadata.resourceVersion !==
         resource.metadata.resourceVersion
       ) {
-        changed();
+        changed(patched);
       }
       return patched;
     },

@@ -1,3 +1,5 @@
+import type { ResourceRef } from "./resource.ts";
+
 export type OptionRole = "default" | "reject";
 
 export interface Option {
@@ -41,12 +43,6 @@ export type Outcome =
       readonly kind: "cancelled";
       readonly reason: CancellationReason;
     };
-
-export interface ResourceRef {
-  readonly resourceKind: string;
-  readonly resourceId: string;
-  readonly resourceOwner: "plugin" | "baton";
-}
 
 /** A decision previously requested by the Resource currently being reconciled. */
 export interface Snapshot {

@@ -56,6 +56,7 @@ import type {
 } from "../interaction/types.ts";
 import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
 import { Manager } from "../plugin/manager.ts";
+import { BATON_TURN_RESOURCE_KIND } from "../plugin/builtin.ts";
 import type {
   PluginCommandResult,
   ToastMessage,
@@ -985,11 +986,11 @@ export class BatonChatProtocol implements ChatProtocol {
       },
       onReconcileError: ({ key, error }) => {
         let resourceLabel = `${key.resourceKind}/${key.resourceId}`;
-        // 为 baton.turn 提供更友好的展示信息
-        if (key.resourceKind === "baton.turn") {
+        // 为 Baton Turn 提供更友好的展示信息
+        if (key.resourceKind === BATON_TURN_RESOURCE_KIND) {
           try {
             const turnResource = this.plugins.getBatonResource(
-              "baton.turn",
+              BATON_TURN_RESOURCE_KIND,
               key.resourceId,
             );
             const userText = turnResource.data.userText;

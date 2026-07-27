@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ReconcileProposal } from "../src/plugin/controller.ts";
+import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 
 const roots: string[] = [];
@@ -22,6 +23,7 @@ function draft(
     key: {
       batonSessionId: "bs_test",
       pluginInstanceId: "reqloop_default",
+      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
       resourceKind: "ReqLoopRun",
       resourceId: "run_1",
     },
@@ -83,15 +85,15 @@ describe("ProposalStore", () => {
     const store = new ProposalStore({
       session: testSession(testRoot()),
     });
-    const observedDraft = (resourceVersion: number): ReconcileProposal => ({
+    const observedDraft = (resourceVersion: string): ReconcileProposal => ({
       key: draft().key,
       basedOnGeneration: 1,
       basedOnResourceVersion: resourceVersion,
       text: "Review requirement",
     });
-    const first = store.record(observedDraft(2));
-    const repeated = store.record(observedDraft(2));
-    const nextObservation = store.record(observedDraft(3));
+    const first = store.record(observedDraft("2"));
+    const repeated = store.record(observedDraft("2"));
+    const nextObservation = store.record(observedDraft("3"));
 
     expect(repeated).toEqual(first);
     expect(nextObservation.proposalId).not.toBe(first.proposalId);
@@ -154,7 +156,8 @@ describe("ProposalStore", () => {
         batonSessionId: "bs_test",
         pluginInstanceId: "router_default",
         resourceOwner: "baton",
-        resourceKind: "baton.turn",
+        resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
+        resourceKind: BATON_TURN_RESOURCE_TYPE.kind,
         resourceId: "t_1",
       },
       basedOnRevision: 42,
@@ -169,7 +172,12 @@ describe("ProposalStore", () => {
     expect(first.basedOnRevision).toBe(42);
     expect(reopened.record(draft)).toEqual(first);
     expect(
-      reopened.record({ ...draft, basedOnRevision: 43 }).proposalId,
+      reopened.record({
+        key: draft.key,
+        basedOnRevision: 43,
+        text: draft.text,
+      }).proposalId,
     ).not.toBe(first.proposalId);
   });
+
 });

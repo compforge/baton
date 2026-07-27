@@ -177,7 +177,7 @@ Package 是不可变交付物，Instance 是 BatonSession 中的配置身份，B
 BatonPlugin
 ├── commands             创建、选择或修改 Resource
 └── controllers
-    ├── resourceKind
+    ├── resourceType       apiVersion + kind
     ├── reconcile
     ├── sources[]          固定 cron 周期唤醒
     └── present?           决定 Resource 是否显示到 Board
@@ -295,21 +295,22 @@ source emit draft
 Plugin，避免回调风暴。
 
 对 Plugin 而言，Event 不是必须逐条处理的 callback 参数。Plugin Manager 先把选定的内部事实
-转换成有稳定 kind、identity 和 revision 的只读 Baton-owned Resource，再把 key 放入 workqueue；
-Controller 执行时读取最新 snapshot。首个 `baton.turn` 来自
+转换成有稳定 type、identity 和 revision 的只读 Baton-owned Resource，再把 key 放入 workqueue；
+Controller 执行时读取最新 snapshot。首个 `baton.dev/v1alpha1, Kind=Turn` 来自
 `_baton_turn_summary`，启动 replay 与 live append 使用同一 Resource index 和队列。用户和 Plugin 都不能
 修改 Baton-owned Resource；需要 desired state 时使用 Resource。
 
 ## 5. Resource、Controller 与 RequeueAfter
 
-Resource kind 位于同一所有权注册表：Baton 启动时先注册 `baton.*` kind，例如从 Event Ledger
-派生出的只读 `baton.turn`；Plugin 随后声明自己的 kind。Plugin 可以为 Baton kind 注册
-Controller 进行观察，但不能重新声明或修改它；不同 Plugin 也不能声明同名 kind。同一 Plugin
-的多个 Instance 复用同一 kind 定义，各自的 Resource 数据仍按 `pluginInstanceId` 隔离。
+Resource type 位于同一所有权注册表：Baton 启动时先注册
+`baton.dev/v1alpha1, Kind=Turn`，它是从 Event Ledger 派生的只读类型；Plugin 随后声明自己的
+`apiVersion + kind`。Plugin 可以为 Baton type 注册 Controller 进行观察，但不能重新声明或
+修改它；不同 Plugin 也不能声明同一 type。同一 Plugin 的多个 Instance 复用同一 type 定义，
+各自的 Resource 数据仍按 namespace（即 `pluginInstanceId`）隔离。
 
 Plugin 创建的 Resource 用 `spec` 保存人认可的 Contract，用 `status` 保存 Controller 的观测。
 Baton-owned Resource 更新、Resource 创建或 spec 更新、启动恢复和计时到期都映射为
-`pluginInstanceId + resourceKind + resourceId`，Baton 合并同一 key 的重复唤醒：
+`pluginInstanceId + apiVersion + kind + name`，Baton 合并同一 key 的重复唤醒：
 
 同一 Controller 可以管理多份同 kind Resource，因此一个 BatonSession 可以同时承载多个活跃
 loop run。Baton 不定义跨业务的 `phase` 或 `metadata.lifecycle`；Plugin 在自己的 `status`
@@ -337,9 +338,10 @@ Controller 可以调用自己 Plugin 的 Connector，使实际状态靠近已授
 首期 `ReconcileResult` 只有 `output?` 和 `requeueAfterMs?`。`proposed-input` 供人审核、编辑
 或丢弃，提交后才成为普通 Input；`interaction` 请求一个持久的单选或自由文本决定，回答先进入
 Event Ledger，再作为当前 Resource 的 Snapshot 输入触发下一次 reconcile。Resource 的
-`requeueAfterMs` 换算成持久化 `nextReconcileAt`，进程
-重启后恢复。Baton-owned Resource 的 due time 只存在于进程队列，重启时由 ledger replay 再次
-enqueue。错误都由 Baton 退避重试，空结果等待新事实。
+`requeueAfterMs` 换算成 Baton 内部 control 中持久化的 `nextReconcileAt`，进程重启后恢复；
+它不是 Plugin 可见的 Resource metadata，也不推进 resourceVersion。Baton-owned Resource 的
+due time 只存在于进程队列，重启时由 ledger replay 再次 enqueue。错误都由 Baton 退避重试，
+空结果等待新事实。
 
 Monitor、EventSource 和 Action 都不进入首期。webhook、长连接或无 Resource 的观察
 出现后再增加只负责 enqueue 的 EventSource；无法表达成 desired state 的独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进
@@ -622,10 +624,10 @@ DevelopmentOutcome
 
 1. devloop 在 Harness 内提供稳定 DevelopmentOutcome；Harness 边界归一成 Baton Event；
 2. 建立 PluginPackage/PluginInstance/PluginBinding，以及 Resource 通用信封与存储；
-3. 将 `_baton_turn_summary` 转换为只读 `baton.turn`，让 Plugin 从启动 replay 和 live
+3. 将 `_baton_turn_summary` 转换为只读 `baton.dev/v1alpha1, Kind=Turn`，让 Plugin 从启动 replay 和 live
    append 感知 Baton 内部事实；
-4. 建立同 key 不并发的 reconcile queue，将 Resource 的 `requeueAfter` 持久化为
-   `nextReconcileAt`，并让 Controller cron Sources 进入同一队列；
+4. 建立同 key 不并发的 reconcile queue，将 Resource 的 `requeueAfter` 持久化为内部
+   schedule，并让 Controller cron Sources 进入同一队列；
 5. 接通 Board presentation、Resource Context source、`proposed-input` 和 `interaction` Output，用 reqloop + 安装了 devloop 的 Harness
    跑通用户审核文本后驱动的 Requirement Loop；
 6. 真实场景无法由固定 Sources、动态轮询、desired state 或当前进程覆盖时，再依次引入

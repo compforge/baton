@@ -1,21 +1,45 @@
 import type { TurnSummary } from "./snapshot.ts";
 
+/** Versioned Resource schema identity, equivalent to a Kubernetes GroupVersionKind. */
+export interface ResourceType {
+  readonly apiVersion: string;
+  readonly kind: string;
+}
+
+/**
+ * Stable Resource reference.
+ *
+ * `uid` pins one concrete incarnation. Omit it only when the caller intends
+ * name-based lookup that may resolve to a replacement Resource.
+ */
+export interface ResourceRef extends ResourceType {
+  readonly namespace: string;
+  readonly name: string;
+  readonly uid?: string;
+}
+
 export interface ResourceMetadata {
-  readonly resourceId: string;
-  readonly batonSessionId: string;
-  readonly pluginInstanceId: string;
+  /** Stable name within one namespace and Resource type. */
+  readonly name: string;
+  /** PluginInstance scope. Baton-owned Resources use a Baton-reserved namespace. */
+  readonly namespace: string;
+  /** Baton-assigned identity for this concrete incarnation. */
+  readonly uid: string;
+  /** Desired-state revision. Only spec changes advance it. */
   readonly generation: number;
-  readonly resourceVersion: number;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly nextReconcileAt?: string;
+  /** Opaque optimistic-concurrency token. */
+  readonly resourceVersion: string;
+  readonly creationTimestamp: string;
+  /** Machine-readable grouping and selection metadata owned by the Plugin. */
+  readonly labels?: Readonly<Record<string, string>>;
+  /** Non-identifying extension metadata owned by the Plugin. */
+  readonly annotations?: Readonly<Record<string, string>>;
 }
 
 export interface Resource<
   TSpec = Record<string, unknown>,
   TStatus = Record<string, unknown>,
-> {
-  readonly kind: string;
+> extends ResourceType {
   readonly metadata: ResourceMetadata;
   readonly spec: TSpec;
   readonly status: TStatus;
@@ -23,27 +47,38 @@ export interface Resource<
 
 export interface ResourceClient {
   get<TSpec, TStatus>(
-    resourceKind: string,
-    resourceId: string,
+    type: ResourceType,
+    name: string,
   ): Readonly<Resource<TSpec, TStatus>>;
   list<TSpec, TStatus>(
-    resourceKind?: string,
+    type: ResourceType,
   ): readonly Readonly<Resource<TSpec, TStatus>>[];
   create<TSpec, TStatus>(
-    resourceKind: string,
+    type: ResourceType,
     init: {
-      resourceId: string;
+      name: string;
+      labels?: Readonly<Record<string, string>>;
+      annotations?: Readonly<Record<string, string>>;
       spec: TSpec;
     },
   ): Readonly<Resource<TSpec, TStatus>>;
-  delete(resourceKind: string, resourceId: string): void;
+  delete(type: ResourceType, name: string): void;
   patchStatus<TSpec, TStatus>(
     resource: Readonly<Resource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
   ): Readonly<Resource<TSpec, TStatus>>;
 }
 
-export type BatonTurnResourceKind = "baton.turn";
+export const BATON_API_VERSION = "baton.dev/v1alpha1" as const;
+export const BATON_SYSTEM_NAMESPACE = "baton-system" as const;
+export const BATON_TURN_RESOURCE_TYPE = Object.freeze({
+  apiVersion: BATON_API_VERSION,
+  kind: "Turn",
+} as const satisfies ResourceType);
+
+export type BatonTurnResourceApiVersion =
+  typeof BATON_TURN_RESOURCE_TYPE.apiVersion;
+export type BatonTurnResourceKind = typeof BATON_TURN_RESOURCE_TYPE.kind;
 
 export type BatonTurnResourceData = TurnSummary & {
   readonly harness?: string;
@@ -51,10 +86,11 @@ export type BatonTurnResourceData = TurnSummary & {
   readonly harnessSessionId?: string;
 };
 
-/** Read-only Resource shape exposed by the Baton-owned `baton.turn` kind. */
+/** Read-only Resource shape exposed by Baton-owned Turn observations. */
 export type BatonTurnResource = Resource<
   Record<string, never>,
   BatonTurnResourceData
 > & {
+  readonly apiVersion: BatonTurnResourceApiVersion;
   readonly kind: BatonTurnResourceKind;
 };

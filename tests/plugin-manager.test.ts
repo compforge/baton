@@ -17,6 +17,11 @@ interface Spec {
 }
 
 const roots: string[] = [];
+const API_VERSION = "tests.baton.dev/v1alpha1";
+
+function resourceType(kind: string) {
+  return { apiVersion: API_VERSION, kind };
+}
 
 function testRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "baton-plugin-manager-"));
@@ -28,6 +33,7 @@ function scope(pluginInstanceId: string, resourceKind: string = "ReqLoopRun"): R
   return {
     batonSessionId: "bs_test",
     pluginInstanceId,
+    resourceApiVersion: API_VERSION,
     resourceKind,
   };
 }
@@ -69,8 +75,8 @@ function createResource(
   resourceId: string,
 ): void {
   resources.create<Spec>({
-    kind: resourceKind,
-    resourceId,
+    type: resourceType(resourceKind),
+    name: resourceId,
     spec: { value: resourceId },
   });
 }
@@ -104,8 +110,8 @@ describe("plugin Manager", () => {
       pluginInstanceId: "reqloop_default",
     });
     resources.create<Spec>({
-      kind: "ReqLoopRun",
-      resourceId: "run_1",
+      type: resourceType("ReqLoopRun"),
+      name: "run_1",
       spec: { value: "run_1" },
     });
     const snapshots: unknown[] = [];
@@ -116,7 +122,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile(baton) {
         const current = baton.pluginInteractions.find(
           (interaction) => interaction.decisionKey === "associate-pr",
@@ -144,6 +150,7 @@ describe("plugin Manager", () => {
     const reconcileKey = {
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
       resourceKind: "ReqLoopRun",
       resourceId: "run_1",
     };
@@ -198,9 +205,9 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile(_baton, resource) {
-          started.push(resource.metadata.pluginInstanceId);
+          started.push(resource.metadata.namespace);
           await gate.promise;
           return {
             output: {
@@ -212,9 +219,9 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: deployStore,
-      resourceKind: "Deployment",
+      resourceType: resourceType("Deployment"),
       async reconcile(_baton, resource) {
-          started.push(resource.metadata.pluginInstanceId);
+          started.push(resource.metadata.namespace);
         },
     });
 
@@ -234,17 +241,17 @@ describe("plugin Manager", () => {
     const resources = store(root, "reqloop_default");
     const definition = {
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {},
     };
     const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
     manager.registerController(definition);
 
     expect(() => manager.registerController(definition)).toThrow(
-      "plugin Controller already registered for bs_test/reqloop_default/ReqLoopRun",
+      `plugin Controller already registered for bs_test/reqloop_default/${API_VERSION}/ReqLoopRun`,
     );
     await expect(manager.enqueue(key("missing", "run_1"))).rejects.toThrow(
-      "no plugin Controller registered for bs_test/missing/ReqLoopRun",
+      `no plugin Controller registered for bs_test/missing/${API_VERSION}/ReqLoopRun`,
     );
   });
 
@@ -255,7 +262,7 @@ describe("plugin Manager", () => {
     const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
     const registration = manager.registerController({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {},
     });
 
@@ -263,7 +270,7 @@ describe("plugin Manager", () => {
     registration.close();
     registration.close();
     await expect(manager.enqueue(key("reqloop_default", "run_1"))).rejects.toThrow(
-      "no plugin Controller registered for bs_test/reqloop_default/ReqLoopRun",
+      `no plugin Controller registered for bs_test/reqloop_default/${API_VERSION}/ReqLoopRun`,
     );
   });
 
@@ -282,14 +289,14 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: firstStore,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           await gate.promise;
         },
     });
     const waitingRegistration = manager.registerController<Spec, Record<string, never>>({
       store: waitingStore,
-      resourceKind: "Deployment",
+      resourceType: resourceType("Deployment"),
       async reconcile() {
           waitingRuns += 1;
         },
@@ -330,22 +337,22 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       maxConcurrency: 1,
       async reconcile(_baton, resource) {
           started.push(
-            `${resource.metadata.pluginInstanceId}/${resource.metadata.resourceId}`,
+            `${resource.metadata.namespace}/${resource.metadata.name}`,
           );
           await gate.promise;
         },
     });
     manager.registerController<Spec, Record<string, never>>({
       store: deployStore,
-      resourceKind: "Deployment",
+      resourceType: resourceType("Deployment"),
       maxConcurrency: 1,
       async reconcile(_baton, resource) {
           started.push(
-            `${resource.metadata.pluginInstanceId}/${resource.metadata.resourceId}`,
+            `${resource.metadata.namespace}/${resource.metadata.name}`,
           );
           await gate.promise;
         },
@@ -415,7 +422,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           return {
             output: {
@@ -470,8 +477,8 @@ describe("plugin Manager", () => {
     createResource(resources, "ReqLoopRun", "expired");
     createResource(resources, "ReqLoopRun", "future");
     const now = Date.now();
-    resources.setNextReconcileAt("ReqLoopRun", "expired", new Date(now - 1_000));
-    resources.setNextReconcileAt("ReqLoopRun", "future", new Date(now + 100));
+    resources.setNextReconcileAt(resourceType("ReqLoopRun"), "expired", new Date(now - 1_000));
+    resources.setNextReconcileAt(resourceType("ReqLoopRun"), "future", new Date(now + 100));
     const runs: string[] = [];
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -479,9 +486,9 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile(_baton, resource) {
-          runs.push(resource.metadata.resourceId);
+          runs.push(resource.metadata.name);
         },
     });
 
@@ -490,8 +497,7 @@ describe("plugin Manager", () => {
     expect(runs).toEqual(["expired"]);
     await waitFor(() => runs.includes("future"));
     expect(runs).toEqual(["expired", "future"]);
-    expect(resources.get("ReqLoopRun", "expired").metadata.nextReconcileAt).toBeUndefined();
-    expect(resources.get("ReqLoopRun", "future").metadata.nextReconcileAt).toBeUndefined();
+    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
     registration.close();
   });
 
@@ -506,7 +512,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           runs += 1;
           if (runs === 1) return { requeueAfterMs: 20 };
@@ -515,9 +521,9 @@ describe("plugin Manager", () => {
 
     await manager.start();
     await manager.enqueue(key("reqloop_default", "run_1"));
-    expect(resources.get("ReqLoopRun", "run_1").metadata.nextReconcileAt).toBeDefined();
+    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toHaveLength(1);
     await waitFor(() => runs === 2);
-    expect(resources.get("ReqLoopRun", "run_1").metadata.nextReconcileAt).toBeUndefined();
+    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
     registration.close();
   });
 
@@ -535,7 +541,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       sources: [
         {
           type: "cron",
@@ -551,7 +557,7 @@ describe("plugin Manager", () => {
         },
       ],
       async reconcile(_baton, resource) {
-          runs.push(resource.metadata.resourceId);
+          runs.push(resource.metadata.name);
         },
     });
 
@@ -560,9 +566,7 @@ describe("plugin Manager", () => {
     await waitFor(() => runs.length === 2);
     expect(runs.sort()).toEqual(["run_1", "run_2"]);
     expect(
-      resources.list("ReqLoopRun").every(
-        (resource) => resource.metadata.nextReconcileAt === undefined,
-      ),
+      resources.scheduledReconciles(resourceType("ReqLoopRun")).length === 0,
     ).toBe(true);
 
     registration.close();
@@ -581,20 +585,20 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       sources: [{
         type: "cron",
         sourceId: "discover-pr",
         cron: "* * * * * *",
         timeZone: "UTC",
         discover() {
-          if (resources.list("ReqLoopRun").length === 0) {
+          if (resources.list(resourceType("ReqLoopRun")).length === 0) {
             createResource(resources, "ReqLoopRun", "run_discovered");
           }
         },
       }],
       async reconcile(_baton, resource) {
-        runs.push(resource.metadata.resourceId);
+        runs.push(resource.metadata.name);
       },
     });
 
@@ -625,7 +629,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       sources: [{
         type: "cron",
         sourceId: "discover-pr",
@@ -636,7 +640,7 @@ describe("plugin Manager", () => {
         },
       }],
       async reconcile(_baton, resource) {
-        runs.push(resource.metadata.resourceId);
+        runs.push(resource.metadata.name);
       },
     });
 
@@ -663,7 +667,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       sources: [{
         type: "cron",
         sourceId: "poll-pr-state",
@@ -701,7 +705,7 @@ describe("plugin Manager", () => {
     });
     const firstRegistration = firstManager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           throw new Error("connector unavailable");
         },
@@ -711,9 +715,10 @@ describe("plugin Manager", () => {
       "connector unavailable",
     );
     expect(failures).toEqual([{ attempt: 1, nextRetryAt: expect.any(String) }]);
-    expect(resources.get("ReqLoopRun", "run_1").metadata.nextReconcileAt).toBe(
-      failures[0]?.nextRetryAt,
-    );
+    expect(
+      resources.scheduledReconciles(resourceType("ReqLoopRun"))[0]
+        ?.nextReconcileAt.toISOString(),
+    ).toBe(failures[0]?.nextRetryAt);
     firstRegistration.close();
 
     let recoveredRuns = 0;
@@ -726,14 +731,14 @@ describe("plugin Manager", () => {
       Record<string, never>
     >({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           recoveredRuns += 1;
         },
     });
     await recoveredManager.start();
     await waitFor(() => recoveredRuns === 1);
-    expect(resources.get("ReqLoopRun", "run_1").metadata.nextReconcileAt).toBeUndefined();
+    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
     recoveredRegistration.close();
   });
 
@@ -754,7 +759,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           runs += 1;
           if (runs <= 2 || failNext) {
@@ -785,7 +790,7 @@ describe("plugin Manager", () => {
     const resources = store(root, "reqloop_default");
     createResource(resources, "ReqLoopRun", "run_1");
     resources.setNextReconcileAt(
-      "ReqLoopRun",
+      resourceType("ReqLoopRun"),
       "run_1",
       new Date(Date.now() + 50),
     );
@@ -796,7 +801,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceKind: "ReqLoopRun",
+      resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
           runs += 1;
         },

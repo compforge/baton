@@ -13,6 +13,19 @@ import {
   type PluginPackage,
 } from "@qiankun01/baton-plugin";
 
+const EXAMPLE_RESOURCE = {
+  apiVersion: "example.baton.dev/v1alpha1",
+  kind: "Example",
+} as const;
+
+// Creation may attach Plugin-defined string metadata:
+// context.resources.create(EXAMPLE_RESOURCE, {
+//   name: "example-1",
+//   labels: { "example.com/team": "platform" },
+//   annotations: { "example.com/display-name": "First example" },
+//   spec: { title: "Hello" },
+// });
+
 type Example = ExampleResource<
   { title: string },
   { phase?: "active" | "done" }
@@ -44,12 +57,14 @@ const plugin: PluginPackage = {
       kind: "example",
       search(query) {
         return context.resources
-          .list<{ title: string }, { phase?: "active" | "done" }>("Example")
+          .list<{ title: string }, { phase?: "active" | "done" }>(
+            EXAMPLE_RESOURCE,
+          )
           .filter((resource) =>
             resource.spec.title.toLowerCase().includes(query.toLowerCase())
           )
           .map((resource) => ({
-            id: resource.metadata.resourceId,
+            id: resource.metadata.name,
             label: resource.spec.title,
             detail: resource.status.phase,
           }));
@@ -58,12 +73,12 @@ const plugin: PluginPackage = {
         const resource = context.resources.get<
           { title: string },
           { phase?: "active" | "done" }
-        >("Example", id);
+        >(EXAMPLE_RESOURCE, id);
         return `Example: ${resource.spec.title}`.slice(0, maxChars);
       },
     });
     context.registerController({
-      resourceKind: "Example",
+      resourceType: EXAMPLE_RESOURCE,
       sources: [{
         type: "cron",
         sourceId: "periodic-refresh",

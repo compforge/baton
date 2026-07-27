@@ -30,7 +30,6 @@ export type {
   OptionRole,
   Outcome,
   Output,
-  ResourceRef,
   Snapshot,
 } from "./interaction.ts";
 
@@ -43,12 +42,21 @@ export type {
 } from "./reconcile.ts";
 
 export type {
+  ResourceRef,
+  ResourceType,
   BatonTurnResourceData,
   BatonTurnResource,
+  BatonTurnResourceApiVersion,
   BatonTurnResourceKind,
   Resource,
   ResourceClient,
   ResourceMetadata,
+} from "./resource.ts";
+
+export {
+  BATON_API_VERSION,
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
 } from "./resource.ts";
 
 export type {

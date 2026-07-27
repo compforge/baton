@@ -13,12 +13,14 @@ import type {
   PluginPackage,
   PluginSessionContext,
   Resource,
+  ResourceType,
   ToastMessage,
   ToastSink,
   ToastTone,
 } from "@qiankun01/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
 import type { ResourceClient } from "./resource-client.ts";
+import { validateResourceType } from "./resource.ts";
 
 export type {
   BoardPresentation,
@@ -35,9 +37,15 @@ export type {
   PluginPackage,
   PluginSessionContext,
   Resource,
+  ResourceType,
   ToastMessage,
   ToastSink,
   ToastTone,
+} from "@qiankun01/baton-plugin";
+
+export {
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
 } from "@qiankun01/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(
@@ -111,9 +119,7 @@ export class PluginBinding implements PluginActivationContext {
     controller: Controller<TSpec, TStatus>,
   ): void {
     this.assertRegistering();
-    if (!controller.resourceKind.trim()) {
-      throw new Error("resourceKind must not be empty");
-    }
+    validateResourceType(controller.resourceType);
     const close = this.registrars.registerController(controller);
     this.cleanups.push(close);
   }

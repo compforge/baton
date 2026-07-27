@@ -17,6 +17,7 @@ import {
   type ReconcileProposal,
 } from "./controller.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
+import { validateResourceType } from "./resource.ts";
 
 export type ProposalOutcome = "submitted" | "dismissed";
 
@@ -54,6 +55,15 @@ function positiveInteger(name: string, value: unknown): asserts value is number 
   }
 }
 
+function opaqueResourceVersion(
+  name: string,
+  value: unknown,
+): asserts value is string {
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) {
+    throw new Error(`${name} must be an opaque positive version`);
+  }
+}
+
 function isoTimestamp(name: string, value: unknown): asserts value is string {
   if (typeof value !== "string" || !value || Number.isNaN(Date.parse(value))) {
     throw new Error(`${name} must be an ISO timestamp`);
@@ -67,7 +77,6 @@ function sha256(value: string): string {
 function proposalId(proposal: ReconcileProposal): string {
   const textDigest = sha256(proposal.text);
   if (proposal.basedOnGeneration !== undefined) {
-    // 无 resourceVersion 的旧 Proposal 保留原身份，升级后已有文件仍可校验。
     const basis =
       proposal.basedOnResourceVersion === undefined
         ? [proposal.basedOnGeneration, textDigest]
@@ -81,6 +90,7 @@ function proposalId(proposal: ReconcileProposal): string {
       JSON.stringify([
         proposal.key.batonSessionId,
         proposal.key.pluginInstanceId,
+        proposal.key.resourceApiVersion,
         proposal.key.resourceKind,
         proposal.key.resourceId,
         ...basis,
@@ -92,6 +102,7 @@ function proposalId(proposal: ReconcileProposal): string {
       proposal.key.batonSessionId,
       proposal.key.pluginInstanceId,
       "baton",
+      proposal.key.resourceApiVersion,
       proposal.key.resourceKind,
       proposal.key.resourceId,
       proposal.basedOnRevision,
@@ -115,6 +126,7 @@ function sameKey(left: ReconcileKey, right: ReconcileKey): boolean {
   return (
     left.batonSessionId === right.batonSessionId &&
     left.pluginInstanceId === right.pluginInstanceId &&
+    left.resourceApiVersion === right.resourceApiVersion &&
     left.resourceKind === right.resourceKind &&
     left.resourceId === right.resourceId &&
     reconcileResourceOwner(left) === reconcileResourceOwner(right)
@@ -245,6 +257,7 @@ export class ProposalStore {
     const key = {
       batonSessionId: draft.key.batonSessionId,
       pluginInstanceId: draft.key.pluginInstanceId,
+      resourceApiVersion: draft.key.resourceApiVersion,
       resourceKind: draft.key.resourceKind,
       resourceId: draft.key.resourceId,
       ...(draft.key.resourceOwner === undefined
@@ -259,6 +272,10 @@ export class ProposalStore {
     })) {
       assertPathSegment(name, value);
     }
+    validateResourceType({
+      apiVersion: key.resourceApiVersion,
+      kind: key.resourceKind,
+    });
     if (key.batonSessionId !== this.batonSessionId) {
       throw new Error(
         `plugin proposal batonSessionId must be ${this.batonSessionId}, got ${key.batonSessionId}`,
@@ -268,7 +285,10 @@ export class ProposalStore {
     if (owner === "plugin") {
       positiveInteger("basedOnGeneration", draft.basedOnGeneration);
       if (draft.basedOnResourceVersion !== undefined) {
-        positiveInteger("basedOnResourceVersion", draft.basedOnResourceVersion);
+        opaqueResourceVersion(
+          "basedOnResourceVersion",
+          draft.basedOnResourceVersion,
+        );
       }
       if (draft.basedOnRevision !== undefined) {
         throw new Error("PluginResource proposal must not set basedOnRevision");
@@ -328,7 +348,7 @@ export class ProposalStore {
         ...(proposal.basedOnResourceVersion === undefined
           ? {}
           : {
-              basedOnResourceVersion: proposal.basedOnResourceVersion as number,
+              basedOnResourceVersion: proposal.basedOnResourceVersion as string,
             }),
         ...(proposal.basedOnRevision === undefined
           ? {}

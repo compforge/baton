@@ -3,6 +3,11 @@ import type {
   EventEnvelope,
   TurnSummary,
 } from "../event/types.ts";
+import {
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
+  type ResourceRef,
+} from "@qiankun01/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
 import {
   type BuiltinResourceReconcileProposal,
@@ -21,7 +26,7 @@ import {
 import { validatePluginOutput } from "./output.ts";
 import type { ControllerSource } from "./package.ts";
 
-export const BATON_TURN_RESOURCE_KIND = "baton.turn" as const;
+export const BATON_TURN_RESOURCE_KIND = BATON_TURN_RESOURCE_TYPE.kind;
 
 export type DeepReadonly<T> =
   T extends (...args: never[]) => unknown
@@ -101,6 +106,15 @@ function turnResource(
         ? {}
         : { harnessSessionId: event.harnessSessionId }),
     },
+  });
+}
+
+function builtinResourceRef(resource: BuiltinResource): ResourceRef {
+  return Object.freeze({
+    ...BATON_TURN_RESOURCE_TYPE,
+    namespace: BATON_SYSTEM_NAMESPACE,
+    name: resource.metadata.resourceId,
+    uid: resource.metadata.sourceEventId,
   });
 }
 
@@ -261,6 +275,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
+      resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       resourceKind: options.resourceKind,
       resourceOwner: "baton",
     });
@@ -298,6 +313,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
           if (result.output?.kind === "interaction") {
             await this.onInteraction(Object.freeze({
               key,
+              resource: builtinResourceRef(resource),
               basedOnRevision: resource.metadata.revision,
               request: result.output,
             }));
@@ -352,11 +368,12 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     if (
       key.batonSessionId !== this.scope.batonSessionId ||
       key.pluginInstanceId !== this.scope.pluginInstanceId ||
+      key.resourceApiVersion !== this.scope.resourceApiVersion ||
       key.resourceKind !== this.scope.resourceKind ||
       reconcileResourceOwner(key) !== "baton"
     ) {
       throw new Error(
-        `reconcile key is outside controller scope: ${key.batonSessionId}/${key.pluginInstanceId}/${key.resourceKind}/${key.resourceId}`,
+        `reconcile key is outside controller scope: ${key.batonSessionId}/${key.pluginInstanceId}/${key.resourceApiVersion}/${key.resourceKind}/${key.resourceId}`,
       );
     }
   }

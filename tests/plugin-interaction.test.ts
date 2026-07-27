@@ -27,13 +27,22 @@ describe("plugin Interaction Store", () => {
     const key = {
       batonSessionId: handle.id,
       pluginInstanceId: "reqloop_default",
+      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
       resourceKind: "ReqLoopRun",
       resourceId: "run_1",
     };
+    const resource = {
+      apiVersion: key.resourceApiVersion,
+      kind: key.resourceKind,
+      namespace: key.pluginInstanceId,
+      name: key.resourceId,
+      uid: "pr_resource_uid",
+    } as const;
     const draft: ReconcileInteraction = {
       key,
+      resource,
       basedOnGeneration: 3,
-      basedOnResourceVersion: 7,
+      basedOnResourceVersion: "7",
       request: {
         kind: "interaction",
         decisionKey: "associate-pr",
@@ -72,11 +81,7 @@ describe("plugin Interaction Store", () => {
       {
         interactionId: opened.interactionId,
         decisionKey: "associate-pr",
-        resource: {
-          resourceKind: "ReqLoopRun",
-          resourceId: "run_1",
-          resourceOwner: "plugin",
-        },
+        resource,
         outcome: { kind: "answered", values: ["req_1"] },
       },
     ]);
@@ -95,4 +100,5 @@ describe("plugin Interaction Store", () => {
     ).toBeUndefined();
     restored.close();
   });
+
 });

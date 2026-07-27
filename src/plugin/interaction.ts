@@ -39,8 +39,11 @@ function interactionIdentity(
   return JSON.stringify([
     pluginInstanceId,
     context.resourceOwner,
-    context.resourceKind,
-    context.resourceId,
+    context.resource.apiVersion,
+    context.resource.kind,
+    context.resource.namespace,
+    context.resource.name,
+    context.resource.uid,
     context.decisionKey,
   ]);
 }
@@ -50,8 +53,7 @@ function interactionContext(
 ): PluginResourceInteractionContext {
   return Object.freeze({
     decisionKey: draft.request.decisionKey,
-    resourceKind: draft.key.resourceKind,
-    resourceId: draft.key.resourceId,
+    resource: draft.resource,
     resourceOwner: reconcileResourceOwner(draft.key),
     ...(draft.basedOnGeneration === undefined
       ? {}
@@ -209,8 +211,9 @@ export class Store {
     return Object.freeze({
       batonSessionId: this.session.id,
       pluginInstanceId: interaction.requester.pluginInstanceId,
-      resourceKind: context.resourceKind,
-      resourceId: context.resourceId,
+      resourceApiVersion: context.resource.apiVersion,
+      resourceKind: context.resource.kind,
+      resourceId: context.resource.name,
       ...(context.resourceOwner === "plugin"
         ? {}
         : { resourceOwner: context.resourceOwner }),
@@ -228,8 +231,9 @@ export class Store {
         interaction.requester.pluginInstanceId !== key.pluginInstanceId ||
         !context ||
         context.resourceOwner !== resourceOwner ||
-        context.resourceKind !== key.resourceKind ||
-        context.resourceId !== key.resourceId
+        context.resource.apiVersion !== key.resourceApiVersion ||
+        context.resource.kind !== key.resourceKind ||
+        context.resource.name !== key.resourceId
       ) {
         continue;
       }
@@ -237,11 +241,7 @@ export class Store {
       snapshots.push(Object.freeze({
         interactionId: interaction.interactionId,
         decisionKey: context.decisionKey,
-        resource: Object.freeze({
-          resourceKind: context.resourceKind,
-          resourceId: context.resourceId,
-          resourceOwner: context.resourceOwner,
-        }),
+        resource: context.resource,
         ...(resolved === undefined ? {} : { outcome: Object.freeze(resolved) }),
       }));
     }

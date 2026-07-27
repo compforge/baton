@@ -2,6 +2,7 @@ import type {
   BoardPresentation,
   BoardItemTone,
   Resource,
+  ResourceType,
 } from "./package.ts";
 
 export interface BoardItem {
@@ -19,7 +20,7 @@ export interface BoardItem {
 export interface BoardSource<TSpec = unknown, TStatus = unknown> {
   readonly pluginId: string;
   readonly pluginInstanceId: string;
-  readonly resourceKind: string;
+  readonly resourceType: ResourceType;
   readonly list: () => readonly Readonly<Resource<TSpec, TStatus>>[];
   readonly present: (
     resource: Readonly<Resource<TSpec, TStatus>>,
@@ -39,12 +40,13 @@ function presentResource<TSpec, TStatus>(
   return Object.freeze({
     id: JSON.stringify([
       source.pluginInstanceId,
-      source.resourceKind,
+      source.resourceType.apiVersion,
+      source.resourceType.kind,
       resourceId,
     ]),
     pluginId: source.pluginId,
     pluginInstanceId: source.pluginInstanceId,
-    resourceKind: source.resourceKind,
+    resourceKind: source.resourceType.kind,
     resourceId,
     title: presentation.title,
     ...(presentation.status === undefined ? {} : { status: presentation.status }),
@@ -63,23 +65,24 @@ export function presentBoardSource<TSpec, TStatus>(
       const presentation = source.present(resource);
       if (presentation) {
         items.push(
-          presentResource(source, resource.metadata.resourceId, presentation),
+          presentResource(source, resource.metadata.name, presentation),
         );
       }
     } catch (error) {
-      const resourceId = resource.metadata.resourceId;
+      const resourceId = resource.metadata.name;
       items.push(
         Object.freeze({
           id: JSON.stringify([
             source.pluginInstanceId,
-            source.resourceKind,
+            source.resourceType.apiVersion,
+            source.resourceType.kind,
             resourceId,
           ]),
           pluginId: source.pluginId,
           pluginInstanceId: source.pluginInstanceId,
-          resourceKind: source.resourceKind,
+          resourceKind: source.resourceType.kind,
           resourceId,
-          title: `${source.resourceKind}/${resourceId}`,
+          title: `${source.resourceType.kind}/${resourceId}`,
           status: "presentation failed",
           detail: error instanceof Error ? error.message : String(error),
           tone: "error",
