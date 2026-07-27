@@ -166,6 +166,9 @@ GC、finalizer、label selector 或通用关系索引。
 - `status` 回答“现在实际怎样”，由 Controller 根据 Baton、Harness 和外部系统事实更新；
 - `metadata.generation` 随 `spec` 变化递增，`status.observedGeneration` 表示当前状态基于哪版
   Contract；
+- Plugin 可让自己的 status 扩展 `ConditionedStatus`，按需提供 Kubernetes 风格的
+  `conditions?: ResourceCondition[]`；Baton 只保存统一 wire shape，不解释 condition type
+  或领域策略；
 - `metadata.resourceVersion` 是不应被解析的乐观并发 token；status 变化会更新它，调度变化不会；
 - `nextReconcileAt` 是 Baton 恢复 workqueue 的内部 control，不属于 Plugin 可见 metadata；
 - `status` 原则上应能重新观测或重新计算，不能藏入唯一凭据或不可恢复的工作；
@@ -181,6 +184,25 @@ GC、finalizer、label selector 或通用关系索引。
 Resource；例如 reqloop 可以同时维护多个仍存活的 `ReqLoopRun`。Baton 不为 Resource 定义
 通用 `phase` 或 `metadata.lifecycle`：业务阶段属于 Plugin 自己的 `status`，是否出现在 Board
 则由 Controller 的 `present(resource)` 决定。
+
+`ResourceCondition` 对齐 Kubernetes 的字段语义：
+
+```ts
+interface ResourceCondition {
+  type: string;
+  status: "True" | "False" | "Unknown";
+  observedGeneration: number;
+  lastTransitionTime: string;
+  reason: string;
+  message: string;
+}
+```
+
+同一 `type` 最多保留一条当前 condition；`lastTransitionTime` 只在该 condition 的
+`status` 发生变化时更新，reason、message 或 observedGeneration 的刷新不算状态迁移。
+Conditions 是当前谓词集合，不是事件历史，也不替代 Plugin 自己的 phase 或状态机。
+`observedGeneration` 只回答 condition 基于哪版 spec，外部系统观测的新旧仍应由领域 status
+中的 `observedAt`、外部 revision 等字段表达。
 
 #### Baton 注册的 Resource kind
 
