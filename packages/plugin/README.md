@@ -8,6 +8,7 @@ Public, host-independent authoring contract for Baton plugins.
 
 ```ts
 import {
+  type ConditionedStatus,
   type Resource as ExampleResource,
   type PluginActivationContext,
   type PluginPackage,
@@ -26,10 +27,11 @@ const EXAMPLE_RESOURCE = {
 //   spec: { title: "Hello" },
 // });
 
-type Example = ExampleResource<
-  { title: string },
-  { phase?: "active" | "done" }
->;
+interface ExampleStatus extends ConditionedStatus {
+  readonly phase?: "active" | "done";
+}
+
+type Example = ExampleResource<{ title: string }, ExampleStatus>;
 
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
@@ -57,7 +59,7 @@ const plugin: PluginPackage = {
       kind: "example",
       search(query) {
         return context.resources
-          .list<{ title: string }, { phase?: "active" | "done" }>(
+          .list<{ title: string }, ExampleStatus>(
             EXAMPLE_RESOURCE,
           )
           .filter((resource) =>
@@ -72,7 +74,7 @@ const plugin: PluginPackage = {
       provide(id, { maxChars }) {
         const resource = context.resources.get<
           { title: string },
-          { phase?: "active" | "done" }
+          ExampleStatus
         >(EXAMPLE_RESOURCE, id);
         return `Example: ${resource.spec.title}`.slice(0, maxChars);
       },
@@ -104,6 +106,13 @@ export default plugin;
 This package contains protocol types only. Baton runtime implementations such
 as Manager, Binding, Controller, Store, Marketplace, persistence, and Harness
 routing are intentionally excluded.
+
+Plugins may opt into Kubernetes-style current-state conditions by extending
+`ConditionedStatus`. `conditions` remains optional and lives inside the
+Plugin-owned status schema; Baton stores it but does not interpret condition
+types, reasons, transitions, or lifecycle policy. Keep at most one current
+condition per `type`, and update `lastTransitionTime` only when that condition's
+`status` changes.
 
 `context.toast` is session-scoped and non-durable. Use it for one-off feedback
 caused by an operation or state transition. Ongoing state belongs in Resource

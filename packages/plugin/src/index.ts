@@ -11,6 +11,12 @@ export type {
   PluginCommandResult,
 } from "./command.ts";
 
+export type {
+  ConditionedStatus,
+  ConditionStatus,
+  ResourceCondition,
+} from "./condition.ts";
+
 export type { ContextProvider } from "./context.ts";
 
 export type {
