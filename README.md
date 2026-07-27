@@ -24,7 +24,11 @@ Two fundamentals are in place today:
 - **Context portability**: a BatonSession is a durable, unified history owned by the user that outlives any single harness. Switching agents requires no context carrying; harness-native sessions only accelerate resume and are never a prerequisite for the history to survive.
 - **Native experience**: baton preserves each agent's own input, completion, streaming, tool-call, and approval experience as much as possible, adding only a few commands of its own (such as `/codex` and `/claude`).
 
-On top of these, three directions are on the roadmap (**none implemented yet**):
+The Plugin runtime adds a third principle:
+
+- **Layered loops**: baton core stays domain-neutral and owns the shared input, context, permission, and harness-routing path. Baton Plugins own long-running domain loops and currently propose the next Harness input for the user to confirm, edit, or discard. Harnesses remain intelligent execution providers; Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
+
+On top of these, three product directions remain on the roadmap. The Plugin runtime now provides the Resource/Controller foundation for long-running loops, but these end-to-end experiences are not complete yet:
 
 - **Multi-harness collaboration**: from relaying within one session toward dispatching the same task to multiple harnesses in parallel, with results merged back into one unified history. The near-term path is draft sessions — when a new idea strikes mid-task, fork a draft session (optionally on a different harness) to explore in parallel without interrupting the mainline.
 - **Context intake**: the mainline is not a raw transcript of everything but the canonical history the user endorses. After a draft session produces results, the user decides whether to merge its conclusions into the mainline or discard them; discarding is not deletion — drafts stay durable and referenceable.
@@ -32,11 +36,15 @@ On top of these, three directions are on the roadmap (**none implemented yet**):
 
 ## Architecture at a glance
 
-baton is one bidirectional pipeline: chat-tui carries `intent`/`render` only, the controller owns the `Input` lifecycle + the driven-turn queue, adapters translate each harness's wire to a single normalized event stream, and `session.jsonl` persists it. The event stream is the sole source of truth; the UI is a projection.
+Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carries `intent`/`render` only, the controller owns the `Input` lifecycle + the driven-turn queue, adapters translate each harness's wire to a single normalized event stream, and `session.jsonl` persists it. The event stream is the sole source of truth; the UI is a projection.
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, invariants, the pipeline, and the harness extension contract.
+v2 keeps that pipeline and layers long-running domain loops around it. baton core remains domain-neutral and owns shared control; Baton Plugins reconcile domain Resources and propose work; Harnesses provide intelligent execution, while Harness Plugins constrain the smaller loop inside a Harness. Today, proposed work returns to the same Input, context, permission, and routing path for the user to approve, edit, or discard.
+
+![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
+
+See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, invariants, the v1 pipeline, and the harness extension contract. See [`docs/plugin.md`](docs/plugin.md) for the v2 Plugin runtime and [`docs/loop-engineering.md`](docs/loop-engineering.md) for the layered loop model.
 
 ## Features
 
@@ -51,6 +59,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, 
 - Reuse local Claude Code and Codex credentials without storing them in baton
 - Use a headless REPL to debug agent integrations
 - Register local or Git Plugin Marketplaces and install immutable Plugin Packages
+- Run session-scoped Plugin Controllers over durable Resources, with cron/requeue wakeups, Board projections, and user-approved Proposals
 
 ## Installation & configuration
 
