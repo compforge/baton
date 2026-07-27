@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -175,6 +175,68 @@ describe("BatonChatProtocol picker search", () => {
       ]);
 
       protocol.resolvePicker(pickerId, null);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("BatonChatProtocol plugin command diagnostics", () => {
+  test("records command failures in the current session log", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-plugin-command-log-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const internals = protocol as unknown as {
+        plugins: {
+          listCommands(): Array<{
+            pluginId: string;
+            commandId: string;
+            name: string;
+            description: string;
+          }>;
+          executeCommand(): Promise<never>;
+        };
+      };
+      internals.plugins.listCommands = () => [{
+        pluginId: "qiankun/reqloop",
+        commandId: "requirements",
+        name: "requirements",
+        description: "Browse requirements",
+      }];
+      internals.plugins.executeCommand = async () => {
+        throw new Error("Meegle CLI failed: backend unavailable");
+      };
+
+      await expect(
+        protocol.command("requirements", ""),
+      ).rejects.toThrow("Meegle CLI failed: backend unavailable");
+
+      const log = JSON.parse(
+        readFileSync(join(session.dir, "session.log"), "utf8").trim(),
+      );
+      expect(log).toMatchObject({
+        batonSessionId: session.id,
+        level: "error",
+        component: "plugin.command",
+        message: "Plugin command /requirements failed",
+        error: {
+          name: "Error",
+          message: "Meegle CLI failed: backend unavailable",
+        },
+        details: {
+          pluginId: "qiankun/reqloop",
+          command: "requirements",
+          phase: "invoke",
+        },
+      });
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
