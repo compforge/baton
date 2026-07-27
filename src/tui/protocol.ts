@@ -33,6 +33,7 @@ import {
   sessionContextProvider,
 } from "../context/mention.ts";
 import { ContextProviderRegistry } from "../context/registry.ts";
+import { diagnosticError } from "../diagnostics.ts";
 import {
   textOf,
   type ApprovalReviewUpdate,
@@ -58,6 +59,7 @@ import { createBatonSnapshot } from "../plugin/baton-snapshot.ts";
 import { Manager } from "../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../plugin/builtin.ts";
 import type {
+  PluginCommandInput,
   PluginCommandResult,
   ToastMessage,
 } from "../plugin/package.ts";
@@ -1157,11 +1159,38 @@ export class BatonChatProtocol implements ChatProtocol {
       .listCommands()
       .find((candidate) => candidate.name === name);
     if (!command) throw new Error(`Plugin command is not active: /${name}`);
-    const result = await this.plugins.executeCommand(name, {
+    const result = await this.executePluginCommand(command.pluginId, name, {
       argument,
       ...(selectedValue === undefined ? {} : { selectedValue }),
     });
     this.presentPluginCommandResult(command.pluginId, name, argument, result);
+  }
+
+  private async executePluginCommand(
+    pluginId: string,
+    name: string,
+    input: PluginCommandInput,
+  ): Promise<PluginCommandResult | undefined> {
+    try {
+      return await this.plugins.executeCommand(name, input);
+    } catch (error) {
+      this.session.diagnostic({
+        level: "error",
+        component: "plugin.command",
+        message: `Plugin command /${name} failed`,
+        error: diagnosticError(error),
+        details: {
+          pluginId,
+          command: name,
+          phase: input.selectedValue !== undefined
+            ? "select"
+            : input.searchQuery !== undefined
+            ? "search"
+            : "invoke",
+        },
+      });
+      throw error;
+    }
   }
 
   private presentPluginCommandResult(
@@ -1197,7 +1226,7 @@ export class BatonChatProtocol implements ChatProtocol {
       ...(result.search?.mode === "remote"
         ? {
           onSearch: async (query: string) => {
-            const next = await this.plugins.executeCommand(name, {
+            const next = await this.executePluginCommand(pluginId, name, {
               argument,
               searchQuery: query,
             });
