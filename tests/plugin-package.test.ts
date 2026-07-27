@@ -184,6 +184,53 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
+  test("automatically reconciles created Resources and status changes", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    let context: PluginActivationContext | undefined;
+    const phases: string[] = [];
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((activation) => {
+          context = activation;
+          activation.registerController<
+            { requirement: string },
+            { phase?: string }
+          >({
+            resourceType: REQ_LOOP_RUN,
+            async reconcile(_baton, resource) {
+              phases.push(resource.status.phase ?? "pending");
+              if (resource.status.phase === undefined) {
+                activation.resources.patchStatus(resource, {
+                  phase: "ready",
+                });
+              }
+            },
+          });
+        }),
+      ],
+      onProposal() {},
+    });
+
+    await manager.start();
+    context!.resources.create(REQ_LOOP_RUN, {
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+
+    await waitFor(() => phases.length === 2);
+    expect(phases).toEqual(["pending", "ready"]);
+
+    await manager.close();
+  });
+
   test("presents active Resources as Board items and invalidates on status changes", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);

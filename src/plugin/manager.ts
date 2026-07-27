@@ -53,7 +53,10 @@ import {
   PluginResourceStore,
   resourceTypeKey,
 } from "./resource.ts";
-import { createResourceClient } from "./resource-client.ts";
+import {
+  createResourceClient,
+  type ResourceClientChange,
+} from "./resource-client.ts";
 import {
   type BoardItem,
   presentBoardSource,
@@ -503,7 +506,7 @@ export class Manager {
           session: this.instances.session,
           pluginInstanceId: instance.pluginInstanceId,
         }),
-        () => this.notifyBoardChanged(),
+        (change) => this.handlePluginResourceChange(change),
         (resourceType) =>
           this.claimResourceTypeForCreate(instance.pluginId, resourceType),
       ),
@@ -1166,6 +1169,34 @@ export class Manager {
     } catch {
       // Board is a derived view; consumer invalidation must not affect Plugin runtime state.
     }
+  }
+
+  private handlePluginResourceChange(change: ResourceClientChange): void {
+    this.notifyBoardChanged();
+    if (this.closed || change.kind === "deleted") return;
+
+    const key = Object.freeze({
+      batonSessionId: this.proposals.batonSessionId,
+      pluginInstanceId: change.resource.metadata.namespace,
+      resourceApiVersion: change.resource.apiVersion,
+      resourceKind: change.resource.kind,
+      resourceId: change.resource.metadata.name,
+    });
+    const scopeId = reconcileScopeId(key);
+    // Source discovery enqueues the complete Resource set when it finishes.
+    // Suppressing the immediate signal here avoids reconciling a newly discovered key twice.
+    if (this.activeSourceScopes.has(scopeId)) return;
+
+    const controller = this.controllers.get(scopeId);
+    if (
+      !controller ||
+      this.suspendedControllers.has(scopeId)
+    ) {
+      return;
+    }
+    void controller.enqueue(key).catch(() => {
+      // Reconcile failures use the Controller retry path; close races need no extra reaction.
+    });
   }
 
   private notifyToast(

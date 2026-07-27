@@ -510,8 +510,8 @@ Resource type 使用 BatonSession 内的所有权注册表。Baton 启动时先�
 
 ### 2.2 Resource 与 Controller
 
-Baton-owned Resource 更新、Resource 创建或 `spec` 更新、启动恢复、外部观察、Controller cron Source
-或动态计时到期都只表示
+Baton-owned Resource 更新、Plugin Resource 创建或有效的 `status` 更新、后续 `spec` 更新、启动恢复、
+外部观察、Controller cron Source 或动态计时到期都只表示
 “某个对象可能需要重新检查”。Baton 将同一对象的重复触发合并成 reconcile key：
 
 ```text
@@ -822,7 +822,8 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
    整体回滚，解绑和退出统一关闭。
 2. 已建立 Resource 通用信封与存储、同 key 不并发的 reconcile queue、持久 Proposal，
    `requeueAfter` due time 与 Controller cron Sources；三种唤醒都进入同一
-   keyed queue，运行数据全部归当前 BatonSession。
+   keyed queue；Plugin Resource 创建和有效的 status 更新也自动进入该队列，运行数据全部归当前
+   BatonSession。
 3. 已建立 `_baton_turn_summary` → `baton.dev/v1alpha1, Kind=Turn` 的只读 Baton-owned Resource，
    `registerController` 复用同一 queue、退避和 Proposal 管线；启动 replay 与 live append
    使用同一资源 key。

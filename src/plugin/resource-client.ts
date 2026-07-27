@@ -8,6 +8,11 @@ import { PluginResourceStore } from "./resource.ts";
 
 export type ResourceClient = PublicResourceClient;
 
+export interface ResourceClientChange {
+  readonly kind: "created" | "status-updated" | "deleted";
+  readonly resource: Readonly<Resource<unknown, unknown>>;
+}
+
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.freeze(value);
@@ -18,16 +23,17 @@ function deepFreeze<T>(value: T): T {
 /** Restricts Resource reads and status writes to one PluginInstance namespace. */
 export function createResourceClient(
   store: PluginResourceStore,
-  onChange?: (resource: Readonly<Resource<unknown, unknown>>) => void,
+  onChange?: (change: ResourceClientChange) => void,
   assertCanCreateType?: (type: ResourceType) => void,
 ): ResourceClient {
   const changed = (
+    kind: ResourceClientChange["kind"],
     resource: Readonly<Resource<unknown, unknown>>,
   ): void => {
     try {
-      onChange?.(resource);
+      onChange?.(Object.freeze({ kind, resource }));
     } catch {
-      // Resource mutation has committed; projection invalidation must not turn it into failure.
+      // Resource mutation has committed; host reactions must not turn it into failure.
     }
   };
   const assertOwned = (
@@ -70,14 +76,14 @@ export function createResourceClient(
           spec: init.spec,
         }),
       );
-      changed(created);
+      changed("created", created);
       return created;
     },
     delete(type: ResourceType, name: string) {
       const resource = store.get(type, name);
       assertOwned(resource);
       store.delete(type, name);
-      changed(resource);
+      changed("deleted", resource);
     },
     patchStatus<TSpec, TStatus>(
       resource: Readonly<Resource<TSpec, TStatus>>,
@@ -98,7 +104,7 @@ export function createResourceClient(
         patched.metadata.resourceVersion !==
         resource.metadata.resourceVersion
       ) {
-        changed(patched);
+        changed("status-updated", patched);
       }
       return patched;
     },
