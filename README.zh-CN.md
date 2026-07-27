@@ -24,7 +24,11 @@ baton 是一个以持久、harness-independent 会话为内核的 terminal-nativ
 - **上下文打通**：BatonSession 是用户拥有的持久统一历史，跨 harness 存续。换 agent 不需要搬运上下文；各家原生会话只承担恢复加速，不是历史存续的前提。
 - **原生体验**：尽量保留单独使用各 agent 时的输入、补全、流式输出、工具调用与审批体验，baton 只增加少量自己的命令（如 `/codex` 和 `/claude`）。
 
-在此之上有三个演进方向（**均尚未实现**）：
+Plugin runtime 又增加了一条原则：
+
+- **Loop 分层**：baton core 保持领域无关，统一拥有 Input、Context、Permission 与 Harness routing 路径。Baton Plugin 拥有长期领域 loop，当前默认建议下一条 Harness 输入，交给用户确认、编辑或丢弃；Harness 仍是智能执行能力提供方，devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
+
+在此之上仍有三个产品演进方向。Plugin runtime 已经提供长期 loop 所需的 Resource / Controller 基础，但这些端到端体验尚未完整落地：
 
 - **多 harness 协作**：从同一会话内接力，走向把同一任务并行分派给多个 harness，结果汇回同一份统一历史。近路径是草稿会话——任务进行中有新想法时，拉一个草稿会话（可换 harness）并行探索，主线不被打断。
 - **上下文收录**：主线不是全量流水账，而是用户认可的正典历史。草稿会话出了成果后，由用户决定将结论合入主线还是丢弃；丢弃不等于删除，草稿仍持久、可再引用。
@@ -32,11 +36,15 @@ baton 是一个以持久、harness-independent 会话为内核的 terminal-nativ
 
 ## 架构速览
 
-baton 是一条双向流水线：chat-tui 只承载 `intent`/`render`，controller 拥有 `Input` 生命周期与 driven-turn 队列，adapter 把各 harness 的 wire 归一成同一条事件流，`session.jsonl` 落盘持久化。事件流是唯一真相源，UI 是它的投影。
+先从稳定内核理解 baton：它是一条双向流水线。chat-tui 只承载 `intent`/`render`，controller 拥有 `Input` 生命周期与 driven-turn 队列，adapter 把各 harness 的 wire 归一成同一条事件流，`session.jsonl` 落盘持久化。事件流是唯一真相源，UI 是它的投影。
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
-稳定内核（核心概念、不变量、流水线、harness 扩展契约）见 [`docs/kernel.md`](docs/kernel.md)。
+v2 保留这条流水线，并在其外分层组织长期领域 loop：baton core 保持领域无关并统一控制，Baton Plugin reconcile 领域 Resource 并提出工作建议，Harness 提供智能执行能力，Harness Plugin 约束 Harness 内部的小闭环。当前建议的工作会回到同一条 Input、Context、Permission 与 routing 路径，交给用户确认、编辑或丢弃。
+
+![Baton、Plugin 与 Harness 的关系](docs/kernel-pipeline_v2.svg)
+
+稳定内核（核心概念、不变量、v1 流水线、harness 扩展契约）见 [`docs/kernel.md`](docs/kernel.md)；v2 Plugin runtime 见 [`docs/plugin.md`](docs/plugin.md)，分层 loop 模型见 [`docs/loop-engineering.md`](docs/loop-engineering.md)。
 
 ## 功能
 
@@ -51,6 +59,7 @@ baton 是一条双向流水线：chat-tui 只承载 `intent`/`render`，controll
 - 复用本机 Claude Code / Codex 登录态，不托管凭证
 - 提供 headless REPL，方便调试 agent 接入链路
 - 注册本地或 Git Plugin Marketplace，并安装不可变的 PluginPackage
+- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 cron/requeue 唤醒、Board 投影与用户确认 Proposal
 
 ## 安装与配置
 

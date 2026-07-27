@@ -2,138 +2,88 @@
 
 ## 项目定位与边界
 
-baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在自己拥有的 BatonSession 中工作，在一个 TUI 里切换不同 coding agent，而不需要随 harness 一起切换或搬运会话历史。BatonSession 是 Plugin Binding、Resource、Proposal 等运行态的 owner；Plugin 启用配置则是用户级，供新 Session 自动加载。Project 只按 cwd 组织和发现 Session。它要消除“人充当 agent 之间传话筒”的工作——反复复制产出、解释上下文、手写交接文档。Claude Code 和 Codex 是首批内置 harness，不是封闭支持列表；差异化在“上下文打通”，不是“又一个并行会话管理器”，开发时要警惕滑回后者。
+baton 是一个 terminal-native 的 Loop Engineering runtime，也是跨 coding agent 的统一工作区。
+用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
+Session 的 Plugin runtime；Project 只按 cwd 组织和发现 Session。Claude Code 和 Codex 是首批
+内置 Harness，不是封闭支持列表。
 
-第一阶段只聚焦两件事：
+baton 按三层协作：
 
-1. **交互体验**：尽量保留单独使用 coding agent 时的输入、补全、命令、流式输出、工具调用和审批体验，baton 用 `/codex`、`/claude` 一步切换 agent。
-2. **数据打通**：BatonSession 是用户拥有的持久会话，也是跨 harness 的统一逻辑历史；只要 BatonSession 仍在，任一 harness 都应能恢复所需上下文。同一次会话内切换 harness，以及关闭后重新打开同一 BatonSession 再切换 harness，都应自然续聊，无需用户手工复制上下文或显式 `@` 当前会话。
+1. **Baton core** 提供 Input、Interaction、Event、Context、权限、Harness routing、调度和
+   Projection 等通用控制能力，不理解 Requirement、Deployment、Review 等领域语义。
+2. **Baton Plugin** 拥有长期领域 loop，以 Resource 的 `spec/status` 表达期望与观测，由
+   Controller reconcile。当前 Plugin 通过 Proposal 建议下一条 Harness Input，交给用户确认、
+   编辑或丢弃；不能绕过 Baton 直接调用 Harness。
+3. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
+   Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
 
-v1 明确不做 agent 互相委派、worktree / 并发写文件隔离、多人多设备云端协作、遥测上报与账号体系。它们并非永远不做，而是不应挤占第一阶段“单一逻辑会话中的原生交互与上下文接力”；多 agent 同 cwd 时只提示文件冲突风险。
+稳定内核已经支持同一 BatonSession 内的 Harness 接力；Plugin runtime 已支持 Marketplace、
+Command、Resource/Controller、cron 与 `requeueAfter`、Board presentation、Proposal /
+Interaction 和 ContextProvider。自动、受控的 Harness Work，多 Harness 并行汇总以及主线 /
+草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness runtime 来提前实现。
 
-后续演进有三个方向：
-
-1. **多 harness 协作**：当前先支持同一 BatonSession 内由不同 harness 接力；未来可把同一任务并行分派给多个 harness，再由 baton 汇总各自结果，形成统一产出。近路径是用户驱动的草稿会话：任务进行中有新想法时，拉一个草稿会话（可换 harness）并行探索，主线不被打断。
-2. **上下文收录**：主线不是全量流水账，而是用户认可的正典历史。草稿会话看到成果后，由用户决定将结论合入主线还是丢弃；丢弃不等于删除，草稿仍持久、可再引用。收录只发生在合入边界，不回溯修改已收录历史。
-3. **事件驱动的长期 loop**：Claude Code / Codex 目前缺少可供外部系统统一依赖的完整唤醒机制。baton 作为 agent 驱动方，可监听代码提交、PR 合并等外部事件，重新唤醒对应会话继续后续工作；这是 loop engineering 的长期方向之一。首个官方 Baton Plugin `reqloop` 随产品交付但不进入 core，用 Requirement Loop 提供开箱可理解的默认故事；devloop 则下沉为 Harness Plugin，约束 Harness 内部的开发小闭环。
+reqloop 是独立交付、可禁用和独立升级的官方 Marketplace / Plugin 场景，用 Requirement Loop
+提供默认产品故事；其领域模型与 Connector 始终留在 reqloop，不进入 Baton core。
 
 ## 代码地图与核心模块
 
-**稳定内核**（核心概念 / 不变量 / 流程 / 扩展契约）见 `docs/kernel.md`，动手前先读——加 harness 只碰 adapter/registry/ids 的判据在此。内核之外的完整设计见 `docs/design.md`。
+| 目录 | 职责 |
+|---|---|
+| `docs/kernel.md` | 稳定内核：核心概念、不变量、v1 双向流水线与 Harness 扩展契约 |
+| `docs/plugin.md`、`docs/loop-engineering.md` | v2 Plugin runtime 与分层 loop 控制面 |
+| `packages/plugin/` | `@qiankun01/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
+| `src/controller/`、`src/event/`、`src/session/`、`src/store/` | Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
+| `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
+| `src/plugin/` | Marketplace、Package/Instance/Binding、Resource/Controller、Board 与 Output runtime |
+| `src/context/`、`src/interaction/` | 上下文注册/交付与统一待决交互 |
+| `src/tui/`、`src/cli/` | chat-tui 投影装配、交互入口与 headless 工具 |
+| `tests/` | 内核、Harness 与 Plugin 契约测试 |
 
-```
-baton/
-├── docs/
-│   ├── kernel.md            # 稳定内核：核心概念 + 3 不变量 + 双向流水线 + harness 扩展契约（权威入口）
-│   ├── design.md            # 内核之外的完整设计：问题域总表、架构、关键决策 why、里程碑
-│   ├── plugin.md            # Baton Plugin：Package/Instance/Binding 与 Resource/Reconcile
-│   ├── user-input-lifecycle.md # 用户输入：queue/steer/recall/interrupt 生命周期与待决场景
-│   ├── harness-output-lifecycle.md # harness 输出/感知：归一、终态收口、丢事件自愈与对账
-│   ├── approval-lifecycle.md # 审批/用户确认：审批诚实、审批人跟随 harness、人工审批与回执
-│   ├── harness-interaction-design.md # 输入/输出、用户交互与 Adapter 协议演进方案
-│   └── resume-fork.md       # resume/fork 语义、会话锁与 crash recovery 的 why
-├── packages/
-│   └── plugin/              # @qiankun01/baton-plugin：三方 Plugin 开发使用的纯类型契约
-├── src/
-│   ├── event/               # 内部事件信封（identity / scope / source）与归一 payload
-│   │   ├── ids.ts           # 带前缀 ULID（ev_/ix_/ctx_/ctxe_/bs_/hs_/t_/m_/tc_...），稳定可外部引用
-│   │   └── types.ts         # 信封结构 + payload 类型 + 三态 patch 语义
-│   ├── interaction/
-│   │   └── types.ts         # 持久交互：统一 identity/requester/lifecycle，kind 区分 permission/question 等
-│   ├── config/
-│   │   └── config.ts        # ~/.baton/config.yaml 加载与默认值（env > 文件 > 默认）
-│   ├── harness/
-│   │   ├── adapter.ts       # HarnessAdapter 小核心接口 + capability / InteractionHandler 契约
-│   │   ├── binding.ts       # HarnessTarget ↔ Adapter ↔ HarnessSession 活绑定；启动、配置恢复与关闭
-│   │   ├── ids.ts           # Harness 定义与 wire/alias 身份目录
-│   │   ├── normalize.ts     # Harness 开放终态 → Baton 封闭词表的保守归一
-│   │   ├── registry.ts      # 内置 harness 注册入口；新增 harness 不进入 session core
-│   │   ├── target.ts        # HarnessTarget 与不可变 HarnessLaunchSnapshot；执行位置不与协议类型混用
-│   │   ├── claude/
-│   │   │   └── adapter.ts   # Agent SDK 进程内接入：流式/审批/resume，可执行文件可换（BATON_CLAUDE_BIN）
-│   │   └── codex/
-│   │       ├── jsonrpc.ts   # 行分隔 JSON-RPC peer（请求/通知/服务端请求三路分发）
-│   │       └── adapter.ts   # codex app-server 接入：事件翻译、审批、usage 差分（fast-submit 语义）
-│   ├── context/
-│   │   ├── delivery.ts      # ContextSource/Snapshot/Receipt 与可重放 ContextEpoch
-│   │   ├── mention.ts       # @ 引用急切解析与内置 Session ContextProvider
-│   │   └── registry.ts      # 内置 / Plugin ContextProvider 注册、搜索与引用路由
-│   ├── controller/
-│   │   ├── index.ts         # Controller 公共入口：Harness 编排、事件入口与跨生命周期主流程
-│   │   ├── input.ts         # Input 队列、身份、recall 与只读快照
-│   │   ├── attempt.ts       # Controller 内部的 Harness 投递 Attempt 状态机与重放索引
-│   │   ├── turn.ts          # driven / observed Turn ledger 与幂等终态记账
-│   │   └── interaction.ts   # Interaction waiter 的 opened / resolved / cancel 生命周期
-│   ├── plugin/              # Plugin 宿主 runtime
-│   │   ├── command/         # Plugin slash command
-│   │   └── marketplace/     # Marketplace 与 Package 交付
-│   ├── session/
-│   │   └── open.ts          # BatonSession 打开的唯一入口：新建/继续/指定 + 会话锁 + crash recovery
-│   ├── commands/
-│   │   └── registry.ts      # baton core slash command 真相源：harness/model/session 生命周期
-│   ├── store/               # 会话存储
-│   │   ├── reduce.ts        # 事件流 reduce 成会话状态（TUI 渲染与崩溃恢复的来源）
-│   │   └── store.ts         # session.jsonl 追加/读取 + meta.json + turn-summary 生成
-│   ├── cli/
-│   │   ├── launcher.cjs     # npm bin 薄启动器：调用包内 runtime，不要求用户预装 Bun
-│   │   ├── bin.ts           # 统一命令入口：baton / repl / resume / fork / sessions
-│   │   └── main.ts          # headless REPL：bun run repl -- [--agent codex|claude] [--cwd <dir>]
-│   └── tui/                 # UI 组件层来自 chat-tui（github.com/qiankunli/chat-tui，git 依赖）
-│       ├── main.tsx         # 入口：参数解析 + ChatShell 装配
-│       ├── plugins/         # /plugins 底部管理面：Marketplace / Package 浏览、详情与安装
-│       ├── session-picker.tsx # session picker：resume/fork 无 id 的前置会话选择屏（不经过 protocol）
-│       ├── protocol.ts      # ChatProtocol 实现：controller/store → 视图投影，intents → controller 操作
-│       └── theme.ts         # baton 配色：按 author 区分 agent 颜色（harness 语义不进 chat-tui）
-└── tests/                   # bun test 单测
-```
+改稳定内核或接入 Harness 前先读 `docs/kernel.md`；改 Plugin runtime / API 前先读
+`docs/plugin.md` 和 `docs/loop-engineering.md`。内核之外的产品取舍见 `docs/design.md`。
 
-运行时 Bun；宿主与公共 Plugin 契约同仓分包。验证命令：`bun run check`（typecheck + test）。
+运行时使用 Bun；宿主与公共 Plugin 契约同仓分包。验证命令为 `bun run check`
+（typecheck + test）。仓库内试用使用 `bun install && bun link`，普通用户通过 npm 安装，
+不暴露 Bun 前置条件。
 
-本地试用：仓库内 `bun install && bun link` 后全局可用 `baton`（Bun 直接跑 TS 源码，无构建步骤；不用 `bun build --compile`，opentui 原生库与 Claude SDK 的动态加载在单文件二进制下有坑）。
-
-根目录 `VERSION` 记录项目内部版本；每次逻辑改动至少递增 patch version，同一轮改动只递增
-一次。npm 包版本独立管理，不随 `VERSION` 自动更新。
+根目录 `VERSION` 记录项目内部版本；每次逻辑改动至少递增一次 patch，同一轮只递增一次。
+npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 ## 关键约定
 
-- **BatonSession、HarnessTarget 与 HarnessSession 分属三层**：BatonSession 是用户拥有、跨 harness、可持久恢复的逻辑历史；HarnessTarget 是具体执行与状态实例坐标；HarnessSession 只是该 Target 启动出的私有执行状态。`HarnessBinding`、原生 session、同步水位、偏好 / 授权与 Target-scoped 投影状态一律按 `harnessTargetId` 隔离；Target ID 必须经显式 resolver 找到完整 Target，未知值 fail closed，不能从 Harness 名称、alias 或 wire key 猜实例；Adapter 工厂再按 `target.harness` 选择协议实现。driven turn 在 BatonSession 内全局串行；harness 自发的 observed turn 与队列正交，见 `docs/kernel.md` §3。
-- **事件流是统一历史的合并真相源，UI 是投影**：每条 Event 必须有稳定 `eventId`、单一 `scope` 和显式事实 `source`；归属、来源与 `harness*` / `turnId` 等执行坐标正交。Adapter 只提交事实内容，`source`、Harness 与 HarnessTarget 由绑定它的宿主入口统一补齐，不能由 Adapter 自报。`session.jsonl` 记录可重放事件，TUI 状态由 reduce 重建——live 投影经 `SessionHandle.subscribe` 订阅事件流，与 resume 同一条 reduce 路径，不允许旁路投影通道（曾因 per-turn 回调这条第二通道静默丢掉 observed turn 的回复）；`meta.json` 保存定位与恢复元数据，不替代事件历史。HarnessSession 原生 resume 是加速路径，不是正确性的前提。
-- **Plugin 通过 Resource / Controller 的统一 reconcile 路径工作**：Resource kind 全局唯一，Baton 启动时先注册只读 `baton.*` kind，Plugin 可用同一个 `registerController` 观察但不能覆盖或修改；Plugin 自有 Resource 保存 `spec/status`。Resource 变化、`requeueAfter` 和 Controller cron Source 最终都只 enqueue 同一 keyed reconcile；Source 的可选 discovery 只能创建该 Controller 管理的缺失 Resource，status 与 Output 仍只由逐 Resource reconcile 收敛。Plugin 不必先创建 Resource、更不必是 loop。
-- **显式上下文通过 ContextProvider 统一注册**：Baton 内置与 Plugin 都使用 `registerContextProvider`；内置 kind 保持单词，Plugin Binding 自动限定为 `<pluginName>@<kind>`。`@` Picker 按最终 kind 分组搜索，选中内容只注入当前 turn，不等同于持久 ContextSource delivery。
-- **Plugin 启用身份是用户级 `plugin@marketplace`**：`~/.baton/plugin.yaml` 保存版本、enabled 和 config；新 BatonSession 启动时加载，运行中的 Session 通过 `/reload-plugins` 重建 Binding。Package 缓存按 marketplace 隔离，Resource、Proposal 与 Connector 运行态仍严格归当前 BatonSession。
-- **三方 Plugin 只依赖公共类型包**：`packages/plugin` 不包含 Manager、Binding、Controller、Store、Marketplace 或 Harness runtime；Baton 宿主也消费同一份契约，避免内外两套 API 漂移。领域 Plugin 独立版本化并通过 Marketplace 交付。
-- **Board 是带归属的派生读模型**：Plugin 通过 Controller 的 `present(resource)` 决定每份 Resource 是否展示，Baton 补齐 owner 与 Resource 身份；业务 phase 只属于 Plugin status，Baton 不定义通用 lifecycle。无数据时 UI 完全隐藏，Board 不成为 Resource 或外部系统之外的新真相源。整体边界见 `docs/loop-engineering.md` §6。
-- **Toast 只表达短寿命反馈，不表达持续状态**：Baton 与 Plugin 共用 session-scoped Toast 通道且不落 Event Ledger；Plugin 的进度、异常和待处理事项仍进入 Resource status / Board，只有显式操作或状态迁移才发 Toast，不能随重复 reconcile 刷屏。
-- **用户输入的 owner 是 Controller，harness 执行的 owner 是 Adapter**：driven turn 出队即由 controller 落 `user_message`/`running`（原始输入进正典历史，harness 冷启动不阻塞 Transcript，preparing 可取消）；Adapter 只报告执行过程与终态，steer 成功时补 `delivery:"steer"` 的用户消息。用户输入专项语义及其 Adapter 行为契约见 `docs/user-input-lifecycle.md`；完整交互面的总体结构见 `docs/harness-interaction-design.md`。
-- **Harness 投递先记账再执行**：当前用户驱动 turn 以已持久化 Input 作为上游，Controller 在 submit 前持久化带不可变 launch snapshot 的 Delivery Attempt；Adapter resolve 只确认接受投递责任，Harness idle 才给出最终 outcome。Baton 无法证明 Harness 是否接收或结束时必须保留 `uncertain`，不能猜成失败后重投；幂等重试仍是长期模型，见 `docs/baton-v2.md` §1.5。
-- **上下文交付以 Receipt 推进基线**：不同来源收束为 `ContextSource(kind + owner + key)`；Snapshot 只说明准备送什么，transport 接受后持久化的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch。`meta.syncedSeq` 是兼容缓存，不替代事件历史；当前首个 source kind 是 BatonSession `session_history`，见 `docs/kernel.md` §3 与 `docs/baton-v2.md` §1.6。
-- **待决交互的 owner 是 Controller**：Harness / Plugin 只提交 typed Interaction draft；Controller 统一签发 `ix_`、补 requester、持久化 `interaction.opened/resolved` 并持有 live waiter。permission / question / hook trust 是 `kind`，不各自复制事件和 pending 状态机。
-- 各家 agent 的原生 session 文件（`~/.claude/projects/**`、`~/.codex/sessions/**`）**只读不写**，原因见 `docs/design.md`。
-- 内部事件模型对齐 ACP v2 词汇表；wire 协议用各家原生协议，不强求 ACP。
-- harness 中间过程按“最大公约数 + raw 保真”归一：Adapter 统一思考、工具、文件改动、命令输出、计划等展示与存储形状，粒度差异留在事件信封 `raw` 中；渲染层与存储层不出现 harness 分支。
-- harness 是开放扩展点：当前先以 Claude Code / Codex 打样；新增 harness 应通过 registry + HarnessAdapter 能力接入，不把 harness 分支下沉到 BatonSession core。
-- **凭证零持有**：harness 进程继承用户环境与 HOME，复用各家 CLI 已有登录态；baton 不复制、托管或另建账号凭证体系。
-- **审批诚实性是产品不变量**：baton 不替 harness 定审批人默认（缺省跟随 codex 自己的解析），用户可显式覆盖；生效值只认 harness 回吐，问不出来就不声称。无论授权方是谁，状态必须全局可见、逐条决策必须有权威回执。工具终态展示必须诚实（declined 是一等终态）；adapter 翻译终态只走白名单，未知值悲观处理，未知策略旁路审批时必须发对账 notice。
-- **用户安装与开发运行时分离**：普通用户统一通过 npm 安装，包内 launcher 自带所需 runtime，不暴露 Bun 前置条件；仓库开发仍使用 Bun，避免为分发方式改写开发工具链。
-- 同一 BatonSession 内的 harness 接力由 baton 自动完成；`@` 只承担跨 BatonSession / turn / 产物的显式引用。
-- event / interaction / context snapshot / context epoch / session / turn / message / delivery attempt 的 ID 必须稳定可外部引用；fork 复制的 interaction / turn / message 等领域对象与源共享 ID（同一段逻辑历史），但 Event 因换 session scope 重新签发 `eventId`，保证一个 Event 只属于一个 ledger。跨会话引用领域对象时以 `bs_ + 对象 ID` 限定消歧，why 见 `docs/resume-fork.md`。
-- `/codex`、`/claude` 是 baton 自有的直接 agent 切换入口；其余命令与引用在能力允许时保持 harness 原生语义，由 baton/Adapter 显式映射，不做不可控的文本透传。
-
-- 界面按信息的**时态与寿命**分层：越是“现在时”的信息越靠下、越固定，不随历史滚动；条件层（pinned plan、队列）无内容即整层消失。这是 baton projection 与页面装配的产品语义；chat-tui 只负责按展示结构渲染。分层图与合成规则见 `docs/design.md` 5.9。
+1. **作用域决定 owner**：Project 只组织 Session；BatonSession 拥有正典历史和 Plugin runtime；
+   HarnessTarget 是配置、调度与状态坐标；HarnessSession 只是 Target 启动的原生执行状态。
+   Binding、授权、偏好、上下文水位与投影状态按明确的 Session / Target 身份隔离，未知 ID
+   fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
+2. **事实与投影分层**：Event Ledger 是 Session 执行与感知历史的真相源，Plugin Resource
+   `spec/status` 是领域期望与观测的真相源，外部系统继续拥有自己的事实；TUI 与 Board 都是
+   带归属的派生投影。live、resume 和自愈必须走同一条 append/reduce 路径；Board 更新、Context
+   已交付与 Harness 已被唤醒是三个独立事实。
+3. **长期 loop 与执行小闭环分层**：Baton core 保持领域无关，Baton Plugin 只通过 Resource /
+   Controller 和受控 Output 推进领域 loop；当前 `proposed-input` 经用户确认后才成为普通 Input，
+   继续走 Baton 的 Context、Permission、Attempt 与 Harness routing。Plugin 只能依赖
+   `packages/plugin` 公共契约，不能持有宿主 Store、Controller 或 Harness runtime。
+4. **Harness 差异只留在 Adapter / capability**：新增 Harness 默认只改对应 adapter、registry
+   与 identity 目录；Session、store/reduce、Projection 和 chat-tui 不出现 Harness 分支。开放
+   wire 值在边界保守归一，原始形态保留在 `raw`；原生 Session 只读且只是 resume 加速路径，
+   Baton 不托管 Harness 凭证。
+5. **可信交付必须有显式事实**：Controller 拥有 Input、Attempt、Turn 与 Interaction 生命周期，
+   Adapter 拥有 Harness 执行；投递先持久化再 dispatch，无法证明结果时保留 `uncertain`；
+   Context 只有 DeliveryReceipt 才推进目标 HarnessSession 的 Epoch。审批、用户决议和自动 reviewer
+   必须有可见、可恢复的权威回执，未知终态或策略一律悲观处理。
 
 ## References
 
-- `docs/kernel.md` — 稳定内核：核心概念 / 不变量 / 流程 / harness 扩展契约（权威入口）
-- `docs/design.md` — 内核之外的完整设计与竞品定位
-- `docs/user-input-lifecycle.md` — 用户输入生命周期、当前 harness 能力与三类 interrupt/steer 时序场景
-- `docs/harness-output-lifecycle.md` — harness 输出/感知生命周期：事件归一、终态硬约定、丢事件/乱序自愈、静默悬挂对账（reconcile 能力，Codex `thread/read.status` / Claude `backgroundTasks`）
-- `docs/backlog.md` — 暂缓能力与演进触发条件（何时该做、为什么现在不做）
-- `docs/harness-interaction-design.md` — chat-tui 与 Adapter 的交互抽象方案
-- `docs/resume-fork.md` — resume/fork 语义（fork=同一段逻辑历史的复制，不做 ID remap）、会话锁与 crash recovery
-- `docs/session-paths.md` — 主线/草稿 path 设计稿：会话树（森林表示）、写令牌、context-import 收录原语与两步走实施
-- `docs/baton-v2.md` — 面向 Loop 的 v2 内核目标：作用域、可靠工作投递、上下文交付与恢复
-- `docs/loop-engineering.md` — 长期 Loop Engineering 控制面：Baton Plugin / Harness Plugin、Event、Hook、Schedule、Board 与 Context 边界
-- `docs/plugin.md` — Baton Plugin 的 Package / Instance / Binding 与 Resource / Reconcile 运行模型
-- reqloop 领域设计（独立仓）：
+- `docs/kernel.md` — 稳定内核与 Harness 扩展契约（权威入口）
+- `docs/design.md` — 内核之外的产品定位、架构与竞品取舍
+- `docs/plugin.md` — Plugin Package / Instance / Binding 与 Resource / Reconcile runtime
+- `docs/loop-engineering.md` — Baton Plugin、Harness Plugin、Board、Context 与长期 loop 边界
+- `docs/baton-v2.md` — v2 作用域、可靠投递、上下文交付与恢复目标
+- `docs/user-input-lifecycle.md` — Input queue / steer / recall / interrupt 生命周期
+- `docs/harness-output-lifecycle.md` — Harness 输出归一、终态收口与自愈
+- `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
+- `docs/harness-interaction-design.md` — Adapter 与交互契约
+- `docs/resume-fork.md`、`docs/session-paths.md` — Session 恢复、fork 与主线 / 草稿语义
+- `docs/backlog.md` — 暂缓能力及其启动条件
+- reqloop 领域设计：
   `https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md`
-- 参考实现与协议规范的外部链接见 `docs/design.md` 末尾"参考"一节

@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1020" viewBox="0 0 1800 1020">
+  <title>Baton Plugin and Harness relationship</title>
+  <desc>
+    A Baton Plugin observes a long-running domain loop and proposes or submits
+    scoped work through Baton's normal input, context, permission and routing
+    path. Harnesses are capability providers. Harness Plugins such as devloop
+    constrain the development loop inside a Harness.
+  </desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#111827" stroke-width="1.8"/>
+    </marker>
+    <marker id="plugin-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#6d4cc5" stroke-width="1.8"/>
+    </marker>
+    <marker id="event-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#a76b00" stroke-width="1.8"/>
+    </marker>
+    <style>
+      text {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", Arial, sans-serif;
+        fill: #111827;
+      }
+      .title { font-size: 27px; font-weight: 650; }
+      .section-title { font-size: 22px; font-weight: 650; }
+      .label { font-size: 19px; font-weight: 600; }
+      .small { font-size: 16px; }
+      .tiny { font-size: 13px; }
+      .box { stroke: #111827; stroke-width: 2.6; }
+      .soft-box { stroke: #8a94a6; stroke-width: 1.8; }
+      .future-box { stroke: #7c8799; stroke-width: 2; stroke-dasharray: 8 7; }
+      .flow { fill: none; stroke: #111827; stroke-width: 2.8; marker-end: url(#arrow); }
+      .plugin-flow {
+        fill: none;
+        stroke: #6d4cc5;
+        stroke-width: 2.8;
+        marker-end: url(#plugin-arrow);
+      }
+      .event-flow {
+        fill: none;
+        stroke: #a76b00;
+        stroke-width: 2.8;
+        marker-end: url(#event-arrow);
+      }
+      .future-flow {
+        fill: none;
+        stroke: #7c8799;
+        stroke-width: 2.2;
+        stroke-dasharray: 8 7;
+        marker-end: url(#arrow);
+      }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1020" fill="#ffffff"/>
+  <text x="900" y="48" text-anchor="middle" class="title">Baton、Plugin 与 Harness</text>
+  <text x="900" y="78" text-anchor="middle" class="small">
+    Plugin 编排长期工作，Baton 统一控制，Harness 提供智能执行能力
+  </text>
+
+  <!-- User -->
+  <text x="38" y="295" class="title">用户</text>
+  <line x1="95" y1="290" x2="175" y2="290" class="flow"/>
+  <text x="135" y="252" text-anchor="middle" class="tiny">指令 / 确认</text>
+  <text x="135" y="272" text-anchor="middle" class="tiny">控制 / 查看</text>
+
+  <!-- TUI -->
+  <text x="300" y="112" text-anchor="middle" class="title">Baton TUI</text>
+  <rect x="175" y="135" width="255" height="750" rx="14" fill="#eee8ff" class="box"/>
+
+  <rect x="210" y="205" width="185" height="78" rx="39" fill="#e1d8ff" class="box"/>
+  <text x="302" y="252" text-anchor="middle" class="label">Input</text>
+
+  <rect x="210" y="350" width="185" height="108" rx="14" fill="#f2edff" class="box"/>
+  <text x="302" y="389" text-anchor="middle" class="label">Plugin Proposal</text>
+  <text x="302" y="419" text-anchor="middle" class="small">确认 · 编辑 · 丢弃</text>
+  <line x1="302" y1="338" x2="302" y2="296" class="plugin-flow"/>
+  <text x="322" y="323" class="tiny">submit</text>
+
+  <rect x="210" y="650" width="185" height="96" rx="14" fill="#f2edff" class="box"/>
+  <text x="302" y="688" text-anchor="middle" class="label">Board</text>
+  <text x="302" y="717" text-anchor="middle" class="small">状态 · blocker · 下一步</text>
+
+  <rect x="210" y="795" width="185" height="60" rx="30" fill="#e1d8ff" class="box"/>
+  <text x="302" y="832" text-anchor="middle" class="label">Transcript</text>
+
+  <line x1="175" y1="825" x2="95" y2="825" class="flow"/>
+  <text x="132" y="802" text-anchor="middle" class="tiny">进展与结果</text>
+
+  <!-- Baton boundary -->
+  <text x="505" y="112" class="title">Baton · BatonSession</text>
+  <rect x="470" y="135" width="980" height="820" rx="14" fill="#f9fbff" class="box"/>
+
+  <!-- Stable kernel -->
+  <rect x="505" y="170" width="910" height="350" rx="14" fill="#eef3fb" class="soft-box"/>
+  <text x="530" y="207" class="section-title">Baton core</text>
+  <text x="1385" y="207" text-anchor="end" class="tiny">通用机制，不理解具体领域语义</text>
+
+  <rect x="540" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
+  <text x="655" y="282" text-anchor="middle" class="label">Input / Interaction</text>
+  <text x="655" y="311" text-anchor="middle" class="small">可靠投递 · 用户控制</text>
+  <text x="655" y="334" text-anchor="middle" class="tiny">proposal 也从这里进入</text>
+  <line x1="430" y1="244" x2="525" y2="244" class="flow"/>
+
+  <rect x="835" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
+  <text x="950" y="282" text-anchor="middle" class="label">Context / Permission</text>
+  <text x="950" y="311" text-anchor="middle" class="small">范围 · 上下文 · 审批</text>
+  <text x="950" y="334" text-anchor="middle" class="tiny">跨 Harness 保持一致</text>
+  <line x1="770" y1="297" x2="820" y2="297" class="flow"/>
+
+  <rect x="1130" y="230" width="245" height="135" rx="13" fill="#f7f8fc" class="box"/>
+  <text x="1252" y="269" text-anchor="middle" class="label">Harness routing</text>
+  <text x="1252" y="299" text-anchor="middle" class="small">选择与切换能力提供方</text>
+  <text x="1252" y="328" text-anchor="middle" class="tiny">binding · adapter · lifecycle</text>
+  <line x1="1065" y1="297" x2="1115" y2="297" class="flow"/>
+
+  <path d="M735 405 H1145 V470 Q940 500 735 470 Z" fill="#fff0bf" class="box"/>
+  <text x="940" y="439" text-anchor="middle" class="label">Event / BatonSession history</text>
+  <text x="940" y="466" text-anchor="middle" class="small">用户、Harness、Plugin 的持久事实与结果</text>
+
+  <!-- Baton Plugin, intentionally hiding internals -->
+  <rect x="505" y="555" width="910" height="365" rx="14" fill="#f4f0ff" class="soft-box"/>
+  <text x="530" y="593" class="section-title">Baton Plugin · 长期 Loop</text>
+  <text x="1385" y="593" text-anchor="end" class="small">reqloop / future Plugins</text>
+
+  <rect x="790" y="625" width="355" height="215" rx="16" fill="#ffffff" class="box"/>
+  <text x="967" y="661" text-anchor="middle" class="label">领域 Plugin</text>
+
+  <rect x="815" y="680" width="305" height="48" rx="10" fill="#e9e1ff" class="soft-box"/>
+  <text x="836" y="710" class="label">spec</text>
+  <text x="900" y="710" class="small">用户认可的目标与策略</text>
+
+  <rect x="815" y="742" width="305" height="48" rx="10" fill="#e7f7ee" class="soft-box"/>
+  <text x="836" y="772" class="label">status</text>
+  <text x="916" y="772" class="small">外部事实与持久决定</text>
+
+  <text x="967" y="818" text-anchor="middle" class="small">
+    Reconcile → 下一步工作 · Context · 审批
+  </text>
+
+  <rect x="545" y="665" width="185" height="100" rx="14" fill="#fce8c3" class="box"/>
+  <text x="637" y="704" text-anchor="middle" class="label">Proposal</text>
+  <text x="637" y="733" text-anchor="middle" class="small">建议下一条 Input</text>
+  <text x="637" y="754" text-anchor="middle" class="tiny">当前默认路径</text>
+  <path d="M790 810 C765 810 755 755 745 730" class="plugin-flow"/>
+  <path d="M545 715 H485 V404 H410" class="plugin-flow"/>
+  <text x="473" y="560" text-anchor="middle" class="tiny" transform="rotate(-90 473 560)">
+    先交给用户确认，不直接调用 Harness
+  </text>
+
+  <rect x="545" y="805" width="185" height="70" rx="13" fill="#ffffff" class="future-box"/>
+  <text x="637" y="834" text-anchor="middle" class="small">Scoped work request</text>
+  <text x="637" y="858" text-anchor="middle" class="tiny">未来：在明确策略下提交给 Baton</text>
+  <path d="M790 818 C770 825 755 834 745 838" class="future-flow"/>
+  <path d="M637 805 V535 H655 V365" class="future-flow"/>
+
+  <rect x="1190" y="665" width="180" height="100" rx="14" fill="#e7f7ee" class="box"/>
+  <text x="1280" y="704" text-anchor="middle" class="label">Connector</text>
+  <text x="1280" y="733" text-anchor="middle" class="small">观察 / 授权动作</text>
+  <text x="1280" y="754" text-anchor="middle" class="tiny">需求、代码、部署等系统</text>
+  <line x1="1190" y1="715" x2="1160" y2="715" class="event-flow"/>
+
+  <path d="M940 485 V535 H967 V610" class="event-flow"/>
+  <text x="982" y="548" class="tiny">Harness / 外部结果</text>
+
+  <path d="M790 805 H760 V845 H445 V698 H410" class="flow"/>
+  <text x="540" y="866" text-anchor="middle" class="tiny">Loop status / next action</text>
+
+  <!-- Harness runtime -->
+  <text x="1620" y="112" text-anchor="middle" class="title">Harness Runtime</text>
+  <rect x="1510" y="150" width="235" height="365" rx="16" fill="#eee8ff" class="box"/>
+  <text x="1627" y="187" text-anchor="middle" class="tiny">能力提供方</text>
+
+  <circle cx="1580" cy="270" r="58" fill="#e7ddff" class="box"/>
+  <text x="1580" y="278" text-anchor="middle" class="label">Codex</text>
+  <circle cx="1677" cy="365" r="58" fill="#e7ddff" class="box"/>
+  <text x="1677" y="373" text-anchor="middle" class="label">Claude</text>
+  <line x1="1375" y1="297" x2="1500" y2="297" class="flow"/>
+
+  <rect x="1535" y="430" width="185" height="58" rx="29" fill="#dff5e8" class="box"/>
+  <text x="1627" y="455" text-anchor="middle" class="label">devloop</text>
+  <text x="1627" y="477" text-anchor="middle" class="tiny">Harness Plugin · 开发小闭环</text>
+
+  <!-- Code and external systems -->
+  <rect x="1520" y="565" width="215" height="90" rx="14" fill="#eef3fb" class="box"/>
+  <text x="1627" y="603" text-anchor="middle" class="label">代码与工作区</text>
+  <text x="1627" y="632" text-anchor="middle" class="small">lint · test · commit</text>
+  <line x1="1627" y1="515" x2="1627" y2="550" class="flow"/>
+
+  <text x="1627" y="715" text-anchor="middle" class="section-title">外部系统</text>
+  <rect x="1515" y="740" width="225" height="148" rx="14" fill="#e7f7ee" class="box"/>
+  <text x="1627" y="780" text-anchor="middle" class="label">Observed world</text>
+  <text x="1627" y="814" text-anchor="middle" class="small">需求 · Forge · Review</text>
+  <text x="1627" y="843" text-anchor="middle" class="small">CI · 部署 · Eval</text>
+  <text x="1627" y="870" text-anchor="middle" class="tiny">人和系统也会改变这些状态</text>
+  <path d="M1627 655 V725" class="event-flow"/>
+  <text x="1644" y="697" class="tiny">PR/MR 等变化</text>
+
+  <path d="M1515 820 H1470 V715 H1385" class="event-flow"/>
+  <text x="1458" y="773" text-anchor="middle" class="tiny" transform="rotate(-90 1458 773)">
+    observation
+  </text>
+  <path d="M1370 750 H1465 V910 H1515" class="plugin-flow"/>
+  <text x="1460" y="934" text-anchor="middle" class="tiny">明确授权后的外部动作</text>
+
+  <!-- Legend -->
+  <line x1="520" y1="982" x2="575" y2="982" class="flow"/>
+  <text x="590" y="988" class="small">Baton 控制与投递</text>
+  <line x1="815" y1="982" x2="870" y2="982" class="event-flow"/>
+  <text x="885" y="988" class="small">事件与外部事实</text>
+  <line x1="1100" y1="982" x2="1155" y2="982" class="plugin-flow"/>
+  <text x="1170" y="988" class="small">Plugin 建议与领域动作</text>
+  <line x1="1425" y1="982" x2="1480" y2="982" class="future-flow"/>
+  <text x="1495" y="988" class="small">未来受控工作请求</text>
+</svg>
