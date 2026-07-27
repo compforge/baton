@@ -93,11 +93,7 @@ export type InteractionDraft = PermissionInteraction | QuestionInteraction | Hoo
  */
 export interface PluginResourceInteractionContext {
   decisionKey: string;
-  resource?: ResourceRef;
-  /** Legacy persisted context; new Interactions always write resource. */
-  resourceKind?: string;
-  /** Legacy persisted context; new Interactions always write resource. */
-  resourceId?: string;
+  resource: ResourceRef;
   resourceOwner: "plugin" | "baton";
   basedOnGeneration?: number;
   basedOnResourceVersion?: string;

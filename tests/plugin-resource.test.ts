@@ -45,6 +45,12 @@ describe("PluginResourceStore", () => {
     const resources = store(root);
     const created = resources.create({
       type: REQ_LOOP_RUN,
+      labels: {
+        "reqloop.baton.dev/requirement": "REQ-1",
+      },
+      annotations: {
+        "example.com/display-name": "Ship it",
+      },
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
@@ -55,6 +61,12 @@ describe("PluginResourceStore", () => {
         namespace: "reqloop_default",
         generation: 1,
         resourceVersion: "1",
+        labels: {
+          "reqloop.baton.dev/requirement": "REQ-1",
+        },
+        annotations: {
+          "example.com/display-name": "Ship it",
+        },
       },
     });
     expect(created.metadata.name).toMatch(/^pr_/);
@@ -193,6 +205,8 @@ describe("PluginResourceStore", () => {
       "plugins",
       "reqloop_default",
       "resources",
+      "reqloop.baton.dev",
+      "v1alpha1",
       "ReqLoopRun",
       "run_1.json",
     );
@@ -200,80 +214,27 @@ describe("PluginResourceStore", () => {
     writeFileSync(
       path,
       JSON.stringify({
-        kind: "ReqLoopRun",
-        metadata: {
-          resourceId: "run_1",
-          batonSessionId: "bs_another",
-          pluginInstanceId: "reqloop_default",
-          generation: 1,
-          resourceVersion: 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+        object: {
+          ...REQ_LOOP_RUN,
+          metadata: {
+            name: "run_1",
+            namespace: "another_instance",
+            uid: "pr_test",
+            generation: 1,
+            resourceVersion: "1",
+            creationTimestamp: new Date().toISOString(),
+          },
+          spec: {},
+          status: {},
         },
-        spec: {},
-        status: {},
+        control: {},
       }),
     );
 
     expect(() => store(root).get(REQ_LOOP_RUN, "run_1")).toThrow(
-      `invalid plugin resource ${path}: batonSessionId must be bs_test`,
+      `invalid plugin resource ${path}: namespace must be reqloop_default`,
     );
-    expect(readFileSync(path, "utf8")).toContain("bs_another");
-  });
-
-  test("reads the legacy flat envelope through the standard Resource shape", () => {
-    const root = testRoot();
-    const path = join(
-      root,
-      "projects",
-      "project",
-      "sessions",
-      "bs_test",
-      "plugins",
-      "reqloop_default",
-      "resources",
-      "ReqLoopRun",
-      "run_legacy.json",
-    );
-    mkdirSync(join(path, ".."), { recursive: true });
-    writeFileSync(
-      path,
-      JSON.stringify({
-        kind: "ReqLoopRun",
-        metadata: {
-          resourceId: "run_legacy",
-          batonSessionId: "bs_test",
-          pluginInstanceId: "reqloop_default",
-          generation: 2,
-          resourceVersion: 3,
-          createdAt: "2026-07-25T00:00:00.000Z",
-          updatedAt: "2026-07-25T00:01:00.000Z",
-          nextReconcileAt: "2026-07-25T01:00:00.000Z",
-        },
-        spec: { requirement: "legacy" },
-        status: { phase: "pending" },
-      }),
-    );
-
-    const resources = store(root);
-    const resource = resources.get(REQ_LOOP_RUN, "run_legacy");
-    expect(resource).toMatchObject({
-      ...REQ_LOOP_RUN,
-      metadata: {
-        name: "run_legacy",
-        namespace: "reqloop_default",
-        generation: 2,
-        resourceVersion: "3",
-        creationTimestamp: "2026-07-25T00:00:00.000Z",
-      },
-    });
-    expect(resource.metadata.uid).toMatch(/^res_[0-9a-f]{64}$/);
-    expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([
-      {
-        resource,
-        nextReconcileAt: new Date("2026-07-25T01:00:00.000Z"),
-      },
-    ]);
+    expect(readFileSync(path, "utf8")).toContain("another_instance");
   });
 
   test("assigns a new uid when the same name is recreated", () => {

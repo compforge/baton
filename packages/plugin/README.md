@@ -18,6 +18,14 @@ const EXAMPLE_RESOURCE = {
   kind: "Example",
 } as const;
 
+// Creation may attach Plugin-defined string metadata:
+// context.resources.create(EXAMPLE_RESOURCE, {
+//   name: "example-1",
+//   labels: { "example.com/team": "platform" },
+//   annotations: { "example.com/display-name": "First example" },
+//   spec: { title: "Hello" },
+// });
+
 type Example = ExampleResource<
   { title: string },
   { phase?: "active" | "done" }

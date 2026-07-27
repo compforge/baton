@@ -60,10 +60,7 @@ import {
 } from "./board.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { InteractionResolution } from "../interaction/types.ts";
-import {
-  LEGACY_RESOURCE_API_VERSION,
-  Store as InteractionStore,
-} from "./interaction.ts";
+import { Store as InteractionStore } from "./interaction.ts";
 import {
   emptyBatonSnapshot,
   type BatonSnapshot,
@@ -772,33 +769,14 @@ export class Manager {
     interactionId: string,
     resolution: InteractionResolution,
   ): Promise<boolean> {
-    const resolvedKey = this.interactions?.resolve(interactionId, resolution);
-    if (!resolvedKey) return false;
-    const key =
-      resolvedKey.resourceApiVersion === LEGACY_RESOURCE_API_VERSION
-        ? this.resolveLegacyInteractionKey(resolvedKey)
-        : resolvedKey;
+    const key = this.interactions?.resolve(interactionId, resolution);
+    if (!key) return false;
     try {
       await this.enqueue(key);
     } catch {
       // Resolution 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
     }
     return true;
-  }
-
-  private resolveLegacyInteractionKey(key: ReconcileKey): ReconcileKey {
-    const matches = [...this.controllers.values()].filter(
-      (controller) =>
-        controller.scope.pluginInstanceId === key.pluginInstanceId &&
-        controller.scope.resourceKind === key.resourceKind &&
-        reconcileResourceOwner(controller.scope) ===
-          reconcileResourceOwner(key),
-    );
-    if (matches.length !== 1) return key;
-    return Object.freeze({
-      ...key,
-      resourceApiVersion: matches[0]!.scope.resourceApiVersion,
-    });
   }
 
   getBatonResource<K extends BuiltinResourceKind>(

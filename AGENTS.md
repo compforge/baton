@@ -59,7 +59,8 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    `spec/status` 是领域期望与观测的真相源，外部系统继续拥有自己的事实；TUI 与 Board 都是
    带归属的派生投影。live、resume 和自愈必须走同一条 append/reduce 路径；Board 更新、Context
    已交付与 Harness 已被唤醒是三个独立事实。Resource 以 `apiVersion/kind` 标识类型，以
-   `namespace/name/uid` 标识对象；调度控制不进入公开 metadata。
+   `namespace/name/uid` 标识对象，并允许 Plugin 用 `labels/annotations` 扩展非身份 metadata；
+   调度控制不进入公开 metadata。
 3. **长期 loop 与执行小闭环分层**：Baton core 保持领域无关，Baton Plugin 只通过 Resource /
    Controller 和受控 Output 推进领域 loop；当前 `proposed-input` 经用户确认后才成为普通 Input，
    继续走 Baton 的 Context、Permission、Attempt 与 Harness routing。Plugin 只能依赖

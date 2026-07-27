@@ -131,7 +131,8 @@ Resource<TSpec, TStatus>
 ├── kind          schema kind
 ├── metadata
 │   ├── name / namespace / uid
-│   └── generation / resourceVersion / creationTimestamp
+│   ├── generation / resourceVersion / creationTimestamp
+│   └── labels? / annotations?
 ├── spec          用户认可的期望状态与 Loop Contract
 └── status        Controller 观测到的当前状态、条件和结果引用
 ```
@@ -151,7 +152,9 @@ interface ResourceRef {
 }
 ```
 
-领域间关系应把 `ResourceRef` 放入自己的 `spec/status`，而不是给通用 metadata 添加业务字段。
+`labels` 用于第三方 Plugin 附加机器可读的分类信息，`annotations` 用于不参与身份的扩展信息；
+两者都是 string map，可在创建 Resource 时提供。它们不构成 Resource 身份，也不替代
+`spec/status` 的领域事实。领域间的权威关系仍应把 `ResourceRef` 放入自己的 `spec/status`。
 这与 Kubernetes 的分层一致：Deployment 用 `spec.selector` 和 Pod template labels 表达集合
 关系，Deployment → ReplicaSet → Pod 的实际归属链则由各级 `ownerReferences` 表达；通用信封
 负责身份，领域 schema 负责关系。Baton 当前只提供引用形状，不在本轮引入 owner-reference
@@ -237,6 +240,8 @@ interface ResourceClient {
   // 创建资源（spec 固定，status 初始化为空对象）
   create<TSpec, TStatus>(type: ResourceType, init: {
     name: string;
+    labels?: Readonly<Record<string, string>>;
+    annotations?: Readonly<Record<string, string>>;
     spec: TSpec;
   }): Resource<TSpec, TStatus>;
   
@@ -286,6 +291,8 @@ const COUNTER_STATE = {
 
 const resource = context.resources.create(COUNTER_STATE, {
   name: 'main',
+  labels: { 'example.com/component': 'counter' },
+  annotations: { 'example.com/display-name': 'Main counter' },
   spec: { enabled: true }
 });
 
@@ -309,6 +316,8 @@ counter = await context.resources.patchStatus(counter, {
 - `name/namespace`：类型作用域内的查找身份；删除重建仍可复用
 - `uid`：具体对象实例的不可复用身份，删除重建后必须变化
 - `creationTimestamp`：当前 uid 对应对象的创建时间
+- `labels`：可选的机器可读分类 string map，不参与身份
+- `annotations`：可选的第三方扩展 string map，不参与身份
 - `observedGeneration`：status 中记录，表示当前状态基于哪个版本的 spec
 
 这个设计简化了 API，明确了 spec（配置）与 status（状态）的边界，避免了常见的误用模式。

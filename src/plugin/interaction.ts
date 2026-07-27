@@ -2,10 +2,6 @@ import type {
   Outcome as PublicInteractionOutcome,
   Snapshot as PublicInteractionSnapshot,
 } from "@qiankun01/baton-plugin";
-import {
-  BATON_SYSTEM_NAMESPACE,
-  BATON_TURN_RESOURCE_TYPE,
-} from "@qiankun01/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import type {
@@ -25,8 +21,6 @@ import type {
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 
 const QUESTION_ID = "decision";
-export const LEGACY_RESOURCE_API_VERSION =
-  "legacy.baton.dev/v1alpha1";
 
 type InteractionSession = Pick<
   SessionHandle,
@@ -42,15 +36,6 @@ function interactionIdentity(
   pluginInstanceId: string,
   context: PluginResourceInteractionContext,
 ): string {
-  if (!context.resource) {
-    return JSON.stringify([
-      pluginInstanceId,
-      context.resourceOwner,
-      context.resourceKind,
-      context.resourceId,
-      context.decisionKey,
-    ]);
-  }
   return JSON.stringify([
     pluginInstanceId,
     context.resourceOwner,
@@ -61,23 +46,6 @@ function interactionIdentity(
     context.resource.uid,
     context.decisionKey,
   ]);
-}
-
-function contextKind(context: PluginResourceInteractionContext): string {
-  if (context.resource) return context.resource.kind;
-  if (context.resourceOwner === "baton" && context.resourceKind === "baton.turn") {
-    return BATON_TURN_RESOURCE_TYPE.kind;
-  }
-  if (!context.resourceKind) {
-    throw new Error("plugin Interaction context has no Resource kind");
-  }
-  return context.resourceKind;
-}
-
-function contextName(context: PluginResourceInteractionContext): string {
-  const name = context.resource?.name ?? context.resourceId;
-  if (!name) throw new Error("plugin Interaction context has no Resource name");
-  return name;
 }
 
 function interactionContext(
@@ -243,10 +211,9 @@ export class Store {
     return Object.freeze({
       batonSessionId: this.session.id,
       pluginInstanceId: interaction.requester.pluginInstanceId,
-      resourceApiVersion:
-        context.resource?.apiVersion ?? LEGACY_RESOURCE_API_VERSION,
-      resourceKind: contextKind(context),
-      resourceId: contextName(context),
+      resourceApiVersion: context.resource.apiVersion,
+      resourceKind: context.resource.kind,
+      resourceId: context.resource.name,
       ...(context.resourceOwner === "plugin"
         ? {}
         : { resourceOwner: context.resourceOwner }),
@@ -264,10 +231,9 @@ export class Store {
         interaction.requester.pluginInstanceId !== key.pluginInstanceId ||
         !context ||
         context.resourceOwner !== resourceOwner ||
-        (context.resource !== undefined &&
-          context.resource.apiVersion !== key.resourceApiVersion) ||
-        contextKind(context) !== key.resourceKind ||
-        contextName(context) !== key.resourceId
+        context.resource.apiVersion !== key.resourceApiVersion ||
+        context.resource.kind !== key.resourceKind ||
+        context.resource.name !== key.resourceId
       ) {
         continue;
       }
@@ -275,17 +241,7 @@ export class Store {
       snapshots.push(Object.freeze({
         interactionId: interaction.interactionId,
         decisionKey: context.decisionKey,
-        resource:
-          context.resource ??
-          Object.freeze({
-            apiVersion: key.resourceApiVersion,
-            kind: key.resourceKind,
-            namespace:
-              resourceOwner === "baton"
-                ? BATON_SYSTEM_NAMESPACE
-                : key.pluginInstanceId,
-            name: key.resourceId,
-          }),
+        resource: context.resource,
         ...(resolved === undefined ? {} : { outcome: Object.freeze(resolved) }),
       }));
     }

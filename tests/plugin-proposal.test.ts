@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -187,57 +180,4 @@ describe("ProposalStore", () => {
     ).not.toBe(first.proposalId);
   });
 
-  test("reads proposals persisted before apiVersion joined the reconcile key", () => {
-    const root = testRoot();
-    const text = "Review legacy requirement";
-    const textDigest = createHash("sha256").update(text).digest("hex");
-    const legacyIdentity = JSON.stringify([
-      "bs_test",
-      "reqloop_default",
-      "ReqLoopRun",
-      "run_1",
-      1,
-      "resourceVersion",
-      2,
-      textDigest,
-    ]);
-    const proposalId = `pp_${createHash("sha256")
-      .update(legacyIdentity)
-      .digest("hex")}`;
-    const directory = join(
-      testSession(root).dir,
-      "plugins",
-      "reqloop_default",
-      "proposals",
-    );
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-      join(directory, `${proposalId}.json`),
-      JSON.stringify({
-        proposalId,
-        key: {
-          batonSessionId: "bs_test",
-          pluginInstanceId: "reqloop_default",
-          resourceKind: "ReqLoopRun",
-          resourceId: "run_1",
-        },
-        basedOnGeneration: 1,
-        basedOnResourceVersion: 2,
-        text,
-        createdAt: "2026-07-25T00:00:00.000Z",
-      }),
-    );
-
-    expect(new ProposalStore({ session: testSession(root) }).get(proposalId))
-      .toMatchObject({
-        proposalId,
-        key: {
-          resourceApiVersion: "legacy.baton.dev/v1alpha1",
-          resourceKind: "ReqLoopRun",
-          resourceId: "run_1",
-        },
-        text,
-        basedOnResourceVersion: "2",
-      });
-  });
 });

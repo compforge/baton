@@ -30,6 +30,10 @@ export interface ResourceMetadata {
   /** Opaque optimistic-concurrency token. */
   readonly resourceVersion: string;
   readonly creationTimestamp: string;
+  /** Machine-readable grouping and selection metadata owned by the Plugin. */
+  readonly labels?: Readonly<Record<string, string>>;
+  /** Non-identifying extension metadata owned by the Plugin. */
+  readonly annotations?: Readonly<Record<string, string>>;
 }
 
 export interface Resource<
@@ -53,6 +57,8 @@ export interface ResourceClient {
     type: ResourceType,
     init: {
       name: string;
+      labels?: Readonly<Record<string, string>>;
+      annotations?: Readonly<Record<string, string>>;
       spec: TSpec;
     },
   ): Readonly<Resource<TSpec, TStatus>>;

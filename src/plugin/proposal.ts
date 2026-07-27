@@ -42,7 +42,6 @@ export interface ProposalStoreOptions {
 
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const PROPOSAL_ID = /^pp_[0-9a-f]{64}$/;
-const LEGACY_RESOURCE_API_VERSION = "legacy.baton.dev/v1alpha1";
 
 function assertPathSegment(name: string, value: string): void {
   if (!PATH_SEGMENT.test(value) || value === "." || value === "..") {
@@ -75,32 +74,23 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function proposalId(
-  proposal: ReconcileProposal,
-  legacyResourceVersion?: number,
-): string {
+function proposalId(proposal: ReconcileProposal): string {
   const textDigest = sha256(proposal.text);
-  const versionIdentity =
-    proposal.key.resourceApiVersion === LEGACY_RESOURCE_API_VERSION
-      ? []
-      : [proposal.key.resourceApiVersion];
   if (proposal.basedOnGeneration !== undefined) {
-    // 无 resourceVersion 的旧 Proposal 保留原身份，升级后已有文件仍可校验。
     const basis =
-      proposal.basedOnResourceVersion === undefined &&
-        legacyResourceVersion === undefined
+      proposal.basedOnResourceVersion === undefined
         ? [proposal.basedOnGeneration, textDigest]
         : [
             proposal.basedOnGeneration,
             "resourceVersion",
-            legacyResourceVersion ?? proposal.basedOnResourceVersion,
+            proposal.basedOnResourceVersion,
             textDigest,
           ];
     return `pp_${sha256(
       JSON.stringify([
         proposal.key.batonSessionId,
         proposal.key.pluginInstanceId,
-        ...versionIdentity,
+        proposal.key.resourceApiVersion,
         proposal.key.resourceKind,
         proposal.key.resourceId,
         ...basis,
@@ -112,7 +102,7 @@ function proposalId(
       proposal.key.batonSessionId,
       proposal.key.pluginInstanceId,
       "baton",
-      ...versionIdentity,
+      proposal.key.resourceApiVersion,
       proposal.key.resourceKind,
       proposal.key.resourceId,
       proposal.basedOnRevision,
@@ -349,26 +339,8 @@ export class ProposalStore {
       if (proposal.proposalId !== expectedId) {
         throw new Error(`proposalId must be ${expectedId}`);
       }
-      const rawKey = proposal.key as Partial<ReconcileKey>;
-      const legacyKey = typeof rawKey.resourceApiVersion !== "string";
-      const legacyResourceVersion =
-        legacyKey && typeof proposal.basedOnResourceVersion === "number"
-          ? proposal.basedOnResourceVersion
-          : undefined;
       const rawDraft = {
-        key: {
-          batonSessionId: rawKey.batonSessionId as string,
-          pluginInstanceId: rawKey.pluginInstanceId as string,
-          resourceApiVersion:
-            typeof rawKey.resourceApiVersion === "string"
-              ? rawKey.resourceApiVersion
-              : LEGACY_RESOURCE_API_VERSION,
-          resourceKind: rawKey.resourceKind as string,
-          resourceId: rawKey.resourceId as string,
-          ...(rawKey.resourceOwner === undefined
-            ? {}
-            : { resourceOwner: rawKey.resourceOwner }),
-        },
+        key: proposal.key as ReconcileKey,
         text: proposal.text as string,
         ...(proposal.basedOnGeneration === undefined
           ? {}
@@ -376,19 +348,14 @@ export class ProposalStore {
         ...(proposal.basedOnResourceVersion === undefined
           ? {}
           : {
-              basedOnResourceVersion: String(
-                proposal.basedOnResourceVersion,
-              ),
+              basedOnResourceVersion: proposal.basedOnResourceVersion as string,
             }),
         ...(proposal.basedOnRevision === undefined
           ? {}
           : { basedOnRevision: proposal.basedOnRevision as number }),
       } as ReconcileProposal;
       const draft = this.validateDraft(rawDraft);
-      if (
-        proposal.proposalId !==
-        proposalId(draft, legacyResourceVersion)
-      ) {
+      if (proposal.proposalId !== proposalId(draft)) {
         throw new Error("proposalId does not match proposal content");
       }
       isoTimestamp("createdAt", proposal.createdAt);

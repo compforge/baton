@@ -321,6 +321,20 @@ describe("Plugin Package lifecycle", () => {
     ]);
     expect(Object.isFrozen(toasts[0])).toBe(true);
     expect(Object.isFrozen(toasts[0]!.message)).toBe(true);
+    const created = context!.resources.create(REQ_LOOP_RUN, {
+      name: "run_labeled",
+      labels: { "reqloop.baton.dev/source": "test" },
+      annotations: { "example.com/display-name": "Labeled run" },
+      spec: { requirement: "labeled" },
+    });
+    expect(created.metadata.labels).toEqual({
+      "reqloop.baton.dev/source": "test",
+    });
+    expect(created.metadata.annotations).toEqual({
+      "example.com/display-name": "Labeled run",
+    });
+    expect(Object.isFrozen(created.metadata.labels)).toBe(true);
+    expect(Object.isFrozen(created.metadata.annotations)).toBe(true);
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }

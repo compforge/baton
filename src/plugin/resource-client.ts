@@ -53,6 +53,8 @@ export function createResourceClient(
       type: ResourceType,
       init: {
         name: string;
+        labels?: Readonly<Record<string, string>>;
+        annotations?: Readonly<Record<string, string>>;
         spec: TSpec;
       },
     ) {
@@ -61,6 +63,10 @@ export function createResourceClient(
         store.create<TSpec, TStatus>({
           type,
           name: init.name,
+          ...(init.labels === undefined ? {} : { labels: init.labels }),
+          ...(init.annotations === undefined
+            ? {}
+            : { annotations: init.annotations }),
           spec: init.spec,
         }),
       );
