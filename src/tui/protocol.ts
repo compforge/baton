@@ -564,7 +564,8 @@ export class BatonChatProtocol implements ChatProtocol {
         );
       }
       case "board": {
-        const mode = argument.trim().toLowerCase() || "open";
+        const mode = argument.trim().toLowerCase() ||
+          (this.boardMode === "open" ? "hide" : "open");
         if (mode !== "open" && mode !== "hide" && mode !== "auto") {
           throw new Error(`/board takes 'open', 'hide', or 'auto' (got: ${argument})`);
         }
