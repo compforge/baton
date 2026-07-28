@@ -279,4 +279,63 @@ describe("PluginResourceStore", () => {
       version: "beta",
     });
   });
+
+  test("migrates legacy resources without losing status or scheduling", () => {
+    const root = testRoot();
+    const session = testSession(root);
+    const legacyPath = join(
+      session.dir,
+      "plugins",
+      "reqloop_default",
+      "resources",
+      REQ_LOOP_RUN.kind,
+      "run_1.json",
+    );
+    mkdirSync(join(legacyPath, ".."), { recursive: true });
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        kind: REQ_LOOP_RUN.kind,
+        metadata: {
+          resourceId: "run_1",
+          batonSessionId: session.id,
+          pluginInstanceId: "reqloop_default",
+          generation: 3,
+          resourceVersion: 7,
+          createdAt: "2026-07-20T01:00:00.000Z",
+          updatedAt: "2026-07-21T02:00:00.000Z",
+          nextReconcileAt: "2026-07-29T03:00:00.000Z",
+        },
+        spec: { requirement: "ship it" },
+        status: { phase: "review" },
+      }),
+    );
+
+    const resources = store(root);
+    const [migrated] = resources.list<
+      { requirement: string },
+      { phase: string }
+    >(REQ_LOOP_RUN);
+
+    expect(migrated).toMatchObject({
+      ...REQ_LOOP_RUN,
+      metadata: {
+        name: "run_1",
+        namespace: "reqloop_default",
+        generation: 3,
+        resourceVersion: "7",
+        creationTimestamp: "2026-07-20T01:00:00.000Z",
+      },
+      spec: { requirement: "ship it" },
+      status: { phase: "review" },
+    });
+    expect(migrated?.metadata.uid).toMatch(/^pr_/);
+    expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([{
+      resource: migrated,
+      nextReconcileAt: new Date("2026-07-29T03:00:00.000Z"),
+    }]);
+    expect(existsSync(legacyPath)).toBe(false);
+    expect(existsSync(`${legacyPath}.migrated`)).toBe(true);
+    expect(resources.list(REQ_LOOP_RUN)).toEqual([migrated]);
+  });
 });

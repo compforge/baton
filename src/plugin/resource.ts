@@ -51,6 +51,22 @@ interface StoredPluginResource<TSpec, TStatus> {
   control: ResourceControl;
 }
 
+interface LegacyPluginResource<TSpec, TStatus> {
+  kind: string;
+  metadata: {
+    resourceId: string;
+    batonSessionId: string;
+    pluginInstanceId: string;
+    generation: number;
+    resourceVersion: number;
+    createdAt: string;
+    updatedAt: string;
+    nextReconcileAt?: string;
+  };
+  spec: TSpec;
+  status: TStatus;
+}
+
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const API_VERSION =
   /^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?\/v[0-9]+(?:(?:alpha|beta)[0-9]+)?$/;
@@ -180,6 +196,7 @@ export class PluginResourceStore {
       input.annotations,
     );
     assertPathSegment("resource name", name);
+    this.migrateLegacyResource(type, name);
     const path = this.resourcePath(type, name);
     return withFileLock(path, () => {
       if (existsSync(path)) {
@@ -221,6 +238,7 @@ export class PluginResourceStore {
     type: ResourceType,
   ): PluginResource<TSpec, TStatus>[] {
     validateResourceType(type);
+    this.migrateLegacyResources(type);
     const kindDir = this.kindDir(type);
     if (!existsSync(kindDir)) return [];
     return readdirSync(kindDir, { withFileTypes: true })
@@ -390,6 +408,14 @@ export class PluginResourceStore {
   ): StoredPluginResource<TSpec, TStatus> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
+    this.migrateLegacyResource(type, name);
+    return this.readCurrentStored<TSpec, TStatus>(type, name);
+  }
+
+  private readCurrentStored<TSpec, TStatus>(
+    type: ResourceType,
+    name: string,
+  ): StoredPluginResource<TSpec, TStatus> {
     const path = this.resourcePath(type, name);
     let parsed: unknown;
     try {
@@ -402,6 +428,129 @@ export class PluginResourceStore {
       throw new Error(`could not read plugin resource ${path}: ${detail}`);
     }
     return this.validateStored<TSpec, TStatus>(path, type, name, parsed);
+  }
+
+  private migrateLegacyResources(type: ResourceType): void {
+    const directory = this.legacyKindDir(type);
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      this.migrateLegacyResource(
+        type,
+        basename(entry.name, ".json"),
+      );
+    }
+  }
+
+  private migrateLegacyResource(type: ResourceType, name: string): void {
+    const legacyPath = this.legacyResourcePath(type, name);
+    if (!existsSync(legacyPath)) return;
+    const path = this.resourcePath(type, name);
+    withFileLock(path, () => {
+      if (!existsSync(legacyPath)) return;
+      if (existsSync(path)) {
+        const current = this.readCurrentStored<unknown, unknown>(type, name);
+        const expected = this.readLegacyStored(
+          legacyPath,
+          type,
+          name,
+          current.object.metadata.uid,
+        );
+        if (!isDeepStrictEqual(current, expected)) {
+          throw new Error(
+            `legacy plugin resource conflicts with migrated resource: ${type.kind}/${name}`,
+          );
+        }
+      } else {
+        writeJsonAtomic(
+          path,
+          this.readLegacyStored(
+            legacyPath,
+            type,
+            name,
+            newId("pr"),
+          ),
+        );
+      }
+      this.archiveLegacyResource(legacyPath);
+    });
+  }
+
+  private readLegacyStored(
+    path: string,
+    type: ResourceType,
+    name: string,
+    uid: string,
+  ): StoredPluginResource<unknown, unknown> {
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`could not read legacy plugin resource ${path}: ${detail}`);
+    }
+    try {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("root must be a JSON object");
+      }
+      const legacy = value as Partial<LegacyPluginResource<unknown, unknown>>;
+      if (legacy.kind !== type.kind) {
+        throw new Error(`kind must be ${type.kind}`);
+      }
+      const metadata = legacy.metadata;
+      if (!metadata || typeof metadata !== "object") {
+        throw new Error("metadata must be an object");
+      }
+      if (metadata.resourceId !== name) {
+        throw new Error(`resourceId must be ${name}`);
+      }
+      if (metadata.batonSessionId !== this.batonSessionId) {
+        throw new Error(`batonSessionId must be ${this.batonSessionId}`);
+      }
+      if (metadata.pluginInstanceId !== this.pluginInstanceId) {
+        throw new Error(`pluginInstanceId must be ${this.pluginInstanceId}`);
+      }
+      positiveInteger("metadata.generation", metadata.generation);
+      positiveInteger("metadata.resourceVersion", metadata.resourceVersion);
+      isoTimestamp("metadata.createdAt", metadata.createdAt);
+      isoTimestamp("metadata.updatedAt", metadata.updatedAt);
+      if (metadata.nextReconcileAt !== undefined) {
+        isoTimestamp(
+          "metadata.nextReconcileAt",
+          metadata.nextReconcileAt,
+        );
+      }
+      return {
+        object: {
+          apiVersion: type.apiVersion,
+          kind: type.kind,
+          metadata: {
+            name,
+            namespace: this.pluginInstanceId,
+            uid,
+            generation: metadata.generation,
+            resourceVersion: String(metadata.resourceVersion),
+            creationTimestamp: metadata.createdAt,
+          },
+          spec: jsonObject("spec", legacy.spec),
+          status: jsonObject("status", legacy.status),
+        },
+        control: metadata.nextReconcileAt === undefined
+          ? {}
+          : { nextReconcileAt: metadata.nextReconcileAt },
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`invalid legacy plugin resource ${path}: ${detail}`);
+    }
+  }
+
+  private archiveLegacyResource(path: string): void {
+    let archived = `${path}.migrated`;
+    if (existsSync(archived)) {
+      archived = `${archived}.${Date.now()}.${process.pid}`;
+    }
+    renameSync(path, archived);
   }
 
   private validateStored<TSpec, TStatus>(
@@ -494,5 +643,13 @@ export class PluginResourceStore {
 
   private resourcePath(type: ResourceType, name: string): string {
     return join(this.kindDir(type), `${name}.json`);
+  }
+
+  private legacyKindDir(type: ResourceType): string {
+    return join(this.resourcesDir(), type.kind);
+  }
+
+  private legacyResourcePath(type: ResourceType, name: string): string {
+    return join(this.legacyKindDir(type), `${name}.json`);
   }
 }

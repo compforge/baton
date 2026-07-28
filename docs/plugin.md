@@ -709,8 +709,8 @@ Resource、Receipt 和审计历史继续保留。
 Proposal 和 Plugin Interaction，再扫描 Resource 和内部 schedule，将未完成对象重新 enqueue。
 Plugin 发起的待决 Interaction 不会像失去 Harness resolver 的交互那样在 crash recovery 中自动
 取消；其 continuation 是持久 Resource key。Package 升级不会
-静默覆盖 Session 运行数据；
-确需 Resource schema migration 时由新版本显式声明并产生可审计结果。
+静默覆盖 Session 运行数据；宿主会把旧版通用 Resource envelope 原地迁移到带 `apiVersion`
+的路径并保留迁移前文件。领域 `spec/status` schema migration 仍由新版本显式声明并产生可审计结果。
 
 ## 3. 关键设计
 
