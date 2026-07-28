@@ -49,6 +49,9 @@ export type {
   CronSource,
   PluginOutput,
   ReconcileResult,
+  ResourceSource,
+  ResourceSourceContext,
+  SourceSignal,
 } from "./reconcile.ts";
 
 export type {

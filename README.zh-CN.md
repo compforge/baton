@@ -59,7 +59,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 - 复用本机 Claude Code / Codex 登录态，不托管凭证
 - 提供 headless REPL，方便调试 agent 接入链路
 - 注册本地或 Git Plugin Marketplace，并安装不可变的 PluginPackage
-- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 cron/requeue 唤醒、Board 投影与用户确认 Proposal
+- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 Resource/cron Source、requeue 唤醒、Board 投影与用户确认 Proposal
 
 ## 安装与配置
 

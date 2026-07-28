@@ -182,6 +182,49 @@ describe("Baton Resource index", () => {
     await manager.close();
   });
 
+  test("rejects Resource Sources for read-only Baton Resources", async () => {
+    const session = testSession();
+    const instances = new PluginInstanceStore({ session });
+    const proposals = new ProposalStore({ session });
+    instances.create({
+      pluginInstanceId: "router_default",
+      pluginId: "example/router",
+      packageVersion: "1.0.0",
+    });
+    const failures: unknown[] = [];
+    const manager = new Manager({
+      session,
+      instances,
+      proposals,
+      packages: [{
+        pluginId: "example/router",
+        version: "1.0.0",
+        activate(context) {
+          context.registerController({
+            resourceType: BATON_TURN_RESOURCE_TYPE,
+            sources: [{
+              type: "resource",
+              sourceId: "forge-turn",
+              start() {},
+            }],
+            async reconcile() {},
+          });
+        },
+      }],
+      onProposal() {},
+      onActivationError(failure) {
+        failures.push(failure.error);
+      },
+    });
+
+    await manager.start();
+    expect(manager.isInstanceActive("router_default")).toBe(false);
+    expect(String(failures[0])).toContain(
+      "Resource Sources cannot materialize Baton-owned Resources",
+    );
+    await manager.close();
+  });
+
   test("retries a failed Baton Resource reconcile through the shared due queue", async () => {
     const session = testSession();
     appendTurn(session, "t_retry", "retry me");

@@ -260,6 +260,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.resources = options.resources;
     this.resourceKind = options.resourceKind;
     this.sources = Object.freeze([...(options.sources ?? [])]);
+    if (this.sources.some((source) => source.type === "resource")) {
+      throw new Error(
+        "Controller Resource Sources cannot materialize Baton-owned Resources",
+      );
+    }
     this.resources.list(options.resourceKind);
     this.reconcileResource = options.reconcile;
     this.now = options.now ?? (() => new Date());
@@ -334,12 +339,13 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     return this.queue.enqueue(Object.freeze({ ...key, resourceOwner: "baton" }));
   }
 
-  async discover(source: ControllerSource): Promise<void> {
-    if (!source.discover) return;
-    await this.executeWithCapacity(async () => {
-      if (this.closed) throw new Error("plugin Controller is closed");
-      await source.discover!();
-    });
+  cronSources(): readonly Extract<ControllerSource, { type: "cron" }>[] {
+    return this.sources.filter(
+      (
+        source,
+      ): source is Extract<ControllerSource, { type: "cron" }> =>
+        source.type === "cron",
+    );
   }
 
   close(): void {

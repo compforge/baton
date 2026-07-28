@@ -136,12 +136,20 @@ identity, and removes the registration with the Plugin Binding. Keep `search`
 local and side-effect free; `provide` runs only after the user selects a
 reference and submits the turn.
 
-Controller cron Sources are recurring wakeups. When a cron expression is due,
-Baton first runs the Source's optional `discover` hook, then enqueues every
-current Resource of that Controller through the same keyed reconcile queue used
-by Resource changes and `requeueAfterMs`. Discovery may create missing
-same-kind Resources; status changes and outputs still belong exclusively to
-`reconcile`.
+Controller Sources have two narrow roles:
+
+- A Resource Source performs initial discovery, installs live subscriptions,
+  and calls `emit(seed)` when it observes a Resource owned by that Controller.
+  Baton materializes a missing Resource, treats an identical repeated seed as a
+  keyed wakeup, and rejects an implicit spec change. `start()` resolves only
+  after the initial scan and subscription are ready; the owning Binding aborts
+  its signal on close.
+- A cron Source periodically enqueues every current Resource owned by that
+  Controller.
+
+Both paths use the same keyed reconcile queue as Resource changes and
+`requeueAfterMs`. Sources never update status or produce Plugin Output; those
+remain exclusively owned by `reconcile`.
 
 A Controller can return `kind: "interaction"` when its Resource needs a durable
 user decision:

@@ -18,7 +18,7 @@ baton 按三层协作：
    Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
 
 稳定内核已经支持同一 BatonSession 内的 Harness 接力；Plugin runtime 已支持 Marketplace、
-Command、Resource/Controller、cron 与 `requeueAfter`、Board presentation、Proposal /
+Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board presentation、Proposal /
 Interaction 和 ContextProvider。自动、受控的 Harness Work，多 Harness 并行汇总以及主线 /
 草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness runtime 来提前实现。
 

@@ -59,7 +59,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, 
 - Reuse local Claude Code and Codex credentials without storing them in baton
 - Use a headless REPL to debug agent integrations
 - Register local or Git Plugin Marketplaces and install immutable Plugin Packages
-- Run session-scoped Plugin Controllers over durable Resources, with cron/requeue wakeups, Board projections, and user-approved Proposals
+- Run session-scoped Plugin Controllers over durable Resources, with Resource/cron Sources, requeue wakeups, Board projections, and user-approved Proposals
 
 ## Installation & configuration
 

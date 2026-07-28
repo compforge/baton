@@ -520,7 +520,6 @@ describe("plugin Manager", () => {
     });
 
     await manager.start();
-    await manager.enqueue(key("reqloop_default", "run_1"));
     expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toHaveLength(1);
     await waitFor(() => runs === 2);
     expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
@@ -573,28 +572,35 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("cron Sources discover Resources before enqueueing the current set", async () => {
+  test("Resource Sources finish initial sync before reconciling discovered Resources", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    let now = new Date("2026-07-26T00:00:00.990Z");
+    const ready = deferred();
     const runs: string[] = [];
+    const failures: string[] = [];
+    let emit!: (seed: { name: string; spec: Spec }) => void;
+    let sourceSignal!: { readonly aborted: boolean };
     const manager = new Manager({
       proposals: proposalStore(root),
       onProposal() {},
-      now: () => now,
+      onControllerSourceError(failure) {
+        failures.push(failure.sourceId);
+      },
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("ReqLoopRun"),
       sources: [{
-        type: "cron",
+        type: "resource",
         sourceId: "discover-pr",
-        cron: "* * * * * *",
-        timeZone: "UTC",
-        discover() {
-          if (resources.list(resourceType("ReqLoopRun")).length === 0) {
-            createResource(resources, "ReqLoopRun", "run_discovered");
-          }
+        async start(context) {
+          emit = context.emit;
+          sourceSignal = context.signal;
+          context.emit({
+            name: "run_discovered",
+            spec: { value: "run_discovered" },
+          });
+          await ready.promise;
         },
       }],
       async reconcile(_baton, resource) {
@@ -602,21 +608,41 @@ describe("plugin Manager", () => {
       },
     });
 
-    await manager.start();
+    const starting = manager.start();
+    await Bun.sleep(20);
     expect(runs).toEqual([]);
-    now = new Date("2026-07-26T00:00:01.000Z");
+    ready.resolve();
+    await starting;
     await waitFor(() => runs.length === 1);
     expect(runs).toEqual(["run_discovered"]);
 
+    emit({
+      name: "run_discovered",
+      spec: { value: "run_discovered" },
+    });
+    await waitFor(() => runs.length === 2);
+    expect(runs).toEqual(["run_discovered", "run_discovered"]);
+
+    emit({
+      name: "run_discovered",
+      spec: { value: "different" },
+    });
+    await waitFor(() => failures.length === 1);
+    expect(failures).toEqual(["discover-pr"]);
+    expect(resources.get<Spec>(
+      resourceType("ReqLoopRun"),
+      "run_discovered",
+    ).spec).toEqual({ value: "run_discovered" });
+
     registration.close();
+    expect(sourceSignal.aborted).toBe(true);
     await manager.close();
   });
 
-  test("cron Source discovery failure does not block known Resources", async () => {
+  test("Resource Source startup failure does not block known Resources", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
     createResource(resources, "ReqLoopRun", "run_known");
-    let now = new Date("2026-07-26T00:00:00.990Z");
     const failures: string[] = [];
     const runs: string[] = [];
     const manager = new Manager({
@@ -625,17 +651,14 @@ describe("plugin Manager", () => {
       onControllerSourceError(failure) {
         failures.push(failure.sourceId);
       },
-      now: () => now,
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("ReqLoopRun"),
       sources: [{
-        type: "cron",
+        type: "resource",
         sourceId: "discover-pr",
-        cron: "* * * * * *",
-        timeZone: "UTC",
-        discover() {
+        start() {
           throw new Error("forge unavailable");
         },
       }],
@@ -645,9 +668,8 @@ describe("plugin Manager", () => {
     });
 
     await manager.start();
-    now = new Date("2026-07-26T00:00:01.000Z");
-    await waitFor(() => failures.length === 1 && runs.length === 1);
     expect(failures).toEqual(["discover-pr"]);
+    await waitFor(() => runs.length === 1);
     expect(runs).toEqual(["run_known"]);
 
     registration.close();
@@ -683,7 +705,7 @@ describe("plugin Manager", () => {
     registration.close();
     now = new Date("2026-07-26T00:00:01.000Z");
     await Bun.sleep(30);
-    expect(runs).toBe(0);
+    expect(runs).toBe(1);
     await manager.close();
   });
 
@@ -789,11 +811,6 @@ describe("plugin Manager", () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
     createResource(resources, "ReqLoopRun", "run_1");
-    resources.setNextReconcileAt(
-      resourceType("ReqLoopRun"),
-      "run_1",
-      new Date(Date.now() + 50),
-    );
     let runs = 0;
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -803,13 +820,14 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("ReqLoopRun"),
       async reconcile() {
-          runs += 1;
-        },
+        runs += 1;
+        return { requeueAfterMs: 50 };
+      },
     });
 
     await manager.start();
     registration.close();
     await Bun.sleep(80);
-    expect(runs).toBe(0);
+    expect(runs).toBe(1);
   });
 });

@@ -42,6 +42,14 @@ interface CreateResource<TSpec, TStatus> {
   status?: TStatus;
 }
 
+interface EnsureResource<TSpec> {
+  type: ResourceType;
+  name: string;
+  labels?: Readonly<Record<string, string>>;
+  annotations?: Readonly<Record<string, string>>;
+  spec: TSpec;
+}
+
 interface ResourceControl {
   nextReconcileAt?: string;
 }
@@ -49,22 +57,6 @@ interface ResourceControl {
 interface StoredPluginResource<TSpec, TStatus> {
   object: PluginResource<TSpec, TStatus>;
   control: ResourceControl;
-}
-
-interface LegacyPluginResource<TSpec, TStatus> {
-  kind: string;
-  metadata: {
-    resourceId: string;
-    batonSessionId: string;
-    pluginInstanceId: string;
-    generation: number;
-    resourceVersion: number;
-    createdAt: string;
-    updatedAt: string;
-    nextReconcileAt?: string;
-  };
-  spec: TSpec;
-  status: TStatus;
 }
 
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -196,34 +188,65 @@ export class PluginResourceStore {
       input.annotations,
     );
     assertPathSegment("resource name", name);
-    this.migrateLegacyResource(type, name);
     const path = this.resourcePath(type, name);
     return withFileLock(path, () => {
       if (existsSync(path)) {
         throw new Error(`plugin resource already exists: ${type.kind}/${name}`);
       }
-      const now = new Date().toISOString();
-      const resource: PluginResource<TSpec, TStatus> = {
-        apiVersion: type.apiVersion,
-        kind: type.kind,
-        metadata: {
+      const stored = this.initialStoredResource<TSpec, TStatus>({
+        type,
+        name,
+        labels,
+        annotations,
+        spec: input.spec,
+        status: input.status ?? ({} as TStatus),
+      });
+      writeJsonAtomic(path, stored);
+      return stored.object;
+    });
+  }
+
+  /**
+   * Materializes a Source-owned Resource identity once. Repeated observations
+   * are wakeups, not implicit spec updates.
+   */
+  ensure<TSpec, TStatus = Record<string, unknown>>(
+    input: EnsureResource<TSpec>,
+  ): PluginResource<TSpec, TStatus> {
+    const type = validateResourceType(input.type);
+    const name = input.name;
+    const labels = stringMap("metadata.labels", input.labels);
+    const annotations = stringMap(
+      "metadata.annotations",
+      input.annotations,
+    );
+    const spec = jsonObject("spec", input.spec);
+    assertPathSegment("resource name", name);
+    const path = this.resourcePath(type, name);
+    return withFileLock(path, () => {
+      if (!existsSync(path)) {
+        const stored = this.initialStoredResource<TSpec, TStatus>({
+          type,
           name,
-          namespace: this.pluginInstanceId,
-          uid: newId("pr"),
-          generation: 1,
-          resourceVersion: "1",
-          creationTimestamp: now,
-          ...(labels === undefined ? {} : { labels }),
-          ...(annotations === undefined ? {} : { annotations }),
-        },
-        spec: jsonObject("spec", input.spec),
-        status: jsonObject("status", input.status ?? ({} as TStatus)),
-      };
-      writeJsonAtomic(path, {
-        object: resource,
-        control: {},
-      } satisfies StoredPluginResource<TSpec, TStatus>);
-      return resource;
+          labels,
+          annotations,
+          spec,
+          status: {} as TStatus,
+        });
+        writeJsonAtomic(path, stored);
+        return stored.object;
+      }
+      const current = this.readCurrentStored<TSpec, TStatus>(type, name).object;
+      if (
+        !isDeepStrictEqual(current.spec, spec) ||
+        !isDeepStrictEqual(current.metadata.labels, labels) ||
+        !isDeepStrictEqual(current.metadata.annotations, annotations)
+      ) {
+        throw new Error(
+          `Controller Source seed conflicts with existing Resource: ${type.kind}/${name}`,
+        );
+      }
+      return current;
     });
   }
 
@@ -238,7 +261,6 @@ export class PluginResourceStore {
     type: ResourceType,
   ): PluginResource<TSpec, TStatus>[] {
     validateResourceType(type);
-    this.migrateLegacyResources(type);
     const kindDir = this.kindDir(type);
     if (!existsSync(kindDir)) return [];
     return readdirSync(kindDir, { withFileTypes: true })
@@ -408,7 +430,6 @@ export class PluginResourceStore {
   ): StoredPluginResource<TSpec, TStatus> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
-    this.migrateLegacyResource(type, name);
     return this.readCurrentStored<TSpec, TStatus>(type, name);
   }
 
@@ -428,129 +449,6 @@ export class PluginResourceStore {
       throw new Error(`could not read plugin resource ${path}: ${detail}`);
     }
     return this.validateStored<TSpec, TStatus>(path, type, name, parsed);
-  }
-
-  private migrateLegacyResources(type: ResourceType): void {
-    const directory = this.legacyKindDir(type);
-    if (!existsSync(directory)) return;
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      this.migrateLegacyResource(
-        type,
-        basename(entry.name, ".json"),
-      );
-    }
-  }
-
-  private migrateLegacyResource(type: ResourceType, name: string): void {
-    const legacyPath = this.legacyResourcePath(type, name);
-    if (!existsSync(legacyPath)) return;
-    const path = this.resourcePath(type, name);
-    withFileLock(path, () => {
-      if (!existsSync(legacyPath)) return;
-      if (existsSync(path)) {
-        const current = this.readCurrentStored<unknown, unknown>(type, name);
-        const expected = this.readLegacyStored(
-          legacyPath,
-          type,
-          name,
-          current.object.metadata.uid,
-        );
-        if (!isDeepStrictEqual(current, expected)) {
-          throw new Error(
-            `legacy plugin resource conflicts with migrated resource: ${type.kind}/${name}`,
-          );
-        }
-      } else {
-        writeJsonAtomic(
-          path,
-          this.readLegacyStored(
-            legacyPath,
-            type,
-            name,
-            newId("pr"),
-          ),
-        );
-      }
-      this.archiveLegacyResource(legacyPath);
-    });
-  }
-
-  private readLegacyStored(
-    path: string,
-    type: ResourceType,
-    name: string,
-    uid: string,
-  ): StoredPluginResource<unknown, unknown> {
-    let value: unknown;
-    try {
-      value = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`could not read legacy plugin resource ${path}: ${detail}`);
-    }
-    try {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error("root must be a JSON object");
-      }
-      const legacy = value as Partial<LegacyPluginResource<unknown, unknown>>;
-      if (legacy.kind !== type.kind) {
-        throw new Error(`kind must be ${type.kind}`);
-      }
-      const metadata = legacy.metadata;
-      if (!metadata || typeof metadata !== "object") {
-        throw new Error("metadata must be an object");
-      }
-      if (metadata.resourceId !== name) {
-        throw new Error(`resourceId must be ${name}`);
-      }
-      if (metadata.batonSessionId !== this.batonSessionId) {
-        throw new Error(`batonSessionId must be ${this.batonSessionId}`);
-      }
-      if (metadata.pluginInstanceId !== this.pluginInstanceId) {
-        throw new Error(`pluginInstanceId must be ${this.pluginInstanceId}`);
-      }
-      positiveInteger("metadata.generation", metadata.generation);
-      positiveInteger("metadata.resourceVersion", metadata.resourceVersion);
-      isoTimestamp("metadata.createdAt", metadata.createdAt);
-      isoTimestamp("metadata.updatedAt", metadata.updatedAt);
-      if (metadata.nextReconcileAt !== undefined) {
-        isoTimestamp(
-          "metadata.nextReconcileAt",
-          metadata.nextReconcileAt,
-        );
-      }
-      return {
-        object: {
-          apiVersion: type.apiVersion,
-          kind: type.kind,
-          metadata: {
-            name,
-            namespace: this.pluginInstanceId,
-            uid,
-            generation: metadata.generation,
-            resourceVersion: String(metadata.resourceVersion),
-            creationTimestamp: metadata.createdAt,
-          },
-          spec: jsonObject("spec", legacy.spec),
-          status: jsonObject("status", legacy.status),
-        },
-        control: metadata.nextReconcileAt === undefined
-          ? {}
-          : { nextReconcileAt: metadata.nextReconcileAt },
-      };
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`invalid legacy plugin resource ${path}: ${detail}`);
-    }
-  }
-
-  private archiveLegacyResource(path: string): void {
-    let archived = `${path}.migrated`;
-    if (existsSync(archived)) {
-      archived = `${archived}.${Date.now()}.${process.pid}`;
-    }
-    renameSync(path, archived);
   }
 
   private validateStored<TSpec, TStatus>(
@@ -624,6 +522,37 @@ export class PluginResourceStore {
     return control;
   }
 
+  private initialStoredResource<TSpec, TStatus>(
+    input: {
+      type: ResourceType;
+      name: string;
+      labels?: Readonly<Record<string, string>>;
+      annotations?: Readonly<Record<string, string>>;
+      spec: TSpec;
+      status: TStatus;
+    },
+  ): StoredPluginResource<TSpec, TStatus> {
+    const resource: PluginResource<TSpec, TStatus> = {
+      apiVersion: input.type.apiVersion,
+      kind: input.type.kind,
+      metadata: {
+        name: input.name,
+        namespace: this.pluginInstanceId,
+        uid: newId("pr"),
+        generation: 1,
+        resourceVersion: "1",
+        creationTimestamp: new Date().toISOString(),
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.annotations === undefined
+          ? {}
+          : { annotations: input.annotations }),
+      },
+      spec: jsonObject("spec", input.spec),
+      status: jsonObject("status", input.status),
+    };
+    return { object: resource, control: {} };
+  }
+
   private resourcesDir(): string {
     return join(
       this.sessionDir,
@@ -645,11 +574,4 @@ export class PluginResourceStore {
     return join(this.kindDir(type), `${name}.json`);
   }
 
-  private legacyKindDir(type: ResourceType): string {
-    return join(this.resourcesDir(), type.kind);
-  }
-
-  private legacyResourcePath(type: ResourceType, name: string): string {
-    return join(this.legacyKindDir(type), `${name}.json`);
-  }
 }

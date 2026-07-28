@@ -58,18 +58,15 @@ export function nextCronSourceAt(
   }
 }
 
-export function validateControllerSources(
-  sources: readonly ControllerSource[] | undefined,
+export function validateControllerSources<TSpec>(
+  sources: readonly ControllerSource<TSpec>[] | undefined,
   currentDate: Date,
 ): void {
   if (!sources) return;
   const ids = new Set<string>();
   for (const source of sources) {
-    if (source.type !== "cron") {
-      throw new Error(`unsupported Controller source type: ${String(source.type)}`);
-    }
     if (!source.sourceId.trim()) {
-      throw new Error("Controller cron sourceId must not be empty");
+      throw new Error("Controller sourceId must not be empty");
     }
     if (ids.has(source.sourceId)) {
       throw new Error(
@@ -77,6 +74,19 @@ export function validateControllerSources(
       );
     }
     ids.add(source.sourceId);
+    if (source.type === "resource") {
+      if (typeof source.start !== "function") {
+        throw new Error(
+          `Controller Resource Source ${source.sourceId} must provide start()`,
+        );
+      }
+      continue;
+    }
+    if (source.type !== "cron") {
+      throw new Error(
+        `unsupported Controller source type: ${String(source.type)}`,
+      );
+    }
     if (!source.cron.trim()) {
       throw new Error(
         `Controller cron source ${source.sourceId} cron must not be empty`,
@@ -106,13 +116,14 @@ export class CronSourceQueue {
     this.onDue = options.onDue;
   }
 
-  register(
+  register<TSpec>(
     scope: ReconcileScope,
-    sources: readonly ControllerSource[],
+    sources: readonly ControllerSource<TSpec>[],
   ): void {
     const now = new Date(timestamp(this.now));
     validateControllerSources(sources, now);
     for (const source of sources) {
+      if (source.type !== "cron") continue;
       const id = scheduleEntryId(scope, source.sourceId);
       if (this.entries.has(id)) {
         throw new Error(

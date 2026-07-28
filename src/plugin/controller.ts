@@ -2,6 +2,8 @@ import type {
   Controller as PluginController,
   ControllerSource,
   Output as PluginInteractionOutput,
+  ResourceSource,
+  ResourceSourceContext,
   ResourceRef,
   ResourceType,
 } from "@qiankun01/baton-plugin";
@@ -98,7 +100,7 @@ export interface ScheduledReconcile {
 export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceType: ResourceType;
-  sources?: readonly ControllerSource[];
+  sources?: readonly ControllerSource<TSpec>[];
   reconcile: PluginController<TSpec, TStatus>["reconcile"];
   present?: PluginController<TSpec, TStatus>["present"];
   maxConcurrency?: number;
@@ -113,6 +115,8 @@ export interface ControllerOptions<TSpec, TStatus> {
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
   onReconcileError?(key: ReconcileKey, error: unknown): void;
+  /** Source materialize Resource 后失效 Board 等派生投影。 */
+  onSourceResource?(resource: Readonly<PluginResource<TSpec, TStatus>>): void;
 }
 
 function ownedKey(key: ReconcileKey): ReconcileKey {
@@ -178,7 +182,7 @@ interface ReconcileExecution {
  */
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
-  readonly sources: readonly ControllerSource[];
+  readonly sources: readonly ControllerSource<TSpec>[];
   readonly present?: PluginController<TSpec, TStatus>["present"];
   private readonly store: PluginResourceStore;
   private readonly resourceType: ResourceType;
@@ -192,7 +196,12 @@ export class Controller<TSpec, TStatus> {
   private readonly onInteraction: NonNullable<
     ControllerOptions<TSpec, TStatus>["onInteraction"]
   >;
+  private readonly onSourceResource:
+    ControllerOptions<TSpec, TStatus>["onSourceResource"];
   private readonly queue: ReconcileQueue;
+  private sourceAbort?: AbortController;
+  private sourceStart?: Promise<void>;
+  private sourcesReady = false;
   private closed = false;
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
@@ -213,6 +222,7 @@ export class Controller<TSpec, TStatus> {
       (() => {
         throw new Error("plugin Controller has no Interaction publisher");
       });
+    this.onSourceResource = options.onSourceResource;
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -246,16 +256,86 @@ export class Controller<TSpec, TStatus> {
     return this.queue.enqueue(reconcileKey);
   }
 
-  async discover(source: ControllerSource): Promise<void> {
-    if (!source.discover) return;
-    await this.executeWithCapacity(async () => {
-      if (this.closed) throw new Error("plugin Controller is closed");
-      await source.discover!();
-    });
+  async startSources(
+    onError: (sourceId: string, error: unknown) => void,
+  ): Promise<void> {
+    if (!this.sourceStart) {
+      this.sourceStart = this.startSourcesOnce(onError);
+    }
+    await this.sourceStart;
+  }
+
+  private async startSourcesOnce(
+    onError: (sourceId: string, error: unknown) => void,
+  ): Promise<void> {
+    const sources = this.sources.filter(
+      (source): source is ResourceSource<TSpec> => source.type === "resource",
+    );
+    if (sources.length === 0) {
+      this.sourcesReady = true;
+      return;
+    }
+    const abort = new AbortController();
+    this.sourceAbort = abort;
+    await Promise.all(
+      sources.map(async (source) => {
+        const reportError = (error: unknown): void => {
+          if (this.closed || abort.signal.aborted) return;
+          try {
+            onError(source.sourceId, error);
+          } catch {
+            // Source diagnostics must not interrupt discovery or live delivery.
+          }
+        };
+        const emit: ResourceSourceContext<TSpec>["emit"] = (seed): void => {
+          if (this.closed || abort.signal.aborted) return;
+          try {
+            const resource = this.store.ensure<TSpec, TStatus>({
+              type: this.resourceType,
+              ...seed,
+            });
+            try {
+              this.onSourceResource?.(resource);
+            } catch {
+              // Resource is durable; projection invalidation is best-effort.
+            }
+            if (!this.sourcesReady) {
+              return;
+            }
+            this.enqueueSourceResource(resource.metadata.name);
+          } catch (error) {
+            reportError(error);
+          }
+        };
+        try {
+          await this.executeWithCapacity(async () => {
+            if (this.closed || abort.signal.aborted) return;
+            await source.start(Object.freeze({
+              signal: abort.signal,
+              emit,
+              reportError,
+            }));
+          });
+        } catch (error) {
+          reportError(error);
+        }
+      }),
+    );
+    this.sourcesReady = true;
+  }
+
+  cronSources(): readonly Extract<ControllerSource<TSpec>, { type: "cron" }>[] {
+    return this.sources.filter(
+      (
+        source,
+      ): source is Extract<ControllerSource<TSpec>, { type: "cron" }> =>
+        source.type === "cron",
+    );
   }
 
   close(): void {
     this.closed = true;
+    this.sourceAbort?.abort();
     this.queue.close();
   }
 
@@ -278,6 +358,10 @@ export class Controller<TSpec, TStatus> {
         resourceId: resource.metadata.name,
       }),
     );
+  }
+
+  initialReconciles(): ReconcileKey[] {
+    return this.resourceKeys();
   }
 
   setNextReconcileAt(key: ReconcileKey, next: Date): void {
@@ -364,6 +448,15 @@ export class Controller<TSpec, TStatus> {
         };
       },
     );
+  }
+
+  private enqueueSourceResource(resourceId: string): void {
+    void this.enqueue({
+      ...this.scope,
+      resourceId,
+    }).catch(() => {
+      // Reconcile failure reporting and retry are owned by Manager.
+    });
   }
 
   private assertOwns(key: ReconcileKey): void {

@@ -1,7 +1,7 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 / Controller cron Source、Baton-owned `Turn` Resource
+> Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 / Controller Resource/cron Source、Baton-owned `Turn` Resource
 > 派生与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
 > `/reload-plugins`、Plugin Command 与显式 ContextProvider 已经落地；持久 Resource Context
@@ -358,7 +358,7 @@ Plugin 的扩展点收束为少量明确能力：
 |---|---|---|
 | `registerCommand` | 用户直接发起的入口 | 创建、选择或修改 Resource |
 | `registerContextProvider` | 用户在输入中显式选择的只读上下文 | 按 kind 分组的搜索候选与当前 turn context |
-| `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、cron Sources、Board presentation、Plugin Output |
+| `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、Resource/cron Sources、Board presentation、Plugin Output |
 
 ContextProvider 是显式、单 turn 的上下文入口。Baton 内置和 Plugin 使用相同注册方法：内置
 Provider 保持 `session` 这类单词 kind；Plugin Binding 把局部 kind 自动限定为
@@ -371,20 +371,22 @@ Receipt；需要追踪可靠投递或跨 turn 水位时再进入 Context deliver
 Baton 在激活时校验二者一致，既能让安装者提前看见能力和风险，又不把函数或进程细节写进
 manifest。
 
-Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可写 Resource。首期也不提供
-Monitor、EventSource、Action 或通用 Hook：观察 Baton kind 与领域收敛都使用
-`registerController`，一次性动态重查和固定周期观察分别使用 `requeueAfter` 与 Controller
-的 `sources`。只有 webhook、关闭 TUI
-后的持续监听、无法表达成 desired state 的独立命令，或真实同步拦截不能由当前契约表达时，
-才增加对应的窄接口。
+Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可写 Resource。观察 Baton kind
+与领域收敛都使用 `registerController`；一次性动态重查使用 `requeueAfter`，固定周期 resync
+和外部对象发现使用两类 Controller Source。无法表达成 desired state 的独立命令出现后再增加
+Action，不恢复平行的 Monitor 状态机。
 
-每个 Controller 可以声明多个 cron Source：`type: "cron" + sourceId + cron + timeZone`。
-Source 只在当前 Binding 活跃时运行；同一时刻到期的多个 Source 先按 Controller scope 合并。
-Source 可用可选 `discover` 从外部系统列出新对象并创建该 Controller 管理的缺失 Resource；
-Baton 随后枚举该 kind 的全部当前 Resource key，放入既有 reconcile queue。`discover` 不修改
-status、不产生 Plugin Output，也不把 tick 写成领域 Event，具体状态仍由逐 Resource 的
-`reconcile` 收敛。重启后从当前时间的下一次 occurrence 继续，不补放历史 tick；关闭 TUI 后
-仍需准时运行时再引入 daemon。
+Resource Source 使用
+`type: "resource" + sourceId + start(context)`。`start` 先完成初始发现并安装文件监听、webhook
+channel 等实时订阅，再返回 ready；期间及后续通过 `context.emit(seed)` 贡献该 Controller
+管理的 Resource。Baton 统一 materialize 缺失对象并按稳定 key 入队；重复的相同 seed 是幂等
+wake，试图隐式改变既有 spec 则报 Source failure。Source 只属于当前 Binding，关闭时
+`context.signal` 被 abort。Resource Source 不能挂到 Baton-owned 只读 kind。
+
+cron Source 使用 `type: "cron" + sourceId + cron + timeZone`，只负责周期性枚举并唤醒该
+Controller 的当前 Resource。Source 不修改 status、不产生 Plugin Output，也不把 signal 写成
+领域 Event，具体状态仍由逐 Resource 的 `reconcile` 收敛。重启后 cron 从当前时间的下一次
+occurrence 继续，不补放历史 tick；关闭 TUI 后仍需准时运行时再引入 daemon。
 
 Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多一个通用 Board 条目：
 
@@ -539,7 +541,7 @@ Resource type 使用 BatonSession 内的所有权注册表。Baton 启动时先�
 ### 2.2 Resource 与 Controller
 
 Baton-owned Resource 更新、Plugin Resource 创建或有效的 `status` 更新、后续 `spec` 更新、启动恢复、
-外部观察、Controller cron Source 或动态计时到期都只表示
+Controller Resource/cron Source 或动态计时到期都只表示
 “某个对象可能需要重新检查”。Baton 将同一对象的重复触发合并成 reconcile key：
 
 ```text
@@ -665,11 +667,12 @@ Manager 使用按 key 的指数退避并把下一次 retry 同样写入内部 `n
 time 不反写 Resource；进程内仍使用相同 due queue，重启后由 ledger 全量重放再次入队。不引入语义
 模糊的 `requeue: boolean`。
 
-Controller 的 cron `sources` 表达与单次 reconcile 结果无关的固定周期职责，例如每
-五分钟检查活跃 PR 状态。Baton 使用显式 IANA `timeZone` 计算 cron occurrence；tick 到期后
-先运行可选 `discover` 物化缺失 Resource，再枚举该 Controller 的当前 Resource 并复用同一
-keyed queue。固定 Source 与
-`requeueAfter` 相互独立：前者持续存在，后者仍由某个 Resource 的本次 reconcile 动态决定。
+Controller 的 Resource Source 负责初始发现和实时事件到目标 Resource key 的映射；初始
+Source ready 后，Baton 才对该 Controller 的当前对象执行 initial reconcile。cron Source
+表达与单次 reconcile 结果无关的固定周期职责，例如每五分钟检查活跃 PR 状态；Baton 使用显式
+IANA `timeZone` 计算 occurrence，并枚举该 Controller 的当前 Resource。两类 Source 与
+`requeueAfter` 相互独立：前两者属于 Controller 生命周期，后者由某个 Resource 的本次
+reconcile 动态决定。
 
 Controller 可以调用 Plugin 自己的 Connector、文件或脚本修改外部系统，因为副作用本来就是“使实际状态
 靠近 spec”的一部分，而不是返回值的一部分。前提是当前 `spec` 或已记录的用户决定已经授权该
@@ -678,8 +681,6 @@ Controller 可以调用 Plugin 自己的 Connector、文件或脚本修改外部
 
 ### 2.3 后续触发条件
 
-- webhook、长连接、文件监听或无 Resource 的持续观察出现后，再增加只负责 enqueue 的
-  EventSource，不恢复一套 Monitor 状态机；
 - 无法自然表达成 desired state、又需要被独立调用的命令出现后，再增加 Action，并复用
   Intent / Attempt / Receipt；
 - 需要关闭 TUI 后继续实时推进时，再引入 daemon，复用同一 Resource store 和 reconcile queue。
@@ -709,8 +710,8 @@ Resource、Receipt 和审计历史继续保留。
 Proposal 和 Plugin Interaction，再扫描 Resource 和内部 schedule，将未完成对象重新 enqueue。
 Plugin 发起的待决 Interaction 不会像失去 Harness resolver 的交互那样在 crash recovery 中自动
 取消；其 continuation 是持久 Resource key。Package 升级不会
-静默覆盖 Session 运行数据；宿主会把旧版通用 Resource envelope 原地迁移到带 `apiVersion`
-的路径并保留迁移前文件。领域 `spec/status` schema migration 仍由新版本显式声明并产生可审计结果。
+静默覆盖 Session 运行数据；
+确需 Resource schema migration 时由新版本显式声明并产生可审计结果。
 
 ## 3. 关键设计
 
@@ -739,7 +740,7 @@ Operator 模型可以帮助区分这些职责，但 Board 不直接等于 CRD：
 | CR | 一个具体的 Resource，例如某次 ReqLoopRun |
 | spec / status | 人认可的 Loop Contract / Controller 观测状态 |
 | Controller / Controller | Baton-owned kind Controller 或 Controller 中的 `reconcile()` |
-| watch / work queue | Baton-owned / Plugin-owned Resource 变化与 keyed reconcile queue |
+| watch / work queue | Controller Resource Source、Resource 变化与 keyed reconcile queue |
 | dynamic recheck / periodic resync | `RequeueAfter` → 持久化内部 schedule / Controller cron Source |
 | API mutation | Controller 更新 status、调用 Plugin Connector |
 | kubectl / status view | Board presentation |
@@ -850,7 +851,7 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
 1. 已建立 Package、Instance、Binding 的可信进程内最小契约：启动恢复启用 Instance，激活失败
    整体回滚，解绑和退出统一关闭。
 2. 已建立 Resource 通用信封与存储、同 key 不并发的 reconcile queue、持久 Proposal，
-   `requeueAfter` due time 与 Controller cron Sources；三种唤醒都进入同一
+   `requeueAfter` due time 与 Controller Resource/cron Sources；所有唤醒都进入同一
    keyed queue；Plugin Resource 创建和有效的 status 更新也自动进入该队列，运行数据全部归当前
    BatonSession。
 3. 已建立 `_baton_turn_summary` → `baton.dev/v1alpha1, Kind=Turn` 的只读 Baton-owned Resource，
@@ -868,8 +869,9 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
    编辑并提交 proposed input 后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar。
    内置 Session 与 Plugin 已通过同一个 ContextProvider Registry 接入分组 `@` 搜索和单 turn
    急切上下文；后续再把需要可靠水位的来源接入持久 Resource Context source。
-7. reqloop 出现真实外部变化需求后再接 EventSource；无法表达成 desired state 的独立命令出现
-   后再接 Action，不给 Plugin 预造 Monitor 或私有 timer。
+7. Resource Source 已提供初始发现、实时订阅和目标 Resource materialize；reqloop 可直接接入
+   devloop 文件变化。无法表达成 desired state 的独立命令出现后再接 Action，不给 Plugin
+   预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Controller 主动启动 Harness 后，再设计受控调用；首期只允许用户把
    `proposed-input` Output 提交成普通 Input。
 9. `/plugins` 首期管理面已接入 Marketplace 浏览、Package 搜索 / 详情 / 安装、用户级
