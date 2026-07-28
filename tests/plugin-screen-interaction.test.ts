@@ -8,7 +8,7 @@ import {
   type TestRendererSetup,
 } from "@opentui/core/testing";
 import { createRoot, type Root } from "@opentui/react";
-import { defaultTheme, type ChatViewState } from "chat-tui";
+import { createChatStore, defaultTheme } from "chat-tui";
 import { createElement, createRef } from "react";
 
 import type { Manager } from "../src/plugin/manager.ts";
@@ -31,13 +31,6 @@ afterEach(() => {
   mounted = null;
 });
 
-const view: ChatViewState = {
-  transcript: [],
-  header: "Baton chat",
-  composerPlaceholder: "Chat input",
-  footer: "ready",
-};
-
 function protocol(options: {
   available?: readonly AvailablePluginPackage[];
   installed?: readonly InstalledPluginPackage[];
@@ -57,8 +50,13 @@ function protocol(options: {
     pluginManager,
     commands: [],
     mentionCandidates: () => [],
-    getView: () => view,
-    subscribe: () => () => {},
+    stateStore: createChatStore({
+      timeline: { items: [], header: "Baton chat" },
+      composer: { placeholder: "Chat input" },
+      activity: {},
+      footer: { text: "ready" },
+      sidecar: undefined,
+    }),
     subscribeCommands: () => () => {},
     submit: () => {},
     command: () => {},

@@ -43,7 +43,7 @@ afterEach(() => {
 // 参数化事件到达时机：无活跃 turn / driven turn 运行中（同 harness）/（异 harness）。
 // 投影正确性不允许依赖 controller 的 turn 状态——这正是当年丢消息的机制。
 
-describe("projection invariant: every appended event reaches the view", () => {
+describe("State invariant: every appended event reaches the timeline", () => {
   const arrivals: Array<{ name: string; before: AnyEventDraft[] }> = [
     { name: "while idle (between turns)", before: [] },
     {
@@ -70,7 +70,7 @@ describe("projection invariant: every appended event reaches the view", () => {
         payload: { messageId: "m_wake", content: [{ type: "text", text: "background result" }] },
       });
       expect(
-        protocol.getView().transcript.some((item) => item.type === "message" && item.id === "m_wake"),
+        protocol.stateStore.getState("timeline").items.some((item) => item.type === "message" && item.id === "m_wake"),
       ).toBe(true);
       await protocol.exit();
     });
@@ -87,10 +87,11 @@ describe("observed turn presentation", () => {
       turnId: "t_obs",
       payload: { state: "running" },
     });
-    let view = protocol.getView();
-    expect(view.busy).toBe(true);
-    expect(view.runStatus).toHaveLength(1);
-    const line = view.runStatus?.[0];
+    let composer = protocol.stateStore.getState("composer");
+    let runStatus = protocol.stateStore.getState("activity").items;
+    expect(composer.busy).toBe(true);
+    expect(runStatus).toHaveLength(1);
+    const line = runStatus?.[0];
     expect(line).toBeDefined();
     expect(line?.id).toBe("run:observed:t_obs");
     expect(line?.author).toBe("claude");
@@ -105,10 +106,11 @@ describe("observed turn presentation", () => {
       turnId: "t_obs",
       payload: { state: "idle", stopReason: "end_turn" },
     });
-    view = protocol.getView();
-    expect(view.busy).toBe(false);
-    expect(view.runStatus).toHaveLength(1);
-    expect(view.runStatus?.[0]).toMatchObject({
+    composer = protocol.stateStore.getState("composer");
+    runStatus = protocol.stateStore.getState("activity").items;
+    expect(composer.busy).toBe(false);
+    expect(runStatus).toHaveLength(1);
+    expect(runStatus?.[0]).toMatchObject({
       author: "codex",
       label: "default · idle",
     });
@@ -126,10 +128,11 @@ describe("observed turn presentation", () => {
         payload: { state: "running" },
       });
     }
-    let view = protocol.getView();
-    expect(view.busy).toBe(true);
-    expect(view.runStatus).toHaveLength(1);
-    expect(view.runStatus?.[0]?.id).toBe("run:observed:t_obs2");
+    let composer = protocol.stateStore.getState("composer");
+    let runStatus = protocol.stateStore.getState("activity").items;
+    expect(composer.busy).toBe(true);
+    expect(runStatus).toHaveLength(1);
+    expect(runStatus?.[0]?.id).toBe("run:observed:t_obs2");
 
     // 一个收口不影响另一个（单槽时代任何 idle 都会全局清空）
     session.append({
@@ -139,10 +142,11 @@ describe("observed turn presentation", () => {
       turnId: "t_obs1",
       payload: { state: "idle", stopReason: "end_turn" },
     });
-    view = protocol.getView();
-    expect(view.busy).toBe(true);
-    expect(view.runStatus).toHaveLength(1);
-    expect(view.runStatus?.[0]?.id).toBe("run:observed:t_obs2");
+    composer = protocol.stateStore.getState("composer");
+    runStatus = protocol.stateStore.getState("activity").items;
+    expect(composer.busy).toBe(true);
+    expect(runStatus).toHaveLength(1);
+    expect(runStatus?.[0]?.id).toBe("run:observed:t_obs2");
     await protocol.exit();
   });
 });

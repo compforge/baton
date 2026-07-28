@@ -1,5 +1,7 @@
+// Baton 领域状态到 chat-tui State 的投影。
+
 import type {
-  ChatViewState,
+  ChatState,
   InteractionView,
   PickerSearchView,
   RunStatusItem,
@@ -34,7 +36,7 @@ export type BoardMode = "auto" | "open" | "hidden";
 export interface BoardViewProjection {
   readonly items: readonly BoardItem[];
   readonly mode: BoardMode;
-  readonly sidecar: ChatViewState["sidecar"];
+  readonly sidecar: ChatState["sidecar"];
 }
 
 export interface PickerViewProjection {
@@ -44,7 +46,7 @@ export interface PickerViewProjection {
   search?: PickerSearchView;
 }
 
-export interface ChatViewProjectionInput {
+export interface ChatStateProjectionInput {
   state: SessionState;
   controller: Controller;
   pendingProposals: ReturnType<Manager["listPendingProposals"]>;
@@ -293,8 +295,8 @@ export function projectBoardView(
   };
 }
 
-/** Baton 领域状态 → chat-tui 完整兼容快照。 */
-export function projectChatView(input: ChatViewProjectionInput): ChatViewState {
+/** Baton 领域状态 → chat-tui State。 */
+export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const {
     state,
     controller,
@@ -410,38 +412,46 @@ export function projectChatView(input: ChatViewProjectionInput): ChatViewState {
   const pinnedPlanId = planActive ? lastPlan?.planId : undefined;
 
   return {
-    transcript: [
-      ...buildTranscript(state, pinnedPlanId),
-      ...(input.commandOutput ? [input.commandOutput] : []),
-    ],
-    busy,
-    runStatus,
-    plan: planActive ? planEntries : undefined,
-    queued: controller.queuedTurns.map((turn) => ({
-      id: String(turn.id),
-      text: userVisibleText(textOf(turn.blocks)),
-      tag: turn.harnessTargetId,
-    })),
-    picker: input.picker
-      ? {
-          id: input.picker.id,
-          title: input.picker.title,
-          options: input.picker.options,
-          ...(input.picker.search ? { search: input.picker.search } : {}),
-        }
-      : null,
-    interactions,
+    timeline: {
+      items: [
+        ...buildTranscript(state, pinnedPlanId),
+        ...(input.commandOutput ? [input.commandOutput] : []),
+      ],
+      plan: planActive ? planEntries : undefined,
+      header: `baton · session ${session.id}\ntype to chat · /codex or /claude switch · /sessions open · @bs_xxx reference another session\n`,
+      showThoughts: input.config.showThoughts,
+    },
+    composer: {
+      busy,
+      queued: controller.queuedTurns.map((turn) => ({
+        id: String(turn.id),
+        text: userVisibleText(textOf(turn.blocks)),
+        tag: turn.harnessTargetId,
+      })),
+      picker: input.picker
+        ? {
+            id: input.picker.id,
+            title: input.picker.title,
+            options: input.picker.options,
+            ...(input.picker.search ? { search: input.picker.search } : {}),
+          }
+        : null,
+      interactions,
+      placeholder: `Message ${harnessTargetId} (/ commands, @ mentions, ${
+        controller.queueLength > 0
+          ? "↑ recall queued"
+          : controller.isBusy
+            ? "Enter sends or queues"
+            : "Ctrl+J newline"
+      })`,
+    },
+    activity: {
+      items: runStatus,
+    },
+    footer: {
+      toast: input.toast,
+      text: `session: ${session.id}  in:${state.usage.inputTokens} out:${state.usage.outputTokens}  turns:${state.turnSummaries.length}  queue:${controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${board.items.length > 0 ? `  board:${board.items.length}` : ""}  cwd:${session.meta.cwd}`,
+    },
     sidecar: board.sidecar,
-    toast: input.toast,
-    footer: `session: ${session.id}  in:${state.usage.inputTokens} out:${state.usage.outputTokens}  turns:${state.turnSummaries.length}  queue:${controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${board.items.length > 0 ? `  board:${board.items.length}` : ""}  cwd:${session.meta.cwd}`,
-    composerPlaceholder: `Message ${harnessTargetId} (/ commands, @ mentions, ${
-      controller.queueLength > 0
-        ? "↑ recall queued"
-        : controller.isBusy
-          ? "Enter sends or queues"
-          : "Ctrl+J newline"
-    })`,
-    header: `baton · session ${session.id}\ntype to chat · /codex or /claude switch · /sessions open · @bs_xxx reference another session\n`,
-    showThoughts: input.config.showThoughts,
   };
 }
