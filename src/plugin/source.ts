@@ -4,7 +4,7 @@ import type {
   ResourceType,
   Source,
   SourceContext,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 import { nextCronSourceAt } from "./cron-source.ts";
 import {

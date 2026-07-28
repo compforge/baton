@@ -6,4 +6,4 @@ install:
 
 publish-baton-plugin:
 	bun run --cwd packages/plugin typecheck
-	npm publish --workspace @qiankun01/baton-plugin --access public
+	npm publish --workspace @compforge/baton-plugin --access public

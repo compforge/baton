@@ -76,7 +76,7 @@ manifest 先声明 `manifestVersion + pluginId + version + entry` 和可选展�
 能力与权限声明等到对应的安装审阅和运行期校验入口出现时再扩展，不先造无人消费的
 字段。
 
-三方 Plugin 只依赖独立的 `@qiankun01/baton-plugin` 类型包。它与 Baton 宿主位于同一
+三方 Plugin 只依赖独立的 `@compforge/baton-plugin` 类型包。它与 Baton 宿主位于同一
 monorepo，便于契约、宿主适配和测试原子演进，但独立版本化和发布；其中只包含
 `PluginPackage`、`PluginActivationContext`、Resource/Controller、ContextProvider、
 `BatonSnapshot`、`PluginOutput` 和 Interaction 等作者契约。Manager、Binding、Controller、Store、

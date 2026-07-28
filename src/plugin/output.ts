@@ -1,6 +1,6 @@
-import type { PluginOutput } from "@qiankun01/baton-plugin";
+import type { PluginOutput } from "@compforge/baton-plugin";
 
-export type { PluginOutput } from "@qiankun01/baton-plugin";
+export type { PluginOutput } from "@compforge/baton-plugin";
 
 function nonEmpty(name: string, value: unknown): asserts value is string {
   if (typeof value !== "string" || !value.trim()) {

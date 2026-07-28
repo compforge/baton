@@ -31,7 +31,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 |---|---|
 | `docs/kernel.md` | 稳定内核：核心概念、不变量、v1 双向流水线与 Harness 扩展契约 |
 | `docs/plugin.md`、`docs/loop-engineering.md` | v2 Plugin runtime 与分层 loop 控制面 |
-| `packages/plugin/` | `@qiankun01/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
+| `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
 | `src/controller/`、`src/event/`、`src/session/`、`src/store/` | Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
 | `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
 | `src/plugin/` | Marketplace、Package/Instance/Binding、Resource/Controller、Board 与 Output runtime |

@@ -13,7 +13,7 @@ import { basename, dirname, join } from "node:path";
 import type {
   Resource,
   ResourceType,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import { withAsyncFileLock, withFileLock } from "../store/file-lock.ts";

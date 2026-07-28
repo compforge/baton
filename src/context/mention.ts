@@ -4,7 +4,7 @@
 import type { TurnSummary } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../store/store.ts";
-import type { ContextProvider } from "@qiankun01/baton-plugin";
+import type { ContextProvider } from "@compforge/baton-plugin";
 
 /** @bs_<ULID>：ContextProvider 上线前的 Session token，继续兼容已有输入。 */
 const MENTION_PATTERN = /@(bs_[0-9A-HJKMNP-TV-Z]{26})/g;

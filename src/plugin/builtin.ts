@@ -8,7 +8,7 @@ import {
   BATON_TURN_RESOURCE_TYPE,
   type ResourceRef,
   type Watch,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
 import {
   type BuiltinResourceReconcileProposal,

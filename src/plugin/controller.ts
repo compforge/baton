@@ -6,7 +6,7 @@ import type {
   ResourceRef,
   ResourceType,
   Watch,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
 import {

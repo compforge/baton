@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/qiankunli/baton/main/docs/assets/baton-icon.png" alt="baton icon" width="112" />
 </p>
 
-<h1 align="center">@qiankun01/baton-plugin</h1>
+<h1 align="center">@compforge/baton-plugin</h1>
 
 Public, host-independent authoring contract for Baton plugins.
 
@@ -12,7 +12,7 @@ import {
   type Resource as ExampleResource,
   type PluginActivationContext,
   type PluginPackage,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 const EXAMPLE_RESOURCE = {
   apiVersion: "example.baton.dev/v1alpha1",
@@ -155,7 +155,7 @@ Controllers may also declare `watches` to map changes from secondary Resources
 to primary `ReconcileRequest`s:
 
 ```ts
-import { enqueueRequestsFromMapFunc } from "@qiankun01/baton-plugin";
+import { enqueueRequestsFromMapFunc } from "@compforge/baton-plugin";
 
 const repositories = enqueueRequestsFromMapFunc<
   unknown,
