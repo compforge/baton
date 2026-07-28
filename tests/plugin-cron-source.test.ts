@@ -11,7 +11,7 @@ const scope: ReconcileScope = {
   batonSessionId: "bs_test",
   pluginInstanceId: "reqloop_default",
   resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-  resourceKind: "ReqLoopRun",
+  resourceKind: "Requirement",
 };
 
 async function waitFor(

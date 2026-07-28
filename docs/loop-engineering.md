@@ -140,9 +140,8 @@ devloop 属于 Harness Plugin：它规范 agent 在代码仓内完成开发、li
 manifest、runtime 或公共 Plugin API。这样安装、配置和运行都围绕同一个 PluginInstance，不再
 为外部系统恢复一套平级身份。
 
-Baton 发行包默认带上 reqloop，给用户一条开箱可理解的 Requirement Loop；reqloop 仍保持
-可配置、可禁用、可独立升级的 Plugin 边界。Baton core 不依赖 reqloop 的 Requirement、
-Deployment 等领域类型，未启用 reqloop 时仍是完整的 Loop Engineering runtime。
+reqloop 作为独立 Marketplace 提供 Requirement Loop，保持可配置、可禁用、可独立升级的
+Plugin 边界。Baton core 不依赖 reqloop 的 Requirement、Deployment 等领域类型。
 
 ### chat-tui
 
@@ -492,22 +491,22 @@ Requirement Loop 用来验证 Baton 的通用抽象，但不是 Baton 内建流�
 `reqloop` Plugin，由它拥有这条 loop 的领域模型、推进策略和完成条件；不必预先把 Requirement、
 Deploy、Review、Repair 和 Completion 拆成五个 Plugin。
 
-reqloop 将 Requirement、Deployment、Verdict 等抽象为自己的领域概念，并用内部 Connector
-适配具体平台。Baton 只看到 reqloop 注册的 command 和 ReqLoopRun Controller；
-schema、reconcile、Board presentation 与可选 Context source 都收在该 Resource 下。详细设计
+reqloop 将 Requirement、Repository、PullRequest、Deployment、Evaluation 等抽象为自己的领域
+概念，并用内部 Connector 适配具体平台。Baton 只看到 reqloop 注册的 command 和 Resource
+Controller；schema、reconcile、Board presentation 与可选 Context source 都收在对应 Resource 下。详细设计
 见 [reqloop 领域设计](https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md)。
 
-1. 用户启用并配置随 Baton 交付的 reqloop，通过 `/requirements` 创建或恢复 ReqLoopRun；
+1. 用户安装、启用并配置 reqloop，通过 `/requirements` 创建或恢复 Requirement Resource；
    Requirement、验收条件和完成策略进入 `spec`。
-2. ReqLoopController 返回“根据需求完成开发并提交 PR”的 `proposed-input` Output；用户原样提交、编辑后
+2. RequirementController 返回“根据需求完成开发并提交 PR”的 `proposed-input` Output；用户原样提交、编辑后
    提交或丢弃。提交后才成为普通 Input，因此仍是 user-driven turn。
 3. 目标 Harness 内安装的 devloop 规范 agent 完成开发、lint/test、commit 和 PR/MR；它使用
    Codex/Claude Code 自己的 skill、hook、command 和权限机制，不注册为 Baton Plugin。
 4. MR 可交付时，devloop 产生结构化 DevelopmentOutcome，经 Harness adapter 或窄化的 Baton
-   event bridge 归一为带 ReqLoopRun reference 的 `harness.delivery.ready`；Controller 将 PR
+   event bridge 归一为带 Requirement Resource reference 的 `harness.delivery.ready`；Controller 将 PR
    等实际交付物写入 `status`。无法自动关联时，Controller 返回 `interaction` 让用户选择
    Requirement 或拒绝关联。
-5. `spec` 要求 review 时，Controller 调用 VerdictConnector，并通过 `requeueAfter` 轮询长耗时
+5. `spec` 要求 review 时，Controller 调用 EvaluationConnector，并通过 `requeueAfter` 轮询长耗时
    结果；收到 changes requested 后返回包含 review 意见的修复 `proposed-input` Output。
 6. 部署、review 和修复满足 completion policy 后，Controller 返回 `interaction` 询问是否关闭；
    用户确认后，Controller 在已授权范围内调用 Connector 完成收尾并更新 conditions。
@@ -636,9 +635,9 @@ DevelopmentOutcome
 7. 真实工作区证明必须由 Controller 主动续跑 Harness 时，再扩展受控调用；它复用既有
    Input/Attempt 投递与路由，不伪装成易失的 `monitor Input`。
 
-reqloop 的 `ReqLoopRun` spec/status 与完成条件始终归 reqloop。Baton core 只提供通用
-Resource 信封、ResourceRef、Event、Input/Attempt/Receipt 和 projection 原语，不提前
-抽象一个所有领域都必须采用的通用 `LoopRun`。
+reqloop 的 Requirement、Repository、PullRequest 等 Resource 及其完成条件始终归 reqloop。
+Baton core 只提供通用 Resource 信封、ResourceRef、Event、Input/Attempt/Receipt 和 projection
+原语，不提前抽象一个所有领域都必须采用的通用 `LoopRun`。
 
 每一步都应保持 BatonSession 的 session 事件流是 Harness 会话历史真相源，并明确它与全局
 Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。

@@ -22,8 +22,8 @@ Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board 
 Interaction 和 ContextProvider。自动、受控的 Harness Work，多 Harness 并行汇总以及主线 /
 草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness runtime 来提前实现。
 
-reqloop 是独立交付、可禁用和独立升级的官方 Marketplace / Plugin 场景，用 Requirement Loop
-提供默认产品故事；其领域模型与 Connector 始终留在 reqloop，不进入 Baton core。
+reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场景；其 Requirement Loop
+领域模型与 Connector 始终留在 reqloop，不进入 Baton core。
 
 ## 代码地图与核心模块
 

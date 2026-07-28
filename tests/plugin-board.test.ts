@@ -9,7 +9,7 @@ import { PluginResourceStore } from "../src/plugin/resource.ts";
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
-  kind: "ReqLoopRun",
+  kind: "Requirement",
 } as const;
 
 function store(): PluginResourceStore {
@@ -66,12 +66,12 @@ describe("Plugin Board presentation", () => {
         id: JSON.stringify([
           "reqloop_default",
           REQ_LOOP_RUN.apiVersion,
-          "ReqLoopRun",
+          "Requirement",
           "run_active",
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
-        resourceKind: "ReqLoopRun",
+        resourceKind: "Requirement",
         resourceId: "run_active",
         title: "Ship it",
         status: "active",
@@ -102,14 +102,14 @@ describe("Plugin Board presentation", () => {
         id: JSON.stringify([
           "reqloop_default",
           REQ_LOOP_RUN.apiVersion,
-          "ReqLoopRun",
+          "Requirement",
           "run_1",
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
-        resourceKind: "ReqLoopRun",
+        resourceKind: "Requirement",
         resourceId: "run_1",
-        title: "ReqLoopRun/run_1",
+        title: "Requirement/run_1",
         status: "presentation failed",
         detail: "connector unavailable",
         tone: "error",

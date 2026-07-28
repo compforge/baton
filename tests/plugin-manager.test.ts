@@ -29,7 +29,7 @@ function testRoot(): string {
   return root;
 }
 
-function scope(pluginInstanceId: string, resourceKind: string = "ReqLoopRun"): ReconcileScope {
+function scope(pluginInstanceId: string, resourceKind: string = "Requirement"): ReconcileScope {
   return {
     batonSessionId: "bs_test",
     pluginInstanceId,
@@ -41,7 +41,7 @@ function scope(pluginInstanceId: string, resourceKind: string = "ReqLoopRun"): R
 function key(
   pluginInstanceId: string,
   resourceId: string,
-  resourceKind: string = "ReqLoopRun",
+  resourceKind: string = "Requirement",
 ): ReconcileKey {
   return {
     ...scope(pluginInstanceId, resourceKind),
@@ -110,7 +110,7 @@ describe("plugin Manager", () => {
       pluginInstanceId: "reqloop_default",
     });
     resources.create<Spec>({
-      type: resourceType("ReqLoopRun"),
+      type: resourceType("Requirement"),
       name: "run_1",
       spec: { value: "run_1" },
     });
@@ -122,7 +122,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile(baton) {
         const current = baton.pluginInteractions.find(
           (interaction) => interaction.decisionKey === "associate-pr",
@@ -151,7 +151,7 @@ describe("plugin Manager", () => {
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
       resourceApiVersion: API_VERSION,
-      resourceKind: "ReqLoopRun",
+      resourceKind: "Requirement",
       resourceId: "run_1",
     };
 
@@ -189,7 +189,7 @@ describe("plugin Manager", () => {
     const root = testRoot();
     const reqloopStore = store(root, "reqloop_default");
     const deployStore = store(root, "deploy_default");
-    createResource(reqloopStore, "ReqLoopRun", "run_1");
+    createResource(reqloopStore, "Requirement", "run_1");
     createResource(deployStore, "Deployment", "deployment_1");
     const gate = deferred();
     const started: string[] = [];
@@ -205,7 +205,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile(_baton, resource) {
           started.push(resource.metadata.namespace);
           await gate.promise;
@@ -241,28 +241,28 @@ describe("plugin Manager", () => {
     const resources = store(root, "reqloop_default");
     const definition = {
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {},
     };
     const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
     manager.registerController(definition);
 
     expect(() => manager.registerController(definition)).toThrow(
-      `plugin Controller already registered for bs_test/reqloop_default/${API_VERSION}/ReqLoopRun`,
+      `plugin Controller already registered for bs_test/reqloop_default/${API_VERSION}/Requirement`,
     );
     await expect(manager.enqueue(key("missing", "run_1"))).rejects.toThrow(
-      `no plugin Controller registered for bs_test/missing/${API_VERSION}/ReqLoopRun`,
+      `no plugin Controller registered for bs_test/missing/${API_VERSION}/Requirement`,
     );
   });
 
   test("registration close is idempotent and removes only its Controller", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
     const registration = manager.registerController({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {},
     });
 
@@ -270,7 +270,7 @@ describe("plugin Manager", () => {
     registration.close();
     registration.close();
     await expect(manager.enqueue(key("reqloop_default", "run_1"))).rejects.toThrow(
-      `no plugin Controller registered for bs_test/reqloop_default/${API_VERSION}/ReqLoopRun`,
+      `no plugin Controller registered for bs_test/reqloop_default/${API_VERSION}/Requirement`,
     );
   });
 
@@ -278,7 +278,7 @@ describe("plugin Manager", () => {
     const root = testRoot();
     const firstStore = store(root, "reqloop_default");
     const waitingStore = store(root, "deploy_default");
-    createResource(firstStore, "ReqLoopRun", "run_1");
+    createResource(firstStore, "Requirement", "run_1");
     createResource(waitingStore, "Deployment", "deployment_1");
     const gate = deferred();
     let waitingRuns = 0;
@@ -289,7 +289,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: firstStore,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           await gate.promise;
         },
@@ -325,8 +325,8 @@ describe("plugin Manager", () => {
     const root = testRoot();
     const reqloopStore = store(root, "reqloop_default");
     const deployStore = store(root, "deploy_default");
-    createResource(reqloopStore, "ReqLoopRun", "run_1");
-    createResource(reqloopStore, "ReqLoopRun", "run_2");
+    createResource(reqloopStore, "Requirement", "run_1");
+    createResource(reqloopStore, "Requirement", "run_2");
     createResource(deployStore, "Deployment", "deployment_1");
     const gate = deferred();
     const started: string[] = [];
@@ -337,7 +337,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       maxConcurrency: 1,
       async reconcile(_baton, resource) {
           started.push(
@@ -412,7 +412,7 @@ describe("plugin Manager", () => {
   test("does not surface the same Proposal again after the user resolves it", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     const surfaced: Proposal[] = [];
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -422,7 +422,7 @@ describe("plugin Manager", () => {
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           return {
             output: {
@@ -474,11 +474,11 @@ describe("plugin Manager", () => {
   test("restores expired and future reconcile times when the Manager starts", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "expired");
-    createResource(resources, "ReqLoopRun", "future");
+    createResource(resources, "Requirement", "expired");
+    createResource(resources, "Requirement", "future");
     const now = Date.now();
-    resources.setNextReconcileAt(resourceType("ReqLoopRun"), "expired", new Date(now - 1_000));
-    resources.setNextReconcileAt(resourceType("ReqLoopRun"), "future", new Date(now + 100));
+    resources.setNextReconcileAt(resourceType("Requirement"), "expired", new Date(now - 1_000));
+    resources.setNextReconcileAt(resourceType("Requirement"), "future", new Date(now + 100));
     const runs: string[] = [];
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -486,7 +486,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile(_baton, resource) {
           runs.push(resource.metadata.name);
         },
@@ -497,14 +497,14 @@ describe("plugin Manager", () => {
     expect(runs).toEqual(["expired"]);
     await waitFor(() => runs.includes("future"));
     expect(runs).toEqual(["expired", "future"]);
-    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
+    expect(resources.scheduledReconciles(resourceType("Requirement"))).toEqual([]);
     registration.close();
   });
 
   test("turns requeueAfter into another reconcile and replaces the persisted due time", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     let runs = 0;
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -512,7 +512,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           runs += 1;
           if (runs === 1) return { requeueAfterMs: 20 };
@@ -520,17 +520,17 @@ describe("plugin Manager", () => {
     });
 
     await manager.start();
-    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toHaveLength(1);
+    expect(resources.scheduledReconciles(resourceType("Requirement"))).toHaveLength(1);
     await waitFor(() => runs === 2);
-    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
+    expect(resources.scheduledReconciles(resourceType("Requirement"))).toEqual([]);
     registration.close();
   });
 
   test("cron Sources enqueue every current Resource through the keyed queue", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
-    createResource(resources, "ReqLoopRun", "run_2");
+    createResource(resources, "Requirement", "run_1");
+    createResource(resources, "Requirement", "run_2");
     let now = new Date("2026-07-26T00:00:00.990Z");
     const runs: string[] = [];
     const manager = new Manager({
@@ -540,7 +540,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       sources: [
         {
           type: "cron",
@@ -565,7 +565,7 @@ describe("plugin Manager", () => {
     await waitFor(() => runs.length === 2);
     expect(runs.sort()).toEqual(["run_1", "run_2"]);
     expect(
-      resources.scheduledReconciles(resourceType("ReqLoopRun")).length === 0,
+      resources.scheduledReconciles(resourceType("Requirement")).length === 0,
     ).toBe(true);
 
     registration.close();
@@ -589,7 +589,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       sources: [{
         type: "resource",
         sourceId: "discover-pr",
@@ -630,7 +630,7 @@ describe("plugin Manager", () => {
     await waitFor(() => failures.length === 1);
     expect(failures).toEqual(["discover-pr"]);
     expect(resources.get<Spec>(
-      resourceType("ReqLoopRun"),
+      resourceType("Requirement"),
       "run_discovered",
     ).spec).toEqual({ value: "run_discovered" });
 
@@ -642,7 +642,7 @@ describe("plugin Manager", () => {
   test("resource Source startup failure does not block known Resources", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_known");
+    createResource(resources, "Requirement", "run_known");
     const failures: string[] = [];
     const runs: string[] = [];
     const manager = new Manager({
@@ -654,7 +654,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       sources: [{
         type: "resource",
         sourceId: "discover-pr",
@@ -679,7 +679,7 @@ describe("plugin Manager", () => {
   test("stops cron Sources when their Controller registration closes", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     let now = new Date("2026-07-26T00:00:00.990Z");
     let runs = 0;
     const manager = new Manager({
@@ -689,7 +689,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       sources: [{
         type: "cron",
         sourceId: "poll-pr-state",
@@ -712,7 +712,7 @@ describe("plugin Manager", () => {
   test("persists error backoff so another Manager can recover the retry", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     const failures: Array<{ attempt: number; nextRetryAt?: string }> = [];
     const firstManager = new Manager({
       proposals: proposalStore(root),
@@ -727,7 +727,7 @@ describe("plugin Manager", () => {
     });
     const firstRegistration = firstManager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           throw new Error("connector unavailable");
         },
@@ -738,7 +738,7 @@ describe("plugin Manager", () => {
     );
     expect(failures).toEqual([{ attempt: 1, nextRetryAt: expect.any(String) }]);
     expect(
-      resources.scheduledReconciles(resourceType("ReqLoopRun"))[0]
+      resources.scheduledReconciles(resourceType("Requirement"))[0]
         ?.nextReconcileAt.toISOString(),
     ).toBe(failures[0]?.nextRetryAt);
     firstRegistration.close();
@@ -753,21 +753,21 @@ describe("plugin Manager", () => {
       Record<string, never>
     >({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           recoveredRuns += 1;
         },
     });
     await recoveredManager.start();
     await waitFor(() => recoveredRuns === 1);
-    expect(resources.scheduledReconciles(resourceType("ReqLoopRun"))).toEqual([]);
+    expect(resources.scheduledReconciles(resourceType("Requirement"))).toEqual([]);
     recoveredRegistration.close();
   });
 
   test("backs off repeated failures per key and resets the attempt after success", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     let runs = 0;
     let failNext = false;
     const attempts: number[] = [];
@@ -781,7 +781,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
           runs += 1;
           if (runs <= 2 || failNext) {
@@ -810,7 +810,7 @@ describe("plugin Manager", () => {
   test("registration close cancels its future reconcile wake-ups", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
-    createResource(resources, "ReqLoopRun", "run_1");
+    createResource(resources, "Requirement", "run_1");
     let runs = 0;
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -818,7 +818,7 @@ describe("plugin Manager", () => {
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
-      resourceType: resourceType("ReqLoopRun"),
+      resourceType: resourceType("Requirement"),
       async reconcile() {
         runs += 1;
         return { requeueAfterMs: 50 };

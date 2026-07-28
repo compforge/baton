@@ -220,8 +220,8 @@ Snapshot 存在但 Receipt 缺失表示未证明送达，下次仍可重新组�
   `CollaborationAttempt`；
 - 同一 BatonSession 内 `/codex`、`/claude` 切换只是 Harness 接力，不是一次协作 run。
 
-Baton core 不引入通用 `LoopRun`。Requirement、Deployment、Verdict 和 `ReqLoopRun` 由
-reqloop 拥有，其他 Plugin 也拥有自己的聚合根、checkpoint 和完成条件。除非多个独立领域证明
+Baton core 不引入通用 `LoopRun`。Requirement、Repository、PullRequest、Deployment 和
+Evaluation 由 reqloop 拥有，其他 Plugin 也拥有自己的聚合根、checkpoint 和完成条件。除非多个独立领域证明
 存在完全相同的生命周期，core 只提供 ResourceRef、Event、Intent/Attempt/Receipt、
 `parentEventId` 关系和 projection 原语。
 

@@ -35,7 +35,7 @@ OpenCode 的同类尝试能显著减少持续闪烁，但仍可能在消息完�
 ## Plugin Resource ContextSource
 
 Board 展示一份 Resource，不代表目标 Harness 已经收到它的上下文。reqloop 需要把当前 Turn
-关联的 ReqLoopRun 作为独立 ContextSource，经 ContextSnapshot、DeliveryReceipt 和
+关联的 Requirement Resource 作为独立 ContextSource，经 ContextSnapshot、DeliveryReceipt 和
 ContextEpoch 送达 Harness；同一 BatonSession 可以同时存在多份活跃 Requirement，不能把 Board
 上的全部 Resource 无差别注入每个 Turn。
 
@@ -43,4 +43,4 @@ ContextEpoch 送达 Harness；同一 BatonSession 可以同时存在多份活跃
 Input/Turn 的 Resource provenance。Board presentation 继续只服务人类展示，不作为 Harness
 context 的文本事实源。
 
-**触发条件**：reqloop 创建 ReqLoopRun 并开始从 Requirement 驱动 Harness 开发时。
+**触发条件**：reqloop 开始从 Requirement Resource 驱动 Harness 开发时。

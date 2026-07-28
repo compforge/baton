@@ -8,7 +8,7 @@ import { PluginResourceStore } from "../src/plugin/resource.ts";
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
-  kind: "ReqLoopRun",
+  kind: "Requirement",
 } as const;
 const OTHER = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
@@ -90,7 +90,7 @@ describe("PluginResourceStore", () => {
       "resources",
       "reqloop.baton.dev",
       "v1alpha1",
-      "ReqLoopRun",
+      "Requirement",
       `${created.metadata.name}.json`,
     );
     expect(existsSync(path)).toBe(true);
@@ -207,7 +207,7 @@ describe("PluginResourceStore", () => {
       "resources",
       "reqloop.baton.dev",
       "v1alpha1",
-      "ReqLoopRun",
+      "Requirement",
       "run_1.json",
     );
     mkdirSync(join(path, ".."), { recursive: true });

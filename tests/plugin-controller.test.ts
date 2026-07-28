@@ -23,7 +23,7 @@ interface Status {
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
-  kind: "ReqLoopRun",
+  kind: "Requirement",
 } as const;
 
 function testRoot(): string {
@@ -51,7 +51,7 @@ function key(resourceId: string = "run_1"): ReconcileKey {
     batonSessionId: "bs_test",
     pluginInstanceId: "reqloop_default",
     resourceApiVersion: REQ_LOOP_RUN.apiVersion,
-    resourceKind: "ReqLoopRun",
+    resourceKind: "Requirement",
     resourceId,
   };
 }
