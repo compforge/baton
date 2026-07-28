@@ -1,8 +1,9 @@
 # Baton Plugin 设计
 
 > 状态：分阶段实现。Instance 持久化、可信进程内 Package 激活、Binding 生命周期，
-> Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 / Controller Resource/cron Source、Baton-owned `Turn` Resource
-> 派生与 watch，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
+> Resource / Controller / Proposal / 持久 Interaction / Board presentation / 动态唤醒 /
+> Controller Resource/cron Source、Resource Watches / EventHandler、Baton-owned `Turn`
+> Resource 派生与观察，以及本地 / Git Marketplace 的发现和不可变 Package 安装、用户级
 > Plugin 启停、`/plugins` 首期管理面和
 > `/reload-plugins`、Plugin Command 与显式 ContextProvider 已经落地；持久 Resource Context
 > source、配置编辑 UI 和权限审阅仍按真实产品入口增量
@@ -355,9 +356,10 @@ counter = await context.resources.patchStatus(counter, {
 Plugin runtime 的主模型由四个职责不同的对象组成：
 
 ```text
-Source ── discover / wake ──▶ Resource ── keyed reconcile ──▶ Controller
-                                  ▲                              │
-                                  └──── status / schedule ───────┘
+Source ── discover / emit ──▶ primary Resource ── ReconcileRequest ──▶ Controller
+                                      ▲                                  │
+secondary Resource ── Watches / EventHandler ──┘                         │
+                                      └──────── status / schedule ───────┘
 
 Manager：装配并运行整条链路
 ```
@@ -366,6 +368,9 @@ Manager：装配并运行整条链路
   reconcile 行为。
 - **Source 是输入边界**：发现并贡献缺失 Resource，把外部变化转换成 wake；不更新 status，
   也不产生 Plugin Output。
+- **Watches 是 Resource 事件路由边界**：观察当前 PluginInstance 中已经存在的次级 Resource，
+  由 EventHandler 把 create / update / delete 映射成主 Resource 的 `ReconcileRequest`；
+  它不创建 Resource，也不表达生命周期所有权。
 - **Controller 是收敛边界**：按稳定 key 读取最新 Resource，通过 reconcile 更新 status、
   安排后续检查，并产生由 Baton 接管的 Plugin Output。
 - **Manager 是运行编排边界**：负责注册、启动顺序、队列、容量、定时器、错误和关闭，不承载
@@ -377,7 +382,7 @@ Plugin 的扩展点收束为少量明确能力：
 |---|---|---|
 | `registerCommand` | 用户直接发起的入口 | 创建、选择或修改 Resource |
 | `registerContextProvider` | 用户在输入中显式选择的只读上下文 | 按 kind 分组的搜索候选与当前 turn context |
-| `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、Resource/cron Sources、Board presentation、Plugin Output |
+| `registerController` | 控制自有 kind，或观察 Baton 已注册的只读 kind | reconcile、Resource/cron Sources、Watches、Board presentation、Plugin Output |
 
 ContextProvider 是显式、单 turn 的上下文入口。Baton 内置和 Plugin 使用相同注册方法：内置
 Provider 保持 `session` 这类单词 kind；Plugin Binding 把局部 kind 自动限定为
@@ -406,6 +411,18 @@ wake，试图隐式改变既有 spec 则报 Source failure。Source 只属于当
 该 Controller 的当前 Resource。Source 不修改 status、不产生 Plugin Output，也不把 signal
 写成领域 Event，具体状态仍由逐 Resource 的 `reconcile` 收敛。重启后 cron 从当前时间的
 下一次 occurrence 继续，不补放历史 tick；关闭 TUI 后仍需准时运行时再引入 daemon。
+
+`watches` 对齐 controller-runtime 的 `Watches`：每一项声明次级 `resourceType` 和
+`EventHandler`。`enqueueRequestsFromMapFunc` 在 create / delete 时映射当前对象，在 update 时
+分别映射 old / new snapshot，并去重得到 `ReconcileRequest[]`；这样引用从 A 移到 B 时，A 与 B
+都能重新检查。Manager 再按 Controller 的主 `resourceType` 补齐 BatonSession /
+PluginInstance scope，并与直接 Resource 变化共享同一 keyed queue。删除事件保留最后一份
+Resource snapshot，但不会直接 reconcile 已删除的主 Resource。
+
+Source 与 Watches 不互相替代：Source 面向 Baton store 之外的文件、webhook 或外部系统，并额外
+承担“外部对象 → 主 Resource”的 materialize；Watches 面向已经进入 Baton store 的 Resource
+事件，只做次级 Resource → 主 Resource 的路由。这个差异来自 Baton 没有 Kubernetes API Server
+预先保存全部外部对象，详见 [3.2](#32-对-controller-runtime-的借鉴)。
 
 Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多一个通用 Board 条目：
 
@@ -562,8 +579,9 @@ Resource type 使用 BatonSession 内的所有权注册表。Baton 启动时先�
 
 ### 2.2 Resource 与 Controller
 
-Baton-owned Resource 更新、Plugin Resource 创建或有效的 `status` 更新、后续 `spec` 更新、启动恢复、
-Controller Resource/cron Source 或动态计时到期都只表示
+Baton-owned Resource 更新、Plugin Resource 创建或有效的 `status` 更新、后续 `spec` 更新、
+启动恢复、Controller Resource/cron Source、Watches 映射出的 `ReconcileRequest` 或动态计时
+到期都只表示
 “某个对象可能需要重新检查”。Baton 将同一对象的重复触发合并成 reconcile key：
 
 ```text
@@ -577,7 +595,7 @@ Controller 不把触发原因当成一条必须执行一次的命令。它根据
 外部状态，比较 `spec` 与 `status`，执行当前仍需要的收敛动作：
 
 ```text
-Baton-owned Resource update / Resource change / startup / schedule or timer due
+Baton-owned Resource update / primary Resource change / Watch mapping / startup / timer due
                          │
                          ▼
 enqueue(pluginInstanceId, apiVersion, kind, name)
@@ -611,6 +629,7 @@ reconcile。Baton-owned Resource 来自当前 Session 的不可变 Event Ledger�
 interface Controller<TSpec, TStatus> {
   resourceType: ResourceType;
   sources?: ControllerSource<TSpec>[];
+  watches?: Watch[];
   maxConcurrency?: number;
   reconcile(
     baton: Readonly<BatonSnapshot>,
@@ -788,7 +807,54 @@ Reconcile
 回写为 observation，由 Controller 更新同一个 Resource / Board。这个能力不进入首期，也暂不
 为它提前命名独立的顶层 Intent 类型。
 
-### 3.2 从现有 Plugin 体系吸收什么
+### 3.2 对 controller-runtime 的借鉴
+
+Baton Plugin 的 Resource / Controller runtime 以 controller-runtime 的 level-based reconcile
+模型为主要参照，但不是 Kubernetes API 的兼容实现。借鉴的重点是把事实、事件路由和收敛执行
+分开：事件只产生 `ReconcileRequest`，Controller 每次重新读取主 Resource；不把事件 payload
+当成必须执行一次的命令。
+
+当前概念对应如下：
+
+| controller-runtime | Baton Plugin | 状态与差异 |
+|---|---|---|
+| Kubernetes Object / GVK | `Resource` / `ResourceType` | 已实现；Plugin Resource 持久化在 BatonSession，Baton-owned Resource 从 Event Ledger 派生 |
+| `For(primary)` | `Controller.resourceType` | 已实现；沿用声明式对象 API，不引入 Builder DSL |
+| `reconcile.Request` | `ReconcileRequest` / 内部 reconcile key | 已实现；公开请求只需 `name`，Baton 按 Controller 补齐 Session、Instance 和主 Resource type |
+| Controller workqueue | keyed reconcile queue | 已实现；同 key 合并、不并发，Manager 另有总容量、持久 due time 和错误退避 |
+| `Reconcile` / `RequeueAfter` | `reconcile` / `requeueAfterMs` | 已实现；执行前读取最新 snapshot，动态 due time 不进入公开 metadata |
+| `Source` | resource `Source` / `CronSource` | 已实现但有 Baton 特化；resource Source 还负责把外部对象 materialize 成主 Resource |
+| `Watches` | `Controller.watches` | 已实现 Plugin-owned 次级 Resource 的 create / update / delete 路由 |
+| `EventHandler` | `EventHandler` | 已实现；返回 `ReconcileRequest[]`，Plugin 不直接持有 workqueue |
+| `EnqueueRequestsFromMapFunc` | `enqueueRequestsFromMapFunc` | 已实现；update 同时映射 old / new snapshot 并去重 |
+| `Predicate` | — | 尚未实现；当前 EventHandler 可返回空请求完成简单过滤 |
+| `GenericEvent` / channel Source | — | 尚未实现；等真实外部 signal 无需 materialize Resource 时再增加 |
+| `Owns` / OwnerReference / GC | `ResourceRef` 只有引用形状 | 尚未实现；普通 Watches 不冒充控制关系或生命周期所有权 |
+| Finalizer / deletion timestamp | — | 尚未实现；当前删除是立即删除，外部清理由领域 Controller 显式收口 |
+| Cache selector / FieldIndexer | `ResourceClient.list()` | 尚未实现；Session-scoped 数据量不足以证明需要通用索引时不预建 |
+| 可配置 RateLimiter | Manager 固定指数退避 | 部分实现；Plugin 暂不注入自定义限流器 |
+| Manager leader election | 多进程 Resource reconcile 锁 | 只借鉴“不重复执行”的目标，不复制集群 leader-election API |
+
+几个命名和边界约束：
+
+1. `resourceType` 是 Controller 的 primary Resource，语义等价于 `For`；不再另造
+   `ownerResource`、`subject` 等近义词。
+2. `watches` 只描述次级 Resource 的事件路由。`EventHandler` 决定 enqueue 哪些主 Resource，
+   `reconcile` 再根据最新事实决定是否工作或 `requeueAfterMs`。
+3. Watches 不表示引用、观察租约或生命周期所有权。只有出现真实控制和级联回收语义时，才按
+   controller-runtime 的 `Owns` / OwnerReference 重新设计。
+4. Source 与 Watches 不重叠：Source 跨越 Baton store 边界并可发现主 Resource；Watches 只消费
+   已存在的 Baton Resource。当前 Source 的 materialize 行为是 Baton 相对
+   controller-runtime 的明确特化，不再为它引入平行术语。
+5. Baton 只复用能保持相同语义的名词。namespace、权限、缓存、进程模型与 Kubernetes 不同的
+   地方保留 Baton 自己的窄契约，不为了表面相似复制完整 controller-runtime API。
+
+后续优先按真实用例补齐：先验证 Plugin-owned Watches；需要观察 Baton-owned 次级 Resource 时
+让其也经过同一 EventHandler 路由；重复的全量 `list()` 成为瓶颈后再引入 FieldIndexer；
+需要级联回收和删除前外部清理时，再分别评估 Owns 与 Finalizer。Predicate、GenericEvent 和
+可配置 RateLimiter 不因“controller-runtime 有”就自动进入近期范围。
+
+### 3.3 从现有 Plugin 体系吸收什么
 
 | 体系 | 吸收 | 不照搬 |
 |---|---|---|
@@ -809,7 +875,7 @@ Baton 自己的 Instance、Event 和 Attempt 语义”，而不是复制其中�
 - [Claude Code Plugin 文档](https://code.claude.com/docs/en/plugins-reference)
 - [Claude Code Hook 文档](https://code.claude.com/docs/en/hooks)
 
-### 3.3 Plugin 运行时是窄能力边界
+### 3.4 Plugin 运行时是窄能力边界
 
 Manager 只向 Plugin 暴露完成已注册能力所需的窄入口：
 
@@ -826,7 +892,7 @@ Plugin 不获得通用 Store、Controller、Harness 或 shell。访问 Meego、G
 系统由 Plugin 内部 Connector 完成，并受 manifest 权限、Resource owner 和 Reconcile 生命周期
 约束。Connector 是 Plugin 内部实现，不提升为 Baton 顶层概念。
 
-### 3.4 当前只支持可信的进程内 Plugin
+### 3.5 当前只支持可信的进程内 Plugin
 
 当前 Package 使用进程内 TypeScript 激活，属于 trusted code。安装前尚无权限审阅或签名校验，
 Baton 不宣称提供安全隔离；窄 Plugin 契约的目的首先是稳定架构边界，而不是假装沙箱。
@@ -835,7 +901,7 @@ Baton 不宣称提供安全隔离；窄 Plugin 契约的目的首先是稳定架
 自动更新、卸载、签名、依赖解析和独立进程协议留到实际分发与信任需求出现后再做；届时可以让
 进程适配层实现同一 Binding / Controller 契约，不需要推翻 Instance / Binding 模型。
 
-### 3.5 目录兑现领域边界
+### 3.6 目录兑现领域边界
 
 Plugin core 不为每种注册能力建平级子目录；Marketplace 自身有独立的内部子域：
 
@@ -868,7 +934,7 @@ Project 只负责组织和发现 BatonSession，不拥有 Plugin runtime。Manag
 和队列是进程态；恢复时从用户级启用配置和当前 Session 的 Event Ledger、Resource、
 Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
 
-### 3.6 增量落地
+### 3.7 增量落地
 
 1. 已建立 Package、Instance、Binding 的可信进程内最小契约：启动恢复启用 Instance，激活失败
    整体回滚，解绑和退出统一关闭。

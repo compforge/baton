@@ -7,6 +7,7 @@ import {
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   type ResourceRef,
+  type Watch,
 } from "@qiankun01/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
 import {
@@ -24,6 +25,7 @@ import {
   type BatonSnapshot,
 } from "./baton-snapshot.ts";
 import { validatePluginOutput } from "./output.ts";
+import { validateWatches } from "./watch.ts";
 import type {
   ControllerSource,
   CronSource,
@@ -201,6 +203,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   pluginInstanceId: string;
   resourceKind: K;
   sources?: readonly ControllerSource[];
+  watches?: readonly Watch[];
   reconcile(
     baton: Readonly<BatonSnapshot>,
     resource: Readonly<BuiltinResource<K>>,
@@ -241,6 +244,7 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 export class BuiltinController<K extends BuiltinResourceKind> {
   readonly scope: ReconcileScope;
   readonly sources: readonly ControllerSource[];
+  readonly watches: readonly Watch[];
   private readonly resources: BatonResourceIndex;
   private readonly resourceKind: K;
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
@@ -262,7 +266,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     }
     this.resources = options.resources;
     this.resourceKind = options.resourceKind;
+    validateWatches(options.watches);
     this.sources = Object.freeze([...(options.sources ?? [])]);
+    this.watches = Object.freeze([...(options.watches ?? [])]);
     if (this.sources.some((source) => source.type === "resource")) {
       throw new Error(
         "Controller resource Sources cannot materialize Baton-owned Resources",

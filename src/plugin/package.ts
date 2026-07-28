@@ -6,6 +6,11 @@ import type {
   Controller,
   ControllerSource,
   CronSource,
+  CreateEvent,
+  DeleteEvent,
+  EventHandler,
+  EventResource,
+  MapFunc,
   PluginCommandInput,
   PluginCommandPickerSearch,
   PluginCommandResult,
@@ -15,6 +20,7 @@ import type {
   PluginPackage,
   PluginSessionContext,
   Resource,
+  ReconcileRequest,
   Source,
   SourceContext,
   SourceSignal,
@@ -22,6 +28,8 @@ import type {
   ToastMessage,
   ToastSink,
   ToastTone,
+  UpdateEvent,
+  Watch,
 } from "@qiankun01/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
 import type { ResourceClient } from "./resource-client.ts";
@@ -35,6 +43,11 @@ export type {
   Controller,
   ControllerSource,
   CronSource,
+  CreateEvent,
+  DeleteEvent,
+  EventHandler,
+  EventResource,
+  MapFunc,
   PluginCommandInput,
   PluginCommandPickerSearch,
   PluginCommandResult,
@@ -44,6 +57,7 @@ export type {
   PluginPackage,
   PluginSessionContext,
   Resource,
+  ReconcileRequest,
   Source,
   SourceContext,
   SourceSignal,
@@ -51,11 +65,14 @@ export type {
   ToastMessage,
   ToastSink,
   ToastTone,
+  UpdateEvent,
+  Watch,
 } from "@qiankun01/baton-plugin";
 
 export {
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
+  enqueueRequestsFromMapFunc,
 } from "@qiankun01/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(

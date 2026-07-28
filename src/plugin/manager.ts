@@ -39,6 +39,7 @@ import {
   type PluginLogEntry,
   type ToastMessage,
   type ToastTone,
+  type Watch,
   validatePluginPackage,
 } from "./package.ts";
 import {
@@ -84,6 +85,7 @@ import {
   diagnosticError,
   type DiagnosticSink,
 } from "../diagnostics.ts";
+import { watchRequests } from "./watch.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -110,7 +112,7 @@ export interface ControllerDefinition<TSpec, TStatus>
 
 type BuiltinControllerDefinition<K extends BuiltinResourceKind> = Pick<
   BuiltinControllerOptions<K>,
-  "pluginInstanceId" | "resourceKind" | "sources" | "reconcile" | "maxConcurrency" | "now"
+  "pluginInstanceId" | "resourceKind" | "sources" | "watches" | "reconcile" | "maxConcurrency" | "now"
 >;
 
 export interface PluginToast {
@@ -193,6 +195,7 @@ export interface PluginReloadResult {
 
 interface ManagedController {
   scope: ReconcileScope;
+  watches: readonly Watch[];
   cronSources?(): readonly CronSource[];
   startSources?(
     onError: (sourceId: string, error: unknown) => void,
@@ -1041,6 +1044,7 @@ export class Manager {
         pluginInstanceId,
         resourceKind,
         sources: cronSources,
+        watches: pluginController.watches,
         maxConcurrency: pluginController.maxConcurrency,
         reconcile: async (baton, resource) =>
           await pluginController.reconcile(
@@ -1210,26 +1214,68 @@ export class Manager {
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
     this.notifyBoardChanged();
-    if (this.closed || change.kind === "deleted") return;
+    if (this.closed) return;
 
-    const key = Object.freeze({
-      batonSessionId: this.proposals.batonSessionId,
-      pluginInstanceId: change.resource.metadata.namespace,
-      resourceApiVersion: change.resource.apiVersion,
-      resourceKind: change.resource.kind,
-      resourceId: change.resource.metadata.name,
-    });
-    const scopeId = reconcileScopeId(key);
-    const controller = this.controllers.get(scopeId);
-    if (
-      !controller ||
-      this.suspendedControllers.has(scopeId)
-    ) {
-      return;
+    const pending = new Map<string, {
+      controller: ManagedController;
+      key: ReconcileKey;
+    }>();
+    if (change.kind !== "deleted") {
+      const key = Object.freeze({
+        batonSessionId: this.proposals.batonSessionId,
+        pluginInstanceId: change.resource.metadata.namespace,
+        resourceApiVersion: change.resource.apiVersion,
+        resourceKind: change.resource.kind,
+        resourceId: change.resource.metadata.name,
+      });
+      const scopeId = reconcileScopeId(key);
+      const controller = this.controllers.get(scopeId);
+      if (controller && !this.suspendedControllers.has(scopeId)) {
+        pending.set(reconcileKeyId(key), { controller, key });
+      }
     }
-    void controller.enqueue(key).catch(() => {
-      // Reconcile failures use the Controller retry path; close races need no extra reaction.
-    });
+
+    for (const controller of this.controllers.values()) {
+      const scopeId = reconcileScopeId(controller.scope);
+      if (
+        controller.scope.pluginInstanceId !==
+          change.resource.metadata.namespace ||
+        this.suspendedControllers.has(scopeId)
+      ) {
+        continue;
+      }
+      let requests;
+      try {
+        requests = watchRequests(controller.watches, change);
+      } catch (error) {
+        this.diagnostic?.({
+          level: "error",
+          component: "plugin.watch",
+          message: "Plugin Controller EventHandler failed",
+          error: diagnosticError(error),
+          details: {
+            pluginInstanceId: controller.scope.pluginInstanceId,
+            primaryResource:
+              `${controller.scope.resourceApiVersion}/${controller.scope.resourceKind}`,
+            watchedResource: `${change.resource.apiVersion}/${change.resource.kind}`,
+          },
+        });
+        continue;
+      }
+      for (const request of requests) {
+        const key = Object.freeze({
+          ...controller.scope,
+          resourceId: request.name,
+        });
+        pending.set(reconcileKeyId(key), { controller, key });
+      }
+    }
+
+    for (const { controller, key } of pending.values()) {
+      void controller.enqueue(key).catch(() => {
+        // Reconcile failures use the Controller retry path; close races need no extra reaction.
+      });
+    }
   }
 
   private notifyToast(

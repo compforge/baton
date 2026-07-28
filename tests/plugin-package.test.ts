@@ -12,7 +12,10 @@ import type {
   Source,
   SourceContext,
 } from "../src/plugin/package.ts";
-import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
+import {
+  BATON_TURN_RESOURCE_TYPE,
+  enqueueRequestsFromMapFunc,
+} from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { SessionStore } from "../src/store/store.ts";
@@ -227,6 +230,92 @@ describe("Plugin Package lifecycle", () => {
 
     await waitFor(() => phases.length === 2);
     expect(phases).toEqual(["pending", "ready"]);
+
+    await manager.close();
+  });
+
+  test("maps watched Resource create, update, and delete events to primary Resources", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    const workspaceType = resourceType("Workspace");
+    const repositoryType = resourceType("Repository");
+    for (const name of ["repo_a", "repo_b"]) {
+      resourceStore(root, "reqloop_default").create({
+        type: repositoryType,
+        name,
+        spec: { identity: name },
+      });
+    }
+
+    interface WorkspaceStatus {
+      repositories?: readonly string[];
+    }
+
+    let context: PluginActivationContext | undefined;
+    const reconciled: string[] = [];
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((activation) => {
+          context = activation;
+          activation.registerController({
+            resourceType: repositoryType,
+            watches: [{
+              resourceType: workspaceType,
+              handler: enqueueRequestsFromMapFunc<
+                { root: string },
+                WorkspaceStatus
+              >((workspace) =>
+                (workspace.status.repositories ?? []).map((name) => ({ name }))
+              ),
+            }],
+            async reconcile(_baton, repository) {
+              reconciled.push(repository.metadata.name);
+            },
+          });
+          activation.registerController({
+            resourceType: workspaceType,
+            async reconcile() {},
+          });
+        }),
+      ],
+      onProposal() {},
+    });
+
+    await manager.start();
+    await waitFor(() => reconciled.length === 2);
+    reconciled.length = 0;
+
+    const workspace = context!.resources.create<
+      { root: string },
+      WorkspaceStatus
+    >(workspaceType, {
+      name: "session",
+      spec: { root: "session-cwd" },
+    });
+    const withRepoA = context!.resources.patchStatus(workspace, {
+      repositories: ["repo_a"],
+    });
+    await waitFor(() => reconciled.length === 1);
+    expect(reconciled).toEqual(["repo_a"]);
+
+    reconciled.length = 0;
+    const withRepoB = context!.resources.patchStatus(withRepoA, {
+      repositories: ["repo_b"],
+    });
+    await waitFor(() => reconciled.length === 2);
+    expect(reconciled.sort()).toEqual(["repo_a", "repo_b"]);
+
+    reconciled.length = 0;
+    context!.resources.delete(workspaceType, withRepoB.metadata.name);
+    await waitFor(() => reconciled.length === 1);
+    expect(reconciled).toEqual(["repo_b"]);
 
     await manager.close();
   });

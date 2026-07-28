@@ -44,3 +44,35 @@ Input/Turn 的 Resource provenance。Board presentation 继续只服务人类展
 context 的文本事实源。
 
 **触发条件**：reqloop 开始从 Requirement Resource 驱动 Harness 开发时。
+
+## Plugin Controller 对 controller-runtime 的后续借鉴
+
+Baton Plugin 已以 `Resource / Controller / ReconcileRequest / Source / Watches /
+EventHandler` 落下 level-based reconcile 主链路；详细对应和差异见
+[`plugin.md` §3.2](./plugin.md#32-对-controller-runtime-的借鉴)。其余
+controller-runtime 概念不为 API 对齐而预建，按下面的真实压力分别引入：
+
+- **Predicate**：在 EventHandler 前过滤 create / update / delete；当多个 Controller 重复编写
+  “generation 未变”“无关 status 字段变化”等空映射逻辑，并且过滤规则可稳定复用时引入。
+- **Baton-owned Resource Watches / GenericEvent**：当前 Watches 先覆盖 Plugin-owned 次级
+  Resource；当 Plugin-owned 主 Resource 必须由 `Turn` 等 Baton-owned Resource 变化唤醒时，
+  让派生索引也产生同一 EventHandler 输入。只有外部 signal 无需 materialize Resource、又不能
+  由现有 Source 表达时，再增加 GenericEvent 或 channel Source。
+- **FieldIndexer / selector-aware List**：当前 Session-scoped `ResourceClient.list()` 保持简单。
+  当 Watches mapper 或 reconcile 对同一引用字段反复全量扫描，并在真实 Resource 数量下形成
+  可测瓶颈时，引入由 Baton 维护、随 Resource revision 更新的反向索引；索引仍是派生状态，
+  不能成为关系真相源。
+- **Owns / OwnerReference / garbage collection**：只有主 Resource 对子 Resource 存在真实控制、
+  唯一生命周期 owner 和级联回收要求时引入。普通引用、多方共享或“谁希望继续观察”不使用
+  Owns；先明确跨 namespace、删除重建 uid 和 orphan 行为。
+- **Finalizer / deletion timestamp**：当 Resource 删除前必须可靠撤销外部订阅、清理远端对象，
+  且立即删除会丢失重试身份时引入；需要同时定义卡住删除的可见性、超时、强制终止和恢复语义。
+- **可配置 RateLimiter**：当前 Manager 的固定指数退避足够。只有不同 Connector 的服务端限流、
+  polling 成本或失败恢复窗口明显不同，固定策略造成节流不足或恢复过慢时，才开放受约束的
+  Controller RateLimiter 配置，不向 Plugin 暴露原始 workqueue。
+- **Leader election**：当前本机多进程靠 Resource reconcile 文件锁保证同 key 不重入。只有
+  daemon 或多节点宿主共享同一 BatonSession store、并需要单活 Source/cron 生命周期时，才设计
+  Manager 级 leader election；不能把单 Resource 锁直接冒充 leader lease。
+
+这些能力继续沿用 controller-runtime 的既有术语；若 Baton 的身份、持久化或宿主模型导致语义
+实质不同，先在 `plugin.md` 写清差异，再决定是否仍应复用该名称。

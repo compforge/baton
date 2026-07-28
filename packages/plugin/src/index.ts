@@ -46,8 +46,25 @@ export type {
 export type {
   Controller,
   PluginOutput,
+  ReconcileRequest,
   ReconcileResult,
 } from "./reconcile.ts";
+
+export type {
+  CreateEvent,
+  DeleteEvent,
+  EventResource,
+  UpdateEvent,
+} from "./event.ts";
+
+export type {
+  EventHandler,
+  MapFunc,
+} from "./handler.ts";
+
+export {
+  enqueueRequestsFromMapFunc,
+} from "./handler.ts";
 
 export type {
   ControllerSource,
@@ -56,6 +73,8 @@ export type {
   SourceContext,
   SourceSignal,
 } from "./source.ts";
+
+export type { Watch } from "./watch.ts";
 
 export type {
   ResourceRef,
