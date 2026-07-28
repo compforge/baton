@@ -182,6 +182,59 @@ describe("Baton Resource index", () => {
     await manager.close();
   });
 
+  test("invalidates a cached Board when a live Baton Resource arrives", async () => {
+    const session = testSession();
+    appendTurn(session, "t_existing", "existing question");
+    const instances = new PluginInstanceStore({ session });
+    const proposals = new ProposalStore({ session });
+    instances.create({
+      pluginInstanceId: "router_default",
+      pluginId: "example/router",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      session,
+      instances,
+      proposals,
+      packages: [{
+        pluginId: "example/router",
+        version: "1.0.0",
+        activate(context) {
+          context.registerController<
+            Record<string, never>,
+            { userText?: string }
+          >({
+            resourceType: BATON_TURN_RESOURCE_TYPE,
+            async reconcile() {},
+            present(resource) {
+              return {
+                title: resource.status.userText ?? resource.metadata.name,
+              };
+            },
+          });
+        },
+      }],
+      onProposal() {},
+    });
+
+    await manager.start();
+    const existingItems = manager.listBoardItems();
+    expect(existingItems.map((item) => item.title)).toEqual([
+      "existing question",
+    ]);
+    expect(manager.listBoardItems()).toBe(existingItems);
+
+    appendTurn(session, "t_live", "new question");
+    const liveItems = manager.listBoardItems();
+    expect(liveItems).not.toBe(existingItems);
+    expect(liveItems.map((item) => item.title)).toEqual([
+      "existing question",
+      "new question",
+    ]);
+
+    await manager.close();
+  });
+
   test("rejects resource Sources for read-only Baton Resources", async () => {
     const session = testSession();
     const instances = new PluginInstanceStore({ session });

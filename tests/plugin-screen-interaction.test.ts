@@ -21,7 +21,7 @@ import {
   BatonTui,
   type BatonTuiHandle,
 } from "../src/tui/app.tsx";
-import type { BatonChatProtocol } from "../src/tui/protocol.ts";
+import type { BatonChatProtocol } from "../src/tui/protocol/index.ts";
 
 let mounted: { root: Root; setup: TestRendererSetup } | null = null;
 

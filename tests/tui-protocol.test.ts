@@ -7,7 +7,12 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
-import { BatonChatProtocol, runStatusLabel, thoughtDisplayBlocks, toolTranscriptItem } from "../src/tui/protocol.ts";
+import {
+  BatonChatProtocol,
+  runStatusLabel,
+  thoughtDisplayBlocks,
+  toolTranscriptItem,
+} from "../src/tui/protocol/index.ts";
 
 describe("BatonChatProtocol exit", () => {
   test("restores the TUI only after controller and session cleanup", async () => {
@@ -381,10 +386,20 @@ describe("BatonChatProtocol Board", () => {
       ];
       const internals = protocol as unknown as {
         plugins: { listBoardItems: () => typeof items };
-        changed: () => void;
+        boardChanged: () => void;
       };
       internals.plugins.listBoardItems = () => items;
-      internals.changed();
+      let timelineNotifications = 0;
+      let composerNotifications = 0;
+      let activityNotifications = 0;
+      let sidecarNotifications = 0;
+      let footerNotifications = 0;
+      protocol.surfaces.timeline.subscribe(() => timelineNotifications++);
+      protocol.surfaces.composer.subscribe(() => composerNotifications++);
+      protocol.surfaces.activity.subscribe(() => activityNotifications++);
+      protocol.surfaces.sidecar.subscribe(() => sidecarNotifications++);
+      protocol.surfaces.footer.subscribe(() => footerNotifications++);
+      internals.boardChanged();
 
       expect(protocol.getView().sidecar).toEqual({
         title: "Board",
@@ -405,6 +420,37 @@ describe("BatonChatProtocol Board", () => {
         ],
       });
       expect(protocol.getView().footer).toContain("board:1");
+      expect({
+        timelineNotifications,
+        composerNotifications,
+        activityNotifications,
+        sidecarNotifications,
+        footerNotifications,
+      }).toEqual({
+        timelineNotifications: 0,
+        composerNotifications: 0,
+        activityNotifications: 0,
+        sidecarNotifications: 1,
+        footerNotifications: 1,
+      });
+      const sidecar = protocol.getView().sidecar;
+      internals.boardChanged();
+      expect(protocol.getView().sidecar).toBe(sidecar);
+      items = [{ ...items[0]!, status: "3 / 3" }];
+      internals.boardChanged();
+      expect({
+        timelineNotifications,
+        composerNotifications,
+        activityNotifications,
+        sidecarNotifications,
+        footerNotifications,
+      }).toEqual({
+        timelineNotifications: 0,
+        composerNotifications: 0,
+        activityNotifications: 0,
+        sidecarNotifications: 2,
+        footerNotifications: 1,
+      });
 
       await protocol.command("board", "hide");
       expect(protocol.getView().sidecar?.mode).toBe("hidden");
@@ -418,7 +464,7 @@ describe("BatonChatProtocol Board", () => {
       expect(protocol.getView().sidecar?.mode).toBe("hidden");
 
       items = [];
-      internals.changed();
+      internals.boardChanged();
       expect(protocol.getView().sidecar).toBeUndefined();
       expect(protocol.getView().footer).not.toContain("board:");
       await protocol.command("board", "");

@@ -127,14 +127,17 @@ export class ControllerSources<TSpec, TStatus> {
         const emit: SourceContext<TSpec>["emit"] = (input): void => {
           if (this.closed || abort.signal.aborted) return;
           try {
-            const resource = this.options.store.ensure<TSpec, TStatus>({
-              type: this.options.resourceType,
-              ...input,
-            });
-            try {
-              this.options.onResource?.(resource);
-            } catch {
-              // Resource is durable; projection invalidation is best-effort.
+            const { resource, created } =
+              this.options.store.ensure<TSpec, TStatus>({
+                type: this.options.resourceType,
+                ...input,
+              });
+            if (created) {
+              try {
+                this.options.onResource?.(resource);
+              } catch {
+                // Resource is durable; projection invalidation is best-effort.
+              }
             }
             if (this.ready) {
               this.options.enqueue(resource.metadata.name);

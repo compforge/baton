@@ -22,7 +22,7 @@ import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
-import { BatonChatProtocol } from "../src/tui/protocol.ts";
+import { BatonChatProtocol } from "../src/tui/protocol/index.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 let root: string;

@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { PluginScreen } from "./plugins/screen.tsx";
-import { BatonChatProtocol } from "./protocol.ts";
+import { BatonChatProtocol } from "./protocol/index.ts";
 
 export interface BatonTuiHandle {
   openPlugins(): void;

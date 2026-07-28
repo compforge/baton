@@ -118,7 +118,7 @@ export interface ControllerOptions<TSpec, TStatus> {
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
   onReconcileError?(key: ReconcileKey, error: unknown): void;
-  /** Source materialize Resource 后失效 Board 等派生投影。 */
+  /** Source 首次 materialize Resource 后失效 Board 等派生投影。 */
   onSourceResource?(resource: Readonly<PluginResource<TSpec, TStatus>>): void;
 }
 
