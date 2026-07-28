@@ -27,7 +27,7 @@ import {
 import {
   PluginBinding,
   type Controller as PluginResourceController,
-  type ControllerSource,
+  type CronSource,
   type PluginCommandInput,
   type PluginCommandResult,
   type PluginPackage,
@@ -48,8 +48,8 @@ import {
 } from "./queue.ts";
 import {
   CronSourceQueue,
-  validateControllerSources,
 } from "./cron-source.ts";
+import { validateSources } from "./source.ts";
 import {
   PluginResourceStore,
   resourceTypeKey,
@@ -164,7 +164,7 @@ export interface ManagerOptions {
   onActivationError?(failure: PluginActivationFailure): void;
   /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
-  /** Controller Source 发现失败；本次 tick 跳过，下一次 cron 继续重试。 */
+  /** Controller resource Source initial/live observation failure. */
   onControllerSourceError?(failure: ControllerSourceFailure): void;
 }
 
@@ -193,8 +193,10 @@ export interface PluginReloadResult {
 
 interface ManagedController {
   scope: ReconcileScope;
-  readonly sources?: readonly ControllerSource[];
-  discover?(source: ControllerSource): Promise<void>;
+  cronSources?(): readonly CronSource[];
+  startSources?(
+    onError: (sourceId: string, error: unknown) => void,
+  ): Promise<void>;
   enqueue(key: ReconcileKey): Promise<void>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
@@ -269,7 +271,6 @@ export class Manager {
   private readonly retryInitialDelayMs: number;
   private readonly retryMaxDelayMs: number;
   private readonly retries = new Map<string, RetryState>();
-  private readonly activeSourceScopes = new Set<string>();
   /** Binding 激活完成前注册项可回滚，但不能提前消费 Event 或产生 Output。 */
   private readonly suspendedControllers = new Set<string>();
   private readonly now: () => Date;
@@ -382,7 +383,7 @@ export class Manager {
         `plugin Controller batonSessionId must be ${this.proposals.batonSessionId}, got ${definition.store.batonSessionId}`,
       );
     }
-    validateControllerSources(definition.sources, this.now());
+    validateSources(definition.sources, this.now());
     const controller = new Controller({
       ...definition,
       snapshot: (key) => this.snapshotFor(key),
@@ -397,6 +398,7 @@ export class Manager {
       onReconcileError: (key, error) => {
         this.retry(controller, key, error);
       },
+      onSourceResource: () => this.notifyBoardChanged(),
     });
     return this.installController(controller, suspended);
   }
@@ -417,7 +419,7 @@ export class Manager {
         "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
-    validateControllerSources(definition.sources, this.now());
+    validateSources(definition.sources, this.now());
     const controller = new BuiltinController({
       ...definition,
       resources: this.batonResources,
@@ -536,7 +538,7 @@ export class Manager {
           if (this.closed) throw new Error("plugin Manager is closed");
           this.bindings.set(pluginInstanceId, binding);
           this.notifyCommandsChanged();
-          this.resumeControllers(pluginInstanceId);
+          await this.resumeControllers(pluginInstanceId);
           this.notifyBoardChanged();
         } catch (error) {
           try {
@@ -864,11 +866,22 @@ export class Manager {
     }
     if (this.closed) throw new Error("plugin Manager is closed");
     this.started = true;
-    for (const controller of controllers) {
-      if (this.controllers.get(reconcileScopeId(controller.scope)) !== controller) continue;
-      this.activateControllerSources(controller);
-      this.enqueueInitial(controller);
-    }
+    await Promise.all(
+      controllers.map(async (controller) => {
+        if (
+          this.controllers.get(reconcileScopeId(controller.scope)) !== controller
+        ) {
+          return;
+        }
+        await this.activateControllerSources(controller);
+        if (
+          this.controllers.get(reconcileScopeId(controller.scope)) !== controller
+        ) {
+          return;
+        }
+        this.enqueueInitial(controller);
+      }),
+    );
   }
 
   private async resolvePackage(
@@ -1014,11 +1027,20 @@ export class Manager {
       );
     }
     const resourceKind = BATON_TURN_RESOURCE_TYPE.kind;
+    const sources = pluginController.sources ?? [];
+    if (sources.some((source) => source.type === "resource")) {
+      throw new Error(
+        "Controller resource Sources cannot materialize Baton-owned Resources",
+      );
+    }
+    const cronSources = sources.filter(
+      (source): source is CronSource => source.type === "cron",
+    );
     const registration = this.registerBuiltinControllerInternal(
       {
         pluginInstanceId,
         resourceKind,
-        sources: pluginController.sources,
+        sources: cronSources,
         maxConcurrency: pluginController.maxConcurrency,
         reconcile: async (baton, resource) =>
           await pluginController.reconcile(
@@ -1159,7 +1181,6 @@ export class Manager {
     this.controllers.clear();
     this.boardSources.clear();
     this.retries.clear();
-    this.activeSourceScopes.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
     this.cronSourceQueue.close();
@@ -1199,10 +1220,6 @@ export class Manager {
       resourceId: change.resource.metadata.name,
     });
     const scopeId = reconcileScopeId(key);
-    // Source discovery enqueues the complete Resource set when it finishes.
-    // Suppressing the immediate signal here avoids reconciling a newly discovered key twice.
-    if (this.activeSourceScopes.has(scopeId)) return;
-
     const controller = this.controllers.get(scopeId);
     if (
       !controller ||
@@ -1321,9 +1338,11 @@ export class Manager {
     if (suspended) this.suspendedControllers.add(id);
     try {
       if (this.started && !suspended) {
-        this.activateControllerSources(controller);
-        this.restoreDueReconciles(controller);
-        this.enqueueInitial(controller);
+        void this.activateControllerSources(controller).then(() => {
+          if (this.controllers.get(id) !== controller) return;
+          this.restoreDueReconciles(controller);
+          this.enqueueInitial(controller);
+        });
       }
     } catch (error) {
       this.controllers.delete(id);
@@ -1359,14 +1378,29 @@ export class Manager {
     }
   }
 
-  private activateControllerSources(controller: ManagedController): void {
-    if (!controller.sources?.length) return;
-    this.cronSourceQueue.register(controller.scope, controller.sources);
+  private async activateControllerSources(
+    controller: ManagedController,
+  ): Promise<void> {
+    const cronSources = controller.cronSources?.() ?? [];
+    if (cronSources.length > 0) {
+      this.cronSourceQueue.register(controller.scope, cronSources);
+    }
+    await controller.startSources?.((sourceId, error) => {
+      try {
+        this.onControllerSourceError?.(Object.freeze({
+          scope: controller.scope,
+          sourceId,
+          error,
+        }));
+      } catch {
+        // Source diagnostics must not interrupt discovery or live delivery.
+      }
+    });
   }
 
   private enqueueCronSourceResources(
     scope: ReconcileScope,
-    sources: readonly ControllerSource[],
+    _sources: readonly CronSource[],
   ): void {
     if (!this.started || this.closed) return;
     const controller = this.controllers.get(reconcileScopeId(scope));
@@ -1374,40 +1408,6 @@ export class Manager {
       !controller ||
       this.suspendedControllers.has(reconcileScopeId(scope)) ||
       !sameReconcileScope(controller.scope, scope)
-    ) {
-      return;
-    }
-    const scopeId = reconcileScopeId(scope);
-    if (this.activeSourceScopes.has(scopeId)) return;
-    this.activeSourceScopes.add(scopeId);
-    void this.runControllerSources(controller, sources).finally(() => {
-      this.activeSourceScopes.delete(scopeId);
-    });
-  }
-
-  private async runControllerSources(
-    controller: ManagedController,
-    sources: readonly ControllerSource[],
-  ): Promise<void> {
-    for (const source of sources) {
-      try {
-        await controller.discover?.(source);
-      } catch (error) {
-        try {
-          this.onControllerSourceError?.(Object.freeze({
-            scope: controller.scope,
-            sourceId: source.sourceId,
-            error,
-          }));
-        } catch {
-          // Source diagnostics must not block reconciliation of known Resources.
-        }
-      }
-    }
-    if (
-      this.closed ||
-      this.controllers.get(reconcileScopeId(controller.scope)) !== controller ||
-      this.suspendedControllers.has(reconcileScopeId(controller.scope))
     ) {
       return;
     }
@@ -1437,13 +1437,14 @@ export class Manager {
     }
   }
 
-  private resumeControllers(pluginInstanceId: string): void {
+  private async resumeControllers(pluginInstanceId: string): Promise<void> {
     for (const controller of this.controllers.values()) {
       if (controller.scope.pluginInstanceId !== pluginInstanceId) continue;
       const id = reconcileScopeId(controller.scope);
       if (!this.suspendedControllers.delete(id)) continue;
       if (this.started) {
-        this.activateControllerSources(controller);
+        await this.activateControllerSources(controller);
+        if (this.controllers.get(id) !== controller) continue;
         this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }

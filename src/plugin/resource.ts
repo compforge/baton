@@ -42,6 +42,14 @@ interface CreateResource<TSpec, TStatus> {
   status?: TStatus;
 }
 
+interface EnsureResource<TSpec> {
+  type: ResourceType;
+  name: string;
+  labels?: Readonly<Record<string, string>>;
+  annotations?: Readonly<Record<string, string>>;
+  spec: TSpec;
+}
+
 interface ResourceControl {
   nextReconcileAt?: string;
 }
@@ -185,28 +193,60 @@ export class PluginResourceStore {
       if (existsSync(path)) {
         throw new Error(`plugin resource already exists: ${type.kind}/${name}`);
       }
-      const now = new Date().toISOString();
-      const resource: PluginResource<TSpec, TStatus> = {
-        apiVersion: type.apiVersion,
-        kind: type.kind,
-        metadata: {
+      const stored = this.initialStoredResource<TSpec, TStatus>({
+        type,
+        name,
+        labels,
+        annotations,
+        spec: input.spec,
+        status: input.status ?? ({} as TStatus),
+      });
+      writeJsonAtomic(path, stored);
+      return stored.object;
+    });
+  }
+
+  /**
+   * Materializes a Source-owned Resource identity once. Repeated observations
+   * are wakeups, not implicit spec updates.
+   */
+  ensure<TSpec, TStatus = Record<string, unknown>>(
+    input: EnsureResource<TSpec>,
+  ): PluginResource<TSpec, TStatus> {
+    const type = validateResourceType(input.type);
+    const name = input.name;
+    const labels = stringMap("metadata.labels", input.labels);
+    const annotations = stringMap(
+      "metadata.annotations",
+      input.annotations,
+    );
+    const spec = jsonObject("spec", input.spec);
+    assertPathSegment("resource name", name);
+    const path = this.resourcePath(type, name);
+    return withFileLock(path, () => {
+      if (!existsSync(path)) {
+        const stored = this.initialStoredResource<TSpec, TStatus>({
+          type,
           name,
-          namespace: this.pluginInstanceId,
-          uid: newId("pr"),
-          generation: 1,
-          resourceVersion: "1",
-          creationTimestamp: now,
-          ...(labels === undefined ? {} : { labels }),
-          ...(annotations === undefined ? {} : { annotations }),
-        },
-        spec: jsonObject("spec", input.spec),
-        status: jsonObject("status", input.status ?? ({} as TStatus)),
-      };
-      writeJsonAtomic(path, {
-        object: resource,
-        control: {},
-      } satisfies StoredPluginResource<TSpec, TStatus>);
-      return resource;
+          labels,
+          annotations,
+          spec,
+          status: {} as TStatus,
+        });
+        writeJsonAtomic(path, stored);
+        return stored.object;
+      }
+      const current = this.readCurrentStored<TSpec, TStatus>(type, name).object;
+      if (
+        !isDeepStrictEqual(current.spec, spec) ||
+        !isDeepStrictEqual(current.metadata.labels, labels) ||
+        !isDeepStrictEqual(current.metadata.annotations, annotations)
+      ) {
+        throw new Error(
+          `Controller Source input conflicts with existing Resource: ${type.kind}/${name}`,
+        );
+      }
+      return current;
     });
   }
 
@@ -390,6 +430,13 @@ export class PluginResourceStore {
   ): StoredPluginResource<TSpec, TStatus> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
+    return this.readCurrentStored<TSpec, TStatus>(type, name);
+  }
+
+  private readCurrentStored<TSpec, TStatus>(
+    type: ResourceType,
+    name: string,
+  ): StoredPluginResource<TSpec, TStatus> {
     const path = this.resourcePath(type, name);
     let parsed: unknown;
     try {
@@ -475,6 +522,37 @@ export class PluginResourceStore {
     return control;
   }
 
+  private initialStoredResource<TSpec, TStatus>(
+    input: {
+      type: ResourceType;
+      name: string;
+      labels?: Readonly<Record<string, string>>;
+      annotations?: Readonly<Record<string, string>>;
+      spec: TSpec;
+      status: TStatus;
+    },
+  ): StoredPluginResource<TSpec, TStatus> {
+    const resource: PluginResource<TSpec, TStatus> = {
+      apiVersion: input.type.apiVersion,
+      kind: input.type.kind,
+      metadata: {
+        name: input.name,
+        namespace: this.pluginInstanceId,
+        uid: newId("pr"),
+        generation: 1,
+        resourceVersion: "1",
+        creationTimestamp: new Date().toISOString(),
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.annotations === undefined
+          ? {}
+          : { annotations: input.annotations }),
+      },
+      spec: jsonObject("spec", input.spec),
+      status: jsonObject("status", input.status),
+    };
+    return { object: resource, control: {} };
+  }
+
   private resourcesDir(): string {
     return join(
       this.sessionDir,
@@ -495,4 +573,5 @@ export class PluginResourceStore {
   private resourcePath(type: ResourceType, name: string): string {
     return join(this.kindDir(type), `${name}.json`);
   }
+
 }

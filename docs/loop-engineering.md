@@ -52,7 +52,7 @@ Observe → Recommend → Manual approval → Scoped automation
 ```
 
 `spec` 保存人认可的 Contract，`status` 保存 Controller 的当前观测；Resource、Harness 结果、
-Controller cron Sources 和 `requeueAfter` 只负责提示“应该重新检查”。首期 Controller 可更新自有 status，并返回一段由人
+Controller Resource/cron Sources 和 `requeueAfter` 只负责提示“应该重新检查”。首期 Controller 可更新自有 status，并返回一段由人
 审核、编辑后交给 Harness 的文本，不要求业务一开始就被穷举成 DSL。详细契约见
 [Baton Plugin 设计](./plugin.md)。
 
@@ -179,15 +179,15 @@ BatonPlugin
 └── controllers
     ├── resourceType       apiVersion + kind
     ├── reconcile
-    ├── sources[]          固定 cron 周期唤醒
+    ├── sources[]          外部 Resource 发现与固定 cron resync
     └── present?           决定 Resource 是否显示到 Board
 ```
 
-当前运行时已有 Plugin Command、Resource Controller 与 Controller cron Sources；Controller
+当前运行时已有 Plugin Command、Resource Controller 与 Controller Resource/cron Sources；Controller
 既可管理 Plugin 自有 kind，也可观察 Baton 预先注册的只读 kind。manifest
 declaration 校验随能力审阅入口补齐。Reconcile 是两种 Controller 共用的处理语义，不要求 Plugin
-必须先创建可写 Resource。固定周期观察使用 Controller 的 `sources`，一次性动态
-重查使用 `requeueAfter`；Monitor、EventSource 和 Action 等到两者无法覆盖真实场景时再引入。Plugin 可以在一个内聚的 loop 内部
+必须先创建可写 Resource。外部对象发现和固定周期观察使用 Controller 的 `sources`，一次性动态
+重查使用 `requeueAfter`；Action 等到无法表达成 desired state 的独立命令出现后再引入。Plugin 可以在一个内聚的 loop 内部
 组合多个外部系统；跨 Plugin 编排统一回到 Baton，不直接互调。
 
 ### Baton Plugin 与 Harness Plugin
@@ -343,9 +343,10 @@ Event Ledger，再作为当前 Resource 的 Snapshot 输入触发下一次 recon
 due time 只存在于进程队列，重启时由 ledger replay 再次 enqueue。错误都由 Baton 退避重试，
 空结果等待新事实。
 
-Monitor、EventSource 和 Action 都不进入首期。webhook、长连接或无 Resource 的观察
-出现后再增加只负责 enqueue 的 EventSource；无法表达成 desired state 的独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进
-时，再让 daemon 复用同一 Resource store 和 reconcile queue。
+resource Source 把初始发现、文件监听、webhook channel 等外部 signal 映射为所属 Controller
+的 Resource input/key；Source ready 后才执行 initial reconcile。无法表达成 desired state 的
+独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进时，再让 daemon 复用同一 Resource
+store 和 reconcile queue。
 
 ## 6. Board、Context 与 BatonSession
 
@@ -552,7 +553,7 @@ devloop（Harness Plugin）
 
 - **留在 devloop**：agent loop 约束，以及交付、阻塞等开发结果的判定；
 - **交给 Harness 边界**：通过 adapter 或窄化 event bridge，把宿主内信号归一成 HarnessEvent；
-- **移交 Baton**：事件持久化、Resource、reconcile queue、Controller cron Sources、`requeueAfter`、session 路由、Board 与
+- **移交 Baton**：事件持久化、Resource、reconcile queue、Controller Resource/cron Sources、`requeueAfter`、session 路由、Board 与
   Harness 调度；
 - **逐步退休**：依赖单一宿主的易失 notifier、waiter re-arm 和 agent 手工建立唤醒的步骤。
 
@@ -627,11 +628,11 @@ DevelopmentOutcome
 3. 将 `_baton_turn_summary` 转换为只读 `baton.dev/v1alpha1, Kind=Turn`，让 Plugin 从启动 replay 和 live
    append 感知 Baton 内部事实；
 4. 建立同 key 不并发的 reconcile queue，将 Resource 的 `requeueAfter` 持久化为内部
-   schedule，并让 Controller cron Sources 进入同一队列；
+   schedule，并让 Controller Resource/cron Sources 进入同一队列；
 5. 接通 Board presentation、Resource Context source、`proposed-input` 和 `interaction` Output，用 reqloop + 安装了 devloop 的 Harness
    跑通用户审核文本后驱动的 Requirement Loop；
-6. 真实场景无法由固定 Sources、动态轮询、desired state 或当前进程覆盖时，再依次引入
-   EventSource、Action 或 daemon；
+6. 真实场景无法由 Resource/cron Sources、desired state 或当前进程覆盖时，再依次引入
+   Action 或 daemon；
 7. 真实工作区证明必须由 Controller 主动续跑 Harness 时，再扩展受控调用；它复用既有
    Input/Attempt 投递与路由，不伪装成易失的 `monitor Input`。
 
@@ -674,9 +675,9 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
 18. Project、BatonSession 与 HarnessTarget 分别承担会话组织、loop/历史归属和执行位置，不能
     继续由 cwd、Harness 名称或隐式“当前值”混用。
 19. Baton core 不内建通用 LoopRun；具体 run、checkpoint 和完成条件由领域 Plugin 拥有。
-20. Controller cron Source 表达 Controller 固有的固定周期职责，`requeueAfter` 表达某个
-    Resource 动态决定的一次性重查；二者最终都只 enqueue 同一 keyed reconcile。Source 可先
-    发现并创建该 Controller 管理的缺失 Resource，但不更新 status 或产生 Output；Source 仅在
+20. Controller resource Source 负责初始发现、实时订阅和目标 Resource materialize；cron
+    Source 表达固定周期 resync，`requeueAfter` 表达单个 Resource 动态决定的一次性重查。
+    三者最终都只 enqueue 同一 keyed reconcile；Source 不更新 status 或产生 Output，只在
     Binding 活跃时运行，关闭 TUI 后的准时执行留给 daemon。
 
 ## 12. 待继续讨论
@@ -690,9 +691,8 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
    排队、steer 或取消？
 6. Board scope 与 resource reference 如何设计，才能支持多 repo 和多个并行 loop？
 7. Resource 的 identity、spec/status schema、status patch 冲突和 migration 如何定义？
-8. 哪些场景不能由 Controller cron Sources 或 `requeueAfter` 覆盖，足以引入 EventSource？
-9. 什么可靠性或实时性指标足以触发 Baton daemon？
-10. 不同 Harness 分别用 custom event、hook 还是 `baton emit` 传递 DevelopmentOutcome，才能
+8. resource Source 的可靠性或实时性达到什么指标后，应由 Baton daemon 承载？
+9. 不同 Harness 分别用 custom event、hook 还是 `baton emit` 传递 DevelopmentOutcome，才能
     兼顾原生能力、可靠性和最小耦合？
-11. Harness 对“已接收工作”的权威边界分别是什么，哪些 Harness 能原生查询并收敛
+10. Harness 对“已接收工作”的权威边界分别是什么，哪些 Harness 能原生查询并收敛
     `uncertain` Attempt？

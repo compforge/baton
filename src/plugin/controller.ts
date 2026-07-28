@@ -1,6 +1,7 @@
 import type {
   Controller as PluginController,
   ControllerSource,
+  CronSource,
   Output as PluginInteractionOutput,
   ResourceRef,
   ResourceType,
@@ -21,6 +22,7 @@ import {
   type PluginOutput,
   validatePluginOutput,
 } from "./output.ts";
+import { ControllerSources } from "./source.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
 
@@ -98,7 +100,7 @@ export interface ScheduledReconcile {
 export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceType: ResourceType;
-  sources?: readonly ControllerSource[];
+  sources?: readonly ControllerSource<TSpec>[];
   reconcile: PluginController<TSpec, TStatus>["reconcile"];
   present?: PluginController<TSpec, TStatus>["present"];
   maxConcurrency?: number;
@@ -113,6 +115,8 @@ export interface ControllerOptions<TSpec, TStatus> {
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
   onReconcileError?(key: ReconcileKey, error: unknown): void;
+  /** Source materialize Resource 后失效 Board 等派生投影。 */
+  onSourceResource?(resource: Readonly<PluginResource<TSpec, TStatus>>): void;
 }
 
 function ownedKey(key: ReconcileKey): ReconcileKey {
@@ -178,7 +182,7 @@ interface ReconcileExecution {
  */
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
-  readonly sources: readonly ControllerSource[];
+  readonly sources: readonly ControllerSource<TSpec>[];
   readonly present?: PluginController<TSpec, TStatus>["present"];
   private readonly store: PluginResourceStore;
   private readonly resourceType: ResourceType;
@@ -193,6 +197,7 @@ export class Controller<TSpec, TStatus> {
     ControllerOptions<TSpec, TStatus>["onInteraction"]
   >;
   private readonly queue: ReconcileQueue;
+  private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private closed = false;
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
@@ -200,7 +205,6 @@ export class Controller<TSpec, TStatus> {
     this.store = options.store;
     this.resourceType = Object.freeze({ ...options.resourceType });
     this.reconcileResource = options.reconcile;
-    this.sources = Object.freeze([...(options.sources ?? [])]);
     this.present = options.present;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
@@ -233,6 +237,22 @@ export class Controller<TSpec, TStatus> {
       maxConcurrency: options.maxConcurrency,
       onError: options.onReconcileError,
     });
+    this.controllerSources = new ControllerSources({
+      sources: options.sources,
+      store: this.store,
+      resourceType: this.resourceType,
+      executeWithCapacity: this.executeWithCapacity,
+      onResource: options.onSourceResource,
+      enqueue: (resourceId) => {
+        void this.enqueue({
+          ...this.scope,
+          resourceId,
+        }).catch(() => {
+          // Reconcile failure reporting and retry are owned by Manager.
+        });
+      },
+    });
+    this.sources = this.controllerSources.all;
   }
 
   enqueue(key: ReconcileKey): Promise<void> {
@@ -246,16 +266,19 @@ export class Controller<TSpec, TStatus> {
     return this.queue.enqueue(reconcileKey);
   }
 
-  async discover(source: ControllerSource): Promise<void> {
-    if (!source.discover) return;
-    await this.executeWithCapacity(async () => {
-      if (this.closed) throw new Error("plugin Controller is closed");
-      await source.discover!();
-    });
+  async startSources(
+    onError: (sourceId: string, error: unknown) => void,
+  ): Promise<void> {
+    await this.controllerSources.start(onError);
+  }
+
+  cronSources(): readonly CronSource[] {
+    return this.controllerSources.cron();
   }
 
   close(): void {
     this.closed = true;
+    this.controllerSources.close();
     this.queue.close();
   }
 
@@ -278,6 +301,10 @@ export class Controller<TSpec, TStatus> {
         resourceId: resource.metadata.name,
       }),
     );
+  }
+
+  initialReconciles(): ReconcileKey[] {
+    return this.resourceKeys();
   }
 
   setNextReconcileAt(key: ReconcileKey, next: Date): void {

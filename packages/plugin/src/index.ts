@@ -45,11 +45,17 @@ export type {
 
 export type {
   Controller,
-  ControllerSource,
-  CronSource,
   PluginOutput,
   ReconcileResult,
 } from "./reconcile.ts";
+
+export type {
+  ControllerSource,
+  CronSource,
+  Source,
+  SourceContext,
+  SourceSignal,
+} from "./source.ts";
 
 export type {
   ResourceRef,

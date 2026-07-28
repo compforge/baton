@@ -9,6 +9,8 @@ import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
   PluginActivationContext,
   PluginPackage,
+  Source,
+  SourceContext,
 } from "../src/plugin/package.ts";
 import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
@@ -139,7 +141,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
-  test("activates cron Sources through the public Controller contract", async () => {
+  test("activates resource Sources through the public Controller contract", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);
     instances.create({
@@ -147,8 +149,18 @@ describe("Plugin Package lifecycle", () => {
       pluginId: "qiankun/reqloop",
       packageVersion: "1.2.0",
     });
-    let now = new Date("2026-07-26T00:00:00.990Z");
     let runs = 0;
+    class PullRequestSource implements Source<{ requirement: string }> {
+      readonly type = "resource";
+      readonly sourceId = "poll-pr-state";
+
+      start(source: SourceContext<{ requirement: string }>): void {
+        source.emit({
+          name: "run_1",
+          spec: { requirement: "ship it" },
+        });
+      }
+    }
     const manager = new Manager({
       instances,
       proposals,
@@ -156,30 +168,17 @@ describe("Plugin Package lifecycle", () => {
         reqloopPackage((context) => {
           context.registerController({
             resourceType: REQ_LOOP_RUN,
-            sources: [{
-              type: "cron",
-              sourceId: "poll-pr-state",
-              cron: "* * * * * *",
-              timeZone: "UTC",
-              discover() {
-                context.resources.create(REQ_LOOP_RUN, {
-                  name: "run_1",
-                  spec: { requirement: "ship it" },
-                });
-              },
-            }],
+            sources: [new PullRequestSource()],
             async reconcile() {
               runs += 1;
             },
           });
         }),
       ],
-      now: () => now,
       onProposal() {},
     });
 
     await manager.start();
-    now = new Date("2026-07-26T00:00:01.000Z");
     await waitFor(() => runs === 1);
     await manager.deactivateInstance("reqloop_default");
     await manager.close();
@@ -503,11 +502,7 @@ describe("Plugin Package lifecycle", () => {
     expect(manager.isInstanceActive("reqloop_a")).toBe(true);
     expect(manager.isInstanceActive("reqloop_b")).toBe(true);
     expect(manager.isInstanceActive("reqloop_disabled")).toBe(false);
-
-    await Promise.all([
-      manager.enqueue(key("reqloop_a", "run_1")),
-      manager.enqueue(key("reqloop_b", "run_1")),
-    ]);
+    await waitFor(() => reconciled.length === 2);
     expect(reconciled.sort()).toEqual(["reqloop_a", "reqloop_b"]);
     await manager.close();
   });
