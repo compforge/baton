@@ -394,11 +394,11 @@ describe("BatonChatProtocol Board", () => {
       let activityNotifications = 0;
       let sidecarNotifications = 0;
       let footerNotifications = 0;
-      protocol.presentation.timeline.subscribe(() => timelineNotifications++);
-      protocol.presentation.composer.subscribe(() => composerNotifications++);
-      protocol.presentation.activity.subscribe(() => activityNotifications++);
-      protocol.presentation.sidecar.subscribe(() => sidecarNotifications++);
-      protocol.presentation.footer.subscribe(() => footerNotifications++);
+      protocol.surfaces.timeline.subscribe(() => timelineNotifications++);
+      protocol.surfaces.composer.subscribe(() => composerNotifications++);
+      protocol.surfaces.activity.subscribe(() => activityNotifications++);
+      protocol.surfaces.sidecar.subscribe(() => sidecarNotifications++);
+      protocol.surfaces.footer.subscribe(() => footerNotifications++);
       internals.boardChanged();
 
       expect(protocol.getView().sidecar).toEqual({

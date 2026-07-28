@@ -4,7 +4,7 @@
 
 import type {
   ChatProtocol,
-  ChatPresentationRuntime,
+  ChatSurfaceStore,
   ChatViewState,
   Candidate,
   CommandSpec,
@@ -12,7 +12,11 @@ import type {
   PickerSearchView,
   TranscriptItem,
 } from "chat-tui";
-import { createChatPresentationRuntime } from "chat-tui";
+import {
+  chatSurfaceStateFromView,
+  commitViewToSurfaces,
+  createChatSurfaceStore,
+} from "chat-tui";
 
 import {
   COMMANDS,
@@ -109,7 +113,7 @@ interface PendingPicker {
 
 export class BatonChatProtocol implements ChatProtocol {
   readonly marketplace: MarketplaceRegistry;
-  readonly presentation: ChatPresentationRuntime;
+  readonly surfaces: ChatSurfaceStore;
   private session: SessionHandle;
   private state: SessionState;
   private controller: Controller;
@@ -165,7 +169,9 @@ export class BatonChatProtocol implements ChatProtocol {
     this.unsubscribeSession = this.subscribeSession(this.session);
     this.plugins = this.createPluginManager();
     this.view = this.buildView();
-    this.presentation = createChatPresentationRuntime(this.view);
+    this.surfaces = createChatSurfaceStore(
+      chatSurfaceStateFromView(this.view),
+    );
     this.startPluginManager();
   }
 
@@ -1070,14 +1076,14 @@ export class BatonChatProtocol implements ChatProtocol {
     }, STREAM_VIEW_FRAME_MS);
   }
 
-  /** 通用状态更新仍产出兼容快照；Presentation Runtime 只通知真正变化的 Surface。 */
+  /** 通用状态更新仍产出兼容快照；Surface store 只通知真正变化的区域。 */
   private changed(): void {
     if (this.streamViewTimer !== undefined) {
       clearTimeout(this.streamViewTimer);
       this.streamViewTimer = undefined;
     }
     this.view = this.buildView();
-    this.presentation.commitView(this.view);
+    commitViewToSurfaces(this.surfaces, this.view);
     for (const listener of this.listeners) listener();
   }
 
@@ -1104,8 +1110,8 @@ export class BatonChatProtocol implements ChatProtocol {
       toast: this.toast,
       footer,
     };
-    const currentFooter = this.presentation.footer.getSnapshot();
-    this.presentation.commit({
+    const currentFooter = this.surfaces.footer.getSnapshot();
+    this.surfaces.commit({
       sidecar: board.sidecar,
       ...(currentFooter.toast === this.toast && currentFooter.text === footer
         ? {}
