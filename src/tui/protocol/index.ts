@@ -1,5 +1,5 @@
 // baton 对 chat-tui 的接入层：实现 ChatProtocol，把 Controller / SessionStore
-// 的状态投影成视图快照，把 TUI intents 翻译成 controller 操作。
+// 的状态整理成 chat-tui State，把 TUI intents 翻译成 controller 操作。
 // UI 语义（补全、分层 Ctrl+C、Interaction Dock）都在 chat-tui；这里只有 baton 的业务编排。
 
 import type {

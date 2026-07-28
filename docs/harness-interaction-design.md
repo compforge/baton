@@ -91,7 +91,7 @@ Adapter 内部语义优先对齐 ACP v2：
 
 ### 3.1 边界
 
-chat-tui 继续采用“view snapshot 进，typed intents 出”。它只回答：
+chat-tui 继续采用“State snapshot 进，typed intents 出”。它只回答：
 
 - 当前能输入什么、默认提交行为是什么；
 - transcript / activity / notice 怎么展示；
@@ -597,7 +597,7 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 
 ## 5. 两层契约的对应关系
 
-| baton semantic state/action | chat-tui view/intent |
+| baton semantic state/action | chat-tui State/intent |
 |---|---|
 | PromptBlock + delivery policy | ComposerValue + SubmitIntent |
 | available commands snapshot | CommandView[] + CommandIntent |

@@ -561,6 +561,10 @@ describe("plugin Manager", () => {
     });
 
     await manager.start();
+    // Controller 启动会先 reconcile 现有 Resource；清空这批结果后再单独观察 cron tick，
+    // 避免首次 reconcile 与 timer 同时完成时 runs 从 0 直接越过 2。
+    await waitFor(() => runs.length === 2);
+    runs.length = 0;
     now = new Date("2026-07-26T00:00:01.000Z");
     await waitFor(() => runs.length === 2);
     expect(runs.sort()).toEqual(["run_1", "run_2"]);
