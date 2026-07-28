@@ -248,6 +248,7 @@ export class Manager {
   ]);
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
+  private boardItemsCache: readonly BoardItem[] | undefined;
   private readonly commandRegistry: PluginCommandRegistry;
   private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
@@ -365,6 +366,7 @@ export class Manager {
         session: options.session,
       });
       this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
+        this.notifyBoardChanged();
         this.enqueueBuiltinResource(resource);
       });
     }
@@ -762,12 +764,14 @@ export class Manager {
   }
 
   listBoardItems(): readonly BoardItem[] {
+    if (this.boardItemsCache) return this.boardItemsCache;
     const items: BoardItem[] = [];
     for (const source of this.boardSources.values()) {
       if (!this.bindings.has(source.pluginInstanceId)) continue;
       items.push(...source.present());
     }
-    return Object.freeze(items);
+    this.boardItemsCache = Object.freeze(items);
+    return this.boardItemsCache;
   }
 
   listCommands(): readonly AvailablePluginCommand[] {
@@ -1205,6 +1209,8 @@ export class Manager {
 
   private notifyBoardChanged(): void {
     if (this.closed) return;
+    // Board 是 Resource 的派生快照；非 Board 的 view 刷新复用它，避免流式输出逐帧读盘并重跑 present()。
+    this.boardItemsCache = undefined;
     try {
       this.onBoardChanged?.();
     } catch {

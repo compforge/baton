@@ -171,7 +171,7 @@ baton 保证 effective delivery 如实：只有 harness 确认接受才记录 st
 
 ## 6. 代码与测试锚点
 
-- `src/tui/protocol.ts`：busy submit 的 steer / follow-up 选择，Esc intent 到 controller 的映射；`recallQueued` / `historyPrev` / `historyNext` 与历史游标 / stash / 事件流种入。
+- `src/tui/protocol/`：busy submit 的 steer / follow-up 选择，Esc intent 到 controller 的映射；`recallQueued` / `historyPrev` / `historyNext` 与历史游标 / stash / 事件流种入。
 - chat-tui `components/chat-shell.tsx`（↑/↓ 三级分派）、`components/composer.tsx`（`cursorAtBoundary` 边界门槛）、`protocol/index.ts`（`historyPrev` / `historyNext` 契约）。
 - `src/controller/input.ts`：一等 `InputRecord`（身份即 messageId + status）、队列、recall 与只读快照。
 - `src/controller/index.ts` / `turn.ts`：active driven turn、steer 降级、cancel 与 finalize 状态迁移；`Control` + `control(signal)`；finalize 时的 Interaction cancel-cascade。

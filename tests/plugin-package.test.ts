@@ -153,15 +153,18 @@ describe("Plugin Package lifecycle", () => {
       packageVersion: "1.2.0",
     });
     let runs = 0;
+    let boardChanges = 0;
     class PullRequestSource implements Source<{ requirement: string }> {
       readonly type = "resource";
       readonly sourceId = "poll-pr-state";
 
       start(source: SourceContext<{ requirement: string }>): void {
-        source.emit({
+        const observation = {
           name: "run_1",
           spec: { requirement: "ship it" },
-        });
+        };
+        source.emit(observation);
+        source.emit(observation);
       }
     }
     const manager = new Manager({
@@ -175,14 +178,22 @@ describe("Plugin Package lifecycle", () => {
             async reconcile() {
               runs += 1;
             },
+            present(resource) {
+              return { title: resource.spec.requirement };
+            },
           });
         }),
       ],
       onProposal() {},
+      onBoardChanged() {
+        boardChanges += 1;
+      },
     });
 
     await manager.start();
     await waitFor(() => runs === 1);
+    expect(boardChanges).toBe(2);
+    expect(manager.listBoardItems()).toHaveLength(1);
     await manager.deactivateInstance("reqloop_default");
     await manager.close();
   });
@@ -336,6 +347,7 @@ describe("Plugin Package lifecycle", () => {
     });
     let context: PluginActivationContext | undefined;
     let boardChanges = 0;
+    let presentations = 0;
     const manager = new Manager({
       instances,
       proposals,
@@ -349,6 +361,7 @@ describe("Plugin Package lifecycle", () => {
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
             present(resource) {
+              presentations += 1;
               return {
                 title: resource.spec.requirement,
                 status: resource.status.phase,
@@ -364,7 +377,8 @@ describe("Plugin Package lifecycle", () => {
     });
 
     await manager.start();
-    expect(manager.listBoardItems()).toEqual([
+    const pendingItems = manager.listBoardItems();
+    expect(pendingItems).toEqual([
       {
         id: JSON.stringify([
           "reqloop_default",
@@ -380,13 +394,19 @@ describe("Plugin Package lifecycle", () => {
         status: "pending",
       },
     ]);
+    expect(manager.listBoardItems()).toBe(pendingItems);
+    expect(presentations).toBe(1);
 
     const resource = context!.resources.get<
       { requirement: string },
       { phase: string }
     >(REQ_LOOP_RUN, "run_1");
     context!.resources.patchStatus(resource, { phase: "ready" });
-    expect(manager.listBoardItems()[0]?.status).toBe("ready");
+    const readyItems = manager.listBoardItems();
+    expect(readyItems).not.toBe(pendingItems);
+    expect(readyItems[0]?.status).toBe("ready");
+    expect(manager.listBoardItems()).toBe(readyItems);
+    expect(presentations).toBe(2);
     expect(boardChanges).toBeGreaterThanOrEqual(2);
 
     await manager.deactivateInstance("reqloop_default");

@@ -155,6 +155,24 @@ describe("PluginResourceStore", () => {
     expect(resources.get(REQ_LOOP_RUN, "run_1").metadata.resourceVersion).toBe("1");
   });
 
+  test("reports whether a Source observation materialized a new Resource", () => {
+    const resources = store(testRoot());
+    const first = resources.ensure({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "same" },
+    });
+    const repeated = resources.ensure({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "same" },
+    });
+
+    expect(first.created).toBe(true);
+    expect(repeated.created).toBe(false);
+    expect(repeated.resource).toEqual(first.resource);
+  });
+
   test("checks expected resourceVersion inside the write lock", () => {
     const resources = store(testRoot());
     resources.create({

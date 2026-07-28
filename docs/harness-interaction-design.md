@@ -224,7 +224,7 @@ type InteractionView =
 
 这里的 `InteractionView` 是 chat-tui 展示联合，不等于 Baton 内核的持久 `Interaction`：
 permission、question、hook trust 从内核 Interaction 投影为 blocking view；Plugin Proposal
-保持自己的持久 identity / resolution，只在 `tui/protocol.ts` 投影为 non-blocking
+保持自己的持久 identity / resolution，只在 `tui/protocol/` 投影为 non-blocking
 `suggested_input`，与前述请求共享 `InteractionDock` 的排序和响应入口，不伪造
 `interaction.opened/resolved`。
 
@@ -611,7 +611,7 @@ Interaction 统一 resolve 为 `{kind:"cancelled", reason:"turn"}`，先落
 | Plugin Proposal | SuggestedInputInteractionView + proposed-input resolution intent |
 | controller input state | InputView（requested/effective delivery） |
 
-映射只存在于 baton `tui/protocol.ts` 一处；chat-tui 和 harness adapter 不互相依赖。
+映射只存在于 baton `tui/protocol/`；chat-tui 和 harness adapter 不互相依赖。
 
 ## 6. 实施顺序
 

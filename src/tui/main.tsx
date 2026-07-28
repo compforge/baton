@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // chat-first TUI：打开即聊天，体验对齐 claude/codex CLI。
-// UI 层来自 chat-tui（github.com/qiankunli/chat-tui）：ChatShell 消费视图快照、回传 intents；
+// UI 层来自 chat-tui（github.com/compforge/chat-tui）：ChatShell 消费视图快照、回传 intents；
 // baton 侧只有 BatonChatProtocol（controller/store → 视图投影 + intents → controller 操作）。
 //   - 直接输入 → 发给当前 agent（默认 codex）
 //   - /codex、/claude 直接选择输入目标；/model、/effort 分别配置后续 turn
@@ -17,7 +17,7 @@ import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import { openBatonSession, type OpenBatonSessionResult } from "../session/open.ts";
 import { SessionStore } from "../store/store.ts";
 import { BatonTui, type BatonTuiHandle } from "./app.tsx";
-import { BatonChatProtocol } from "./protocol.ts";
+import { BatonChatProtocol } from "./protocol/index.ts";
 import { SessionPickerScreen } from "./session-picker.tsx";
 import { batonTheme } from "./theme.ts";
 

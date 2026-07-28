@@ -50,6 +50,11 @@ interface EnsureResource<TSpec> {
   spec: TSpec;
 }
 
+interface EnsureResourceResult<TSpec, TStatus> {
+  resource: PluginResource<TSpec, TStatus>;
+  created: boolean;
+}
+
 interface ResourceControl {
   nextReconcileAt?: string;
 }
@@ -212,7 +217,7 @@ export class PluginResourceStore {
    */
   ensure<TSpec, TStatus = Record<string, unknown>>(
     input: EnsureResource<TSpec>,
-  ): PluginResource<TSpec, TStatus> {
+  ): EnsureResourceResult<TSpec, TStatus> {
     const type = validateResourceType(input.type);
     const name = input.name;
     const labels = stringMap("metadata.labels", input.labels);
@@ -234,7 +239,7 @@ export class PluginResourceStore {
           status: {} as TStatus,
         });
         writeJsonAtomic(path, stored);
-        return stored.object;
+        return { resource: stored.object, created: true };
       }
       const current = this.readCurrentStored<TSpec, TStatus>(type, name).object;
       if (
@@ -246,7 +251,7 @@ export class PluginResourceStore {
           `Controller Source input conflicts with existing Resource: ${type.kind}/${name}`,
         );
       }
-      return current;
+      return { resource: current, created: false };
     });
   }
 
