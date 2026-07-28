@@ -4,19 +4,15 @@
 
 import type {
   ChatProtocol,
-  ChatSurfaceStore,
-  ChatViewState,
+  ChatState,
+  WritableChatStore,
   Candidate,
   CommandSpec,
   InteractionResponse,
   PickerSearchView,
   TranscriptItem,
 } from "chat-tui";
-import {
-  chatSurfaceStateFromView,
-  commitViewToSurfaces,
-  createChatSurfaceStore,
-} from "chat-tui";
+import { createChatStore } from "chat-tui";
 
 import {
   COMMANDS,
@@ -70,22 +66,22 @@ import { userVisibleText } from "./transcript.ts";
 import {
   contextUsageText,
   projectBoardView,
-  projectChatView,
+  projectChatState,
   type BoardMode,
   type BoardViewProjection,
-} from "./view.ts";
+} from "./state.ts";
 
 export {
   thoughtDisplayBlocks,
   toolTranscriptItem,
   userVisibleText,
 } from "./transcript.ts";
-export { runStatusLabel } from "./view.ts";
+export { runStatusLabel } from "./state.ts";
 
-// OpenTUI 以 30 FPS 绘制；逐 token 同步发布完整 view 只会让 React 重复重建 transcript，
+// OpenTUI 以 30 FPS 绘制；逐 token 同步发布完整 State 只会让 React 重复重建 transcript，
 // 还会挤占 composer 的终端光标刷新。只合并高频、可安全追加的流式事件；Interaction、终态和
 // 完整快照仍立即发布，并顺带冲刷此前积累的 chunk，避免交互卡片被延迟。
-const STREAM_VIEW_FRAME_MS = 33;
+const STREAM_STATE_FRAME_MS = 33;
 const PICKER_SEARCH_DEBOUNCE_MS = 250;
 const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "agent_message_chunk",
@@ -93,6 +89,40 @@ const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "tool_call_content_chunk",
   "usage_update",
 ]);
+
+function publishChatState(
+  store: WritableChatStore,
+  next: ChatState,
+): void {
+  const timeline = store.getState("timeline");
+  const composer = store.getState("composer");
+  const activity = store.getState("activity");
+  const footer = store.getState("footer");
+  store.commit({
+    ...(timeline.items === next.timeline.items &&
+    timeline.plan === next.timeline.plan &&
+    timeline.header === next.timeline.header &&
+    timeline.showThoughts === next.timeline.showThoughts
+      ? {}
+      : { timeline: next.timeline }),
+    ...(composer.busy === next.composer.busy &&
+    composer.queued === next.composer.queued &&
+    composer.picker === next.composer.picker &&
+    composer.interactions === next.composer.interactions &&
+    composer.placeholder === next.composer.placeholder
+      ? {}
+      : { composer: next.composer }),
+    ...(activity.items === next.activity.items
+      ? {}
+      : { activity: next.activity }),
+    ...(footer.toast === next.footer.toast && footer.text === next.footer.text
+      ? {}
+      : { footer: next.footer }),
+    ...(store.getState("sidecar") === next.sidecar
+      ? {}
+      : { sidecar: next.sidecar }),
+  });
+}
 
 export interface BatonNavigation {
   openPlugins(): void;
@@ -113,7 +143,7 @@ interface PendingPicker {
 
 export class BatonChatProtocol implements ChatProtocol {
   readonly marketplace: MarketplaceRegistry;
-  readonly surfaces: ChatSurfaceStore;
+  readonly stateStore: WritableChatStore;
   private session: SessionHandle;
   private state: SessionState;
   private controller: Controller;
@@ -128,11 +158,9 @@ export class BatonChatProtocol implements ChatProtocol {
   private boardMode: BoardMode = "auto";
   private boardViewCache: BoardViewProjection | undefined;
   private nextPickerId = 1;
-  private listeners = new Set<() => void>();
   private commandListeners = new Set<() => void>();
-  private view: ChatViewState;
   private unsubscribeSession: () => void;
-  private streamViewTimer: ReturnType<typeof setTimeout> | undefined;
+  private streamStateTimer: ReturnType<typeof setTimeout> | undefined;
   // 输入历史（shell 式 ↑/↓ 回溯）：会话级，从事件流的 user 消息种入、提交时追加。
   // 事件流是真相源——不另存磁盘文件；resume/切换会话后 loadState 重建 state 即可重新种入。
   private history: string[] = [];
@@ -168,10 +196,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(this.session);
     this.plugins = this.createPluginManager();
-    this.view = this.buildView();
-    this.surfaces = createChatSurfaceStore(
-      chatSurfaceStateFromView(this.view),
-    );
+    this.stateStore = createChatStore(this.buildState());
     this.startPluginManager();
   }
 
@@ -179,16 +204,12 @@ export class BatonChatProtocol implements ChatProtocol {
   private subscribeSession(session: SessionHandle): () => void {
     return session.subscribe((envelope) => {
       applyEvent(this.state, envelope);
-      if (COALESCED_STREAM_EVENT_KINDS.has(envelope.kind)) this.scheduleStreamViewChanged();
+      if (COALESCED_STREAM_EVENT_KINDS.has(envelope.kind)) this.scheduleStreamStateChanged();
       else this.changed();
     });
   }
 
   // ===== 输出：baton → TUI =====
-
-  getView(): ChatViewState {
-    return this.view;
-  }
 
   get commands(): readonly CommandSpec[] {
     return [...COMMANDS, ...this.plugins.listCommands()];
@@ -196,11 +217,6 @@ export class BatonChatProtocol implements ChatProtocol {
 
   get pluginManager(): Manager {
     return this.plugins;
-  }
-
-  subscribe(onChange: () => void): () => void {
-    this.listeners.add(onChange);
-    return () => this.listeners.delete(onChange);
   }
 
   subscribeCommands(onChange: () => void): () => void {
@@ -900,7 +916,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.changed();
   }
 
-  /** 控制命令输出只进入当前 view，不写 session.jsonl，避免污染可恢复的会话历史。 */
+  /** 控制命令输出只进入当前 timeline State，不写 session.jsonl，避免污染可恢复的会话历史。 */
   private sessionStatusItem(): TranscriptItem {
     const meta = this.session.meta;
     const activeTargetId = this.controller.activeHarnessTargetId;
@@ -1067,33 +1083,32 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  /** 高频流式事件按 renderer 帧合并；state 已同步 reduce，这里只延迟昂贵的完整 view 投影。 */
-  private scheduleStreamViewChanged(): void {
-    if (this.streamViewTimer !== undefined) return;
-    this.streamViewTimer = setTimeout(() => {
-      this.streamViewTimer = undefined;
+  /** 高频流式事件按 renderer 帧合并；领域 state 已同步 reduce，这里只延迟 UI State 投影。 */
+  private scheduleStreamStateChanged(): void {
+    if (this.streamStateTimer !== undefined) return;
+    this.streamStateTimer = setTimeout(() => {
+      this.streamStateTimer = undefined;
       this.changed();
-    }, STREAM_VIEW_FRAME_MS);
+    }, STREAM_STATE_FRAME_MS);
   }
 
-  /** 通用状态更新仍产出兼容快照；Surface store 只通知真正变化的区域。 */
+  /** 通用状态更新按 State 发布；Store 只通知真正变化的数据单元。 */
   private changed(): void {
-    if (this.streamViewTimer !== undefined) {
-      clearTimeout(this.streamViewTimer);
-      this.streamViewTimer = undefined;
+    if (this.streamStateTimer !== undefined) {
+      clearTimeout(this.streamStateTimer);
+      this.streamStateTimer = undefined;
     }
-    this.view = this.buildView();
-    commitViewToSurfaces(this.surfaces, this.view);
-    for (const listener of this.listeners) listener();
+    publishChatState(this.stateStore, this.buildState());
   }
 
   /**
    * Board 是独立 read model：插件 reconcile 或显隐切换不重建 transcript/input。
-   * 兼容 getView 的 footer 只替换 board 计数片段，其他字段来自最近一次通用投影。
+   * footer 只替换 board 计数片段，其他 State 保持引用不变。
    */
   private boardChanged(): void {
     const board = this.boardView();
-    const footerWithoutBoard = (this.view.footer ?? "").replace(
+    const currentFooter = this.stateStore.getState("footer");
+    const footerWithoutBoard = (currentFooter.text ?? "").replace(
       /  board:\d+(?=  cwd:)/,
       "",
     );
@@ -1104,20 +1119,12 @@ export class BatonChatProtocol implements ChatProtocol {
           `  board:${board.items.length}  cwd:`,
         )
         : footerWithoutBoard;
-    this.view = {
-      ...this.view,
-      sidecar: board.sidecar,
-      toast: this.toast,
-      footer,
-    };
-    const currentFooter = this.surfaces.footer.getSnapshot();
-    this.surfaces.commit({
+    this.stateStore.commit({
       sidecar: board.sidecar,
       ...(currentFooter.toast === this.toast && currentFooter.text === footer
         ? {}
         : { footer: { toast: this.toast, text: footer } }),
     });
-    for (const listener of this.listeners) listener();
   }
 
   private commandsChanged(): void {
@@ -1136,8 +1143,8 @@ export class BatonChatProtocol implements ChatProtocol {
     return this.boardViewCache;
   }
 
-  private buildView(): ChatViewState {
-    return projectChatView({
+  private buildState(): ChatState {
+    return projectChatState({
       state: this.state,
       controller: this.controller,
       pendingProposals: this.plugins.listPendingProposals(),

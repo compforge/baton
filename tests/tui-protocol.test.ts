@@ -143,7 +143,7 @@ describe("BatonChatProtocol picker search", () => {
         },
         onSelect() {},
       });
-      const pickerId = protocol.getView().picker!.id;
+      const pickerId = protocol.stateStore.getState("composer").picker!.id;
 
       protocol.searchPicker(pickerId, "ignored");
       protocol.searchPicker(pickerId, "first");
@@ -152,7 +152,7 @@ describe("BatonChatProtocol picker search", () => {
       protocol.searchPicker(pickerId, "second");
       await Bun.sleep(300);
       expect(calls).toEqual(["first", "second"]);
-      expect(protocol.getView().picker).toMatchObject({
+      expect(protocol.stateStore.getState("composer").picker).toMatchObject({
         search: {
           mode: "remote",
           query: "second",
@@ -171,7 +171,7 @@ describe("BatonChatProtocol picker search", () => {
         search: { mode: "remote", query: "first" },
       });
       await Bun.sleep(0);
-      expect(protocol.getView().picker?.options).toEqual([
+      expect(protocol.stateStore.getState("composer").picker?.options).toEqual([
         {
           name: "Second result",
           description: "REQ-2",
@@ -315,7 +315,7 @@ describe("BatonChatProtocol status command", () => {
       const eventCount = session.readEvents().length;
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       await protocol.command("status", "");
-      const status = protocol.getView().transcript.at(-1);
+      const status = protocol.stateStore.getState("timeline").items.at(-1);
       expect(status).toMatchObject({
         id: "_baton_status",
         author: "baton",
@@ -325,7 +325,7 @@ describe("BatonChatProtocol status command", () => {
       const internals = protocol as unknown as { controller: { submit: () => Promise<"completed"> } };
       internals.controller.submit = async () => "completed";
       await protocol.submit("continue");
-      expect(protocol.getView().transcript.some((item) => item.id === "_baton_status")).toBe(false);
+      expect(protocol.stateStore.getState("timeline").items.some((item) => item.id === "_baton_status")).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -348,7 +348,7 @@ describe("BatonChatProtocol status command", () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       await protocol.command("claude", "");
       await protocol.command("status", "");
-      const status = protocol.getView().transcript.at(-1);
+      const status = protocol.stateStore.getState("timeline").items.at(-1);
       expect(status).toMatchObject({
         id: "_baton_status",
         text: expect.stringContaining("Context: 40,000 / 200,000 tokens (20%)"),
@@ -394,14 +394,14 @@ describe("BatonChatProtocol Board", () => {
       let activityNotifications = 0;
       let sidecarNotifications = 0;
       let footerNotifications = 0;
-      protocol.surfaces.timeline.subscribe(() => timelineNotifications++);
-      protocol.surfaces.composer.subscribe(() => composerNotifications++);
-      protocol.surfaces.activity.subscribe(() => activityNotifications++);
-      protocol.surfaces.sidecar.subscribe(() => sidecarNotifications++);
-      protocol.surfaces.footer.subscribe(() => footerNotifications++);
+      protocol.stateStore.subscribe("timeline", () => timelineNotifications++);
+      protocol.stateStore.subscribe("composer", () => composerNotifications++);
+      protocol.stateStore.subscribe("activity", () => activityNotifications++);
+      protocol.stateStore.subscribe("sidecar", () => sidecarNotifications++);
+      protocol.stateStore.subscribe("footer", () => footerNotifications++);
       internals.boardChanged();
 
-      expect(protocol.getView().sidecar).toEqual({
+      expect(protocol.stateStore.getState("sidecar")).toEqual({
         title: "Board",
         mode: "auto",
         sections: [
@@ -419,7 +419,7 @@ describe("BatonChatProtocol Board", () => {
           },
         ],
       });
-      expect(protocol.getView().footer).toContain("board:1");
+      expect(protocol.stateStore.getState("footer").text).toContain("board:1");
       expect({
         timelineNotifications,
         composerNotifications,
@@ -433,9 +433,9 @@ describe("BatonChatProtocol Board", () => {
         sidecarNotifications: 1,
         footerNotifications: 1,
       });
-      const sidecar = protocol.getView().sidecar;
+      const sidecar = protocol.stateStore.getState("sidecar");
       internals.boardChanged();
-      expect(protocol.getView().sidecar).toBe(sidecar);
+      expect(protocol.stateStore.getState("sidecar")).toBe(sidecar);
       items = [{ ...items[0]!, status: "3 / 3" }];
       internals.boardChanged();
       expect({
@@ -453,22 +453,22 @@ describe("BatonChatProtocol Board", () => {
       });
 
       await protocol.command("board", "hide");
-      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+      expect(protocol.stateStore.getState("sidecar")?.mode).toBe("hidden");
       await protocol.command("board", "");
-      expect(protocol.getView().sidecar?.mode).toBe("open");
+      expect(protocol.stateStore.getState("sidecar")?.mode).toBe("open");
       await protocol.command("board", "");
-      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+      expect(protocol.stateStore.getState("sidecar")?.mode).toBe("hidden");
       await protocol.command("board", "");
-      expect(protocol.getView().sidecar?.mode).toBe("open");
+      expect(protocol.stateStore.getState("sidecar")?.mode).toBe("open");
       protocol.dismissSidecar();
-      expect(protocol.getView().sidecar?.mode).toBe("hidden");
+      expect(protocol.stateStore.getState("sidecar")?.mode).toBe("hidden");
 
       items = [];
       internals.boardChanged();
-      expect(protocol.getView().sidecar).toBeUndefined();
-      expect(protocol.getView().footer).not.toContain("board:");
+      expect(protocol.stateStore.getState("sidecar")).toBeUndefined();
+      expect(protocol.stateStore.getState("footer").text).not.toContain("board:");
       await protocol.command("board", "");
-      expect(protocol.getView().toast).toEqual({
+      expect(protocol.stateStore.getState("footer").toast).toEqual({
         text: "Board has no items",
         tone: "info",
       });
@@ -496,8 +496,8 @@ describe("BatonChatProtocol proposed plan", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      expect(protocol.getView().plan).toBeUndefined();
-      expect(protocol.getView().transcript).toContainEqual({
+      expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
+      expect(protocol.stateStore.getState("timeline").items).toContainEqual({
         type: "block",
         id: "pl-proposed",
         kind: "proposed_plan",
@@ -535,7 +535,7 @@ describe("BatonChatProtocol plugins command", () => {
       expect(session.readEvents()).toHaveLength(0);
       await expect(protocol.command("plugins", "extra")).rejects.toThrow("/plugins takes no arguments");
       await protocol.command("reload-plugins", "");
-      expect(protocol.getView().toast).toEqual({
+      expect(protocol.stateStore.getState("footer").toast).toEqual({
         text: "Reloaded 0 plugin instances",
         tone: "info",
       });
@@ -550,15 +550,15 @@ describe("BatonChatProtocol plugins command", () => {
   });
 });
 
-describe("BatonChatProtocol streaming projection", () => {
-  test("coalesces synchronous stream chunks into one view notification", async () => {
+describe("BatonChatProtocol streaming State", () => {
+  test("coalesces synchronous stream chunks into one timeline publication", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-stream-"));
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       let notifications = 0;
-      protocol.subscribe(() => notifications++);
+      protocol.stateStore.subscribe("timeline", () => notifications++);
 
       for (const text of ["one ", "two ", "three"]) {
         session.append({
@@ -573,7 +573,7 @@ describe("BatonChatProtocol streaming projection", () => {
       expect(notifications).toBe(0);
       await Bun.sleep(50);
       expect(notifications).toBe(1);
-      expect(protocol.getView().transcript).toContainEqual(
+      expect(protocol.stateStore.getState("timeline").items).toContainEqual(
         expect.objectContaining({ id: "m_stream", text: "one two three" }),
       );
       await protocol.exit();
@@ -589,7 +589,7 @@ describe("BatonChatProtocol streaming projection", () => {
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       let notifications = 0;
-      protocol.subscribe(() => notifications++);
+      protocol.stateStore.subscribe("timeline", () => notifications++);
 
       session.append({
         source: { type: "baton" },
@@ -613,8 +613,8 @@ describe("BatonChatProtocol streaming projection", () => {
       });
 
       expect(notifications).toBe(1);
-      expect(protocol.getView().interactions?.[0]?.id).toBe("ix_stream");
-      expect(protocol.getView().transcript).toContainEqual(
+      expect(protocol.stateStore.getState("composer").interactions?.[0]?.id).toBe("ix_stream");
+      expect(protocol.stateStore.getState("timeline").items).toContainEqual(
         expect.objectContaining({ id: "m_stream", text: "latest output" }),
       );
       await Bun.sleep(50);
@@ -650,13 +650,13 @@ describe("BatonChatProtocol harness commands", () => {
       };
 
       await protocol.command("claude", "");
-      expect(protocol.getView().runStatus?.[0]).toMatchObject({ author: "claude" });
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "claude" });
 
       await protocol.command("codex", "");
-      expect(protocol.getView().runStatus?.[0]).toMatchObject({ author: "codex" });
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "codex" });
 
       await protocol.submit("/cc review this");
-      expect(protocol.getView().runStatus?.[0]).toMatchObject({ author: "claude" });
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "claude" });
       expect(submitted).toEqual([{ harness: "claude", text: "review this" }]);
 
       await protocol.submit("/cx fix it");
@@ -670,11 +670,11 @@ describe("BatonChatProtocol harness commands", () => {
 
       await protocol.command("compact", "");
       expect(compacted).toEqual(["codex"]);
-      expect(protocol.getView().toast?.text).toBe("codex context compacted");
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex context compacted");
 
       await protocol.submit("/c ambiguous");
       expect(submitted).toHaveLength(4);
-      expect(protocol.getView().transcript.at(-1)).toMatchObject({
+      expect(protocol.stateStore.getState("timeline").items.at(-1)).toMatchObject({
         id: "_baton_harness_route_error",
         author: "baton",
         text: expect.stringContaining('harness prefix "/c" is ambiguous; matches codex, claude'),
@@ -686,7 +686,7 @@ describe("BatonChatProtocol harness commands", () => {
   });
 });
 
-describe("BatonChatProtocol view projection", () => {
+describe("BatonChatProtocol State projection", () => {
   type ViewInternals = {
     state: {
       plans: Map<string, { planId: string; harness?: string; entries: Array<{ content: string; status: string }> }>;
@@ -713,17 +713,19 @@ describe("BatonChatProtocol view projection", () => {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      const view = protocol.getView();
+      const runStatus = protocol.stateStore.getState("activity").items;
+      const footer = protocol.stateStore.getState("footer").text;
+      const composer = protocol.stateStore.getState("composer");
       // 主行常驻：idle 显式可见，无计时/中断提示
-      expect(view.runStatus).toHaveLength(1);
-      expect(view.runStatus?.[0]).toMatchObject({
+      expect(runStatus).toHaveLength(1);
+      expect(runStatus?.[0]).toMatchObject({
         author: "codex",
         label: "default · idle",
       });
-      expect(view.runStatus?.[0]?.startedAt).toBeUndefined();
-      expect(view.runStatus?.[0]?.hint).toBeUndefined();
-      expect(view.footer).toStartWith(`session: ${session.id}  `);
-      expect(view.composerPlaceholder).toContain("Ctrl+J newline");
+      expect(runStatus?.[0]?.startedAt).toBeUndefined();
+      expect(runStatus?.[0]?.hint).toBeUndefined();
+      expect(footer).toStartWith(`session: ${session.id}  `);
+      expect(composer.placeholder).toContain("Ctrl+J newline");
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -743,7 +745,7 @@ describe("BatonChatProtocol view projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      expect(protocol.getView().runStatus?.[0]?.label).toBe("gpt-5.6-sol · xhigh · idle");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("gpt-5.6-sol · xhigh · idle");
 
       await protocol.exit();
     } finally {
@@ -779,15 +781,15 @@ describe("BatonChatProtocol view projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      expect(protocol.getView().runStatus).toHaveLength(2);
-      expect(protocol.getView().runStatus?.[0]?.label).toBe("default · idle");
-      expect(protocol.getView().runStatus?.[1]?.label).toBe("context 12,500/200,000 (6%)");
-      expect(protocol.getView().footer).not.toContain("context");
+      expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
+      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 12,500/200,000 (6%)");
+      expect(protocol.stateStore.getState("footer").text).not.toContain("context");
       await protocol.command("claude", "");
-      expect(protocol.getView().runStatus).toHaveLength(2);
-      expect(protocol.getView().runStatus?.[0]?.label).toBe("default · idle");
-      expect(protocol.getView().runStatus?.[1]?.label).toBe("context 80,000/200,000 (40%)");
-      expect(protocol.getView().footer).not.toContain("context");
+      expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
+      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 80,000/200,000 (40%)");
+      expect(protocol.stateStore.getState("footer").text).not.toContain("context");
 
       await protocol.exit();
     } finally {
@@ -809,7 +811,7 @@ describe("BatonChatProtocol view projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      expect(protocol.getView().runStatus?.[0]?.label).toBe("default · idle");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
 
       await protocol.exit();
     } finally {
@@ -825,7 +827,7 @@ describe("BatonChatProtocol view projection", () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       const internals = protocol as unknown as ViewInternals;
       const planInTranscript = () =>
-        protocol.getView().transcript.some((item) => item.type === "block" && item.kind === "plan");
+        protocol.stateStore.getState("timeline").items.some((item) => item.type === "block" && item.kind === "plan");
 
       internals.state.plans.set("p1", {
         planId: "p1",
@@ -847,28 +849,28 @@ describe("BatonChatProtocol view projection", () => {
         state: "running",
       });
       internals.changed();
-      expect(protocol.getView().plan).toEqual([
+      expect(protocol.stateStore.getState("timeline").plan).toEqual([
         { content: "step one", status: "completed" },
         { content: "step two", status: "in_progress" },
       ]);
-      expect(protocol.getView().footer).toContain("plan:1/2");
+      expect(protocol.stateStore.getState("footer").text).toContain("plan:1/2");
       // 互补显示：进行中归 pin，transcript 不重复渲染（过去时区域不该有实时改写的块）
       expect(planInTranscript()).toBe(false);
 
       // plan 跟随 harness：切到另一家后不再占用 pinned 层，切回则恢复。
       await protocol.command("claude", "");
-      expect(protocol.getView().plan).toBeUndefined();
-      expect(protocol.getView().footer).not.toContain("plan:");
+      expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
+      expect(protocol.stateStore.getState("footer").text).not.toContain("plan:");
       expect(planInTranscript()).toBe(true);
       await protocol.command("codex", "");
-      expect(protocol.getView().plan).toHaveLength(2);
+      expect(protocol.stateStore.getState("timeline").plan).toHaveLength(2);
       expect(planInTranscript()).toBe(false);
 
       // idle 且未完成：pin 卸下（搁置即过去时）——否则状态更新缺失/中途放弃时 pin 永驻
       internals.state.activeTurns.clear();
       internals.changed();
-      expect(protocol.getView().plan).toBeUndefined();
-      expect(protocol.getView().footer).not.toContain("plan:");
+      expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
+      expect(protocol.stateStore.getState("footer").text).not.toContain("plan:");
       expect(planInTranscript()).toBe(true);
 
       // 同一种 Harness 的另一个 Target 在跑，不得把当前 Target 的 plan 重新上 pin。
@@ -880,7 +882,7 @@ describe("BatonChatProtocol view projection", () => {
         state: "running",
       });
       internals.changed();
-      expect(protocol.getView().plan).toBeUndefined();
+      expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
       expect(planInTranscript()).toBe(true);
 
       // 当前 Target 的回合重新开跑：未完成 plan 重新上 pin，transcript 卡随之撤下
@@ -893,7 +895,7 @@ describe("BatonChatProtocol view projection", () => {
         state: "running",
       });
       internals.changed();
-      expect(protocol.getView().plan).toHaveLength(2);
+      expect(protocol.stateStore.getState("timeline").plan).toHaveLength(2);
       expect(planInTranscript()).toBe(false);
 
       // 全部完成：即使仍在运行，pin 停发、footer 摘要撤下，终态卡在 transcript 原位供回看
@@ -906,11 +908,11 @@ describe("BatonChatProtocol view projection", () => {
         ],
       });
       internals.changed();
-      expect(protocol.getView().plan).toBeUndefined();
-      expect(protocol.getView().footer).not.toContain("plan:");
+      expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
+      expect(protocol.stateStore.getState("footer").text).not.toContain("plan:");
       expect(planInTranscript()).toBe(true);
       expect(
-        protocol.getView().transcript.find((item) => item.type === "block" && item.kind === "plan"),
+        protocol.stateStore.getState("timeline").items.find((item) => item.type === "block" && item.kind === "plan"),
       ).toMatchObject({ id: "p1", status: "completed" });
       await protocol.exit();
     } finally {
@@ -950,10 +952,10 @@ describe("BatonChatProtocol transcript projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      const toolIndex = protocol.getView().transcript.findIndex((item) => item.id === "tc1");
+      const toolIndex = protocol.stateStore.getState("timeline").items.findIndex((item) => item.id === "tc1");
       // 展示双轴：approved 的 outcome 是 completed（审到底了，不被遮成 warning），
       // 需留痕由正交的 tone 表达（委托代批放行 → 审计痕）
-      expect(protocol.getView().transcript[toolIndex + 1]).toMatchObject({
+      expect(protocol.stateStore.getState("timeline").items[toolIndex + 1]).toMatchObject({
         id: "approval-review:arv_test1",
         kind: "notice",
         status: "completed",
@@ -1003,7 +1005,7 @@ describe("BatonChatProtocol transcript projection", () => {
       });
 
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: true }, () => undefined);
-      const messages = protocol.getView().transcript.filter((item) => item.type === "message");
+      const messages = protocol.stateStore.getState("timeline").items.filter((item) => item.type === "message");
       expect(messages).toEqual([
         {
           type: "message",
@@ -1033,7 +1035,7 @@ describe("BatonChatProtocol transcript projection", () => {
         },
       ]);
       // thought/tool block 的归属走一等 author 字段，不再拼进 title
-      expect(protocol.getView().transcript.find((item) => item.id === "m_thought:0")).toMatchObject({
+      expect(protocol.stateStore.getState("timeline").items.find((item) => item.id === "m_thought:0")).toMatchObject({
         author: "codex",
         title: "Inspecting image",
       });
@@ -1147,7 +1149,7 @@ describe("BatonChatProtocol sessions picker", () => {
 
       await protocol.command("sessions", "");
 
-      const values = protocol.getView().picker?.options.map((option) => option.value) ?? [];
+      const values = protocol.stateStore.getState("composer").picker?.options.map((option) => option.value) ?? [];
       expect(values).toHaveLength(2);
       expect(values).toContain(current.id);
       expect(values).toContain(sibling.id);
@@ -1273,8 +1275,8 @@ describe("interaction eventization: pending projects from the event stream", () 
           options: APPROVAL_OPTIONS,
         },
       });
-      let view = protocol.getView();
-      expect(view.interactions?.[0]).toMatchObject({
+      let composer = protocol.stateStore.getState("composer");
+      expect(composer.interactions?.[0]).toMatchObject({
         id: "ix_1",
         kind: "approval",
         blocking: true,
@@ -1287,9 +1289,9 @@ describe("interaction eventization: pending projects from the event stream", () 
 
       // 无 live resolver（如崩溃残留）：应答提示 stale，不静默吞掉
       await protocol.resolveInteraction("ix_1", { kind: "approval", optionId: "allow" });
-      view = protocol.getView();
-      expect(view.interactions).toHaveLength(1); // 卡片消失只由 resolved 事件驱动
-      expect(view.toast?.text).toContain("no longer pending");
+      composer = protocol.stateStore.getState("composer");
+      expect(composer.interactions).toHaveLength(1); // 卡片消失只由 resolved 事件驱动
+      expect(protocol.stateStore.getState("footer").toast?.text).toContain("no longer pending");
 
       // resolved 落盘 → 卡片消失
       session.append({
@@ -1301,7 +1303,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().interactions).toEqual([]);
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1327,7 +1329,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           questions: [{ questionId: "q1", header: "Scope", question: "Which scope?" }],
         },
       });
-      expect(protocol.getView().interactions?.[0]).toMatchObject({
+      expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_2",
         kind: "question",
         blocking: true,
@@ -1362,7 +1364,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().interactions).toEqual([]);
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1420,7 +1422,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           ],
         },
       });
-      expect(protocol.getView().interactions?.[0]).toMatchObject({
+      expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_plugin",
         kind: "question",
         requester: "reqloop_default",
@@ -1495,7 +1497,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           ],
         },
       });
-      expect(protocol.getView().interactions?.[0]).toMatchObject({
+      expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_3",
         kind: "approval",
         blocking: true,
@@ -1526,7 +1528,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           resolution: { kind: "cancelled", reason: "recovery" },
         },
       });
-      expect(protocol.getView().interactions).toEqual([]);
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1561,7 +1563,7 @@ describe("Plugin Proposal projection", () => {
         text: "Review the requirement",
       });
       internals.changed();
-      expect(protocol.getView().interactions).toEqual([
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([
         {
           id: dismissed.proposalId,
           kind: "suggested_input",
@@ -1577,7 +1579,7 @@ describe("Plugin Proposal projection", () => {
         outcome: "dismissed",
       });
       expect(proposals.get(dismissed.proposalId).resolution?.outcome).toBe("dismissed");
-      expect(protocol.getView().interactions).toEqual([]);
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
 
       const submitted = proposals.record({
         key: {
@@ -1602,7 +1604,7 @@ describe("Plugin Proposal projection", () => {
       });
       expect(proposals.get(submitted.proposalId).resolution?.outcome).toBe("submitted");
       expect(submittedInputs).toEqual(["Check the implementation and tests"]);
-      expect(protocol.getView().interactions).toEqual([]);
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
 
       await protocol.exit();
     } finally {
@@ -1635,7 +1637,7 @@ describe("BatonChatProtocol steer submit", () => {
 
       await protocol.submit("prefer approach B");
       expect(calls).toEqual(["sendTurn"]);
-      expect(protocol.getView().toast?.text).toContain("steering");
+      expect(protocol.stateStore.getState("footer").toast?.text).toContain("steering");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1668,7 +1670,7 @@ describe("BatonChatProtocol steer submit", () => {
 
       const submitted = protocol.submit("prefer approach B");
       await Bun.sleep(1); // 让 protocol 走到降级状态提示、停在等待 outcome 处
-      const degraded = protocol.getView().toast?.text;
+      const degraded = protocol.stateStore.getState("footer").toast?.text;
       expect(degraded).toContain("queued as follow-up");
       expect(degraded).not.toContain("steering");
       resolveOutcome?.("completed");

@@ -3,7 +3,7 @@
 //
 // 回归背景（PR #112）：普通流式事件曾同时走两条通知——session.append 的事件流广播
 // （投影订阅）+ controller appendEvent 末尾的 changed()（onChange），导致每个
-// streaming chunk 触发两次完整 view 重建。修复删掉了 appendEvent 末尾的 changed()，
+// streaming chunk 触发两次完整 State 投影。修复删掉了 appendEvent 末尾的 changed()，
 // 但这条"哪类变更走哪条通知通道"的分工只靠 Controller 里的一行注释守着——任何人
 // 顺手加回 changed() 就会无声复发（双重建只是性能劣化，UI 不出错，肉眼看不出来）。
 // 本测试把它钉成契约：普通流式事件到达时，订阅方收到的通知恰好一次。
@@ -81,7 +81,7 @@ class StreamingAdapter implements HarnessAdapter {
 // 0 = 事件到不了投影（丢更新，harness-initiated-turn.test.ts 钉住的那半边）；
 // 2 = append 广播之外又走了 controller onChange（#112 的双重建回归，这半边归本文件）。
 
-describe("single-channel view notification per streaming event", () => {
+describe("single-channel State publication per streaming event", () => {
   const cases: Array<{ name: string; event: (turnId: string) => AnyEventDraft }> = [
     {
       name: "agent_message_chunk",
@@ -122,8 +122,8 @@ describe("single-channel view notification per streaming event", () => {
         resolveTarget: resolveTestTarget,
         createAdapter: () => adapter,
         // 镜像 BatonChatProtocol 的接线：事件流订阅（subscribeSession）与 controller 的
-        // onChange 汇入同一个 changed()——每次调用重建一次完整 view。因此
-        // 两条通道的计数之和 == 一个事件引发的 view 重建次数。
+        // onChange 汇入同一个 changed()——每次调用重建一次完整 State。因此
+        // 两条通道的计数之和 == 一个事件引发的 State 投影次数。
         onChange: () => {
           notifications += 1;
         },

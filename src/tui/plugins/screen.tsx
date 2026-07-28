@@ -3,14 +3,13 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import {
   Transcript,
   type ChatProtocol,
-  type ChatViewState,
   type Theme,
+  useStoreState,
 } from "chat-tui";
 import {
-  useCallback,
   useRef,
   useState,
-  useSyncExternalStore,
+  useCallback,
   type ReactNode,
 } from "react";
 
@@ -90,22 +89,15 @@ function loadBrowserData(
   };
 }
 
-function useProtocolView(protocol: ChatProtocol): ChatViewState {
-  return useSyncExternalStore(
-    useCallback((onChange) => protocol.subscribe(onChange), [protocol]),
-    () => protocol.getView(),
-  );
-}
-
 export function PluginScreen(props: PluginScreenProps): ReactNode {
-  const view = useProtocolView(props.protocol);
+  const timeline = useStoreState(props.protocol.stateStore, "timeline");
   const terminal = useTerminalDimensions();
   return (
     <box style={{ flexDirection: "column", flexGrow: 1 }}>
       <Transcript
-        header={view.header}
-        items={view.transcript}
-        showThoughts={view.showThoughts}
+        header={timeline.header}
+        items={timeline.items}
+        showThoughts={timeline.showThoughts}
         theme={props.theme}
       />
       <PluginPanel
