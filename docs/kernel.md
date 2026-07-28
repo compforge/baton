@@ -39,7 +39,7 @@ Controller / Harness 平铺为同一层概念；每个对象仍绑定一条不�
 | **Context delivery** | Controller 域内把有 owner/key 的 ContextSource 组装成 Snapshot，并向某个 HarnessSession 交付 | Snapshot 说明准备送什么；只有 transport 接受后落下的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch，不能用 Board 已更新或本地已组装代替 |
 | **HarnessTarget** | Baton 配置、调度与状态查询侧的一份具体 Harness 目标；可在不创建 HarnessSession 的前提下做只读 capability/catalog probe | 实例坐标与协议类型分离：Target ID 只经显式 resolver 解析，未知值 fail closed；Adapter 工厂接收完整 Target；`Controller` processing / queue、`HarnessBinding`、原生 session、同步水位、偏好 / 授权和 Target-scoped 投影状态均按 `harnessTargetId` 隔离，不按 Harness 名称混用；发现不借 Adapter.open 制造隐形 session |
 | **Adapter + Capability** | harness 方言的**唯一**居所：小核心 `HarnessAdapter` + 可选能力 descriptor | 差异表达为"能力有无"，type-guard 发现、契约测试钉住；**内核永不 `if harness===`** |
-| **Projection** | 纯函数：event reduce → 视图快照 | 只产展示形状；chat-tui 消费形状不消费语义；未变返回同引用（快照一致）|
+| **Projection** | 纯函数：event reduce → chat-tui State | 只产展示数据；chat-tui 消费 State 不消费领域语义；未变返回同引用（快照一致）|
 
 HarnessSession 不在此表——它是某 HarnessTarget 启动出的原生执行状态、内核的实现细节：
 baton 优先用 `harnessSessionId` 加速恢复，但它缺失只降级、不能阻止 BatonSession 续聊。

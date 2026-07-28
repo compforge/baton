@@ -193,7 +193,7 @@ ContextProvider Registry 提供候选和当前 turn 的只读上下文；Plugin 
 
 ### 5.9 TUI
 
-UI 组件层来自 [chat-tui](https://github.com/compforge/chat-tui)（从 baton 抽出的开源库，基于 opentui React reconciler）：baton 侧实现 ChatProtocol——`tui/protocol/` 把 controller/store 状态投影成视图快照、把 intents 翻译成 controller 操作；补全、分层 Ctrl+C、Interaction Dock 等交互语义都在 chat-tui。当前布局为 transcript、可增长 composer、状态栏与贴近 composer 的统一 Interaction Dock；补全、选择、权限、结构化问题、Hook Trust 和 Plugin Proposal 都从各自事实来源投影到 Dock，`/sessions` 提供持久会话切换，`/new` 新建会话。
+UI 组件层来自 [chat-tui](https://github.com/compforge/chat-tui)（从 baton 抽出的开源库，基于 opentui React reconciler）：baton 侧实现 ChatProtocol——`tui/protocol/` 把 controller/store 状态整理成 chat-tui State、把 intents 翻译成 controller 操作；补全、分层 Ctrl+C、Interaction Dock 等交互语义都在 chat-tui。当前布局为 transcript、可增长 composer、状态栏与贴近 composer 的统一 Interaction Dock；补全、选择、权限、结构化问题、Hook Trust 和 Plugin Proposal 都从各自事实来源整理到 Dock，`/sessions` 提供持久会话切换，`/new` 新建会话。
 
 #### 界面分层：时态与寿命
 
