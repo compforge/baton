@@ -8,6 +8,20 @@ tutti 把 agent 启动前准备抽成独立模块，用 `DeploymentProfile + Cap
 
 **触发条件**：baton 开始做 skill 注入、browser/computer 类 capability，或同一套 adapter 需要部署到多种宿主环境时。
 
+## Open URL Interaction 与宿主打开能力
+
+Harness 或其子进程不能假设自己能直接访问宿主桌面。Baton 包装 Codex 后，npm 等 CLI 即使
+输出浏览器认证 URL 并调用系统 `open`，也可能无法连接 macOS LaunchServices；远程或 headless
+Harness 下更不存在可直接打开的本地图形环境。
+
+后续把打开外部 URL 建模为显式的 `open-url` Interaction：请求方只贡献 URL、用途和等待语义，
+Baton 负责持久化并向用户展示，由宿主能力在用户确认后打开并回传明确结果。Harness 不直接
+调用桌面命令，也不能把“子进程成功启动”当作用户已完成认证；宿主无法打开时仍保留可复制的
+URL，让流程可见且可恢复。
+
+**触发条件**：Baton 开始正式支持需要 OAuth / 浏览器认证的 CLI 工作流，或 Harness 需要在
+远程、headless 与本机桌面宿主之间保持同一套交互语义时。
+
 ## Opaque reference（NodeRef / ReferenceHandle）
 
 tutti 把跨来源引用统一成 `NodeRef { sourceId, nodeId }`，`nodeId` 对聚合层完全不透明；复杂产物用懒解析的 `ReferenceHandle`，避免把整个 artifact 提前塞进 prompt。参考 tutti `docs/architecture/agent-reference-sources.md`。
