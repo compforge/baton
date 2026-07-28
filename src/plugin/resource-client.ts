@@ -8,10 +8,20 @@ import { PluginResourceStore } from "./resource.ts";
 
 export type ResourceClient = PublicResourceClient;
 
-export interface ResourceClientChange {
-  readonly kind: "created" | "status-updated" | "deleted";
-  readonly resource: Readonly<Resource<unknown, unknown>>;
-}
+export type ResourceClientChange =
+  | {
+      readonly kind: "created";
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+    }
+  | {
+      readonly kind: "status-updated";
+      readonly oldResource: Readonly<Resource<unknown, unknown>>;
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+    }
+  | {
+      readonly kind: "deleted";
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+    };
 
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -29,9 +39,18 @@ export function createResourceClient(
   const changed = (
     kind: ResourceClientChange["kind"],
     resource: Readonly<Resource<unknown, unknown>>,
+    oldResource?: Readonly<Resource<unknown, unknown>>,
   ): void => {
     try {
-      onChange?.(Object.freeze({ kind, resource }));
+      onChange?.(
+        kind === "status-updated"
+          ? Object.freeze({
+              kind,
+              oldResource: oldResource!,
+              resource,
+            })
+          : Object.freeze({ kind, resource }),
+      );
     } catch {
       // Resource mutation has committed; host reactions must not turn it into failure.
     }
@@ -80,7 +99,7 @@ export function createResourceClient(
       return created;
     },
     delete(type: ResourceType, name: string) {
-      const resource = store.get(type, name);
+      const resource = deepFreeze(store.get(type, name));
       assertOwned(resource);
       store.delete(type, name);
       changed("deleted", resource);
@@ -104,7 +123,7 @@ export function createResourceClient(
         patched.metadata.resourceVersion !==
         resource.metadata.resourceVersion
       ) {
-        changed("status-updated", patched);
+        changed("status-updated", patched, resource);
       }
       return patched;
     },

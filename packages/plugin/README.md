@@ -151,6 +151,33 @@ Both paths use the same keyed reconcile queue as Resource changes and
 `requeueAfterMs`. Sources never update status or produce Plugin Output; those
 remain exclusively owned by `reconcile`.
 
+Controllers may also declare `watches` to map changes from secondary Resources
+to primary `ReconcileRequest`s:
+
+```ts
+import { enqueueRequestsFromMapFunc } from "@qiankun01/baton-plugin";
+
+const repositories = enqueueRequestsFromMapFunc<
+  unknown,
+  { readonly repositories?: readonly string[] }
+>((workspace) =>
+  (workspace.status.repositories ?? []).map((name) => ({ name })),
+);
+
+registerController({
+  resourceType: "Repository",
+  watches: [{ resourceType: "Workspace", handler: repositories }],
+  async reconcile(_baton, repository) {
+    // Reconcile repository.metadata.name from the latest stored state.
+  },
+});
+```
+
+For an update, `enqueueRequestsFromMapFunc` maps both the old and new Resource
+and deduplicates the resulting requests. A Watch routes Resources already
+stored by Baton; a Source discovers external state and materializes the primary
+Resource before it is reconciled.
+
 A Controller can return `kind: "interaction"` when its Resource needs a durable
 user decision:
 

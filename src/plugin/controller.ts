@@ -5,6 +5,7 @@ import type {
   Output as PluginInteractionOutput,
   ResourceRef,
   ResourceType,
+  Watch,
 } from "@qiankun01/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
@@ -23,6 +24,7 @@ import {
   validatePluginOutput,
 } from "./output.ts";
 import { ControllerSources } from "./source.ts";
+import { validateWatches } from "./watch.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
 
@@ -101,6 +103,7 @@ export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceType: ResourceType;
   sources?: readonly ControllerSource<TSpec>[];
+  watches?: readonly Watch[];
   reconcile: PluginController<TSpec, TStatus>["reconcile"];
   present?: PluginController<TSpec, TStatus>["present"];
   maxConcurrency?: number;
@@ -183,6 +186,7 @@ interface ReconcileExecution {
 export class Controller<TSpec, TStatus> {
   readonly scope: ReconcileScope;
   readonly sources: readonly ControllerSource<TSpec>[];
+  readonly watches: readonly Watch[];
   readonly present?: PluginController<TSpec, TStatus>["present"];
   private readonly store: PluginResourceStore;
   private readonly resourceType: ResourceType;
@@ -202,8 +206,10 @@ export class Controller<TSpec, TStatus> {
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
     validateResourceType(options.resourceType);
+    validateWatches(options.watches);
     this.store = options.store;
     this.resourceType = Object.freeze({ ...options.resourceType });
+    this.watches = Object.freeze([...(options.watches ?? [])]);
     this.reconcileResource = options.reconcile;
     this.present = options.present;
     this.now = options.now ?? (() => new Date());
