@@ -9,6 +9,8 @@ import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
   PluginActivationContext,
   PluginPackage,
+  Source,
+  SourceContext,
 } from "../src/plugin/package.ts";
 import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
@@ -139,7 +141,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
-  test("activates Resource Sources through the public Controller contract", async () => {
+  test("activates resource Sources through the public Controller contract", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);
     instances.create({
@@ -148,6 +150,17 @@ describe("Plugin Package lifecycle", () => {
       packageVersion: "1.2.0",
     });
     let runs = 0;
+    class PullRequestSource implements Source<{ requirement: string }> {
+      readonly type = "resource";
+      readonly sourceId = "poll-pr-state";
+
+      start(source: SourceContext<{ requirement: string }>): void {
+        source.emit({
+          name: "run_1",
+          spec: { requirement: "ship it" },
+        });
+      }
+    }
     const manager = new Manager({
       instances,
       proposals,
@@ -155,16 +168,7 @@ describe("Plugin Package lifecycle", () => {
         reqloopPackage((context) => {
           context.registerController({
             resourceType: REQ_LOOP_RUN,
-            sources: [{
-              type: "resource",
-              sourceId: "poll-pr-state",
-              start(source) {
-                source.emit({
-                  name: "run_1",
-                  spec: { requirement: "ship it" },
-                });
-              },
-            }],
+            sources: [new PullRequestSource()],
             async reconcile() {
               runs += 1;
             },

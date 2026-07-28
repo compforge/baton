@@ -4,8 +4,8 @@ import type { ReconcileScope } from "../src/plugin/controller.ts";
 import {
   CronSourceQueue,
   nextCronSourceAt,
-  validateControllerSources,
 } from "../src/plugin/cron-source.ts";
+import { validateSources } from "../src/plugin/source.ts";
 
 const scope: ReconcileScope = {
   batonSessionId: "bs_test",
@@ -42,7 +42,7 @@ describe("Controller cron Sources", () => {
 
   test("validates duplicate ids, cron expressions, and time zones", () => {
     expect(() =>
-      validateControllerSources(
+      validateSources(
         [
           {
             type: "cron",
@@ -61,7 +61,7 @@ describe("Controller cron Sources", () => {
       ),
     ).toThrow("Controller sourceId already registered: poll");
     expect(() =>
-      validateControllerSources(
+      validateSources(
         [{
           type: "cron",
           sourceId: "poll",
@@ -72,7 +72,7 @@ describe("Controller cron Sources", () => {
       ),
     ).toThrow("invalid Controller cron source poll");
     expect(() =>
-      validateControllerSources(
+      validateSources(
         [{
           type: "cron",
           sourceId: "poll",

@@ -352,6 +352,25 @@ counter = await context.resources.patchStatus(counter, {
 
 #### Command 与 Controller
 
+Plugin runtime 的主模型由四个职责不同的对象组成：
+
+```text
+Source ── discover / wake ──▶ Resource ── keyed reconcile ──▶ Controller
+                                  ▲                              │
+                                  └──── status / schedule ───────┘
+
+Manager：装配并运行整条链路
+```
+
+- **Resource 是数据与事实边界**：保存身份、`spec/status` 和持久化状态，不承载发现、调度或
+  reconcile 行为。
+- **Source 是输入边界**：发现并贡献缺失 Resource，把外部变化转换成 wake；不更新 status，
+  也不产生 Plugin Output。
+- **Controller 是收敛边界**：按稳定 key 读取最新 Resource，通过 reconcile 更新 status、
+  安排后续检查，并产生由 Baton 接管的 Plugin Output。
+- **Manager 是运行编排边界**：负责注册、启动顺序、队列、容量、定时器、错误和关闭，不承载
+  Plugin 的领域判断。
+
 Plugin 的扩展点收束为少量明确能力：
 
 | API | 作用 | 返回或产生 |
@@ -376,17 +395,17 @@ Reconcile 是 Controller 的处理语义，不意味着 Plugin 必须拥有可�
 和外部对象发现使用两类 Controller Source。无法表达成 desired state 的独立命令出现后再增加
 Action，不恢复平行的 Monitor 状态机。
 
-Resource Source 使用
+`Source` 使用
 `type: "resource" + sourceId + start(context)`。`start` 先完成初始发现并安装文件监听、webhook
-channel 等实时订阅，再返回 ready；期间及后续通过 `context.emit(seed)` 贡献该 Controller
-管理的 Resource。Baton 统一 materialize 缺失对象并按稳定 key 入队；重复的相同 seed 是幂等
+channel 等实时订阅，再返回 ready；期间及后续通过 `context.emit(resource)` 贡献该 Controller
+管理的 Resource。Baton 统一 materialize 缺失对象并按稳定 key 入队；重复的相同值是幂等
 wake，试图隐式改变既有 spec 则报 Source failure。Source 只属于当前 Binding，关闭时
-`context.signal` 被 abort。Resource Source 不能挂到 Baton-owned 只读 kind。
+`context.signal` 被 abort。resource Source 不能挂到 Baton-owned 只读 kind。
 
-cron Source 使用 `type: "cron" + sourceId + cron + timeZone`，只负责周期性枚举并唤醒该
-Controller 的当前 Resource。Source 不修改 status、不产生 Plugin Output，也不把 signal 写成
-领域 Event，具体状态仍由逐 Resource 的 `reconcile` 收敛。重启后 cron 从当前时间的下一次
-occurrence 继续，不补放历史 tick；关闭 TUI 后仍需准时运行时再引入 daemon。
+`CronSource` 使用 `type: "cron" + sourceId + cron + timeZone`，只负责周期性枚举并唤醒
+该 Controller 的当前 Resource。Source 不修改 status、不产生 Plugin Output，也不把 signal
+写成领域 Event，具体状态仍由逐 Resource 的 `reconcile` 收敛。重启后 cron 从当前时间的
+下一次 occurrence 继续，不补放历史 tick；关闭 TUI 后仍需准时运行时再引入 daemon。
 
 Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多一个通用 Board 条目：
 
@@ -588,7 +607,7 @@ reconcile。Baton-owned Resource 来自当前 Session 的不可变 Event Ledger�
 ```ts
 interface Controller<TSpec, TStatus> {
   resourceType: ResourceType;
-  sources?: ControllerSource[];
+  sources?: ControllerSource<TSpec>[];
   maxConcurrency?: number;
   reconcile(
     baton: Readonly<BatonSnapshot>,
@@ -667,7 +686,7 @@ Manager 使用按 key 的指数退避并把下一次 retry 同样写入内部 `n
 time 不反写 Resource；进程内仍使用相同 due queue，重启后由 ledger 全量重放再次入队。不引入语义
 模糊的 `requeue: boolean`。
 
-Controller 的 Resource Source 负责初始发现和实时事件到目标 Resource key 的映射；初始
+Controller 的 resource Source 负责初始发现和实时事件到目标 Resource key 的映射；初始
 Source ready 后，Baton 才对该 Controller 的当前对象执行 initial reconcile。cron Source
 表达与单次 reconcile 结果无关的固定周期职责，例如每五分钟检查活跃 PR 状态；Baton 使用显式
 IANA `timeZone` 计算 occurrence，并枚举该 Controller 的当前 Resource。两类 Source 与
@@ -740,7 +759,7 @@ Operator 模型可以帮助区分这些职责，但 Board 不直接等于 CRD：
 | CR | 一个具体的 Resource，例如某次 ReqLoopRun |
 | spec / status | 人认可的 Loop Contract / Controller 观测状态 |
 | Controller / Controller | Baton-owned kind Controller 或 Controller 中的 `reconcile()` |
-| watch / work queue | Controller Resource Source、Resource 变化与 keyed reconcile queue |
+| watch / work queue | Controller resource Source、Resource 变化与 keyed reconcile queue |
 | dynamic recheck / periodic resync | `RequeueAfter` → 持久化内部 schedule / Controller cron Source |
 | API mutation | Controller 更新 status、调用 Plugin Connector |
 | kubectl / status view | Board presentation |
@@ -869,7 +888,7 @@ Proposal 重建。Baton-owned Resource 不在 `plugins/` 下另存副本。
    编辑并提交 proposed input 后驱动 Harness；Controller 的 `present()` 已接入可选右侧 Sidecar。
    内置 Session 与 Plugin 已通过同一个 ContextProvider Registry 接入分组 `@` 搜索和单 turn
    急切上下文；后续再把需要可靠水位的来源接入持久 Resource Context source。
-7. Resource Source 已提供初始发现、实时订阅和目标 Resource materialize；reqloop 可直接接入
+7. resource Source 已提供初始发现、实时订阅和目标 Resource materialize；reqloop 可直接接入
    devloop 文件变化。无法表达成 desired state 的独立命令出现后再接 Action，不给 Plugin
    预造 Monitor 或私有 timer。
 8. 真实 loop 证明必须由 Controller 主动启动 Harness 后，再设计受控调用；首期只允许用户把

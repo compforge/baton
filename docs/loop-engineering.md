@@ -343,8 +343,8 @@ Event Ledger，再作为当前 Resource 的 Snapshot 输入触发下一次 recon
 due time 只存在于进程队列，重启时由 ledger replay 再次 enqueue。错误都由 Baton 退避重试，
 空结果等待新事实。
 
-Resource Source 把初始发现、文件监听、webhook channel 等外部 signal 映射为所属 Controller
-的 Resource seed/key；Source ready 后才执行 initial reconcile。无法表达成 desired state 的
+resource Source 把初始发现、文件监听、webhook channel 等外部 signal 映射为所属 Controller
+的 Resource input/key；Source ready 后才执行 initial reconcile。无法表达成 desired state 的
 独立命令出现后再增加 Action。关闭 TUI 后仍要求实时推进时，再让 daemon 复用同一 Resource
 store 和 reconcile queue。
 
@@ -675,7 +675,7 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
 18. Project、BatonSession 与 HarnessTarget 分别承担会话组织、loop/历史归属和执行位置，不能
     继续由 cwd、Harness 名称或隐式“当前值”混用。
 19. Baton core 不内建通用 LoopRun；具体 run、checkpoint 和完成条件由领域 Plugin 拥有。
-20. Controller Resource Source 负责初始发现、实时订阅和目标 Resource materialize；cron
+20. Controller resource Source 负责初始发现、实时订阅和目标 Resource materialize；cron
     Source 表达固定周期 resync，`requeueAfter` 表达单个 Resource 动态决定的一次性重查。
     三者最终都只 enqueue 同一 keyed reconcile；Source 不更新 status 或产生 Output，只在
     Binding 活跃时运行，关闭 TUI 后的准时执行留给 daemon。
@@ -691,7 +691,7 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
    排队、steer 或取消？
 6. Board scope 与 resource reference 如何设计，才能支持多 repo 和多个并行 loop？
 7. Resource 的 identity、spec/status schema、status patch 冲突和 migration 如何定义？
-8. Resource Source 的可靠性或实时性达到什么指标后，应由 Baton daemon 承载？
+8. resource Source 的可靠性或实时性达到什么指标后，应由 Baton daemon 承载？
 9. 不同 Harness 分别用 custom event、hook 还是 `baton emit` 传递 DevelopmentOutcome，才能
     兼顾原生能力、可靠性和最小耦合？
 10. Harness 对“已接收工作”的权威边界分别是什么，哪些 Harness 能原生查询并收敛

@@ -24,7 +24,10 @@ import {
   type BatonSnapshot,
 } from "./baton-snapshot.ts";
 import { validatePluginOutput } from "./output.ts";
-import type { ControllerSource } from "./package.ts";
+import type {
+  ControllerSource,
+  CronSource,
+} from "./package.ts";
 
 export const BATON_TURN_RESOURCE_KIND = BATON_TURN_RESOURCE_TYPE.kind;
 
@@ -262,7 +265,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.sources = Object.freeze([...(options.sources ?? [])]);
     if (this.sources.some((source) => source.type === "resource")) {
       throw new Error(
-        "Controller Resource Sources cannot materialize Baton-owned Resources",
+        "Controller resource Sources cannot materialize Baton-owned Resources",
       );
     }
     this.resources.list(options.resourceKind);
@@ -339,11 +342,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     return this.queue.enqueue(Object.freeze({ ...key, resourceOwner: "baton" }));
   }
 
-  cronSources(): readonly Extract<ControllerSource, { type: "cron" }>[] {
+  cronSources(): readonly CronSource[] {
     return this.sources.filter(
-      (
-        source,
-      ): source is Extract<ControllerSource, { type: "cron" }> =>
+      (source): source is CronSource =>
         source.type === "cron",
     );
   }

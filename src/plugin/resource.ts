@@ -243,7 +243,7 @@ export class PluginResourceStore {
         !isDeepStrictEqual(current.metadata.annotations, annotations)
       ) {
         throw new Error(
-          `Controller Source seed conflicts with existing Resource: ${type.kind}/${name}`,
+          `Controller Source input conflicts with existing Resource: ${type.kind}/${name}`,
         );
       }
       return current;

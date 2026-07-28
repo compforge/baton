@@ -572,13 +572,13 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("Resource Sources finish initial sync before reconciling discovered Resources", async () => {
+  test("resource Sources finish initial sync before reconciling discovered Resources", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
     const ready = deferred();
     const runs: string[] = [];
     const failures: string[] = [];
-    let emit!: (seed: { name: string; spec: Spec }) => void;
+    let emit!: (resource: { name: string; spec: Spec }) => void;
     let sourceSignal!: { readonly aborted: boolean };
     const manager = new Manager({
       proposals: proposalStore(root),
@@ -639,7 +639,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("Resource Source startup failure does not block known Resources", async () => {
+  test("resource Source startup failure does not block known Resources", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
     createResource(resources, "ReqLoopRun", "run_known");

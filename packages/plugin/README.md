@@ -138,13 +138,13 @@ reference and submits the turn.
 
 Controller Sources have two narrow roles:
 
-- A Resource Source performs initial discovery, installs live subscriptions,
-  and calls `emit(seed)` when it observes a Resource owned by that Controller.
-  Baton materializes a missing Resource, treats an identical repeated seed as a
+- A `Source` performs initial discovery, installs live subscriptions,
+  and calls `emit(resource)` when it observes a Resource owned by that Controller.
+  Baton materializes a missing Resource, treats an identical repeated value as a
   keyed wakeup, and rejects an implicit spec change. `start()` resolves only
   after the initial scan and subscription are ready; the owning Binding aborts
   its signal on close.
-- A cron Source periodically enqueues every current Resource owned by that
+- A `CronSource` periodically enqueues every current Resource owned by that
   Controller.
 
 Both paths use the same keyed reconcile queue as Resource changes and

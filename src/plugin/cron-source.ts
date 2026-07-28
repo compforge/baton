@@ -1,9 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
 
-import type {
-  ControllerSource,
-  CronSource,
-} from "@qiankun01/baton-plugin";
+import type { CronSource } from "@qiankun01/baton-plugin";
 import type { ReconcileScope } from "./controller.ts";
 import {
   reconcileScopeId,
@@ -58,49 +55,6 @@ export function nextCronSourceAt(
   }
 }
 
-export function validateControllerSources<TSpec>(
-  sources: readonly ControllerSource<TSpec>[] | undefined,
-  currentDate: Date,
-): void {
-  if (!sources) return;
-  const ids = new Set<string>();
-  for (const source of sources) {
-    if (!source.sourceId.trim()) {
-      throw new Error("Controller sourceId must not be empty");
-    }
-    if (ids.has(source.sourceId)) {
-      throw new Error(
-        `Controller sourceId already registered: ${source.sourceId}`,
-      );
-    }
-    ids.add(source.sourceId);
-    if (source.type === "resource") {
-      if (typeof source.start !== "function") {
-        throw new Error(
-          `Controller Resource Source ${source.sourceId} must provide start()`,
-        );
-      }
-      continue;
-    }
-    if (source.type !== "cron") {
-      throw new Error(
-        `unsupported Controller source type: ${String(source.type)}`,
-      );
-    }
-    if (!source.cron.trim()) {
-      throw new Error(
-        `Controller cron source ${source.sourceId} cron must not be empty`,
-      );
-    }
-    if (!source.timeZone.trim()) {
-      throw new Error(
-        `Controller cron source ${source.sourceId} timeZone must not be empty`,
-      );
-    }
-    nextCronSourceAt(source, currentDate);
-  }
-}
-
 /**
  * Process-local cron Sources. A tick is a coalescible signal: it is reduced to
  * one Controller scope before Manager enumerates Resource keys into its queue.
@@ -116,14 +70,12 @@ export class CronSourceQueue {
     this.onDue = options.onDue;
   }
 
-  register<TSpec>(
+  register(
     scope: ReconcileScope,
-    sources: readonly ControllerSource<TSpec>[],
+    sources: readonly CronSource[],
   ): void {
     const now = new Date(timestamp(this.now));
-    validateControllerSources(sources, now);
     for (const source of sources) {
-      if (source.type !== "cron") continue;
       const id = scheduleEntryId(scope, source.sourceId);
       if (this.entries.has(id)) {
         throw new Error(

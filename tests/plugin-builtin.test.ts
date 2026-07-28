@@ -182,7 +182,7 @@ describe("Baton Resource index", () => {
     await manager.close();
   });
 
-  test("rejects Resource Sources for read-only Baton Resources", async () => {
+  test("rejects resource Sources for read-only Baton Resources", async () => {
     const session = testSession();
     const instances = new PluginInstanceStore({ session });
     const proposals = new ProposalStore({ session });
@@ -220,7 +220,7 @@ describe("Baton Resource index", () => {
     await manager.start();
     expect(manager.isInstanceActive("router_default")).toBe(false);
     expect(String(failures[0])).toContain(
-      "Resource Sources cannot materialize Baton-owned Resources",
+      "resource Sources cannot materialize Baton-owned Resources",
     );
     await manager.close();
   });

@@ -48,8 +48,8 @@ import {
 } from "./queue.ts";
 import {
   CronSourceQueue,
-  validateControllerSources,
 } from "./cron-source.ts";
+import { validateSources } from "./source.ts";
 import {
   PluginResourceStore,
   resourceTypeKey,
@@ -164,7 +164,7 @@ export interface ManagerOptions {
   onActivationError?(failure: PluginActivationFailure): void;
   /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
-  /** Controller Resource Source initial/live observation failure. */
+  /** Controller resource Source initial/live observation failure. */
   onControllerSourceError?(failure: ControllerSourceFailure): void;
 }
 
@@ -383,7 +383,7 @@ export class Manager {
         `plugin Controller batonSessionId must be ${this.proposals.batonSessionId}, got ${definition.store.batonSessionId}`,
       );
     }
-    validateControllerSources(definition.sources, this.now());
+    validateSources(definition.sources, this.now());
     const controller = new Controller({
       ...definition,
       snapshot: (key) => this.snapshotFor(key),
@@ -419,7 +419,7 @@ export class Manager {
         "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
-    validateControllerSources(definition.sources, this.now());
+    validateSources(definition.sources, this.now());
     const controller = new BuiltinController({
       ...definition,
       resources: this.batonResources,
@@ -1030,7 +1030,7 @@ export class Manager {
     const sources = pluginController.sources ?? [];
     if (sources.some((source) => source.type === "resource")) {
       throw new Error(
-        "Controller Resource Sources cannot materialize Baton-owned Resources",
+        "Controller resource Sources cannot materialize Baton-owned Resources",
       );
     }
     const cronSources = sources.filter(

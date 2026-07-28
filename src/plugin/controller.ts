@@ -1,9 +1,8 @@
 import type {
   Controller as PluginController,
   ControllerSource,
+  CronSource,
   Output as PluginInteractionOutput,
-  ResourceSource,
-  ResourceSourceContext,
   ResourceRef,
   ResourceType,
 } from "@qiankun01/baton-plugin";
@@ -23,6 +22,7 @@ import {
   type PluginOutput,
   validatePluginOutput,
 } from "./output.ts";
+import { ControllerSources } from "./source.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
 
@@ -196,12 +196,8 @@ export class Controller<TSpec, TStatus> {
   private readonly onInteraction: NonNullable<
     ControllerOptions<TSpec, TStatus>["onInteraction"]
   >;
-  private readonly onSourceResource:
-    ControllerOptions<TSpec, TStatus>["onSourceResource"];
   private readonly queue: ReconcileQueue;
-  private sourceAbort?: AbortController;
-  private sourceStart?: Promise<void>;
-  private sourcesReady = false;
+  private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private closed = false;
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
@@ -209,7 +205,6 @@ export class Controller<TSpec, TStatus> {
     this.store = options.store;
     this.resourceType = Object.freeze({ ...options.resourceType });
     this.reconcileResource = options.reconcile;
-    this.sources = Object.freeze([...(options.sources ?? [])]);
     this.present = options.present;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
@@ -222,7 +217,6 @@ export class Controller<TSpec, TStatus> {
       (() => {
         throw new Error("plugin Controller has no Interaction publisher");
       });
-    this.onSourceResource = options.onSourceResource;
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -243,6 +237,22 @@ export class Controller<TSpec, TStatus> {
       maxConcurrency: options.maxConcurrency,
       onError: options.onReconcileError,
     });
+    this.controllerSources = new ControllerSources({
+      sources: options.sources,
+      store: this.store,
+      resourceType: this.resourceType,
+      executeWithCapacity: this.executeWithCapacity,
+      onResource: options.onSourceResource,
+      enqueue: (resourceId) => {
+        void this.enqueue({
+          ...this.scope,
+          resourceId,
+        }).catch(() => {
+          // Reconcile failure reporting and retry are owned by Manager.
+        });
+      },
+    });
+    this.sources = this.controllerSources.all;
   }
 
   enqueue(key: ReconcileKey): Promise<void> {
@@ -259,83 +269,16 @@ export class Controller<TSpec, TStatus> {
   async startSources(
     onError: (sourceId: string, error: unknown) => void,
   ): Promise<void> {
-    if (!this.sourceStart) {
-      this.sourceStart = this.startSourcesOnce(onError);
-    }
-    await this.sourceStart;
+    await this.controllerSources.start(onError);
   }
 
-  private async startSourcesOnce(
-    onError: (sourceId: string, error: unknown) => void,
-  ): Promise<void> {
-    const sources = this.sources.filter(
-      (source): source is ResourceSource<TSpec> => source.type === "resource",
-    );
-    if (sources.length === 0) {
-      this.sourcesReady = true;
-      return;
-    }
-    const abort = new AbortController();
-    this.sourceAbort = abort;
-    await Promise.all(
-      sources.map(async (source) => {
-        const reportError = (error: unknown): void => {
-          if (this.closed || abort.signal.aborted) return;
-          try {
-            onError(source.sourceId, error);
-          } catch {
-            // Source diagnostics must not interrupt discovery or live delivery.
-          }
-        };
-        const emit: ResourceSourceContext<TSpec>["emit"] = (seed): void => {
-          if (this.closed || abort.signal.aborted) return;
-          try {
-            const resource = this.store.ensure<TSpec, TStatus>({
-              type: this.resourceType,
-              ...seed,
-            });
-            try {
-              this.onSourceResource?.(resource);
-            } catch {
-              // Resource is durable; projection invalidation is best-effort.
-            }
-            if (!this.sourcesReady) {
-              return;
-            }
-            this.enqueueSourceResource(resource.metadata.name);
-          } catch (error) {
-            reportError(error);
-          }
-        };
-        try {
-          await this.executeWithCapacity(async () => {
-            if (this.closed || abort.signal.aborted) return;
-            await source.start(Object.freeze({
-              signal: abort.signal,
-              emit,
-              reportError,
-            }));
-          });
-        } catch (error) {
-          reportError(error);
-        }
-      }),
-    );
-    this.sourcesReady = true;
-  }
-
-  cronSources(): readonly Extract<ControllerSource<TSpec>, { type: "cron" }>[] {
-    return this.sources.filter(
-      (
-        source,
-      ): source is Extract<ControllerSource<TSpec>, { type: "cron" }> =>
-        source.type === "cron",
-    );
+  cronSources(): readonly CronSource[] {
+    return this.controllerSources.cron();
   }
 
   close(): void {
     this.closed = true;
-    this.sourceAbort?.abort();
+    this.controllerSources.close();
     this.queue.close();
   }
 
@@ -448,15 +391,6 @@ export class Controller<TSpec, TStatus> {
         };
       },
     );
-  }
-
-  private enqueueSourceResource(resourceId: string): void {
-    void this.enqueue({
-      ...this.scope,
-      resourceId,
-    }).catch(() => {
-      // Reconcile failure reporting and retry are owned by Manager.
-    });
   }
 
   private assertOwns(key: ReconcileKey): void {
