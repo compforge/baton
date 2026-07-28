@@ -20,7 +20,7 @@ import { SessionStore } from "../src/store/store.ts";
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
-  kind: "ReqLoopRun",
+  kind: "Requirement",
 } as const;
 
 function resourceType(kind: string) {
@@ -63,7 +63,7 @@ function key(pluginInstanceId: string, resourceId: string) {
     batonSessionId: "bs_test",
     pluginInstanceId,
     resourceApiVersion: REQ_LOOP_RUN.apiVersion,
-    resourceKind: "ReqLoopRun",
+    resourceKind: "Requirement",
     resourceId,
   };
 }
@@ -280,12 +280,12 @@ describe("Plugin Package lifecycle", () => {
         id: JSON.stringify([
           "reqloop_default",
           REQ_LOOP_RUN.apiVersion,
-          "ReqLoopRun",
+          "Requirement",
           "run_1",
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
-        resourceKind: "ReqLoopRun",
+        resourceKind: "Requirement",
         resourceId: "run_1",
         title: "ship it",
         status: "pending",

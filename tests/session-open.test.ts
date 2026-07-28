@@ -243,7 +243,7 @@ describe("crash recovery on open", () => {
           decisionKey: "associate-pr",
           resource: {
             apiVersion: "reqloop.baton.dev/v1alpha1",
-            kind: "ReqLoopRun",
+            kind: "Requirement",
             namespace: "reqloop_default",
             name: "run_1",
             uid: "pr_resource_uid",

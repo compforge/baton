@@ -187,7 +187,7 @@ GC、finalizer、label selector 或通用关系索引。
 
 一个 Controller 管理一个 `resourceType`（`apiVersion + kind`），同一 BatonSession 内可以同时
 存在多份该类型的
-Resource；例如 reqloop 可以同时维护多个仍存活的 `ReqLoopRun`。Baton 不为 Resource 定义
+Resource；例如 reqloop 可以同时维护多个仍活跃的 `Requirement`。Baton 不为 Resource 定义
 通用 `phase` 或 `metadata.lifecycle`：业务阶段属于 Plugin 自己的 `status`，是否出现在 Board
 则由 Controller 的 `present(resource)` 决定。
 
@@ -413,14 +413,17 @@ Controller 可以附带 `present(resource)`，把每份 Resource 派生为至多
 context.registerController({
   resourceType: {
     apiVersion: "reqloop.baton.dev/v1alpha1",
-    kind: "ReqLoopRun",
+    kind: "Requirement",
   },
   reconcile,
   present(resource) {
-    if (resource.status.phase === "closed") return undefined;
+    if (
+      resource.status.externalState === "completed" ||
+      resource.status.externalState === "closed"
+    ) return undefined;
     return {
       title: resource.spec.title,
-      status: resource.status.phase,
+      status: resource.status.externalState ?? "unknown",
     };
   },
 });
@@ -756,7 +759,7 @@ Operator 模型可以帮助区分这些职责，但 Board 不直接等于 CRD：
 |---|---|
 | Pod 等内置对象 | Event Ledger 派生出的只读 Baton-owned Resource，例如 `baton.dev/v1alpha1, Kind=Turn` |
 | CRD | Plugin 声明的 Resource type 与 `spec/status` schema |
-| CR | 一个具体的 Resource，例如某次 ReqLoopRun |
+| CR | 一个具体的 Resource，例如某项 Requirement |
 | spec / status | 人认可的 Loop Contract / Controller 观测状态 |
 | Controller / Controller | Baton-owned kind Controller 或 Controller 中的 `reconcile()` |
 | watch / work queue | Controller resource Source、Resource 变化与 keyed reconcile queue |

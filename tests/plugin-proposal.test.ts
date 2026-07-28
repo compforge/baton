@@ -24,7 +24,7 @@ function draft(
       batonSessionId: "bs_test",
       pluginInstanceId: "reqloop_default",
       resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-      resourceKind: "ReqLoopRun",
+      resourceKind: "Requirement",
       resourceId: "run_1",
     },
     basedOnGeneration,

@@ -28,7 +28,7 @@ describe("plugin Interaction Store", () => {
       batonSessionId: handle.id,
       pluginInstanceId: "reqloop_default",
       resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-      resourceKind: "ReqLoopRun",
+      resourceKind: "Requirement",
       resourceId: "run_1",
     };
     const resource = {
