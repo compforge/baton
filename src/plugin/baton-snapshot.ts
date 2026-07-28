@@ -5,7 +5,7 @@ import type {
   Interaction,
   InteractionRequester,
 } from "../interaction/types.ts";
-import type { Snapshot as PluginInteractionSnapshot } from "@qiankun01/baton-plugin";
+import type { Snapshot as PluginInteractionSnapshot } from "@compforge/baton-plugin";
 import type { SessionState } from "../store/reduce.ts";
 
 type SnapshotReadonly<T> =

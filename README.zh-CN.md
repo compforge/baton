@@ -66,13 +66,13 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 使用 npm 安装 baton。此外需要安装并登录至少一个受支持的 agent（[Codex CLI](https://github.com/openai/codex) / [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)）。
 
 ```bash
-npm install -g @qiankun01/baton
+npm install -g @compforge/baton
 ```
 
 也可以不做全局安装，直接运行一次：
 
 ```bash
-npx @qiankun01/baton
+npx @compforge/baton
 ```
 
 首次运行会生成 `~/.baton/config.yaml`：

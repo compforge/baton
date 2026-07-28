@@ -1,4 +1,4 @@
-import type { ContextProvider } from "@qiankun01/baton-plugin";
+import type { ContextProvider } from "@compforge/baton-plugin";
 
 const LOCAL_KIND = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const REFERENCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;

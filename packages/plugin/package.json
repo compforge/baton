@@ -1,5 +1,5 @@
 {
-  "name": "@qiankun01/baton-plugin",
+  "name": "@compforge/baton-plugin",
   "version": "0.1.14",
   "description": "Public protocol and authoring types for Baton plugins.",
   "type": "module",

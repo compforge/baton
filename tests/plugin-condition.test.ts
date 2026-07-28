@@ -6,7 +6,7 @@ import {
 import type {
   ConditionedStatus,
   ResourceCondition,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 interface ExampleStatus extends ConditionedStatus {
   readonly phase: "active" | "done";

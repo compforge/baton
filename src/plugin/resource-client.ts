@@ -2,7 +2,7 @@ import type {
   Resource,
   ResourceClient as PublicResourceClient,
   ResourceType,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 import { PluginResourceStore } from "./resource.ts";
 

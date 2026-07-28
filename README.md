@@ -66,13 +66,13 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, 
 Install baton with npm. You also need at least one supported agent installed and authenticated ([Codex CLI](https://github.com/openai/codex) / [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)).
 
 ```bash
-npm install -g @qiankun01/baton
+npm install -g @compforge/baton
 ```
 
 Or run it once without a global install:
 
 ```bash
-npx @qiankun01/baton
+npx @compforge/baton
 ```
 
 On first run, baton creates `~/.baton/config.yaml`:

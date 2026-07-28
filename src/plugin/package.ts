@@ -30,7 +30,7 @@ import type {
   ToastTone,
   UpdateEvent,
   Watch,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 import type { PluginInstance } from "./instance.ts";
 import type { ResourceClient } from "./resource-client.ts";
 import { validateResourceType } from "./resource.ts";
@@ -67,13 +67,13 @@ export type {
   ToastTone,
   UpdateEvent,
   Watch,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 export {
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   enqueueRequestsFromMapFunc,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 type ResourceRegistrar = <TSpec, TStatus>(
   controller: Controller<TSpec, TStatus>,

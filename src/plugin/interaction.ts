@@ -1,7 +1,7 @@
 import type {
   Outcome as PublicInteractionOutcome,
   Snapshot as PublicInteractionSnapshot,
-} from "@qiankun01/baton-plugin";
+} from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import type {

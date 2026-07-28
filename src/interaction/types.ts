@@ -5,7 +5,7 @@
  * kind。Event source 表示谁报告了生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
-import type { ResourceRef } from "@qiankun01/baton-plugin";
+import type { ResourceRef } from "@compforge/baton-plugin";
 
 export type InteractionRequester =
   | { type: "harness"; harnessTargetId: string }
