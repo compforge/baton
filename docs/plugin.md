@@ -143,6 +143,59 @@ host 边界校验，不能信任 Runner 自报。
 升级先解析并校验新 Package，再关闭旧 Binding、切换版本并激活；失败时恢复旧版本与旧
 Binding。Resource schema migration 必须由新版本显式完成，不能由 Manager 猜测。
 
+### 2.6 Plugin 持久化与数据目录
+
+Plugin 自写文件按 `global`、`project`、`session`、`instance` 四种 scope 归属，生命周期依次
+收窄；`instance` 一定属于某个 BatonSession。Baton Project 由 cwd 标识，从 Plugin 视角就是
+同一 workspace 下跨 Session 的持久化边界。Manager 激活 Binding 前创建目录，再通过
+`PluginActivationContext.dataDirs` 传给进程内 Package 或 Runner：
+
+```text
+~/.baton/
+├── plugins/<encoded-plugin-id>/                         # global
+└── projects/<project-key>/
+    ├── plugins/<encoded-plugin-id>/                     # project/workspace
+    └── sessions/<baton-session-id>/
+        └── plugins/
+            ├── <encoded-plugin-id>/                     # session
+            └── <plugin-instance-id>/                    # instance
+```
+
+```ts
+const { global, project, session, instance } = context.dataDirs;
+```
+
+| scope | owner 与生命周期 | 适合 | 不适合 |
+|---|---|---|---|
+| `global` | 当前用户的 Plugin；跨 Project、跨 Session、跨 Package 版本保留 | 用户级 Connector 配置、账号无关的 Plugin 数据 | workspace observation、Session 决议 |
+| `project` | Plugin + Baton Project；同一 cwd/workspace 的 Session 共享 | Repository/PR observation checkpoint、workspace 索引 | 其它 cwd 的状态、Session 私有进度 |
+| `session` | Plugin + BatonSession；同 Plugin 的 Session 数据 | Session 级配置、只对当前 Session 有意义的共享附件或中间状态 | 跨 Session cursor、某个 Instance 的私有执行状态 |
+| `instance` | PluginInstance；一定隶属当前 BatonSession | 单次 Binding/Instance 的私有执行快照、Connector 局部状态 | 用户配置、跨 Instance 协作事实 |
+
+Plugin 配置只定义到 `global`、`project`、`session` 三层，不增加 Instance 级配置；更窄 scope
+的配置覆盖更宽 scope，具体 schema 与合并策略由 Plugin 定义。运行数据可以按需写入全部四层。
+前三层目录按 `pluginId` 隔离，不按 Package version 或运行时 Instance id 分叉；`instance`
+目录按 `pluginInstanceId` 隔离。Baton 只约定各 scope 的根目录，Plugin 自己决定是否在其中
+组织 `data/`、`cache/`、`state/` 等子目录；Package version 不参与路径。
+
+文件名和内容由 Plugin 拥有，但必须遵守：
+
+1. 不自行拼接 `~/.baton`、Project key、Session id 或其它 Plugin 的目录，只使用
+   `context.dataDirs`；
+2. 持久文件带 schema version，写入使用临时文件 + atomic rename；`project` 可能被多个
+   Session Runner 并发写，Plugin 还必须使用跨进程文件锁；
+3. 可安全丢失和重建的内容放 Plugin 自己的 `cache/` 子目录；会改变准入、水位或恢复行为的
+   checkpoint 属于持久状态，不能伪装成 cache；
+4. Event Ledger、Resource、Proposal、Interaction 等 Baton 事实继续使用宿主 API 和专用
+   Store，不能复制到私有 JSON 形成第二真相源；
+5. Plugin 日志继续调用 `context.logger`，由 Baton 写入当前 `session.log` 并补齐 Plugin
+   provenance；不要直接在数据目录另建日志真相源；
+6. secret 不写日志、Resource、Project 或 Session 数据。普通配置文件即使权限受限也不等于
+   secret store；正式 SecretBinding 落地前优先使用环境变量或既有凭证管理器。
+
+禁用、reload 或切换 Package version 不删除上述目录。Instance 与 Session 数据随 Session
+归档或删除；Project 数据随对应 cwd/workspace 保留；global 数据只有显式 purge 才应删除。
+
 ## 3. 面向三方开发者：Plugin authoring
 
 ### 3.1 依赖与入口

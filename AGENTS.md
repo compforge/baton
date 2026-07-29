@@ -4,8 +4,8 @@
 
 baton 是一个 terminal-native 的 Loop Engineering 控制面，也是跨 coding agent 的统一工作区。
 用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
-Session 的 Plugin 数据与执行；Project 只按 cwd 组织和发现 Session。Claude Code 和 Codex 是首批
-内置 Harness，不是封闭支持列表。
+Session 的 Plugin 数据与执行；Project 按 cwd 组织和发现 Session，也承载同一 workspace
+跨 Session 的 Plugin 私有数据。Claude Code 和 Codex 是首批内置 Harness，不是封闭支持列表。
 
 baton 按三层协作：
 
@@ -52,8 +52,9 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 ## 关键约定
 
-1. **作用域决定 owner**：Project 只组织 Session；BatonSession 拥有正典历史和 Plugin 数据；
-   HarnessTarget 是配置、调度与状态坐标；HarnessSession 只是 Target 启动的原生执行状态。
+1. **作用域决定 owner**：Project 组织同 cwd 的 Session，并拥有 workspace 级 Plugin 私有数据；
+   BatonSession 拥有正典历史和 session 级 Plugin 数据；HarnessTarget 是配置、调度与状态坐标；
+   HarnessSession 只是 Target 启动的原生执行状态。
    Binding、授权、偏好、上下文水位与投影状态按明确的 Session / Target 身份隔离，未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
 2. **事实与投影分层**：Event Ledger 是 Session 执行与感知历史的真相源，Plugin Resource

@@ -1,4 +1,5 @@
 import type {
+  PluginDataDirectories,
   PluginInstance,
   PluginSessionContext,
 } from "@compforge/baton-plugin";
@@ -36,6 +37,7 @@ export class PluginSupervisor {
     entry: PluginPackageEntry,
     instance: PluginInstance,
     session: PluginSessionContext,
+    dataDirs: PluginDataDirectories,
     callbacks: PluginRunnerCallbacks,
   ): Promise<ActivePluginRunner> {
     if (this.closed) throw new Error("Plugin Supervisor is closed");
@@ -52,7 +54,12 @@ export class PluginSupervisor {
     });
     this.active.add(client);
     try {
-      const activation = await client.activate(entry, instance, session);
+      const activation = await client.activate(
+        entry,
+        instance,
+        session,
+        dataDirs,
+      );
       let active = true;
       return Object.freeze({
         client,

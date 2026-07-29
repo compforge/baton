@@ -22,6 +22,26 @@ export interface PluginSessionContext {
   readonly cwd?: string;
 }
 
+/**
+ * Host-created writable directories for Plugin-private files.
+ *
+ * Scope, rather than Package version, owns each path so upgrades can resume
+ * existing state. Resource and Proposal facts still use their dedicated APIs.
+ */
+export interface PluginDataDirectories {
+  /** Shared by this Plugin across all Baton Projects and Sessions. */
+  readonly global: string;
+  /**
+   * Shared across Sessions in the current Baton Project. From a Plugin's
+   * perspective this is its workspace scope.
+   */
+  readonly project: string;
+  /** Private to this Plugin in the current BatonSession. */
+  readonly session: string;
+  /** Private to this runtime PluginInstance, which always belongs to a Session. */
+  readonly instance: string;
+}
+
 export type ToastTone = "info" | "success" | "warning" | "error";
 
 export interface ToastMessage {
@@ -56,6 +76,7 @@ export interface PluginLogger {
 export interface PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
+  readonly dataDirs: PluginDataDirectories;
   readonly resources: ResourceClient;
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;

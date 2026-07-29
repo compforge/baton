@@ -1,4 +1,5 @@
 import type {
+  PluginDataDirectories,
   PluginInstance,
   PluginLogEntry,
   PluginSessionContext,
@@ -80,6 +81,7 @@ export type RunnerRequest =
       readonly entry: PluginPackageEntry;
       readonly instance: PluginInstance;
       readonly session: PluginSessionContext;
+      readonly dataDirs: PluginDataDirectories;
     }
   | {
       readonly method: "invoke";

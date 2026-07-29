@@ -34,6 +34,7 @@ function stores() {
   // must erase cleanly instead of resolving through Baton's dependency tree.
   cpSync(join(import.meta.dir, "fixtures", "process-plugin.ts"), entry);
   return {
+    root,
     instances: new PluginInstanceStore({ session }),
     proposals: new ProposalStore({ session }),
     entry,
@@ -73,7 +74,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("keeps the host responsive and withdraws registrations after a crash", async () => {
-    const { instances, proposals, entry } = stores();
+    const { root, instances, proposals, entry } = stores();
     instances.create({
       pluginInstanceId: "process_default",
       pluginId: "tests/process-plugin",
@@ -105,6 +106,39 @@ describe("Plugin Runner process boundary", () => {
     await manager.start();
     expect(activationFailures).toEqual([]);
     expect(manager.isInstanceActive("process_default")).toBe(true);
+    await expect(
+      manager.executeCommand("process-check", { argument: "data-dirs" }),
+    ).resolves.toEqual({
+      kind: "message",
+      text: JSON.stringify({
+        global: join(root, "plugins", "tests%2Fprocess-plugin"),
+        project: join(
+          root,
+          "projects",
+          "project",
+          "plugins",
+          "tests%2Fprocess-plugin",
+        ),
+        session: join(
+          root,
+          "projects",
+          "project",
+          "sessions",
+          "bs_runner",
+          "plugins",
+          "tests%2Fprocess-plugin",
+        ),
+        instance: join(
+          root,
+          "projects",
+          "project",
+          "sessions",
+          "bs_runner",
+          "plugins",
+          "process_default",
+        ),
+      }),
+    });
     const heartbeat = Bun.sleep(25).then(() => "heartbeat");
     const invocation = manager.executeCommand("process-check", {
       argument: "200",

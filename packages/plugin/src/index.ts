@@ -22,6 +22,7 @@ export type { ContextProvider } from "./context.ts";
 export type {
   PluginActivationContext,
   PluginConfig,
+  PluginDataDirectories,
   PluginInstance,
   PluginLogDetails,
   PluginLogEntry,

@@ -9,6 +9,12 @@ const plugin: PluginPackage = {
       name: "process-check",
       description: "Exercise Plugin Runner process isolation",
       async execute(input) {
+        if (input.argument === "data-dirs") {
+          return {
+            kind: "message",
+            text: JSON.stringify(context.dataDirs),
+          };
+        }
         if (input.argument === "crash") {
           process.exit(17);
         }
