@@ -551,7 +551,7 @@ describe("BatonChatProtocol plugins command", () => {
 });
 
 describe("BatonChatProtocol streaming State", () => {
-  test("coalesces synchronous stream chunks into one timeline publication", async () => {
+  test("limits stream publications so composer rendering gets idle frames", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-stream-"));
     try {
       const store = new SessionStore(root);
@@ -572,6 +572,8 @@ describe("BatonChatProtocol streaming State", () => {
 
       expect(notifications).toBe(0);
       await Bun.sleep(50);
+      expect(notifications).toBe(0);
+      await Bun.sleep(75);
       expect(notifications).toBe(1);
       expect(protocol.stateStore.getState("timeline").items).toContainEqual(
         expect.objectContaining({ id: "m_stream", text: "one two three" }),
@@ -617,7 +619,7 @@ describe("BatonChatProtocol streaming State", () => {
       expect(protocol.stateStore.getState("timeline").items).toContainEqual(
         expect.objectContaining({ id: "m_stream", text: "latest output" }),
       );
-      await Bun.sleep(50);
+      await Bun.sleep(125);
       expect(notifications).toBe(1);
       await protocol.exit();
     } finally {

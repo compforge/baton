@@ -79,10 +79,10 @@ export {
 } from "./transcript.ts";
 export { runStatusLabel } from "./state.ts";
 
-// OpenTUI 以 30 FPS 绘制；逐 token 同步发布完整 State 只会让 React 重复重建 transcript，
-// 还会挤占 composer 的终端光标刷新。只合并高频、可安全追加的流式事件；Interaction、终态和
-// 完整快照仍立即发布，并顺带冲刷此前积累的 chunk，避免交互卡片被延迟。
-const STREAM_STATE_FRAME_MS = 33;
+// transcript 重排与终端整帧写入比 composer 的局部绘制重；若也按 renderer 的 30 FPS 持续
+// 发布，终端背压会让已进入 textarea buffer 的按键延迟显示。流式输出限制为 10 FPS，给输入
+// 绘制留出帧间空隙；Interaction、终态和完整快照仍立即发布，并冲刷此前积累的 chunk。
+const STREAM_STATE_FRAME_MS = 100;
 const PICKER_SEARCH_DEBOUNCE_MS = 250;
 const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "agent_message_chunk",
