@@ -21,7 +21,7 @@ export interface SourceContext<TSpec> {
     readonly labels?: Readonly<Record<string, string>>;
     readonly annotations?: Readonly<Record<string, string>>;
     readonly spec: TSpec;
-  }): void;
+  }): Promise<void>;
   /** Reports failures from callbacks that outlive start(). */
   reportError(error: unknown): void;
 }
@@ -38,7 +38,7 @@ export interface Source<TSpec = Record<string, unknown>> {
    * Performs the initial discovery and installs live subscriptions. Resolve
    * only after both are ready; keep long-lived work behind the abort signal.
    */
-  start(context: SourceContext<TSpec>): Promise<void> | void;
+  start(context: SourceContext<TSpec>): Promise<void>;
 }
 
 /** Baton-owned fixed resync schedule; Plugins do not implement its timer. */

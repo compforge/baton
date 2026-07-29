@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("Plugin Board presentation", () => {
-  test("presents at most one Board item per Resource and hides undefined results", () => {
+  test("presents at most one Board item per Resource and hides undefined results", async () => {
     const resources = store();
     resources.create({
       type: REQ_LOOP_RUN,
@@ -46,14 +46,14 @@ describe("Plugin Board presentation", () => {
       status: { phase: "closed" },
     });
 
-    expect(
+    await expect(
       presentBoardSource<{ title: string }, { phase: string }>({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceType: REQ_LOOP_RUN,
         list: () =>
           resources.list<{ title: string }, { phase: string }>(REQ_LOOP_RUN),
-        present(resource) {
+        async present(resource) {
           if (resource.status.phase === "closed") return undefined;
           return {
             title: resource.spec.title,
@@ -61,7 +61,7 @@ describe("Plugin Board presentation", () => {
           };
         },
       }),
-    ).toEqual([
+    ).resolves.toEqual([
       {
         id: JSON.stringify([
           "reqloop_default",
@@ -79,7 +79,7 @@ describe("Plugin Board presentation", () => {
     ]);
   });
 
-  test("isolates a broken Resource presentation as a diagnostic item", () => {
+  test("isolates a broken Resource presentation as a diagnostic item", async () => {
     const resources = store();
     resources.create({
       type: REQ_LOOP_RUN,
@@ -87,17 +87,17 @@ describe("Plugin Board presentation", () => {
       spec: { title: "Ship it" },
     });
 
-    expect(
+    await expect(
       presentBoardSource({
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
         resourceType: REQ_LOOP_RUN,
         list: () => resources.list(REQ_LOOP_RUN),
-        present() {
+        async present() {
           throw new Error("connector unavailable");
         },
       }),
-    ).toEqual([
+    ).resolves.toEqual([
       {
         id: JSON.stringify([
           "reqloop_default",

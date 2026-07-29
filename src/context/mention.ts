@@ -197,7 +197,7 @@ export function sessionContextProvider(
 ): ContextProvider {
   return {
     kind: "session",
-    search(query) {
+    async search(query) {
       const normalized = query.toLowerCase();
       return store
         .listSessions()
@@ -217,7 +217,7 @@ export function sessionContextProvider(
           detail: sessionDisplayTitle(session),
         }));
     },
-    provide(id, { maxChars }) {
+    async provide(id, { maxChars }) {
       if (id === options.excludeSessionId) return undefined;
       return buildSessionContext(store, id, maxChars);
     },

@@ -41,6 +41,7 @@ describe("PluginInstanceStore", () => {
     const instances = store(root);
     const created = instances.create({
       pluginId: "qiankun/reqloop",
+      marketplace: "reqloop",
       packageVersion: "1.2.0",
       config: { project: "baton" },
     });
@@ -49,6 +50,7 @@ describe("PluginInstanceStore", () => {
     expect(created).toMatchObject({
       batonSessionId: "bs_test",
       pluginId: "qiankun/reqloop",
+      marketplace: "reqloop",
       packageVersion: "1.2.0",
       enabled: true,
       config: { project: "baton" },

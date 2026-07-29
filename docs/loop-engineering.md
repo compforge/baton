@@ -137,7 +137,7 @@ devloop 属于 Harness Plugin：它规范 agent 在代码仓内完成开发、li
 
 外部系统不再对应另一种顶层运行角色。Plugin 用内部 Connector 隔离 Meego、Teambition 和不同
 部署平台，并由 Resource Controller 在已授权 `spec` 范围内调用；Connector 不进入 Baton
-manifest、runtime 或公共 Plugin API。这样安装、配置和运行都围绕同一个 PluginInstance，不再
+manifest、host 或公共 Plugin API。这样安装、配置和运行都围绕同一个 PluginInstance，不再
 为外部系统恢复一套平级身份。
 
 reqloop 作为独立 Marketplace 提供 Requirement Loop，保持可配置、可禁用、可独立升级的
@@ -556,8 +556,8 @@ devloop（Harness Plugin）
   Harness 调度；
 - **逐步退休**：依赖单一宿主的易失 notifier、waiter re-arm 和 agent 手工建立唤醒的步骤。
 
-Baton TUI 运行时可以直接 reconcile；关闭 TUI 后仍要求实时推进时，再把相同 Resource/Event
-runtime 放进 daemon，而不是另造一套 notify 协议。
+Baton TUI 打开时可以直接 reconcile；关闭 TUI 后仍要求实时推进时，再把相同 Resource/Event
+host 放进 daemon，而不是另造一套 notify 协议。
 
 ## 9. 安装、权限与运行约束
 
@@ -604,14 +604,14 @@ DevelopmentOutcome
 ### v2 内核路径
 
 1. **作用域与执行位置分离**：BatonSession 同时收口正典逻辑历史与 session-scoped Plugin
-   runtime，HarnessTarget 和不可变 HarnessLaunchSnapshot 只表达执行位置与当时配置；Project
+   数据，HarnessTarget 和不可变 HarnessLaunchSnapshot 只表达执行位置与当时配置；Project
    只负责按 cwd 组织和发现 BatonSession。
 2. **Event、Interaction 与 Signal 收敛**：Event v3 使用稳定 `eventId + scope + source`；
    permission/question/hook trust 共用 `Interaction opened/resolved` 生命周期；wake、文件通知和
    projection invalidation 只作为可合并的 signal。signal 触发权威读取，不能直接改变状态。
 3. **可靠工作投递**：先让现有用户驱动的 Harness submit 进入 Attempt ledger，以已持久化
    Input 作为上游，验证先记账再投递、`uncertain` 和恢复语义；未来 Controller 主动调用
-   Harness 时复用这条路径，不向 Plugin 暴露 Harness runtime。
+   Harness 时复用这条路径，不向 Plugin 暴露 Harness 进程或 SDK 句柄。
 4. **上下文可对账**：建立有 owner/key 的 ContextSource、ContextSnapshot、ContextEpoch 和
    ContextDeliveryReceipt；明确 Board 更新、context 交付和 Harness 唤醒是三个独立转换。
    当前已用 `session_history` 打通 Snapshot → 三种 transport → Receipt → Epoch；Board /
@@ -648,14 +648,14 @@ Plugin/Event ledger 的关联，避免形成两份可独立修改的历史。
 2. Plugin 是唯一通用扩展单元；Harness 是专门的智能执行协议。
 3. Connector 等领域适配抽象只能是 Plugin 内部概念，不进入 Baton 公共协议。
 4. Baton Plugin 与 Harness Plugin 是两层扩展机制；devloop 属于后者，不注册进 Baton Plugin
-   runtime。
+   host。
 5. Resource 用 `spec` 表达用户认可的 Contract，用 `status` 表达 Controller 观测；
    generation / observedGeneration 显式表示收敛水位。
 6. Baton-owned Resource 从 Event Ledger 只读派生且可重放；用户和 Plugin 都不能修改，也不
    另建持久真相。
 7. Controller 返回 `PluginOutput(kind: "proposed-input" | "interaction")` 和
    `requeueAfterMs`；提交文本的 owner 仍是用户，Interaction 决议归请求它的 Resource。
-8. 未来若实现主动 Harness 调用，Plugin 也不能直接持有 Harness runtime，必须复用 Baton
+8. 未来若实现主动 Harness 调用，Plugin 也不能直接持有 Harness 进程或 SDK 句柄，必须复用 Baton
    Input/Attempt 投递路径。
 9. Event 先持久化，再更新 Baton-owned Resource 并触发 Reconcile；触发本身不是必须执行一次的命令。
 10. Board 是带 owner、scope、revision 和 provenance 的共享协作读模型，不是领域真相源或全局

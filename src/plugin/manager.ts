@@ -33,6 +33,7 @@ import {
   type PluginPackage,
   type Resource,
   type ResourceType,
+  type SourceContext,
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   pluginPackageKey,
@@ -63,6 +64,15 @@ import {
   type BoardItem,
   presentBoardSource,
 } from "./board.ts";
+import {
+  PluginSupervisor,
+  type PluginRunnerClient,
+  type CommandRegistration as RunnerCommandRegistration,
+  type ContextProviderRegistration as RunnerContextProviderRegistration,
+  type ControllerRegistration as RunnerControllerRegistration,
+  type PluginPackageEntry,
+  type PluginRegistration as RunnerRegistration,
+} from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { InteractionResolution } from "../interaction/types.ts";
 import { Store as InteractionStore } from "./interaction.ts";
@@ -144,6 +154,17 @@ export interface ManagerOptions {
     version: string,
     options?: { fresh?: boolean; marketplace?: string },
   ): Promise<PluginPackage>;
+  /**
+   * Resolve an immutable entry without importing it into Baton. When supplied
+   * with a PluginSupervisor, Marketplace Plugin code runs in a per-Binding
+   * child process.
+   */
+  loadPackageEntry?(
+    pluginId: string,
+    version: string,
+    options: { marketplace: string; fresh?: boolean },
+  ): Promise<PluginPackageEntry>;
+  pluginSupervisor?: PluginSupervisor;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
   /** Board 展示内容变化；宿主据此重建展示快照。 */
@@ -164,6 +185,8 @@ export interface ManagerOptions {
   now?: () => Date;
   /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败展示到 UI 或诊断日志。 */
   onActivationError?(failure: PluginActivationFailure): void;
+  /** 已激活 Runner 意外退出；Manager 会撤销该 Binding 的全部宿主注册。 */
+  onRunnerFailure?(failure: PluginRunnerFailure): void;
   /** 自动重试已安排；宿主可将错误展示到 UI 或诊断日志。 */
   onReconcileError?(failure: ReconcileFailure): void;
   /** Controller resource Source initial/live observation failure. */
@@ -173,6 +196,11 @@ export interface ManagerOptions {
 export interface PluginActivationFailure {
   readonly pluginInstanceId: string;
   readonly error: unknown;
+}
+
+export interface PluginRunnerFailure {
+  readonly pluginInstanceId: string;
+  readonly error: Error;
 }
 
 export interface ReconcileFailure {
@@ -214,9 +242,19 @@ interface RetryState {
   attempt: number;
 }
 
+type ActivatablePackage =
+  | {
+      readonly kind: "in-process";
+      readonly plugin: PluginPackage;
+    }
+  | {
+      readonly kind: "runner";
+      readonly entry: PluginPackageEntry;
+    };
+
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
-  present(): readonly BoardItem[];
+  present(): Promise<readonly BoardItem[]>;
 }
 
 function positiveDelay(name: string, value: number): void {
@@ -249,12 +287,21 @@ export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
   private readonly boardSources = new Map<string, ManagedBoardSource>();
   private boardItemsCache: readonly BoardItem[] | undefined;
+  private boardRevision = 0;
+  private boardRefresh?: Promise<void>;
   private readonly commandRegistry: PluginCommandRegistry;
   private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
   private readonly packages = new Map<string, PluginPackage>();
   private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
+  private readonly packageEntries = new Map<string, PluginPackageEntry>();
+  private readonly packageEntryLoads = new Map<
+    string,
+    Promise<PluginPackageEntry>
+  >();
   private readonly loadPackage: ManagerOptions["loadPackage"];
+  private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
+  private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => BatonSnapshot;
   private readonly interactions?: InteractionStore;
   private readonly bindings = new Map<string, PluginBinding>();
@@ -268,6 +315,7 @@ export class Manager {
   private readonly onToast: ManagerOptions["onToast"];
   private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
+  private readonly onRunnerFailure: ManagerOptions["onRunnerFailure"];
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly onControllerSourceError:
     ManagerOptions["onControllerSourceError"];
@@ -320,6 +368,8 @@ export class Manager {
       this.packages.set(key, plugin);
     }
     this.loadPackage = options.loadPackage;
+    this.loadPackageEntry = options.loadPackageEntry;
+    this.pluginSupervisor = options.pluginSupervisor;
     this.snapshot =
       options.snapshot ??
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
@@ -339,6 +389,7 @@ export class Manager {
       onChanged: () => this.notifyCommandsChanged(),
     });
     this.onActivationError = options.onActivationError;
+    this.onRunnerFailure = options.onRunnerFailure;
     this.onReconcileError = options.onReconcileError;
     this.onControllerSourceError = options.onControllerSourceError;
     this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
@@ -492,11 +543,7 @@ export class Manager {
     if (!instance.enabled) {
       throw new Error(`plugin Instance is disabled: ${pluginInstanceId}`);
     }
-    const plugin = await this.resolvePackage(
-      instance.pluginId,
-      instance.packageVersion,
-      instance.marketplace,
-    );
+    const packageSource = await this.preparePackage(instance);
     const batonSession = this.snapshot().session;
     if (batonSession.batonSessionId !== this.proposals.batonSessionId) {
       throw new Error(
@@ -504,6 +551,15 @@ export class Manager {
       );
     }
 
+    const resources = createResourceClient(
+      new PluginResourceStore({
+        session: this.instances.session,
+        pluginInstanceId: instance.pluginInstanceId,
+      }),
+      (change) => this.handlePluginResourceChange(change),
+      (resourceType) =>
+        this.claimResourceTypeForCreate(instance.pluginId, resourceType),
+    );
     const binding = new PluginBinding(
       instance,
       {
@@ -524,21 +580,45 @@ export class Manager {
           this.notifyToast(instance.pluginInstanceId, message),
         writeLog: (entry) => this.writePluginLog(instance, entry),
       },
-      createResourceClient(
-        new PluginResourceStore({
-          session: this.instances.session,
-          pluginInstanceId: instance.pluginInstanceId,
-        }),
-        (change) => this.handlePluginResourceChange(change),
-        (resourceType) =>
-          this.claimResourceTypeForCreate(instance.pluginId, resourceType),
-      ),
+      resources,
     );
     let activation!: Promise<void>;
     activation = Promise.resolve()
       .then(async () => {
         try {
-          await plugin.activate(binding);
+          if (packageSource.kind === "in-process") {
+            await packageSource.plugin.activate(binding);
+          } else {
+            if (!this.pluginSupervisor) {
+              throw new Error("Plugin Supervisor is unavailable");
+            }
+            const runner = await this.pluginSupervisor.activate(
+              packageSource.entry,
+              instance,
+              binding.session,
+              {
+                resources,
+                onToast: (message) =>
+                  this.notifyToast(instance.pluginInstanceId, message),
+                onLog: (entry) => this.writePluginLog(instance, entry),
+                onFailure: (error) =>
+                  this.handleRunnerFailure(
+                    instance.pluginInstanceId,
+                    error,
+                  ),
+              },
+            );
+            // Register Runner cleanup first so reverse-order Binding close
+            // withdraws host registrations before terminating third-party code.
+            binding.onClose(() => runner.close());
+            for (const registration of runner.activation.registrations) {
+              this.installRunnerRegistration(
+                binding,
+                runner.client,
+                registration,
+              );
+            }
+          }
           binding.completeActivation();
           if (this.closed) throw new Error("plugin Manager is closed");
           this.bindings.set(pluginInstanceId, binding);
@@ -587,10 +667,10 @@ export class Manager {
     return this.instances.list();
   }
 
-  listContextCandidates(prefix: string): ReturnType<
+  async listContextCandidates(prefix: string): ReturnType<
     ContextProviderRegistry["candidates"]
   > {
-    return this.contextProviders.candidates(prefix);
+    return await this.contextProviders.candidates(prefix);
   }
 
   hasContextReference(input: string): boolean {
@@ -654,7 +734,9 @@ export class Manager {
     const current = this.instances.get(pluginInstanceId);
     if (current.packageVersion === packageVersion) return current;
 
-    await this.resolvePackage(current.pluginId, packageVersion, current.marketplace);
+    await this.preparePackage(
+      Object.freeze({ ...current, packageVersion }),
+    );
     const wasActive = this.isInstanceActive(pluginInstanceId);
     if (wasActive) await this.deactivateInstance(pluginInstanceId);
     const updated = this.instances.setPackageVersion(pluginInstanceId, packageVersion);
@@ -705,16 +787,11 @@ export class Manager {
     const packageFailures = new Map<string, unknown>();
     const loadedPackages = new Set<string>();
     for (const instance of enabled) {
-      const key = this.runtimePackageKey(instance);
+      const key = this.packageSourceKey(instance);
       if (loadedPackages.has(key)) continue;
       loadedPackages.add(key);
       try {
-        await this.resolvePackage(
-          instance.pluginId,
-          instance.packageVersion,
-          instance.marketplace,
-          true,
-        );
+        await this.preparePackage(instance, true);
       } catch (error) {
         packageFailures.set(key, error);
       }
@@ -724,7 +801,7 @@ export class Manager {
     for (const instance of enabled) {
       if (failures.has(instance.pluginInstanceId)) continue;
       const error = packageFailures.get(
-        this.runtimePackageKey(instance),
+        this.packageSourceKey(instance),
       );
       if (error) {
         failures.set(instance.pluginInstanceId, {
@@ -764,14 +841,7 @@ export class Manager {
   }
 
   listBoardItems(): readonly BoardItem[] {
-    if (this.boardItemsCache) return this.boardItemsCache;
-    const items: BoardItem[] = [];
-    for (const source of this.boardSources.values()) {
-      if (!this.bindings.has(source.pluginInstanceId)) continue;
-      items.push(...source.present());
-    }
-    this.boardItemsCache = Object.freeze(items);
-    return this.boardItemsCache;
+    return this.boardItemsCache ?? [];
   }
 
   listCommands(): readonly AvailablePluginCommand[] {
@@ -891,6 +961,83 @@ export class Manager {
     );
   }
 
+  private async preparePackage(
+    instance: PluginInstance,
+    fresh = false,
+  ): Promise<ActivatablePackage> {
+    if (
+      this.pluginSupervisor &&
+      this.loadPackageEntry &&
+      instance.marketplace
+    ) {
+      return {
+        kind: "runner",
+        entry: await this.resolvePackageEntry(
+          instance.pluginId,
+          instance.packageVersion,
+          instance.marketplace,
+          fresh,
+        ),
+      };
+    }
+    return {
+      kind: "in-process",
+      plugin: await this.resolvePackage(
+        instance.pluginId,
+        instance.packageVersion,
+        instance.marketplace,
+        fresh,
+      ),
+    };
+  }
+
+  private async resolvePackageEntry(
+    pluginId: string,
+    version: string,
+    marketplace: string,
+    fresh = false,
+  ): Promise<PluginPackageEntry> {
+    if (!this.loadPackageEntry) {
+      throw new Error(
+        `plugin Package entry is unavailable: ${pluginId}@${marketplace} ${version}`,
+      );
+    }
+    const key = JSON.stringify([pluginId, marketplace, version]);
+    if (!fresh) {
+      const cached = this.packageEntries.get(key);
+      if (cached) return cached;
+      const loading = this.packageEntryLoads.get(key);
+      if (loading) return await loading;
+    }
+    const loading = Promise.resolve()
+      .then(() =>
+        this.loadPackageEntry!(
+          pluginId,
+          version,
+          {
+            marketplace,
+            ...(fresh ? { fresh: true } : {}),
+          },
+        ),
+      )
+      .then((entry) => {
+        if (entry.pluginId !== pluginId || entry.version !== version) {
+          throw new Error(
+            `resolved Package entry ${entry.pluginId}@${entry.version} does not match ${pluginId}@${version}`,
+          );
+        }
+        this.packageEntries.set(key, entry);
+        return entry;
+      })
+      .finally(() => {
+        if (this.packageEntryLoads.get(key) === loading) {
+          this.packageEntryLoads.delete(key);
+        }
+      });
+    this.packageEntryLoads.set(key, loading);
+    return await loading;
+  }
+
   private async resolvePackage(
     pluginId: string,
     version: string,
@@ -939,10 +1086,123 @@ export class Manager {
     return await loading;
   }
 
-  private runtimePackageKey(instance: PluginInstance): string {
+  private packageSourceKey(instance: PluginInstance): string {
     return instance.marketplace
       ? JSON.stringify([instance.pluginId, instance.marketplace, instance.packageVersion])
       : pluginPackageKey(instance.pluginId, instance.packageVersion);
+  }
+
+  private installRunnerRegistration(
+    binding: PluginBinding,
+    runner: PluginRunnerClient,
+    registration: RunnerRegistration,
+  ): void {
+    if (registration.kind === "command") {
+      this.installRunnerCommand(binding, runner, registration);
+      return;
+    }
+    if (registration.kind === "context-provider") {
+      this.installRunnerContextProvider(binding, runner, registration);
+      return;
+    }
+    this.installRunnerController(binding, runner, registration);
+  }
+
+  private installRunnerCommand(
+    binding: PluginBinding,
+    runner: PluginRunnerClient,
+    registration: RunnerCommandRegistration,
+  ): void {
+    binding.registerCommand({
+      commandId: registration.commandId,
+      name: registration.name,
+      description: registration.description,
+      execute: async (input) =>
+        await runner.invoke<PluginCommandResult | undefined>(
+          registration.handlerId,
+          input,
+        ),
+    });
+  }
+
+  private installRunnerContextProvider(
+    binding: PluginBinding,
+    runner: PluginRunnerClient,
+    registration: RunnerContextProviderRegistration,
+  ): void {
+    binding.registerContextProvider({
+      kind: registration.providerKind,
+      search: async (query) =>
+        await runner.invoke(
+          registration.searchHandlerId,
+          query,
+        ),
+      provide: async (id, options) =>
+        await runner.invoke<string | undefined>(
+          registration.provideHandlerId,
+          id,
+          options,
+        ),
+    });
+  }
+
+  private installRunnerController(
+    binding: PluginBinding,
+    runner: PluginRunnerClient,
+    registration: RunnerControllerRegistration,
+  ): void {
+    const sources = registration.sources.map((source) =>
+      source.type === "cron"
+        ? {
+            type: "cron" as const,
+            sourceId: source.sourceId,
+            cron: source.cron,
+            timeZone: source.timeZone,
+          }
+        : {
+            type: "resource" as const,
+            sourceId: source.sourceId,
+            start: async (context: SourceContext<unknown>) =>
+              await runner.startSource(
+                source.startHandlerId,
+                context,
+              ),
+          }
+    );
+    const watches: Watch[] = registration.watches.map((watch) => ({
+      resourceType: watch.resourceType,
+      handler: {
+        create: async (event) =>
+          await runner.invoke(watch.createHandlerId, event),
+        update: async (event) =>
+          await runner.invoke(watch.updateHandlerId, event),
+        delete: async (event) =>
+          await runner.invoke(watch.deleteHandlerId, event),
+      },
+    }));
+    binding.registerController({
+      resourceType: registration.resourceType,
+      sources,
+      watches,
+      ...(registration.maxConcurrency === undefined
+        ? {}
+        : { maxConcurrency: registration.maxConcurrency }),
+      reconcile: async (baton, resource) =>
+        await runner.invoke(
+          registration.reconcileHandlerId,
+          baton,
+          resource,
+        ),
+      ...(registration.presentHandlerId === undefined
+        ? {}
+        : {
+            present: async (resource) =>
+              await runner.invoke(
+                registration.presentHandlerId!,
+                resource,
+              ),
+          }),
+    });
   }
 
   private bindController<TSpec, TStatus>(
@@ -1195,6 +1455,11 @@ export class Manager {
     this.unsubscribeBatonResources?.();
     this.batonResources?.close();
     this.interactions?.close();
+    try {
+      await this.pluginSupervisor?.close();
+    } catch (error) {
+      errors.push(error);
+    }
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "could not close plugin Manager");
   }
@@ -1209,17 +1474,53 @@ export class Manager {
 
   private notifyBoardChanged(): void {
     if (this.closed) return;
-    // Board 是 Resource 的派生快照；非 Board 的 view 刷新复用它，避免流式输出逐帧读盘并重跑 present()。
-    this.boardItemsCache = undefined;
-    try {
-      this.onBoardChanged?.();
-    } catch {
-      // Board is a derived view; consumer invalidation must not affect Plugin runtime state.
-    }
+    this.boardRevision += 1;
+    this.refreshBoardItems();
+  }
+
+  private refreshBoardItems(): void {
+    if (this.closed || this.boardRefresh) return;
+    const revision = this.boardRevision;
+    const sources = [...this.boardSources.values()].filter((source) =>
+      this.bindings.has(source.pluginInstanceId)
+    );
+    const refresh = Promise.all(
+      sources.map((source) => source.present()),
+    )
+      .then((groups) => {
+        if (this.closed || revision !== this.boardRevision) return;
+        this.boardItemsCache = Object.freeze(groups.flat());
+        try {
+          this.onBoardChanged?.();
+        } catch {
+          // Projection invalidation cannot affect Plugin state.
+        }
+      })
+      .catch((error) => {
+        this.diagnostic?.({
+          level: "error",
+          component: "plugin.board",
+          message: "Could not refresh Plugin Board projection",
+          error: diagnosticError(error),
+        });
+      })
+      .finally(() => {
+        if (this.boardRefresh === refresh) this.boardRefresh = undefined;
+        if (!this.closed && revision !== this.boardRevision) {
+          this.refreshBoardItems();
+        }
+      });
+    this.boardRefresh = refresh;
   }
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
     this.notifyBoardChanged();
+    void this.routePluginResourceChange(change);
+  }
+
+  private async routePluginResourceChange(
+    change: ResourceClientChange,
+  ): Promise<void> {
     if (this.closed) return;
 
     const pending = new Map<string, {
@@ -1252,7 +1553,7 @@ export class Manager {
       }
       let requests;
       try {
-        requests = watchRequests(controller.watches, change);
+        requests = await watchRequests(controller.watches, change);
       } catch (error) {
         this.diagnostic?.({
           level: "error",
@@ -1301,7 +1602,7 @@ export class Manager {
         }),
       );
     } catch {
-      // UI feedback must not affect Plugin runtime state.
+      // UI feedback must not affect Plugin-owned state.
     }
   }
 
@@ -1365,8 +1666,32 @@ export class Manager {
     try {
       this.onCommandsChanged?.();
     } catch {
-      // Completion is a derived view; invalidation must not affect Plugin runtime state.
+      // Completion is a derived view; invalidation must not affect Plugin-owned state.
     }
+  }
+
+  private handleRunnerFailure(
+    pluginInstanceId: string,
+    error: Error,
+  ): void {
+    try {
+      this.onRunnerFailure?.({ pluginInstanceId, error });
+    } catch {
+      // Failure reporting cannot keep a dead Binding registered.
+    }
+    void (async () => {
+      const activation = this.activations.get(pluginInstanceId);
+      if (activation) {
+        try {
+          await activation;
+        } catch {
+          return;
+        }
+      }
+      await this.deactivateInstance(pluginInstanceId);
+    })().catch(() => {
+      // Binding close errors are surfaced through diagnostics at their origin.
+    });
   }
 
   private restoreDueReconciles(controller: ManagedController): void {

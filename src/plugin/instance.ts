@@ -132,6 +132,9 @@ export class PluginInstanceStore implements PluginInstanceRepository {
     const pluginInstanceId = input.pluginInstanceId ?? newId("pi");
     assertPathSegment("pluginInstanceId", pluginInstanceId);
     nonEmptyString("pluginId", input.pluginId);
+    if (input.marketplace !== undefined) {
+      nonEmptyString("marketplace", input.marketplace);
+    }
     nonEmptyString("packageVersion", input.packageVersion);
     if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
       throw new Error("enabled must be a boolean");
@@ -147,6 +150,9 @@ export class PluginInstanceStore implements PluginInstanceRepository {
         pluginInstanceId,
         batonSessionId: this.batonSessionId,
         pluginId: input.pluginId,
+        ...(input.marketplace === undefined
+          ? {}
+          : { marketplace: input.marketplace }),
         packageVersion: input.packageVersion,
         enabled: input.enabled ?? true,
         config,
@@ -255,6 +261,9 @@ export class PluginInstanceStore implements PluginInstanceRepository {
         throw new Error(`batonSessionId must be ${this.batonSessionId}`);
       }
       nonEmptyString("pluginId", instance.pluginId);
+      if (instance.marketplace !== undefined) {
+        nonEmptyString("marketplace", instance.marketplace);
+      }
       nonEmptyString("packageVersion", instance.packageVersion);
       if (typeof instance.enabled !== "boolean") {
         throw new Error("enabled must be a boolean");
@@ -266,6 +275,9 @@ export class PluginInstanceStore implements PluginInstanceRepository {
         pluginInstanceId: instance.pluginInstanceId,
         batonSessionId: instance.batonSessionId,
         pluginId: instance.pluginId,
+        ...(instance.marketplace === undefined
+          ? {}
+          : { marketplace: instance.marketplace }),
         packageVersion: instance.packageVersion,
         enabled: instance.enabled,
         config,

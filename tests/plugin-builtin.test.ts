@@ -121,7 +121,7 @@ describe("Baton Resource index", () => {
     const plugin: PluginPackage = {
       pluginId: "example/router",
       version: "1.0.0",
-      activate(context) {
+      async activate(context) {
         context.registerController<
           Record<string, never>,
           { userText?: string }
@@ -199,14 +199,14 @@ describe("Baton Resource index", () => {
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
-        activate(context) {
+        async activate(context) {
           context.registerController<
             Record<string, never>,
             { userText?: string }
           >({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {},
-            present(resource) {
+            async present(resource) {
               return {
                 title: resource.status.userText ?? resource.metadata.name,
               };
@@ -225,6 +225,7 @@ describe("Baton Resource index", () => {
     expect(manager.listBoardItems()).toBe(existingItems);
 
     appendTurn(session, "t_live", "new question");
+    await waitFor(() => manager.listBoardItems() !== existingItems);
     const liveItems = manager.listBoardItems();
     expect(liveItems).not.toBe(existingItems);
     expect(liveItems.map((item) => item.title)).toEqual([
@@ -252,13 +253,13 @@ describe("Baton Resource index", () => {
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
-        activate(context) {
+        async activate(context) {
           context.registerController({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             sources: [{
               type: "resource",
               sourceId: "forge-turn",
-              start() {},
+              async start() {},
             }],
             async reconcile() {},
           });
@@ -298,7 +299,7 @@ describe("Baton Resource index", () => {
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
-        activate(context) {
+        async activate(context) {
           context.registerController({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {

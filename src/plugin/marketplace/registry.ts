@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import { withFileLock } from "../../store/file-lock.ts";
 import type { PluginPackage } from "../package.ts";
 import { validatePluginPackage } from "../package.ts";
+import type { PluginPackageEntry } from "../runner/index.ts";
 import {
   type MarketplaceManifest,
   type MarketplacePluginEntry,
@@ -220,33 +221,25 @@ async function runGit(
   args: readonly string[],
   options: { cwd?: string; timeoutMs: number },
 ): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const process = Bun.spawn(["git", ...args], {
-      cwd: options.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      signal: controller.signal,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
-      process.exited,
-    ]);
-    if (exitCode !== 0) {
-      const detail = stderr.trim() || stdout.trim() || `exit code ${exitCode}`;
-      throw new Error(`git ${args[0] ?? ""} failed: ${detail}`);
-    }
-    return stdout.trim();
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`git command timed out after ${options.timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+  const process = Bun.spawn(["git", ...args], {
+    cwd: options.cwd,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: options.timeoutMs,
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) {
+    const detail = stderr.trim() || stdout.trim() || `exit code ${exitCode}`;
+    throw new Error(`git ${args[0] ?? ""} failed: ${detail}`);
   }
+  return stdout.trim();
 }
 
 /**
@@ -257,7 +250,7 @@ export class MarketplaceRegistry {
   private readonly cwd: string;
   private readonly now: () => Date;
   private readonly gitTimeoutMs: number;
-  private runtimeRoot?: string;
+  private freshPackageRoot?: string;
   private loadRevision = 0;
 
   constructor(options: MarketplaceRegistryOptions = {}) {
@@ -283,10 +276,6 @@ export class MarketplaceRegistry {
   list(): RegisteredMarketplace[] {
     return this.readRegistry().marketplaces.map((registration) => {
       const rootDir = this.marketplaceRoot(registration);
-      // Auto-update Git marketplaces to fetch latest plugins
-      if (registration.source.kind === "git") {
-        this.updateGitMarketplaceSync(registration, rootDir);
-      }
       const manifest = readMarketplaceManifest(rootDir);
       if (manifest.name !== registration.name) {
         throw new Error(
@@ -295,6 +284,22 @@ export class MarketplaceRegistry {
       }
       return Object.freeze({ ...registration, rootDir, manifest });
     });
+  }
+
+  /**
+   * Refreshes Git-backed delivery caches without making list/render paths wait
+   * for network or subprocess work. A failed source keeps its last valid cache.
+   */
+  async refresh(): Promise<void> {
+    const registrations = this.readRegistry().marketplaces;
+    await Promise.all(
+      registrations.map((registration) =>
+        this.updateGitMarketplace(
+          registration,
+          this.marketplaceRoot(registration),
+        )
+      ),
+    );
   }
 
   available(options: { marketplace?: string } = {}): AvailablePluginPackage[] {
@@ -387,15 +392,50 @@ export class MarketplaceRegistry {
     version: string,
     options: { fresh?: boolean } = {},
   ): Promise<PluginPackage> {
+    const packageEntry = await this.entry(
+      pluginId,
+      marketplace,
+      version,
+      options,
+    );
+    const module = await import(packageEntry.entryUrl) as { default?: unknown };
+    const plugin = module.default as PluginPackage | undefined;
+    if (!plugin) {
+      throw new Error(
+        `Plugin entry must default export a PluginPackage: ${packageEntry.entryUrl}`,
+      );
+    }
+    validatePluginPackage(plugin);
+    if (
+      plugin.pluginId !== packageEntry.pluginId ||
+      plugin.version !== packageEntry.version
+    ) {
+      throw new Error(
+        `loaded Package identity ${plugin.pluginId}@${plugin.version} does not match manifest ${packageEntry.pluginId}@${packageEntry.version}`,
+      );
+    }
+    return plugin;
+  }
+
+  /**
+   * Resolve an immutable Package entry without importing third-party code into
+   * the Baton process. Interactive sessions pass this entry to Plugin Runner.
+   */
+  async entry(
+    pluginId: string,
+    marketplace: string,
+    version: string,
+    options: { fresh?: boolean } = {},
+  ): Promise<PluginPackageEntry> {
     const installed = this.readInstalled(
       this.resolveInstalledPackageDir(pluginId, marketplace, version),
     );
     let packageDir = installed.packageDir;
     if (options.fresh) {
-      const runtimeRoot =
-        this.runtimeRoot ??
-        (this.runtimeRoot = mkdtempSync(join(tmpdir(), "baton-plugin-runtime-")));
-      packageDir = join(runtimeRoot, `package-${++this.loadRevision}`);
+      const freshPackageRoot =
+        this.freshPackageRoot ??
+        (this.freshPackageRoot = mkdtempSync(join(tmpdir(), "baton-plugin-load-")));
+      packageDir = join(freshPackageRoot, `package-${++this.loadRevision}`);
       // Bun's ESM registry ignores query-string cache busting. A unique physical Package tree
       // gives both the entry and its relative imports fresh module identities, while retaining
       // the tree for plugins that resolve assets from import.meta.dir after activation.
@@ -409,27 +449,17 @@ export class MarketplaceRegistry {
       installed.manifest.entry,
       `Plugin entry ${pluginId}`,
     );
-    const module = await import(pathToFileURL(entry).href) as { default?: unknown };
-    const plugin = module.default as PluginPackage | undefined;
-    if (!plugin) {
-      throw new Error(`Plugin entry must default export a PluginPackage: ${entry}`);
-    }
-    validatePluginPackage(plugin);
-    if (
-      plugin.pluginId !== installed.manifest.pluginId ||
-      plugin.version !== installed.manifest.version
-    ) {
-      throw new Error(
-        `loaded Package identity ${plugin.pluginId}@${plugin.version} does not match manifest ${installed.manifest.pluginId}@${installed.manifest.version}`,
-      );
-    }
-    return plugin;
+    return Object.freeze({
+      pluginId: installed.manifest.pluginId,
+      version: installed.manifest.version,
+      entryUrl: pathToFileURL(entry).href,
+    });
   }
 
   close(): void {
-    if (!this.runtimeRoot) return;
-    rmSync(this.runtimeRoot, { recursive: true, force: true });
-    this.runtimeRoot = undefined;
+    if (!this.freshPackageRoot) return;
+    rmSync(this.freshPackageRoot, { recursive: true, force: true });
+    this.freshPackageRoot = undefined;
   }
 
   private addLocal(rootDir: string): RegisteredMarketplace {
@@ -499,45 +529,38 @@ export class MarketplaceRegistry {
     }
   }
 
-  private updateGitMarketplaceSync(
+  private async updateGitMarketplace(
     registration: MarketplaceRegistration,
     rootDir: string,
-  ): void {
+  ): Promise<void> {
     if (registration.source.kind !== "git") return;
 
     try {
       const fetchArgs = registration.source.ref
-        ? ["git", "fetch", "--quiet", "origin", registration.source.ref]
-        : ["git", "fetch", "--quiet", "origin"];
-      const fetched = Bun.spawnSync(fetchArgs, {
+        ? ["fetch", "--quiet", "origin", registration.source.ref]
+        : ["fetch", "--quiet", "origin"];
+      await runGit(fetchArgs, {
         cwd: rootDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 5000,
+        timeoutMs: this.gitTimeoutMs,
       });
-      if (fetched.exitCode !== 0) return;
 
       let target = "FETCH_HEAD";
       if (!registration.source.ref) {
-        const upstream = Bun.spawnSync(
-          ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        target = await runGit(
+          ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
           {
             cwd: rootDir,
-            stdout: "pipe",
-            stderr: "pipe",
+            timeoutMs: this.gitTimeoutMs,
           },
         );
-        if (upstream.exitCode !== 0) return;
-        target = upstream.stdout.toString().trim();
         if (!target) return;
       }
 
       // Git marketplaces are Baton-owned delivery caches. Resetting instead of pulling keeps
       // accidental edits inside the cache from permanently blocking update discovery.
-      Bun.spawnSync(["git", "reset", "--quiet", "--hard", target], {
+      await runGit(["reset", "--quiet", "--hard", target], {
         cwd: rootDir,
-        stdout: "pipe",
-        stderr: "pipe",
+        timeoutMs: this.gitTimeoutMs,
       });
     } catch {
       // Update failures are silent; the last valid cache remains usable.

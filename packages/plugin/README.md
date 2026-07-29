@@ -20,7 +20,7 @@ const EXAMPLE_RESOURCE = {
 } as const;
 
 // Creation may attach Plugin-defined string metadata:
-// context.resources.create(EXAMPLE_RESOURCE, {
+// await context.resources.create(EXAMPLE_RESOURCE, {
 //   name: "example-1",
 //   labels: { "example.com/team": "platform" },
 //   annotations: { "example.com/display-name": "First example" },
@@ -36,7 +36,7 @@ type Example = ExampleResource<{ title: string }, ExampleStatus>;
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
-  activate(context: PluginActivationContext) {
+  async activate(context: PluginActivationContext) {
     context.logger.write({
       level: "info",
       component: "activation",
@@ -47,7 +47,7 @@ const plugin: PluginPackage = {
       commandId: "examples",
       name: "examples",
       description: "List examples",
-      execute() {
+      async execute() {
         return {
           kind: "picker",
           title: "Examples",
@@ -62,11 +62,12 @@ const plugin: PluginPackage = {
     });
     context.registerContextProvider({
       kind: "example",
-      search(query) {
-        return context.resources
-          .list<{ title: string }, ExampleStatus>(
-            EXAMPLE_RESOURCE,
-          )
+      async search(query) {
+        const resources = await context.resources.list<
+          { title: string },
+          ExampleStatus
+        >(EXAMPLE_RESOURCE);
+        return resources
           .filter((resource) =>
             resource.spec.title.toLowerCase().includes(query.toLowerCase())
           )
@@ -76,8 +77,8 @@ const plugin: PluginPackage = {
             detail: resource.status.phase,
           }));
       },
-      provide(id, { maxChars }) {
-        const resource = context.resources.get<
+      async provide(id, { maxChars }) {
+        const resource = await context.resources.get<
           { title: string },
           ExampleStatus
         >(EXAMPLE_RESOURCE, id);
@@ -95,7 +96,7 @@ const plugin: PluginPackage = {
       async reconcile(_baton, resource: Example) {
         // Observe current facts and patch status through context.resources.
       },
-      present(resource) {
+      async present(resource) {
         return {
           title: resource.spec.title,
           status: resource.status.phase,
@@ -108,9 +109,9 @@ const plugin: PluginPackage = {
 export default plugin;
 ```
 
-This package contains protocol types only. Baton runtime implementations such
-as Manager, Binding, Controller, Store, Marketplace, persistence, and Harness
-routing are intentionally excluded.
+This package contains protocol types only. Baton host implementations such as
+Manager, Binding, Supervisor, Runner, Controller, Store, Marketplace,
+persistence, and Harness routing are intentionally excluded.
 
 Plugins may opt into Kubernetes-style current-state conditions by extending
 `ConditionedStatus`. `conditions` remains optional and lives inside the
@@ -155,14 +156,30 @@ Controllers may also declare `watches` to map changes from secondary Resources
 to primary `ReconcileRequest`s:
 
 ```ts
-import { enqueueRequestsFromMapFunc } from "@compforge/baton-plugin";
+import type {
+  EventHandler,
+  EventResource,
+  ReconcileRequest,
+} from "@compforge/baton-plugin";
 
-const repositories = enqueueRequestsFromMapFunc<
-  unknown,
-  { readonly repositories?: readonly string[] }
->((workspace) =>
-  (workspace.status.repositories ?? []).map((name) => ({ name })),
-);
+function requests(workspace: EventResource): readonly ReconcileRequest[] {
+  const status = workspace.status as {
+    readonly repositories?: readonly string[];
+  };
+  return (status.repositories ?? []).map((name) => ({ name }));
+}
+
+const repositories: EventHandler = {
+  async create(event) {
+    return requests(event.object);
+  },
+  async update(event) {
+    return [...requests(event.oldObject), ...requests(event.newObject)];
+  },
+  async delete(event) {
+    return requests(event.object);
+  },
+};
 
 registerController({
   resourceType: "Repository",
@@ -173,10 +190,10 @@ registerController({
 });
 ```
 
-For an update, `enqueueRequestsFromMapFunc` maps both the old and new Resource
-and deduplicates the resulting requests. A Watch routes Resources already
-stored by Baton; a Source discovers external state and materializes the primary
-Resource before it is reconciled.
+For an update, map both the old and new Resource so removed relationships still
+wake their former owner, then deduplicate the resulting requests. A Watch
+routes Resources already stored by Baton; a Source discovers external state
+and materializes the primary Resource before it is reconciled.
 
 A Controller can return `kind: "interaction"` when its Resource needs a durable
 user decision:

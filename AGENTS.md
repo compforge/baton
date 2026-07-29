@@ -2,9 +2,9 @@
 
 ## 项目定位与边界
 
-baton 是一个 terminal-native 的 Loop Engineering runtime，也是跨 coding agent 的统一工作区。
+baton 是一个 terminal-native 的 Loop Engineering 控制面，也是跨 coding agent 的统一工作区。
 用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
-Session 的 Plugin runtime；Project 只按 cwd 组织和发现 Session。Claude Code 和 Codex 是首批
+Session 的 Plugin 数据与执行；Project 只按 cwd 组织和发现 Session。Claude Code 和 Codex 是首批
 内置 Harness，不是封闭支持列表。
 
 baton 按三层协作：
@@ -17,10 +17,11 @@ baton 按三层协作：
 3. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
    Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
 
-稳定内核已经支持同一 BatonSession 内的 Harness 接力；Plugin runtime 已支持 Marketplace、
+稳定内核已经支持同一 BatonSession 内的 Harness 接力；Plugin host 已支持 Marketplace、
 Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board presentation、Proposal /
-Interaction 和 ContextProvider。自动、受控的 Harness Work，多 Harness 并行汇总以及主线 /
-草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness runtime 来提前实现。
+Interaction 和 ContextProvider；三方 Package 按 Binding 在独立 Runner 进程执行。自动、受控的
+Harness Work，多 Harness 并行汇总以及主线 / 草稿收录仍是后续方向，不能用 Plugin 私下持有
+Harness 进程或 SDK 句柄来提前实现。
 
 reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场景；其 Requirement Loop
 领域模型与 Connector 始终留在 reqloop，不进入 Baton core。
@@ -30,16 +31,16 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | 目录 | 职责 |
 |---|---|
 | `docs/kernel.md` | 稳定内核：核心概念、不变量、v1 双向流水线与 Harness 扩展契约 |
-| `docs/plugin.md`、`docs/loop-engineering.md` | v2 Plugin runtime 与分层 loop 控制面 |
+| `docs/plugin.md`、`docs/loop-engineering.md` | Plugin host / authoring 契约与分层 loop 控制面 |
 | `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
 | `src/controller/`、`src/event/`、`src/session/`、`src/store/` | Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
 | `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
-| `src/plugin/` | Marketplace、Package/Instance/Binding、Resource/Controller、Board 与 Output runtime |
+| `src/plugin/` | Marketplace、Package/Instance/Binding、Manager/Supervisor/Runner、Resource/Controller 与 Board |
 | `src/context/`、`src/interaction/` | 上下文注册/交付与统一待决交互 |
 | `src/tui/`、`src/cli/` | chat-tui 投影装配、交互入口与 headless 工具 |
 | `tests/` | 内核、Harness 与 Plugin 契约测试 |
 
-改稳定内核或接入 Harness 前先读 `docs/kernel.md`；改 Plugin runtime / API 前先读
+改稳定内核、进程模型或接入 Harness 前先读 `docs/kernel.md`；改 Plugin host / API 前先读
 `docs/plugin.md` 和 `docs/loop-engineering.md`。内核之外的产品取舍见 `docs/design.md`。
 
 运行时使用 Bun；宿主与公共 Plugin 契约同仓分包。验证命令为 `bun run check`
@@ -51,7 +52,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 ## 关键约定
 
-1. **作用域决定 owner**：Project 只组织 Session；BatonSession 拥有正典历史和 Plugin runtime；
+1. **作用域决定 owner**：Project 只组织 Session；BatonSession 拥有正典历史和 Plugin 数据；
    HarnessTarget 是配置、调度与状态坐标；HarnessSession 只是 Target 启动的原生执行状态。
    Binding、授权、偏好、上下文水位与投影状态按明确的 Session / Target 身份隔离，未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
@@ -64,7 +65,9 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 3. **长期 loop 与执行小闭环分层**：Baton core 保持领域无关，Baton Plugin 只通过 Resource /
    Controller 和受控 Output 推进领域 loop；当前 `proposed-input` 经用户确认后才成为普通 Input，
    继续走 Baton 的 Context、Permission、Attempt 与 Harness routing。Plugin 只能依赖
-   `packages/plugin` 公共契约，不能持有宿主 Store、Controller 或 Harness runtime。
+   `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
+   Marketplace Plugin 按活动 Binding 进入独立 Runner；线程 / 进程编排由 Baton 持有，
+   chat-tui 只负责终端焦点、输入路由和 surface 投影。
 4. **Harness 差异只留在 Adapter / capability**：新增 Harness 默认只改对应 adapter、registry
    与 identity 目录；Session、store/reduce、Projection 和 chat-tui 不出现 Harness 分支。开放
    wire 值在边界保守归一，原始形态保留在 `raw`；原生 Session 只读且只是 resume 加速路径，
@@ -78,7 +81,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 - `docs/kernel.md` — 稳定内核与 Harness 扩展契约（权威入口）
 - `docs/design.md` — 内核之外的产品定位、架构与竞品取舍
-- `docs/plugin.md` — Plugin Package / Instance / Binding 与 Resource / Reconcile runtime
+- `docs/plugin.md` — Plugin Manager / Supervisor / Runner 与三方 authoring 契约
 - `docs/loop-engineering.md` — Baton Plugin、Harness Plugin、Board、Context 与长期 loop 边界
 - `docs/baton-v2.md` — v2 作用域、可靠投递、上下文交付与恢复目标
 - `docs/user-input-lifecycle.md` — Input queue / steer / recall / interrupt 生命周期

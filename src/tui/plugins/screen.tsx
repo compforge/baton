@@ -7,6 +7,7 @@ import {
   useStoreState,
 } from "chat-tui";
 import {
+  useEffect,
   useRef,
   useState,
   useCallback,
@@ -135,6 +136,26 @@ function PluginPanel(props: PluginPanelProps): ReactNode {
   const tabs = useRef<TabSelectRenderable | null>(null);
   const list = useRef<SelectRenderable | null>(null);
   const items = pluginBrowserItems(tab, data, query);
+
+  useEffect(() => {
+    let active = true;
+    void props.registry.refresh().then(
+      () => {
+        if (active) setData(loadBrowserData(props.registry, props.manager));
+      },
+      (error) => {
+        if (active) {
+          setNotice({
+            text: `Marketplace refresh failed: ${errorMessage(error)}`,
+            tone: "error",
+          });
+        }
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [props.manager, props.registry]);
 
   const openSelected = useCallback(() => {
     const key = String(list.current?.getSelectedOption()?.value ?? "");

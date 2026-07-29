@@ -312,6 +312,7 @@ export default {
       expect(result.exitCode, result.stderr.toString()).toBe(0);
     }
 
+    await registry.refresh();
     expect(registry.available()[0]?.manifest.version).toBe("0.2.0");
     expect(readFileSync(cachedEntry, "utf8")).toContain('version: "0.2.0"');
   });

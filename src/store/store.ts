@@ -1,6 +1,6 @@
 // 会话存储：~/.baton/projects/<project key>/sessions/<id>/。
 // Project 只负责按 cwd 组织 BatonSession；session.jsonl 承载统一逻辑历史，
-// session/plugins/ 承载以该 BatonSession 为 owner 的 Plugin runtime 数据。
+// session/plugins/ 承载以该 BatonSession 为 owner 的 Plugin 数据。
 // HarnessSession 元数据只用于优先恢复 harness 私有状态，缺失时仍可从 BatonSession 重建上下文。
 
 import { createHash } from "node:crypto";

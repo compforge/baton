@@ -49,10 +49,10 @@ export interface ResourceClient {
   get<TSpec, TStatus>(
     type: ResourceType,
     name: string,
-  ): Readonly<Resource<TSpec, TStatus>>;
+  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
   list<TSpec, TStatus>(
     type: ResourceType,
-  ): readonly Readonly<Resource<TSpec, TStatus>>[];
+  ): Promise<readonly Readonly<Resource<TSpec, TStatus>>[]>;
   create<TSpec, TStatus>(
     type: ResourceType,
     init: {
@@ -61,24 +61,16 @@ export interface ResourceClient {
       annotations?: Readonly<Record<string, string>>;
       spec: TSpec;
     },
-  ): Readonly<Resource<TSpec, TStatus>>;
-  delete(type: ResourceType, name: string): void;
+  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
+  delete(type: ResourceType, name: string): Promise<void>;
   patchStatus<TSpec, TStatus>(
     resource: Readonly<Resource<TSpec, TStatus>>,
     patch: Partial<TStatus>,
-  ): Readonly<Resource<TSpec, TStatus>>;
+  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
 }
 
-export const BATON_API_VERSION = "baton.dev/v1alpha1" as const;
-export const BATON_SYSTEM_NAMESPACE = "baton-system" as const;
-export const BATON_TURN_RESOURCE_TYPE = Object.freeze({
-  apiVersion: BATON_API_VERSION,
-  kind: "Turn",
-} as const satisfies ResourceType);
-
-export type BatonTurnResourceApiVersion =
-  typeof BATON_TURN_RESOURCE_TYPE.apiVersion;
-export type BatonTurnResourceKind = typeof BATON_TURN_RESOURCE_TYPE.kind;
+export type BatonTurnResourceApiVersion = "baton.dev/v1alpha1";
+export type BatonTurnResourceKind = "Turn";
 
 export type BatonTurnResourceData = TurnSummary & {
   readonly harness?: string;

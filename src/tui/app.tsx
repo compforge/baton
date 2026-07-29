@@ -30,7 +30,7 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
 
     useEffect(
       () =>
-        props.protocol.subscribeCommands(() =>
+        props.protocol.subscribeCompletions(() =>
           setProtocolRevision((value) => value + 1),
         ),
       [props.protocol],

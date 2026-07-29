@@ -33,5 +33,5 @@ export interface Controller<TSpec, TStatus> {
   ): Promise<ReconcileResult | void>;
   present?(
     resource: Readonly<Resource<TSpec, TStatus>>,
-  ): BoardPresentation | undefined;
+  ): Promise<BoardPresentation | undefined>;
 }

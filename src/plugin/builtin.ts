@@ -3,11 +3,9 @@ import type {
   EventEnvelope,
   TurnSummary,
 } from "../event/types.ts";
-import {
-  BATON_SYSTEM_NAMESPACE,
-  BATON_TURN_RESOURCE_TYPE,
-  type ResourceRef,
-  type Watch,
+import type {
+  ResourceRef,
+  Watch,
 } from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
 import {
@@ -29,6 +27,10 @@ import { validateWatches } from "./watch.ts";
 import type {
   ControllerSource,
   CronSource,
+} from "./package.ts";
+import {
+  BATON_SYSTEM_NAMESPACE,
+  BATON_TURN_RESOURCE_TYPE,
 } from "./package.ts";
 
 export const BATON_TURN_RESOURCE_KIND = BATON_TURN_RESOURCE_TYPE.kind;

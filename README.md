@@ -24,11 +24,11 @@ Two fundamentals are in place today:
 - **Context portability**: a BatonSession is a durable, unified history owned by the user that outlives any single harness. Switching agents requires no context carrying; harness-native sessions only accelerate resume and are never a prerequisite for the history to survive.
 - **Native experience**: baton preserves each agent's own input, completion, streaming, tool-call, and approval experience as much as possible, adding only a few commands of its own (such as `/codex` and `/claude`).
 
-The Plugin runtime adds a third principle:
+The Plugin host adds a third principle:
 
 - **Layered loops**: baton core stays domain-neutral and owns the shared input, context, permission, and harness-routing path. Baton Plugins own long-running domain loops and currently propose the next Harness input for the user to confirm, edit, or discard. Harnesses remain intelligent execution providers; Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
 
-On top of these, three product directions remain on the roadmap. The Plugin runtime now provides the Resource/Controller foundation for long-running loops, but these end-to-end experiences are not complete yet:
+On top of these, three product directions remain on the roadmap. The Plugin host now provides the Resource/Controller foundation for long-running loops, but these end-to-end experiences are not complete yet:
 
 - **Multi-harness collaboration**: from relaying within one session toward dispatching the same task to multiple harnesses in parallel, with results merged back into one unified history. The near-term path is draft sessions — when a new idea strikes mid-task, fork a draft session (optionally on a different harness) to explore in parallel without interrupting the mainline.
 - **Context intake**: the mainline is not a raw transcript of everything but the canonical history the user endorses. After a draft session produces results, the user decides whether to merge its conclusions into the mainline or discard them; discarding is not deletion — drafts stay durable and referenceable.
@@ -44,7 +44,9 @@ v2 keeps that pipeline and layers long-running domain loops around it. baton cor
 
 ![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
 
-See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, invariants, the v1 pipeline, and the harness extension contract. See [`docs/plugin.md`](docs/plugin.md) for the v2 Plugin runtime and [`docs/loop-engineering.md`](docs/loop-engineering.md) for the layered loop model.
+The terminal has one focus and one host event loop; chat-tui isolates updates by surface, while Baton isolates third-party Package code in one Runner process per active Binding. A blocked or crashed Plugin therefore cannot occupy composer input, and its registrations are withdrawn as one unit.
+
+See [`docs/kernel.md`](docs/kernel.md) for the stable kernel and process model. See [`docs/plugin.md`](docs/plugin.md) for the Plugin host and third-party authoring contract, and [`docs/loop-engineering.md`](docs/loop-engineering.md) for the layered loop model.
 
 ## Features
 
@@ -59,6 +61,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel — core concepts, 
 - Reuse local Claude Code and Codex credentials without storing them in baton
 - Use a headless REPL to debug agent integrations
 - Register local or Git Plugin Marketplaces and install immutable Plugin Packages
+- Run each active third-party Plugin Binding in its own supervised process
 - Run session-scoped Plugin Controllers over durable Resources, with Resource/cron Sources, requeue wakeups, Board projections, and user-approved Proposals
 
 ## Installation & configuration
@@ -164,7 +167,7 @@ baton stores its data in `~/.baton/` by default:
             └── proposals/
 ```
 
-Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Plugin runtime data belongs to its BatonSession. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
+Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Plugin data belongs to its BatonSession. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
 
 ## License
 

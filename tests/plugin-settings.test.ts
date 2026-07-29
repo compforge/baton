@@ -107,7 +107,7 @@ plugins:
     const plugin: PluginPackage = {
       pluginId: "qiankun/requirement-loop",
       version: "0.1.0",
-      activate(context) {
+      async activate(context) {
         activations.push(context.session.batonSessionId);
       },
     };

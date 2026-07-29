@@ -10,13 +10,13 @@ export interface ContextProvider {
    * as `<pluginName>@<kind>`.
    */
   readonly kind: string;
-  search(query: string): readonly {
+  search(query: string): Promise<readonly {
     readonly id: string;
     readonly label: string;
     readonly detail?: string;
-  }[];
+  }[]>;
   provide(
     id: string,
     options: { readonly maxChars: number },
-  ): Promise<string | undefined> | string | undefined;
+  ): Promise<string | undefined>;
 }

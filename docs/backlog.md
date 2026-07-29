@@ -62,9 +62,10 @@ context 的文本事实源。
 ## Plugin Controller 对 controller-runtime 的后续借鉴
 
 Baton Plugin 已以 `Resource / Controller / ReconcileRequest / Source / Watches /
-EventHandler` 落下 level-based reconcile 主链路；详细对应和差异见
-[`plugin.md` §3.2](./plugin.md#32-对-controller-runtime-的借鉴)。其余
-controller-runtime 概念不为 API 对齐而预建，按下面的真实压力分别引入：
+EventHandler` 落下 level-based reconcile 主链路；当前宿主约束见
+[`plugin.md` §2.4](./plugin.md#24-调度与一致性)，作者约束见
+[`plugin.md` §3.3–3.4](./plugin.md#33-resource-与-controller)。其余 controller-runtime
+概念不为 API 对齐而预建，按下面的真实压力分别引入：
 
 - **Predicate**：在 EventHandler 前过滤 create / update / delete；当多个 Controller 重复编写
   “generation 未变”“无关 status 字段变化”等空映射逻辑，并且过滤规则可稳定复用时引入。

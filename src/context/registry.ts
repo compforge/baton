@@ -82,12 +82,12 @@ export class ContextProviderRegistry {
     };
   }
 
-  candidates(query: string): Array<{
+  async candidates(query: string): Promise<Array<{
     readonly group: string;
     readonly insert: string;
     readonly label: string;
     readonly detail: string;
-  }> {
+  }>> {
     const candidates: Array<{
       readonly group: string;
       readonly insert: string;
@@ -95,7 +95,7 @@ export class ContextProviderRegistry {
       readonly detail: string;
     }> = [];
     for (const registration of this.providers.values()) {
-      for (const candidate of registration.provider.search(query)) {
+      for (const candidate of await registration.provider.search(query)) {
         assertReferenceId(registration.kind, candidate.id);
         if (!candidate.label.trim()) {
           throw new Error(

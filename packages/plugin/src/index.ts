@@ -62,10 +62,6 @@ export type {
   MapFunc,
 } from "./handler.ts";
 
-export {
-  enqueueRequestsFromMapFunc,
-} from "./handler.ts";
-
 export type {
   ControllerSource,
   CronSource,
@@ -86,12 +82,6 @@ export type {
   Resource,
   ResourceClient,
   ResourceMetadata,
-} from "./resource.ts";
-
-export {
-  BATON_API_VERSION,
-  BATON_SYSTEM_NAMESPACE,
-  BATON_TURN_RESOURCE_TYPE,
 } from "./resource.ts";
 
 export type {
