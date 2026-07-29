@@ -1770,6 +1770,18 @@ export class Manager {
     }
     await controller.startSources?.((sourceId, error) => {
       try {
+        this.diagnostic?.({
+          level: "error",
+          component: "plugin.source",
+          message: `Plugin source ${sourceId} failed`,
+          error: diagnosticError(error),
+          details: {
+            pluginInstanceId: controller.scope.pluginInstanceId,
+            resourceApiVersion: controller.scope.resourceApiVersion,
+            resourceKind: controller.scope.resourceKind,
+            sourceId,
+          },
+        });
         this.onControllerSourceError?.(Object.freeze({
           scope: controller.scope,
           sourceId,

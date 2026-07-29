@@ -13,6 +13,10 @@ import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager, type PluginRunnerFailure } from "../src/plugin/manager.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginSupervisor } from "../src/plugin/runner/index.ts";
+import {
+  restoredError,
+  serializedError,
+} from "../src/plugin/runner/protocol.ts";
 
 const roots: string[] = [];
 
@@ -54,6 +58,20 @@ afterEach(() => {
 });
 
 describe("Plugin Runner process boundary", () => {
+  test("preserves nested error causes across IPC serialization", () => {
+    const restored = restoredError(serializedError(
+      new Error("Could not list Forge PullRequests", {
+        cause: new Error("GET /repos/openai/plugins/pulls returned 404"),
+      }),
+    ));
+
+    expect(restored.message).toBe("Could not list Forge PullRequests");
+    expect(restored.cause).toBeInstanceOf(Error);
+    expect((restored.cause as Error).message).toBe(
+      "GET /repos/openai/plugins/pulls returned 404",
+    );
+  });
+
   test("keeps the host responsive and withdraws registrations after a crash", async () => {
     const { instances, proposals, entry } = stores();
     instances.create({

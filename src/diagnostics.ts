@@ -4,6 +4,7 @@ export interface DiagnosticError {
   name?: string;
   message: string;
   stack?: string;
+  cause?: DiagnosticError;
 }
 
 export interface DiagnosticEntry {
@@ -26,6 +27,9 @@ export function diagnosticError(error: unknown): DiagnosticError {
       name: error.name,
       message: error.message,
       ...(error.stack ? { stack: error.stack } : {}),
+      ...(error.cause === undefined
+        ? {}
+        : { cause: diagnosticError(error.cause) }),
     };
   }
   return { message: String(error) };

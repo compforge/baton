@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
+import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
   BatonChatProtocol,
@@ -242,6 +243,86 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
           phase: "invoke",
         },
       });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("BatonChatProtocol plugin source diagnostics", () => {
+  test("keeps the toast concise and writes the full error to the session log", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-plugin-source-log-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      await protocol.pluginManager.start();
+      const resources = new PluginResourceStore({
+        session,
+        pluginInstanceId: "pi_reqloop",
+      });
+      const registration = protocol.pluginManager.registerController({
+        store: resources,
+        resourceType: {
+          apiVersion: "reqloop.baton.dev/v1alpha1",
+          kind: "PullRequest",
+        },
+        sources: [{
+          type: "resource",
+          sourceId: "forge",
+          async start(context) {
+            context.reportError(
+              new Error("Could not list Forge PullRequests for openai/plugins", {
+                cause: new Error(
+                  "GET /repos/openai/plugins/pulls returned 404",
+                ),
+              }),
+            );
+          },
+        }],
+        async reconcile() {},
+      });
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (protocol.stateStore.getState("footer").toast) break;
+        await Bun.sleep(5);
+      }
+      expect(protocol.stateStore.getState("footer").toast).toEqual({
+        text: "Plugin source forge failed for pi_reqloop/PullRequest",
+        tone: "error",
+      });
+
+      const log = readFileSync(join(session.dir, "session.log"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((entry) => entry.component === "plugin.source");
+      expect(log).toMatchObject({
+        batonSessionId: session.id,
+        level: "error",
+        component: "plugin.source",
+        message: "Plugin source forge failed",
+        error: {
+          message: "Could not list Forge PullRequests for openai/plugins",
+          cause: {
+            message: "GET /repos/openai/plugins/pulls returned 404",
+          },
+        },
+        details: {
+          pluginInstanceId: "pi_reqloop",
+          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
+          resourceKind: "PullRequest",
+          sourceId: "forge",
+        },
+      });
+
+      registration.close();
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
