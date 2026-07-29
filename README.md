@@ -157,18 +157,23 @@ baton stores its data in `~/.baton/` by default:
 ├── plugins/
 │   ├── marketplaces.json
 │   ├── marketplaces/<marketplace-name>/
-│   └── packages/<encoded-plugin-id>/<version>/
+│   ├── packages/<encoded-plugin-id>/<version>/
+│   └── <encoded-plugin-id>/                 # Plugin global writable data
 └── projects/<project-key>/
     ├── project.json
+    ├── plugins/<encoded-plugin-id>/         # Plugin project/workspace data
     └── sessions/<session-id>/
         ├── meta.json
         ├── session.jsonl
-        └── plugins/<plugin-instance-id>/
-            ├── resources/
-            └── proposals/
+        ├── session.log
+        └── plugins/
+            ├── <encoded-plugin-id>/         # Plugin session data
+            └── <plugin-instance-id>/
+                ├── resources/
+                └── proposals/
 ```
 
-Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Plugin data belongs to its BatonSession. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
+Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Plugins receive writable global, Project/workspace, Session, and Instance scope roots and decide their internal layout, while Resource and Proposal facts remain behind the host APIs. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
 
 ## License
 

@@ -4,6 +4,7 @@ import type {
   Controller,
   EventHandler,
   PluginActivationContext,
+  PluginDataDirectories,
   PluginInstance,
   PluginLogEntry,
   PluginPackage,
@@ -255,6 +256,7 @@ async function activate(
   entry: PluginPackageEntry,
   instance: PluginInstance,
   session: PluginSessionContext,
+  dataDirs: PluginDataDirectories,
 ): Promise<ActivationResult> {
   if (active) throw new Error("Plugin Runner already has an active Binding");
   if (closing) throw new Error("Plugin Runner is closing");
@@ -277,6 +279,7 @@ async function activate(
   const context: PluginActivationContext = Object.freeze({
     instance,
     session,
+    dataDirs: Object.freeze({ ...dataDirs }),
     resources,
     toast: Object.freeze({
       show(message: ToastMessage) {
@@ -400,7 +403,12 @@ async function closeBinding(): Promise<void> {
 async function dispatch(request: RunnerRequest): Promise<unknown> {
   switch (request.method) {
     case "activate":
-      return await activate(request.entry, request.instance, request.session);
+      return await activate(
+        request.entry,
+        request.instance,
+        request.session,
+        request.dataDirs,
+      );
     case "invoke": {
       const callback = handlers.get(request.handlerId);
       if (!callback) throw new Error(`Unknown Plugin handler: ${request.handlerId}`);

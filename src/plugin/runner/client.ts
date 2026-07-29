@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import type {
+  PluginDataDirectories,
   PluginInstance,
   PluginLogEntry,
   PluginSessionContext,
@@ -109,12 +110,14 @@ export class PluginRunnerClient {
     entry: PluginPackageEntry,
     instance: PluginInstance,
     session: PluginSessionContext,
+    dataDirs: PluginDataDirectories,
   ): Promise<ActivationResult> {
     return await this.call({
       method: "activate",
       entry,
       instance,
       session,
+      dataDirs,
     }) as ActivationResult;
   }
 

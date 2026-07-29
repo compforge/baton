@@ -96,6 +96,7 @@ import {
   type DiagnosticSink,
 } from "../diagnostics.ts";
 import { watchRequests } from "./watch.ts";
+import { preparePluginDataDirectories } from "./data.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -566,12 +567,21 @@ export class Manager {
       (resourceType) =>
         this.claimResourceTypeForCreate(instance.pluginId, resourceType),
     );
+    const dataDirs = preparePluginDataDirectories(
+      {
+        batonSessionId: batonSession.batonSessionId,
+        ...(batonSession.cwd === undefined ? {} : { cwd: batonSession.cwd }),
+        dir: this.instances.session.dir,
+      },
+      instance,
+    );
     const binding = new PluginBinding(
       instance,
       {
         batonSessionId: batonSession.batonSessionId,
         ...(batonSession.cwd === undefined ? {} : { cwd: batonSession.cwd }),
       },
+      dataDirs,
       {
         registerCommand: (command) =>
           this.commandRegistry.register(instance, command),
@@ -602,6 +612,7 @@ export class Manager {
               packageSource.entry,
               instance,
               binding.session,
+              dataDirs,
               {
                 resources,
                 onToast: (message) =>

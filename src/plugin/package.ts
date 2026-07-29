@@ -15,6 +15,7 @@ import type {
   PluginCommandPickerSearch,
   PluginCommandResult,
   PluginActivationContext,
+  PluginDataDirectories,
   PluginLogEntry,
   PluginLogger,
   PluginPackage,
@@ -52,6 +53,7 @@ export type {
   PluginCommandPickerSearch,
   PluginCommandResult,
   PluginActivationContext,
+  PluginDataDirectories,
   PluginLogEntry,
   PluginLogger,
   PluginPackage,
@@ -160,6 +162,7 @@ export function validatePluginPackage(plugin: PluginPackage): void {
 export class PluginBinding implements PluginActivationContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
+  readonly dataDirs: PluginDataDirectories;
   readonly resources: ResourceClient;
   readonly toast: ToastSink;
   readonly logger: PluginLogger;
@@ -172,11 +175,13 @@ export class PluginBinding implements PluginActivationContext {
   constructor(
     instance: PluginInstance,
     session: PluginSessionContext,
+    dataDirs: PluginDataDirectories,
     registrars: PluginRegistrars,
     resources: ResourceClient,
   ) {
     this.instance = instance;
     this.session = Object.freeze({ ...session });
+    this.dataDirs = Object.freeze({ ...dataDirs });
     this.registrars = registrars;
     this.resources = resources;
     this.toast = Object.freeze({

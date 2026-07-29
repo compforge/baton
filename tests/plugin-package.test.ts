@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -102,6 +108,63 @@ afterEach(() => {
 });
 
 describe("Plugin Package lifecycle", () => {
+  test("provides writable Plugin data directories at all four scopes", async () => {
+    const root = testRoot();
+    const { instances, proposals } = stores(root);
+    instances.create({
+      pluginInstanceId: "reqloop_default",
+      pluginId: "qiankun/reqloop",
+      packageVersion: "1.2.0",
+    });
+    let context: PluginActivationContext | undefined;
+    const manager = new Manager({
+      instances,
+      proposals,
+      packages: [
+        reqloopPackage((activation) => {
+          context = activation;
+        }),
+      ],
+      onProposal() {},
+    });
+
+    await manager.start();
+    expect(context?.dataDirs).toEqual({
+      global: join(root, "plugins", "qiankun%2Freqloop"),
+      project: join(
+        root,
+        "projects",
+        "project",
+        "plugins",
+        "qiankun%2Freqloop",
+      ),
+      session: join(
+        root,
+        "projects",
+        "project",
+        "sessions",
+        "bs_test",
+        "plugins",
+        "qiankun%2Freqloop",
+      ),
+      instance: join(
+        root,
+        "projects",
+        "project",
+        "sessions",
+        "bs_test",
+        "plugins",
+        "reqloop_default",
+      ),
+    });
+    for (const path of Object.values(context!.dataDirs)) {
+      expect(existsSync(path)).toBe(true);
+      writeFileSync(join(path, "probe.json"), "{}\n");
+      expect(readFileSync(join(path, "probe.json"), "utf8")).toBe("{}\n");
+    }
+    await manager.close();
+  });
+
   test("scopes ContextProviders by Plugin name and removes them on deactivate", async () => {
     const root = testRoot();
     const { instances, proposals } = stores(root);

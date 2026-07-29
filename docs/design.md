@@ -113,13 +113,16 @@ baton 是一个 terminal-native 的统一 coding agent 会话：用户始终在 
     marketplaces.json                     # Marketplace 注册来源
     marketplaces/<marketplaceName>/       # Git Marketplace checkout
     packages/<encodedPluginId>/<version>/ # 不可变 PluginPackage
+    <encodedPluginId>/                    # Plugin global 可写数据
   projects/<project key>/
     project.json                          # cwd；project key = 可读 basename + cwd 摘要
+    plugins/<encodedPluginId>/            # Plugin project/workspace 数据，跨 Session
     sessions/<batonSessionId>/
       session.jsonl    # 事件流（唯一合并真相源·投影）
       session.log      # harness/transport 内部诊断，不参与重放与投影
       meta.json        # 标题、cwd、参与 agent、harnessSession 映射、resume cursor
-      plugins/<pluginInstanceId>/
+      plugins/<encodedPluginId>/          # Plugin session 私有数据
+      plugins/<pluginInstanceId>/          # Plugin instance scope root
         resources/<kind>/<resourceId>.json
         proposals/<proposalId>.json
   watermarks/<harness>/   # 外部会话增量读水位
