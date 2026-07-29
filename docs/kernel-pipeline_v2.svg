@@ -166,8 +166,8 @@
   <path d="M790 805 H760 V845 H445 V698 H410" class="flow"/>
   <text x="540" y="866" text-anchor="middle" class="tiny">Loop status / next action</text>
 
-  <!-- Harness runtime -->
-  <text x="1620" y="112" text-anchor="middle" class="title">Harness Runtime</text>
+  <!-- Harness execution -->
+  <text x="1620" y="112" text-anchor="middle" class="title">Harness Execution</text>
   <rect x="1510" y="150" width="235" height="365" rx="16" fill="#eee8ff" class="box"/>
   <text x="1627" y="187" text-anchor="middle" class="tiny">能力提供方</text>
 

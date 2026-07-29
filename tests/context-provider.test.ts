@@ -36,7 +36,7 @@ describe("ContextProviderRegistry", () => {
       }),
     );
 
-    const candidates = context.candidates("需求");
+    const candidates = await context.candidates("需求");
     expect(candidates).toEqual([{
       group: "session",
       insert: `@session:${referenced.id}`,
@@ -54,7 +54,7 @@ describe("ContextProviderRegistry", () => {
     const context = new ContextProviderRegistry();
     const unregister = context.registerContextProvider({
       kind: "requirement",
-      search(query) {
+      async search(query) {
         if (query && !query.toLowerCase().includes("ship")) return [];
         return [{
           id: "req_1",
@@ -62,12 +62,12 @@ describe("ContextProviderRegistry", () => {
           detail: "Story",
         }];
       },
-      provide(id) {
+      async provide(id) {
         return id === "req_1" ? "Requirement: Ship ContextProvider" : undefined;
       },
     }, "reqloop");
 
-    expect(context.candidates("ship")).toEqual([{
+    await expect(context.candidates("ship")).resolves.toEqual([{
       group: "reqloop@requirement",
       insert: "@reqloop.requirement:req_1",
       label: "Ship ContextProvider",
@@ -79,12 +79,12 @@ describe("ContextProviderRegistry", () => {
     expect(() =>
       context.registerContextProvider({
         kind: "requirement",
-        search: () => [],
-        provide: () => undefined,
+        search: async () => [],
+        provide: async () => undefined,
       }, "reqloop")
     ).toThrow("ContextProvider already registered: reqloop@requirement");
 
     unregister();
-    expect(context.candidates("ship")).toEqual([]);
+    await expect(context.candidates("ship")).resolves.toEqual([]);
   });
 });

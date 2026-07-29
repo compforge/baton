@@ -78,7 +78,7 @@ session 按 cwd 归入 project 只是**存放与发现的组织方式**，不是
 
 跨 project fork 只迁移会话上下文，不复制代码或工作区状态；源 project 的文件路径出现在历史里时，child 的 harness 需自行判断在新 cwd 下是否仍有效。
 
-Plugin runtime 同样不被隐式复制。Resource、Proposal 和 PluginInstance 配置以 BatonSession 为
+Plugin 数据与 Binding 同样不被隐式复制。Resource、Proposal 和 PluginInstance 配置以 BatonSession 为
 owner；要继续原 loop 应 resume 原 session。未来若真实场景需要“分叉 loop”，必须由 Plugin
 显式定义 clone 语义，不能把可能关联外部副作用的状态目录直接复制给 child。
 

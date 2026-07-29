@@ -72,5 +72,5 @@ export interface PluginActivationContext {
 export interface PluginPackage {
   readonly pluginId: string;
   readonly version: string;
-  activate(context: PluginActivationContext): Promise<void> | void;
+  activate(context: PluginActivationContext): Promise<void>;
 }

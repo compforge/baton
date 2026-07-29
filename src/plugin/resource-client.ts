@@ -66,15 +66,15 @@ export function createResourceClient(
   };
 
   return Object.freeze({
-    get<TSpec, TStatus>(type: ResourceType, name: string) {
+    async get<TSpec, TStatus>(type: ResourceType, name: string) {
       return deepFreeze(store.get<TSpec, TStatus>(type, name));
     },
-    list<TSpec, TStatus>(type: ResourceType) {
+    async list<TSpec, TStatus>(type: ResourceType) {
       return store
         .list<TSpec, TStatus>(type)
         .map((resource) => deepFreeze(resource));
     },
-    create<TSpec, TStatus>(
+    async create<TSpec, TStatus>(
       type: ResourceType,
       init: {
         name: string;
@@ -98,13 +98,13 @@ export function createResourceClient(
       changed("created", created);
       return created;
     },
-    delete(type: ResourceType, name: string) {
+    async delete(type: ResourceType, name: string) {
       const resource = deepFreeze(store.get(type, name));
       assertOwned(resource);
       store.delete(type, name);
       changed("deleted", resource);
     },
-    patchStatus<TSpec, TStatus>(
+    async patchStatus<TSpec, TStatus>(
       resource: Readonly<Resource<TSpec, TStatus>>,
       patch: Partial<TStatus>,
     ) {

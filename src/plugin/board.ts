@@ -24,7 +24,7 @@ export interface BoardSource<TSpec = unknown, TStatus = unknown> {
   readonly list: () => readonly Readonly<Resource<TSpec, TStatus>>[];
   readonly present: (
     resource: Readonly<Resource<TSpec, TStatus>>,
-  ) => BoardPresentation | undefined;
+  ) => Promise<BoardPresentation | undefined>;
 }
 
 function nonEmpty(name: string, value: string): void {
@@ -56,13 +56,13 @@ function presentResource<TSpec, TStatus>(
 }
 
 /** 单个 Resource 的展示失败只生成一条诊断项，不遮掉其它 Plugin 的 Board。 */
-export function presentBoardSource<TSpec, TStatus>(
+export async function presentBoardSource<TSpec, TStatus>(
   source: BoardSource<TSpec, TStatus>,
-): readonly BoardItem[] {
+): Promise<readonly BoardItem[]> {
   const items: BoardItem[] = [];
   for (const resource of source.list()) {
     try {
-      const presentation = source.present(resource);
+      const presentation = await source.present(resource);
       if (presentation) {
         items.push(
           presentResource(source, resource.metadata.name, presentation),

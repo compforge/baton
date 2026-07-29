@@ -56,6 +56,7 @@ import {
   PluginSettingsStore,
 } from "../../plugin/settings.ts";
 import { ProposalStore } from "../../plugin/proposal.ts";
+import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
 import { Controller } from "../../controller/index.ts";
 import { applyEvent, type SessionState } from "../../store/reduce.ts";
@@ -158,7 +159,10 @@ export class BatonChatProtocol implements ChatProtocol {
   private boardMode: BoardMode = "auto";
   private boardViewCache: BoardViewProjection | undefined;
   private nextPickerId = 1;
-  private commandListeners = new Set<() => void>();
+  private completionListeners = new Set<() => void>();
+  private mentionCandidateQuery: string | undefined;
+  private mentionCandidateCache: Candidate[] = [];
+  private mentionCandidateRevision = 0;
   private unsubscribeSession: () => void;
   private streamStateTimer: ReturnType<typeof setTimeout> | undefined;
   // 输入历史（shell 式 ↑/↓ 回溯）：会话级，从事件流的 user 消息种入、提交时追加。
@@ -219,9 +223,9 @@ export class BatonChatProtocol implements ChatProtocol {
     return this.plugins;
   }
 
-  subscribeCommands(onChange: () => void): () => void {
-    this.commandListeners.add(onChange);
-    return () => this.commandListeners.delete(onChange);
+  subscribeCompletions(onChange: () => void): () => void {
+    this.completionListeners.add(onChange);
+    return () => this.completionListeners.delete(onChange);
   }
 
   // ===== 输入：TUI → baton =====
@@ -725,9 +729,34 @@ export class BatonChatProtocol implements ChatProtocol {
     this.resetHistoryNav();
   }
 
-  /** @ 候选源，注入给 ChatShell */
-  mentionCandidates = (prefix: string): Candidate[] =>
-    this.plugins.listContextCandidates(prefix);
+  /**
+   * chat-tui reads candidates synchronously during render. A new prefix starts
+   * an asynchronous lookup and returns an empty snapshot; only the newest
+   * lookup may publish and schedule another render.
+   */
+  mentionCandidates = (prefix: string): Candidate[] => {
+    if (prefix === this.mentionCandidateQuery) {
+      return this.mentionCandidateCache;
+    }
+    this.mentionCandidateQuery = prefix;
+    this.mentionCandidateCache = [];
+    const revision = ++this.mentionCandidateRevision;
+    void this.plugins.listContextCandidates(prefix)
+      .then((candidates) => {
+        if (
+          revision !== this.mentionCandidateRevision ||
+          prefix !== this.mentionCandidateQuery
+        ) {
+          return;
+        }
+        this.mentionCandidateCache = [...candidates];
+        this.completionsChanged(false);
+      })
+      .catch(() => {
+        // Completion is a derived view. A failed provider cannot affect input.
+      });
+    return this.mentionCandidateCache;
+  };
 
   // ===== 内部 =====
 
@@ -783,12 +812,18 @@ export class BatonChatProtocol implements ChatProtocol {
             label: definition.label,
           })),
         }),
-      loadPackage: (pluginId, version, options) => {
+      loadPackageEntry: (pluginId, version, options) => {
         if (!options?.marketplace) {
           throw new Error(`marketplace is required to load ${pluginId}`);
         }
-        return this.marketplace.load(pluginId, options.marketplace, version, options);
+        return this.marketplace.entry(
+          pluginId,
+          options.marketplace,
+          version,
+          options,
+        );
       },
+      pluginSupervisor: new PluginSupervisor(),
       onProposal: () => {
         this.changed();
       },
@@ -802,13 +837,20 @@ export class BatonChatProtocol implements ChatProtocol {
       reservedCommandNames: COMMANDS.map((command) => command.name),
       contextProviders: context,
       onCommandsChanged: () => {
-        this.commandsChanged();
+        this.completionsChanged();
       },
       onActivationError: ({ pluginInstanceId, error }) => {
         this.toast = {
           text: `Plugin ${pluginInstanceId} activation failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
+          tone: "error",
+        };
+        this.changed();
+      },
+      onRunnerFailure: ({ pluginInstanceId, error }) => {
+        this.toast = {
+          text: `Plugin ${pluginInstanceId} stopped: ${error.message}`,
           tone: "error",
         };
         this.changed();
@@ -893,7 +935,7 @@ export class BatonChatProtocol implements ChatProtocol {
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.createPluginManager();
-    this.commandsChanged();
+    this.completionsChanged();
     this.startPluginManager();
     this.changed();
   }
@@ -1127,8 +1169,13 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  private commandsChanged(): void {
-    for (const listener of this.commandListeners) listener();
+  private completionsChanged(invalidateMentions = true): void {
+    if (invalidateMentions) {
+      this.mentionCandidateQuery = undefined;
+      this.mentionCandidateCache = [];
+      this.mentionCandidateRevision += 1;
+    }
+    for (const listener of this.completionListeners) listener();
   }
 
   private boardView(): BoardViewProjection {

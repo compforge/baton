@@ -36,6 +36,7 @@ function protocol(options: {
   installed?: readonly InstalledPluginPackage[];
 } = {}): BatonChatProtocol {
   const marketplace = {
+    refresh: async () => {},
     available: () => options.available ?? [],
     installed: () => options.installed ?? [],
     list: () => [],
@@ -57,7 +58,7 @@ function protocol(options: {
       footer: { text: "ready" },
       sidecar: undefined,
     }),
-    subscribeCommands: () => () => {},
+    subscribeCompletions: () => () => {},
     submit: () => {},
     command: () => {},
     cancel: () => {},

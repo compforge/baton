@@ -42,5 +42,5 @@ export interface Command {
   readonly description: string;
   execute(
     input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined> | PluginCommandResult | undefined;
+  ): Promise<PluginCommandResult | undefined>;
 }

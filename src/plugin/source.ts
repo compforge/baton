@@ -124,7 +124,7 @@ export class ControllerSources<TSpec, TStatus> {
             // Source diagnostics must not interrupt discovery or live delivery.
           }
         };
-        const emit: SourceContext<TSpec>["emit"] = (input): void => {
+        const emit: SourceContext<TSpec>["emit"] = async (input): Promise<void> => {
           if (this.closed || abort.signal.aborted) return;
           try {
             const { resource, created } =

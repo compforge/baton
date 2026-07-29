@@ -72,13 +72,17 @@ function key(pluginInstanceId: string, resourceId: string) {
 }
 
 function reqloopPackage(
-  activate: PluginPackage["activate"],
+  activate: (
+    context: PluginActivationContext,
+  ) => Promise<void> | void,
   version = "1.2.0",
 ): PluginPackage {
   return {
     pluginId: "qiankun/reqloop",
     version,
-    activate,
+    activate: async (context) => {
+      await activate(context);
+    },
   };
 }
 
@@ -113,13 +117,13 @@ describe("Plugin Package lifecycle", () => {
         reqloopPackage((context) => {
           context.registerContextProvider({
             kind: "requirement",
-            search() {
+            async search() {
               return [{
                 id: "req_1",
                 label: "Ship it",
               }];
             },
-            provide(id) {
+            async provide(id) {
               return id === "req_1" ? "Requirement: Ship it" : undefined;
             },
           });
@@ -129,7 +133,7 @@ describe("Plugin Package lifecycle", () => {
     });
 
     await manager.start();
-    expect(manager.listContextCandidates("")).toEqual([{
+    await expect(manager.listContextCandidates("")).resolves.toEqual([{
       group: "reqloop@requirement",
       insert: "@reqloop.requirement:req_1",
       label: "Ship it",
@@ -140,7 +144,7 @@ describe("Plugin Package lifecycle", () => {
     ).resolves.toEqual(["Requirement: Ship it"]);
 
     await manager.deactivateInstance("reqloop_default");
-    expect(manager.listContextCandidates("")).toEqual([]);
+    await expect(manager.listContextCandidates("")).resolves.toEqual([]);
     await manager.close();
   });
 
@@ -158,13 +162,13 @@ describe("Plugin Package lifecycle", () => {
       readonly type = "resource";
       readonly sourceId = "poll-pr-state";
 
-      start(source: SourceContext<{ requirement: string }>): void {
+      async start(source: SourceContext<{ requirement: string }>): Promise<void> {
         const observation = {
           name: "run_1",
           spec: { requirement: "ship it" },
         };
-        source.emit(observation);
-        source.emit(observation);
+        await source.emit(observation);
+        await source.emit(observation);
       }
     }
     const manager = new Manager({
@@ -178,7 +182,7 @@ describe("Plugin Package lifecycle", () => {
             async reconcile() {
               runs += 1;
             },
-            present(resource) {
+            async present(resource) {
               return { title: resource.spec.requirement };
             },
           });
@@ -222,7 +226,7 @@ describe("Plugin Package lifecycle", () => {
             async reconcile(_baton, resource) {
               phases.push(resource.status.phase ?? "pending");
               if (resource.status.phase === undefined) {
-                activation.resources.patchStatus(resource, {
+                await activation.resources.patchStatus(resource, {
                   phase: "ready",
                 });
               }
@@ -234,7 +238,7 @@ describe("Plugin Package lifecycle", () => {
     });
 
     await manager.start();
-    context!.resources.create(REQ_LOOP_RUN, {
+    await context!.resources.create(REQ_LOOP_RUN, {
       name: "run_1",
       spec: { requirement: "ship it" },
     });
@@ -282,7 +286,7 @@ describe("Plugin Package lifecycle", () => {
               handler: enqueueRequestsFromMapFunc<
                 { root: string },
                 WorkspaceStatus
-              >((workspace) =>
+              >(async (workspace) =>
                 (workspace.status.repositories ?? []).map((name) => ({ name }))
               ),
             }],
@@ -303,28 +307,28 @@ describe("Plugin Package lifecycle", () => {
     await waitFor(() => reconciled.length === 2);
     reconciled.length = 0;
 
-    const workspace = context!.resources.create<
+    const workspace = await context!.resources.create<
       { root: string },
       WorkspaceStatus
     >(workspaceType, {
       name: "session",
       spec: { root: "session-cwd" },
     });
-    const withRepoA = context!.resources.patchStatus(workspace, {
+    const withRepoA = await context!.resources.patchStatus(workspace, {
       repositories: ["repo_a"],
     });
     await waitFor(() => reconciled.length === 1);
     expect(reconciled).toEqual(["repo_a"]);
 
     reconciled.length = 0;
-    const withRepoB = context!.resources.patchStatus(withRepoA, {
+    const withRepoB = await context!.resources.patchStatus(withRepoA, {
       repositories: ["repo_b"],
     });
     await waitFor(() => reconciled.length === 2);
     expect(reconciled.sort()).toEqual(["repo_a", "repo_b"]);
 
     reconciled.length = 0;
-    context!.resources.delete(workspaceType, withRepoB.metadata.name);
+    await context!.resources.delete(workspaceType, withRepoB.metadata.name);
     await waitFor(() => reconciled.length === 1);
     expect(reconciled).toEqual(["repo_b"]);
 
@@ -360,7 +364,7 @@ describe("Plugin Package lifecycle", () => {
           >({
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
-            present(resource) {
+            async present(resource) {
               presentations += 1;
               return {
                 title: resource.spec.requirement,
@@ -397,11 +401,12 @@ describe("Plugin Package lifecycle", () => {
     expect(manager.listBoardItems()).toBe(pendingItems);
     expect(presentations).toBe(1);
 
-    const resource = context!.resources.get<
+    const resource = await context!.resources.get<
       { requirement: string },
       { phase: string }
     >(REQ_LOOP_RUN, "run_1");
-    context!.resources.patchStatus(resource, { phase: "ready" });
+    await context!.resources.patchStatus(resource, { phase: "ready" });
+    await waitFor(() => manager.listBoardItems() !== pendingItems);
     const readyItems = manager.listBoardItems();
     expect(readyItems).not.toBe(pendingItems);
     expect(readyItems[0]?.status).toBe("ready");
@@ -478,7 +483,7 @@ describe("Plugin Package lifecycle", () => {
     ]);
     expect(Object.isFrozen(toasts[0])).toBe(true);
     expect(Object.isFrozen(toasts[0]!.message)).toBe(true);
-    const created = context!.resources.create(REQ_LOOP_RUN, {
+    const created = await context!.resources.create(REQ_LOOP_RUN, {
       name: "run_labeled",
       labels: { "reqloop.baton.dev/source": "test" },
       annotations: { "example.com/display-name": "Labeled run" },
@@ -492,24 +497,24 @@ describe("Plugin Package lifecycle", () => {
     });
     expect(Object.isFrozen(created.metadata.labels)).toBe(true);
     expect(Object.isFrozen(created.metadata.annotations)).toBe(true);
-    const resource = context!.resources.get<
+    const resource = await context!.resources.get<
       { requirement: string },
       { phase: string }
     >(REQ_LOOP_RUN, "run_1");
     expect(Object.isFrozen(resource)).toBe(true);
-    const updated = context!.resources.patchStatus(resource, {
+    const updated = await context!.resources.patchStatus(resource, {
       phase: "running",
     });
     expect(updated.status.phase).toBe("running");
-    expect(() =>
+    await expect(
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
-    ).toThrow("outside reqloop_default");
-    expect(() =>
+    ).rejects.toThrow("outside reqloop_default");
+    await expect(
       context!.resources.create(BATON_TURN_RESOURCE_TYPE, {
         name: "forged_turn",
         spec: {},
       }),
-    ).toThrow("Resource type is reserved by Baton");
+    ).rejects.toThrow("Resource type is reserved by Baton");
     await manager.close();
   });
 
@@ -632,7 +637,7 @@ describe("Plugin Package lifecycle", () => {
     const controllerPackage = (pluginId: string): PluginPackage => ({
       pluginId,
       version: "1.0.0",
-      activate(context) {
+      async activate(context) {
         context.registerController({
           resourceType: resourceType("SharedRun"),
           async reconcile() {},
@@ -1098,7 +1103,7 @@ describe("Plugin Package lifecycle", () => {
         return {
           pluginId: "wrong/plugin",
           version: "1.2.0",
-          activate() {},
+          async activate() {},
         };
       },
       onProposal() {},

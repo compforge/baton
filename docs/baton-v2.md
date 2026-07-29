@@ -31,7 +31,7 @@ v2 必须把持久归属、会话组织和执行位置分开：
 
 | 概念 | 回答的问题 | 不负责 |
 |---|---|---|
-| **Project** | 哪些 BatonSession 按同一 cwd 组织和发现？ | 不拥有 Plugin runtime，也不是 Harness 的执行快照 |
+| **Project** | 哪些 BatonSession 按同一 cwd 组织和发现？ | 不拥有 Plugin 数据或 Binding，也不是 Harness 的执行快照 |
 | **BatonSession** | 用户正在延续哪条正典历史和领域 loop？ | 不代表某个 Harness 的原生 session |
 | **HarnessTarget** | 这次工作要由哪个已配置的 Harness、以什么执行位置和能力运行？ | 不承载可变的会话历史 |
 
@@ -292,7 +292,7 @@ daemon 只提高关闭 TUI 时的实时性，不改变事实、调度和恢复�
 
 ### 3.1 Project 只组织 BatonSession
 
-Project 根据 cwd 组织和发现 BatonSession；BatonSession 同时拥有正典历史和 Plugin runtime；
+Project 根据 cwd 组织和发现 BatonSession；BatonSession 同时拥有正典历史和 Plugin 数据；
 HarnessTarget 表达执行放置。三者分离后，同一 Project 可以有多条互不污染的 loop，同一历史
 可以切换多个 target，target 配置变更也不会重写既有执行事实。
 

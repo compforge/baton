@@ -69,11 +69,54 @@ export type {
   Watch,
 } from "@compforge/baton-plugin";
 
-export {
-  BATON_SYSTEM_NAMESPACE,
-  BATON_TURN_RESOURCE_TYPE,
-  enqueueRequestsFromMapFunc,
-} from "@compforge/baton-plugin";
+export const BATON_SYSTEM_NAMESPACE = "baton-system" as const;
+export const BATON_TURN_RESOURCE_TYPE = Object.freeze({
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "Turn",
+} as const satisfies ResourceType);
+
+function uniqueRequests(
+  requests: readonly ReconcileRequest[],
+): readonly ReconcileRequest[] {
+  const unique = new Map<string, ReconcileRequest>();
+  for (const request of requests) {
+    if (!unique.has(request.name)) unique.set(request.name, request);
+  }
+  return Object.freeze([...unique.values()]);
+}
+
+function typedResource<TSpec, TStatus>(
+  resource: EventResource,
+): Readonly<Resource<TSpec, TStatus>> {
+  return resource as Readonly<Resource<TSpec, TStatus>>;
+}
+
+/** Internal convenience adapter; the public authoring package stays type-only. */
+export function enqueueRequestsFromMapFunc<
+  TSpec = unknown,
+  TStatus = unknown,
+>(
+  map: MapFunc<TSpec, TStatus>,
+): EventHandler {
+  return Object.freeze({
+    async create(event: CreateEvent) {
+      return uniqueRequests(
+        await map(typedResource<TSpec, TStatus>(event.object)),
+      );
+    },
+    async update(event: UpdateEvent) {
+      return uniqueRequests([
+        ...await map(typedResource<TSpec, TStatus>(event.oldObject)),
+        ...await map(typedResource<TSpec, TStatus>(event.newObject)),
+      ]);
+    },
+    async delete(event: DeleteEvent) {
+      return uniqueRequests(
+        await map(typedResource<TSpec, TStatus>(event.object)),
+      );
+    },
+  });
+}
 
 type ResourceRegistrar = <TSpec, TStatus>(
   controller: Controller<TSpec, TStatus>,

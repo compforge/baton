@@ -55,10 +55,10 @@ function appendRequests(
   target.push(...requests);
 }
 
-export function watchRequests(
+export async function watchRequests(
   watches: readonly Watch[],
   change: ResourceClientChange,
-): readonly ReconcileRequest[] {
+): Promise<readonly ReconcileRequest[]> {
   const observedType = resourceTypeKey(change.resource);
   const requests: ReconcileRequest[] = [];
   for (const watch of watches) {
@@ -66,7 +66,7 @@ export function watchRequests(
     if (change.kind === "created") {
       appendRequests(
         requests,
-        watch.handler.create(Object.freeze({
+        await watch.handler.create(Object.freeze({
           object: change.resource,
         })),
       );
@@ -75,7 +75,7 @@ export function watchRequests(
     if (change.kind === "status-updated") {
       appendRequests(
         requests,
-        watch.handler.update(Object.freeze({
+        await watch.handler.update(Object.freeze({
           oldObject: change.oldResource,
           newObject: change.resource,
         })),
@@ -84,7 +84,7 @@ export function watchRequests(
     }
     appendRequests(
       requests,
-      watch.handler.delete(Object.freeze({
+      await watch.handler.delete(Object.freeze({
         object: change.resource,
       })),
     );

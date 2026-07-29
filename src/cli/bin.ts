@@ -225,6 +225,7 @@ async function runPlugins(): Promise<void> {
       return;
     }
     if (args[0] === "available") {
+      await registry.refresh();
       const available = registry.available({ marketplace: argValue("--marketplace") });
       if (available.length === 0) {
         console.log("(no Plugin Packages available)");
@@ -243,6 +244,7 @@ async function runPlugins(): Promise<void> {
     if (args[0] === "install") {
       const pluginId = args[1];
       if (!pluginId) fail("Usage: baton plugins install <plugin-id> [--marketplace <name>]");
+      await registry.refresh();
       const installed = registry.install(pluginId, {
         marketplace: argValue("--marketplace"),
       });

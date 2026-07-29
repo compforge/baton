@@ -27,12 +27,12 @@ function requirementPackage(name = "requirements"): PluginPackage {
   return {
     pluginId: "qiankun/reqloop",
     version: "1.0.0",
-    activate(context) {
+    async activate(context) {
       context.registerCommand({
         commandId: "requirements",
         name,
         description: "Browse requirements",
-        execute(input) {
+        async execute(input) {
           if (input.selectedValue) {
             return {
               kind: "message",
@@ -54,12 +54,12 @@ function searchableRequirementPackage(): PluginPackage {
   return {
     pluginId: "qiankun/searchable-reqloop",
     version: "1.0.0",
-    activate(context) {
+    async activate(context) {
       context.registerCommand({
         commandId: "requirements",
         name: "search-requirements",
         description: "Search requirements",
-        execute(input) {
+        async execute(input) {
           const query = input.searchQuery ?? input.argument;
           return {
             kind: "picker",
