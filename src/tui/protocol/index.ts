@@ -883,11 +883,9 @@ export class BatonChatProtocol implements ChatProtocol {
         };
         this.changed();
       },
-      onControllerSourceError: ({ scope, sourceId, error }) => {
+      onControllerSourceError: ({ scope, sourceId }) => {
         this.toast = {
-          text: `Plugin source ${sourceId} failed for ${scope.pluginInstanceId}/${scope.resourceKind}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          text: `Plugin source ${sourceId} failed for ${scope.pluginInstanceId}/${scope.resourceKind}`,
           tone: "error",
         };
         this.changed();

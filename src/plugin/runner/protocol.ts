@@ -170,6 +170,7 @@ export interface SerializedError {
   readonly name: string;
   readonly message: string;
   readonly stack?: string;
+  readonly cause?: SerializedError;
 }
 
 export interface ParentCall {
@@ -227,6 +228,9 @@ export function serializedError(error: unknown): SerializedError {
       name: error.name,
       message: error.message,
       ...(error.stack === undefined ? {} : { stack: error.stack }),
+      ...(error.cause === undefined
+        ? {}
+        : { cause: serializedError(error.cause) }),
     };
   }
   return {
@@ -236,7 +240,12 @@ export function serializedError(error: unknown): SerializedError {
 }
 
 export function restoredError(error: SerializedError): Error {
-  const restored = new Error(error.message);
+  const restored = new Error(
+    error.message,
+    error.cause === undefined
+      ? undefined
+      : { cause: restoredError(error.cause) },
+  );
   restored.name = error.name;
   if (error.stack !== undefined) restored.stack = error.stack;
   return restored;
