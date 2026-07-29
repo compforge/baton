@@ -154,6 +154,7 @@ describe("Plugin Package lifecycle", () => {
         "sessions",
         "bs_test",
         "plugins",
+        "qiankun%2Freqloop",
         "reqloop_default",
       ),
     });

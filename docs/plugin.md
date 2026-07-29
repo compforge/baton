@@ -157,8 +157,8 @@ Plugin 自写文件按 `global`、`project`、`session`、`instance` 四种 scop
     ├── plugins/<encoded-plugin-id>/                     # project/workspace
     └── sessions/<baton-session-id>/
         └── plugins/
-            ├── <encoded-plugin-id>/                     # session
-            └── <plugin-instance-id>/                    # instance
+            └── <encoded-plugin-id>/                     # session
+                └── <plugin-instance-id>/                # instance
 ```
 
 ```ts
@@ -175,8 +175,9 @@ const { global, project, session, instance } = context.dataDirs;
 Plugin 配置只定义到 `global`、`project`、`session` 三层，不增加 Instance 级配置；更窄 scope
 的配置覆盖更宽 scope，具体 schema 与合并策略由 Plugin 定义。运行数据可以按需写入全部四层。
 前三层目录按 `pluginId` 隔离，不按 Package version 或运行时 Instance id 分叉；`instance`
-目录按 `pluginInstanceId` 隔离。Baton 只约定各 scope 的根目录，Plugin 自己决定是否在其中
-组织 `data/`、`cache/`、`state/` 等子目录；Package version 不参与路径。
+目录在所属 Plugin 的 Session 目录下按 `pluginInstanceId` 隔离。Baton 只约定各 scope 的根目录，
+Plugin 自己决定是否在其中组织 `data/`、`cache/`、`state/` 等子目录；Package version 不参与
+路径。
 
 文件名和内容由 Plugin 拥有，但必须遵守：
 

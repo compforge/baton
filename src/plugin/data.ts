@@ -61,15 +61,12 @@ export function preparePluginDataDirectories(
 ): PluginDataDirectories {
   const layout = projectDirectory(session.dir);
   const plugin = pluginDirectoryName(instance.pluginId);
+  const sessionData = join(session.dir, "plugins", plugin);
   const directories = Object.freeze({
     global: join(layout.batonRoot, "plugins", plugin),
     project: join(layout.project, "plugins", plugin),
-    session: join(session.dir, "plugins", plugin),
-    instance: join(
-      session.dir,
-      "plugins",
-      instance.pluginInstanceId,
-    ),
+    session: sessionData,
+    instance: join(sessionData, instance.pluginInstanceId),
   });
   for (const path of Object.values(directories)) {
     mkdirSync(path, { recursive: true, mode: 0o700 });
