@@ -151,8 +151,120 @@ describe("PluginResourceStore", () => {
     expect(
       resources.patchStatus(REQ_LOOP_RUN, "run_1", { phase: "pending" }).metadata.resourceVersion,
     ).toBe("1");
+    expect(
+      resources.patchMetadata(REQ_LOOP_RUN, "run_1", {}).metadata
+        .resourceVersion,
+    ).toBe("1");
     resources.setNextReconcileAt(REQ_LOOP_RUN, "run_1", null);
     expect(resources.get(REQ_LOOP_RUN, "run_1").metadata.resourceVersion).toBe("1");
+  });
+
+  test("patches Plugin metadata by key without changing generation", () => {
+    const resources = store(testRoot());
+    const created = resources.create({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      annotations: {
+        "example.com/keep": "yes",
+        "example.com/remove": "old",
+      },
+      spec: { requirement: "same" },
+    });
+
+    const patched = resources.patchMetadata(
+      REQ_LOOP_RUN,
+      "run_1",
+      {
+        labels: {
+          "example.com/policy": "retained",
+        },
+        annotations: {
+          "example.com/remove": null,
+          "reqloop.baton.dev/delete-after": "2026-08-01T00:00:00.000Z",
+        },
+      },
+      { expectedResourceVersion: created.metadata.resourceVersion },
+    );
+
+    expect(patched.metadata.generation).toBe(1);
+    expect(patched.metadata.resourceVersion).toBe("2");
+    expect(patched.metadata.labels).toEqual({
+      "example.com/policy": "retained",
+    });
+    expect(patched.metadata.annotations).toEqual({
+      "example.com/keep": "yes",
+      "reqloop.baton.dev/delete-after": "2026-08-01T00:00:00.000Z",
+    });
+    expect(() =>
+      resources.patchMetadata(REQ_LOOP_RUN, "run_1", {
+        annotations: {
+          "example.com/invalid": 1 as unknown as string,
+        },
+      })
+    ).toThrow("metadata annotations patch");
+  });
+
+  test("selects Resources by constrained labels while annotations stay opaque", () => {
+    const resources = store(testRoot());
+    const first = resources.create({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      labels: {
+        "reqloop.baton.dev/source": "forge",
+        state: "open",
+      },
+      annotations: {
+        "user note with spaces": JSON.stringify({
+          reason: "keep this text unindexed",
+        }),
+      },
+      spec: { requirement: "first" },
+    });
+    resources.create({
+      type: REQ_LOOP_RUN,
+      name: "run_2",
+      labels: {
+        "reqloop.baton.dev/source": "forge",
+        state: "closed",
+      },
+      spec: { requirement: "second" },
+    });
+
+    expect(
+      resources.list(REQ_LOOP_RUN, {
+        matchLabels: {
+          "reqloop.baton.dev/source": "forge",
+          state: "open",
+        },
+      }),
+    ).toEqual([first]);
+    expect(
+      resources.list(REQ_LOOP_RUN, {
+        matchLabels: { state: "missing" },
+      }),
+    ).toEqual([]);
+
+    expect(() =>
+      resources.create({
+        type: REQ_LOOP_RUN,
+        name: "bad_key",
+        labels: { "Bad Prefix/source": "forge" },
+        spec: {},
+      })
+    ).toThrow("invalid DNS prefix");
+    expect(() =>
+      resources.create({
+        type: REQ_LOOP_RUN,
+        name: "bad_value",
+        labels: { state: "has spaces" },
+        spec: {},
+      })
+    ).toThrow("valid label value");
+    expect(() =>
+      resources.list(REQ_LOOP_RUN, {
+        matchLabels: { state: "has spaces" },
+      })
+    ).toThrow("valid label value");
   });
 
   test("reports whether a Source observation materialized a new Resource", () => {
@@ -171,6 +283,24 @@ describe("PluginResourceStore", () => {
     expect(first.created).toBe(true);
     expect(repeated.created).toBe(false);
     expect(repeated.resource).toEqual(first.resource);
+
+    const annotated = resources.patchMetadata<{ requirement: string }>(
+      REQ_LOOP_RUN,
+      "run_1",
+      {
+        labels: { "example.com/extra": "preserved" },
+        annotations: {
+          "reqloop.baton.dev/delete-after": "2026-08-01T00:00:00.000Z",
+        },
+      },
+    );
+    expect(
+      resources.ensure({
+        type: REQ_LOOP_RUN,
+        name: "run_1",
+        spec: { requirement: "same" },
+      }).resource,
+    ).toEqual(annotated);
   });
 
   test("checks expected resourceVersion inside the write lock", () => {
@@ -262,7 +392,8 @@ describe("PluginResourceStore", () => {
       name: "run_1",
       spec: {},
     });
-    resources.delete(REQ_LOOP_RUN, "run_1");
+    resources.requestDeletion(REQ_LOOP_RUN, "run_1");
+    resources.finalizeDeletion(REQ_LOOP_RUN, "run_1");
     const replacement = resources.create({
       type: REQ_LOOP_RUN,
       name: "run_1",
@@ -271,6 +402,103 @@ describe("PluginResourceStore", () => {
 
     expect(replacement.metadata.name).toBe(first.metadata.name);
     expect(replacement.metadata.uid).not.toBe(first.metadata.uid);
+  });
+
+  test("pins structural owners and cascades deletion requests", () => {
+    const resources = store(testRoot());
+    const workspace = resources.create({
+      type: REQ_LOOP_RUN,
+      name: "workspace",
+      spec: {},
+    });
+    const repository = resources.create({
+      type: OTHER,
+      name: "repository",
+      owner: {
+        ...REQ_LOOP_RUN,
+        namespace: workspace.metadata.namespace,
+        name: workspace.metadata.name,
+        uid: workspace.metadata.uid,
+      },
+      spec: {},
+    });
+    const pullRequest = resources.create({
+      type: REQ_LOOP_RUN,
+      name: "pull-request",
+      owner: {
+        ...OTHER,
+        namespace: repository.metadata.namespace,
+        name: repository.metadata.name,
+        uid: repository.metadata.uid,
+      },
+      spec: {},
+    });
+    const deletionTime = new Date("2026-07-29T01:02:03.000Z");
+
+    const updates = resources.requestDeletion(
+      REQ_LOOP_RUN,
+      workspace.metadata.name,
+      deletionTime,
+    );
+
+    expect(updates.map(({ resource }) => resource.metadata.uid)).toEqual([
+      workspace.metadata.uid,
+      repository.metadata.uid,
+      pullRequest.metadata.uid,
+    ]);
+    for (const resource of [
+      resources.get(REQ_LOOP_RUN, workspace.metadata.name),
+      resources.get(OTHER, repository.metadata.name),
+      resources.get(REQ_LOOP_RUN, pullRequest.metadata.name),
+    ]) {
+      expect(resource.metadata.deletionTimestamp).toBe(
+        deletionTime.toISOString(),
+      );
+      expect(resource.metadata.resourceVersion).toBe("2");
+    }
+    expect(
+      resources.requestDeletion(
+        REQ_LOOP_RUN,
+        workspace.metadata.name,
+        new Date("2026-07-30T00:00:00.000Z"),
+      ),
+    ).toEqual([]);
+    expect(() =>
+      resources.create({
+        type: OTHER,
+        name: "late-child",
+        owner: {
+          ...REQ_LOOP_RUN,
+          namespace: workspace.metadata.namespace,
+          name: workspace.metadata.name,
+          uid: workspace.metadata.uid,
+        },
+        spec: {},
+      })
+    ).toThrow("plugin resource owner is being deleted");
+  });
+
+  test("rejects an owner reference to a replaced incarnation", () => {
+    const resources = store(testRoot());
+    const owner = resources.create({
+      type: REQ_LOOP_RUN,
+      name: "workspace",
+      spec: {},
+    });
+
+    expect(() =>
+      resources.create({
+        type: OTHER,
+        name: "repository",
+        owner: {
+          ...REQ_LOOP_RUN,
+          namespace: owner.metadata.namespace,
+          name: owner.metadata.name,
+          uid: "pr_replaced",
+        },
+        spec: {},
+      })
+    ).toThrow("plugin resource owner uid does not match");
   });
 
   test("keeps the same kind and name isolated across apiVersions", () => {

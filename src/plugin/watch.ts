@@ -72,7 +72,11 @@ export async function watchRequests(
       );
       continue;
     }
-    if (change.kind === "status-updated") {
+    if (
+      change.kind === "status-updated" ||
+      change.kind === "metadata-updated" ||
+      change.kind === "deletion-requested"
+    ) {
       appendRequests(
         requests,
         await watch.handler.update(Object.freeze({

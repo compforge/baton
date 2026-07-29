@@ -120,6 +120,10 @@ export interface ControllerOptions<TSpec, TStatus> {
   onReconcileError?(key: ReconcileKey, error: unknown): void;
   /** Source 首次 materialize Resource 后失效 Board 等派生投影。 */
   onSourceResource?(resource: Readonly<PluginResource<TSpec, TStatus>>): void;
+  /** Terminating Resource reconcile 成功后，向 Manager 发布最终删除事实。 */
+  onResourceDeleted?(
+    resource: Readonly<PluginResource<unknown, unknown>>,
+  ): void;
 }
 
 function ownedKey(key: ReconcileKey): ReconcileKey {
@@ -176,6 +180,7 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 interface ReconcileExecution {
   proposal?: ReconcileProposal;
   interaction?: ReconcileInteraction;
+  deletedResource?: Readonly<PluginResource<unknown, unknown>>;
   nextReconcileAt: Date | null;
 }
 
@@ -237,6 +242,9 @@ export class Controller<TSpec, TStatus> {
           if (execution.proposal) await this.onProposal(execution.proposal);
           if (execution.interaction) {
             await this.onInteraction(execution.interaction);
+          }
+          if (execution.deletedResource) {
+            options.onResourceDeleted?.(execution.deletedResource);
           }
           options.onReconcileSuccess?.(key, execution.nextReconcileAt);
         }),
@@ -352,6 +360,16 @@ export class Controller<TSpec, TStatus> {
           throw new Error(
             `plugin resource generation changed during reconcile: expected ${resource.metadata.generation}, current ${latest.metadata.generation}`,
           );
+        }
+        if (resource.metadata.deletionTimestamp !== undefined) {
+          const deletedResource = this.store.finalizeDeletion(
+            this.resourceType,
+            key.resourceId,
+          );
+          return {
+            nextReconcileAt: null,
+            deletedResource: deepFreeze(deletedResource),
+          };
         }
         const nextReconcileAt =
           result.requeueAfterMs === undefined

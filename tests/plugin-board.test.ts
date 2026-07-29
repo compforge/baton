@@ -45,6 +45,13 @@ describe("Plugin Board presentation", () => {
       spec: { title: "Already shipped" },
       status: { phase: "closed" },
     });
+    resources.create({
+      type: REQ_LOOP_RUN,
+      name: "run_deleting",
+      spec: { title: "Being removed" },
+      status: { phase: "active" },
+    });
+    resources.requestDeletion(REQ_LOOP_RUN, "run_deleting");
 
     await expect(
       presentBoardSource<{ title: string }, { phase: string }>({

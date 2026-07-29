@@ -81,7 +81,9 @@ export type {
   BatonTurnResourceKind,
   Resource,
   ResourceClient,
+  ResourceListOptions,
   ResourceMetadata,
+  ResourceOwnerReference,
 } from "./resource.ts";
 
 export type {

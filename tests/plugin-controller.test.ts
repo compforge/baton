@@ -153,6 +153,64 @@ describe("plugin Controller", () => {
     expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
   });
 
+  test("finalizes a terminating Resource only after reconcile succeeds", async () => {
+    const resources = store(testRoot());
+    resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    resources.requestDeletion(
+      REQ_LOOP_RUN,
+      "run_1",
+      new Date("2026-07-29T00:00:00.000Z"),
+    );
+    const deleted: string[] = [];
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile(_baton, resource) {
+        expect(resource.metadata.deletionTimestamp).toBe(
+          "2026-07-29T00:00:00.000Z",
+        );
+      },
+      onProposal() {},
+      onResourceDeleted(resource) {
+        deleted.push(resource.metadata.name);
+      },
+    });
+
+    await controller.enqueue(key());
+
+    expect(deleted).toEqual(["run_1"]);
+    expect(() => resources.get(REQ_LOOP_RUN, "run_1")).toThrow(
+      "plugin resource not found",
+    );
+  });
+
+  test("keeps a terminating Resource when reconcile fails", async () => {
+    const resources = store(testRoot());
+    resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    resources.requestDeletion(REQ_LOOP_RUN, "run_1");
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile() {
+        throw new Error("cleanup failed");
+      },
+      onProposal() {},
+    });
+
+    await expect(controller.enqueue(key())).rejects.toThrow("cleanup failed");
+    expect(
+      resources.get(REQ_LOOP_RUN, "run_1").metadata.deletionTimestamp,
+    ).toBeDefined();
+  });
+
   test("rejects stale output when spec changes during reconcile", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({

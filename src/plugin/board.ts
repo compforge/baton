@@ -61,6 +61,7 @@ export async function presentBoardSource<TSpec, TStatus>(
 ): Promise<readonly BoardItem[]> {
   const items: BoardItem[] = [];
   for (const resource of source.list()) {
+    if (resource.metadata.deletionTimestamp !== undefined) continue;
     try {
       const presentation = await source.present(resource);
       if (presentation) {

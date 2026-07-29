@@ -152,6 +152,33 @@ Both paths use the same keyed reconcile queue as Resource changes and
 `requeueAfterMs`. Sources never update status or produce Plugin Output; those
 remain exclusively owned by `reconcile`.
 
+Resources may set one `metadata.owner` when they are created or emitted. The
+owner must be an existing Resource in the same PluginInstance namespace and
+must include its `uid`, so a replacement with the same name does not inherit
+dependents. Use this only for structural ownership, not discovery provenance or
+domain references.
+
+Labels are constrained, machine-readable selection metadata:
+
+```ts
+const openForgeTasks = await context.resources.list(TASK, {
+  matchLabels: {
+    "example.baton.dev/source": "forge",
+    state: "open",
+  },
+});
+```
+
+Every `matchLabels` entry must match exactly. Annotations are opaque string
+metadata and are not selectable. Use `patchMetadata()` to update either map by
+key; a `null` value removes that key without replacing unrelated entries.
+
+`ResourceClient.delete()` requests deletion. Baton persists
+`metadata.deletionTimestamp`, cascades the request to structural descendants,
+hides terminating Resources from the Board, and removes each Resource after
+its Controller reconciles successfully. A failed terminating reconcile keeps
+the Resource durable and uses the normal retry path.
+
 Controllers may also declare `watches` to map changes from secondary Resources
 to primary `ReconcileRequest`s:
 

@@ -10,6 +10,8 @@ import type {
   PluginSessionContext,
   Resource,
   ResourceClient,
+  ResourceListOptions,
+  ResourceOwnerReference,
   ResourceType,
   Source,
   SourceContext,
@@ -89,10 +91,14 @@ const resources: ResourceClient = Object.freeze({
       name,
     });
   },
-  async list<TSpec, TStatus>(type: ResourceType) {
+  async list<TSpec, TStatus>(
+    type: ResourceType,
+    options?: ResourceListOptions,
+  ) {
     return await callHost<readonly Readonly<Resource<TSpec, TStatus>>[]>({
       method: "resource.list",
       type,
+      options,
     });
   },
   async create<TSpec, TStatus>(
@@ -101,6 +107,7 @@ const resources: ResourceClient = Object.freeze({
       name: string;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
+      owner?: ResourceOwnerReference;
       spec: TSpec;
     },
   ) {
@@ -115,6 +122,19 @@ const resources: ResourceClient = Object.freeze({
       method: "resource.delete",
       type,
       name,
+    });
+  },
+  async patchMetadata<TSpec, TStatus>(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+    patch: {
+      readonly labels?: Readonly<Record<string, string | null>>;
+      readonly annotations?: Readonly<Record<string, string | null>>;
+    },
+  ) {
+    return await callHost<Readonly<Resource<TSpec, TStatus>>>({
+      method: "resource.patchMetadata",
+      resource: resource as Readonly<Resource<unknown, unknown>>,
+      patch,
     });
   },
   async patchStatus<TSpec, TStatus>(

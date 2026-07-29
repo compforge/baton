@@ -290,7 +290,10 @@ export class PluginRunnerClient {
       case "resource.get":
         return await this.callbacks.resources.get(request.type, request.name);
       case "resource.list":
-        return await this.callbacks.resources.list(request.type);
+        return await this.callbacks.resources.list(
+          request.type,
+          request.options,
+        );
       case "resource.create":
         return await this.callbacks.resources.create(
           request.type,
@@ -299,6 +302,11 @@ export class PluginRunnerClient {
       case "resource.delete":
         await this.callbacks.resources.delete(request.type, request.name);
         return undefined;
+      case "resource.patchMetadata":
+        return await this.callbacks.resources.patchMetadata(
+          request.resource,
+          request.patch,
+        );
       case "resource.patchStatus":
         return await this.callbacks.resources.patchStatus(
           request.resource,
