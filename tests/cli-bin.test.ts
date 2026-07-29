@@ -99,6 +99,27 @@ describe("baton plugins", () => {
       expect(listed.stdout.toString()).toContain(
         "qiankun/requirement-loop@reqloop  0.1.0  enabled",
       );
+
+      const removed = runCli([
+        "plugins",
+        "marketplace",
+        "remove",
+        "reqloop",
+        "--root",
+        root,
+      ]);
+      expect(removed.exitCode).toBe(0);
+      expect(removed.stdout.toString()).toContain("removed marketplace reqloop");
+
+      const marketplaces = runCli(["plugins", "marketplace", "list", "--root", root]);
+      expect(marketplaces.exitCode).toBe(0);
+      expect(marketplaces.stdout.toString()).toContain("(no marketplaces registered)");
+
+      const installedAfterRemoval = runCli(["plugins", "list", "--root", root]);
+      expect(installedAfterRemoval.exitCode).toBe(0);
+      expect(installedAfterRemoval.stdout.toString()).toContain(
+        "qiankun/requirement-loop@reqloop  0.1.0  enabled",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(marketplace, { recursive: true, force: true });

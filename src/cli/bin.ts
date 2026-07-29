@@ -41,6 +41,8 @@ Usage:
                         lineage; reference with @<id> in the input)
   baton plugins marketplace add <path-or-git-url> [--ref <git-ref>] [--root <dir>]
                         register a local or Git Marketplace
+  baton plugins marketplace remove <name> [--root <dir>]
+                        unregister a Marketplace
   baton plugins marketplace list [--root <dir>]
                         list registered Marketplaces
   baton plugins available [--marketplace <name>] [--root <dir>]
@@ -213,6 +215,13 @@ async function runPlugins(): Promise<void> {
       console.log(`added marketplace ${marketplace.name}  ${sourceLabel(marketplace.source)}`);
       return;
     }
+    if (args[0] === "marketplace" && args[1] === "remove") {
+      const name = args[2];
+      if (!name) fail("Usage: baton plugins marketplace remove <name>");
+      registry.remove(name);
+      console.log(`removed marketplace ${name}`);
+      return;
+    }
     if (args[0] === "marketplace" && args[1] === "list") {
       const marketplaces = registry.list();
       if (marketplaces.length === 0) {
@@ -276,7 +285,7 @@ async function runPlugins(): Promise<void> {
       return;
     }
     fail(
-      "Usage: baton plugins marketplace add|list | available | install <plugin-id> | list",
+      "Usage: baton plugins marketplace add|remove|list | available | install <plugin-id> | list",
     );
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
