@@ -132,6 +132,7 @@ baton repl --agent codex           # Start the headless REPL with Codex (alias: 
 baton repl --agent claude          # Start the headless REPL with Claude (alias: cc)
 baton sessions                     # List sessions available for reference
 baton plugins marketplace add ./reqloop
+baton plugins marketplace remove reqloop
 baton plugins available
 baton plugins install qiankun/requirement-loop
 baton plugins list

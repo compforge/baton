@@ -273,6 +273,22 @@ export class MarketplaceRegistry {
     return await this.addGit(source, options.ref);
   }
 
+  remove(name: string): MarketplaceRegistration {
+    return withFileLock(this.registryPath(), () => {
+      const registry = this.readRegistry();
+      const registration = registry.marketplaces.find((marketplace) => marketplace.name === name);
+      if (!registration) throw new Error(`marketplace not registered: ${name}`);
+      writeJsonAtomic(this.registryPath(), {
+        version: 1,
+        marketplaces: registry.marketplaces.filter((marketplace) => marketplace.name !== name),
+      });
+      if (registration.source.kind === "git") {
+        rmSync(this.marketplaceRoot(registration), { recursive: true, force: true });
+      }
+      return registration;
+    });
+  }
+
   list(): RegisteredMarketplace[] {
     return this.readRegistry().marketplaces.map((registration) => {
       const rootDir = this.marketplaceRoot(registration);

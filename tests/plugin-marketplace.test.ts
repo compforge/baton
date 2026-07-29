@@ -141,6 +141,24 @@ describe("Plugin Marketplace", () => {
     expect(typeof plugin.activate).toBe("function");
   });
 
+  test("removes a local Marketplace without deleting its source or installed Packages", async () => {
+    const marketplaceRoot = testRoot("baton-marketplace-source-");
+    const batonRoot = testRoot("baton-marketplace-data-");
+    createMarketplace(marketplaceRoot);
+    const registry = new MarketplaceRegistry({ rootDir: batonRoot });
+    await registry.add(marketplaceRoot);
+    const installed = registry.install("qiankun/requirement-loop");
+
+    const removed = registry.remove("reqloop");
+
+    expect(removed.name).toBe("reqloop");
+    expect(registry.list()).toEqual([]);
+    expect(existsSync(marketplaceRoot)).toBe(true);
+    expect(existsSync(installed.packageDir)).toBe(true);
+    expect(registry.installed()).toHaveLength(1);
+    expect(() => registry.remove("reqloop")).toThrow("marketplace not registered: reqloop");
+  });
+
   test("does not overwrite an installed Package version when local source changes", async () => {
     const marketplaceRoot = testRoot("baton-marketplace-source-");
     const batonRoot = testRoot("baton-marketplace-data-");
@@ -258,6 +276,40 @@ export default {
     });
     expect(registered.rootDir).toBe(join(batonRoot, "plugins", "marketplaces", "reqloop"));
     expect(registry.available()).toHaveLength(1);
+  });
+
+  test("removes the managed checkout for a Git Marketplace", async () => {
+    const marketplaceRoot = testRoot("baton-marketplace-git-source-");
+    const batonRoot = testRoot("baton-marketplace-data-");
+    createMarketplace(marketplaceRoot);
+    for (const args of [
+      ["init", "--quiet"],
+      ["add", "."],
+      [
+        "-c",
+        "user.name=Baton Test",
+        "-c",
+        "user.email=baton@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+    ]) {
+      const result = Bun.spawnSync(["git", ...args], {
+        cwd: marketplaceRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+    }
+    const registry = new MarketplaceRegistry({ rootDir: batonRoot });
+    const registered = await registry.add(pathToGitUrl(marketplaceRoot));
+
+    registry.remove("reqloop");
+
+    expect(registry.list()).toEqual([]);
+    expect(existsSync(registered.rootDir)).toBe(false);
   });
 
   test("refreshes a dirty Git Marketplace cache from its upstream branch", async () => {

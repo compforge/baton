@@ -132,6 +132,7 @@ baton repl --agent codex           # 使用 Codex 的 headless REPL（别名：c
 baton repl --agent claude          # 使用 Claude 的 headless REPL（别名：cc）
 baton sessions                     # 查看可引用的历史会话
 baton plugins marketplace add ./reqloop
+baton plugins marketplace remove reqloop
 baton plugins available
 baton plugins install qiankun/requirement-loop
 baton plugins list
