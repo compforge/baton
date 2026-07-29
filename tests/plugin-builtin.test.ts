@@ -229,8 +229,8 @@ describe("Baton Resource index", () => {
     const liveItems = manager.listBoardItems();
     expect(liveItems).not.toBe(existingItems);
     expect(liveItems.map((item) => item.title)).toEqual([
-      "existing question",
       "new question",
+      "existing question",
     ]);
 
     await manager.close();

@@ -254,6 +254,7 @@ Resource 使用版本化类型身份：
 const TASK = {
   apiVersion: "example.baton.dev/v1alpha1",
   kind: "Task",
+  shortNames: ["task"],
 } as const;
 
 type Task = Resource<
@@ -266,6 +267,7 @@ type Task = Resource<
 - `status` 是可重新观测或计算的当前状态；
 - `generation` 只随 spec 变化；
 - `resourceVersion` 是 opaque 乐观并发 token；
+- `shortNames` 是不参与身份的紧凑展示别名，沿用 Kubernetes CRD 命名，Board 使用第一个；
 - `uid` 固定一次具体创建，删除重建后变化；
 - `owner` 只表达同一 PluginInstance 内的结构所有权，并用 `uid` 固定 owner incarnation；
 - `deletionTimestamp` 表示删除已经进入 reconcile 生命周期；
@@ -300,7 +302,9 @@ context.registerController({
   async present(resource: Task) {
     return {
       title: resource.spec.title,
+      url: resource.status.url,
       status: resource.status.phase,
+      priority: resource.status.phase === "blocked" ? 100 : 0,
     };
   },
 });
@@ -310,7 +314,10 @@ context.registerController({
 可能已生效却拿不到回执的外部操作使用稳定 operation key，重试前先 observe。
 
 `present` 只做只读、可重复的派生，不改变 Resource 或外部系统。持续进度和错误进入 status /
-Board；toast 只用于一次操作或状态边沿的反馈。
+Board；toast 只用于一次操作或状态边沿的反馈。Plugin 可以返回有限数值 `priority` 表达同一
+Plugin Instance、同一 Resource Type 内的展示优先级，数值越大越靠前，缺省为 `0`；Baton
+固定展示每组前 5 个，避免单类 Resource 挤占共享 Board。`url` 是可选的原生终端超链接，
+具体打开手势由用户的终端决定。detail 的溢出展示由 UI 统一处理，不进入 Plugin 契约。
 
 ### 3.4 Source、Watch 与定时唤醒
 

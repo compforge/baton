@@ -455,6 +455,7 @@ describe("Plugin Package lifecycle", () => {
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
+        resourceApiVersion: REQ_LOOP_RUN.apiVersion,
         resourceKind: "Requirement",
         resourceId: "run_1",
         title: "ship it",

@@ -4,6 +4,8 @@ import type { TurnSummary } from "./snapshot.ts";
 export interface ResourceType {
   readonly apiVersion: string;
   readonly kind: string;
+  /** Optional compact aliases; they are not part of Resource identity. */
+  readonly shortNames?: readonly string[];
 }
 
 /**

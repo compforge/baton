@@ -17,6 +17,7 @@ import {
 const EXAMPLE_RESOURCE = {
   apiVersion: "example.baton.dev/v1alpha1",
   kind: "Example",
+  shortNames: ["ex"],
 } as const;
 
 // Creation may attach Plugin-defined string metadata:
@@ -99,7 +100,9 @@ const plugin: PluginPackage = {
       async present(resource) {
         return {
           title: resource.spec.title,
+          url: resource.status.url,
           status: resource.status.phase,
+          priority: resource.status.phase === "blocked" ? 100 : 0,
         };
       },
     });
@@ -112,6 +115,15 @@ export default plugin;
 This package contains protocol types only. Baton host implementations such as
 Manager, Binding, Supervisor, Runner, Controller, Store, Marketplace,
 persistence, and Harness routing are intentionally excluded.
+
+`present()` may return a finite numeric `priority`; higher values are shown
+first and omitted values default to `0`. Baton compares priority only within the
+same Plugin instance and Resource type, then shows at most five items from that
+group. Returning `undefined` still hides the Resource from the Board entirely.
+When `url` is present, compatible terminal UIs render the title as a native
+hyperlink that users can open with their terminal's link-click gesture.
+Detail overflow is handled consistently by the UI rather than configured by
+individual Plugins.
 
 Plugins may opt into Kubernetes-style current-state conditions by extending
 `ConditionedStatus`. `conditions` remains optional and lives inside the

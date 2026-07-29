@@ -359,7 +359,8 @@ Harness 交换协作信息的公共平面：
 当前最小切片由 Controller 的 `present()` 落地：Plugin 把每份
 Resource 派生为至多一个条目，Baton 补齐 owner、Resource reference 和最终身份，再展示到
 chat-tui 的可选右侧 Sidecar。`present` 返回 `undefined` 时该 Resource 不显示；全部隐藏时不渲染
-Sidecar。这条链路没有另建
+Sidecar。Plugin 可随 presentation 返回 `priority` 决定同一 Plugin Instance、同一 Resource
+Type 内的次序；Baton 对每组只展示前 5 个。这条链路没有另建
 可写 BoardState，仍以 Resource 为事实来源。
 
 > 可以把 Board 理解成办案团队的“案件板”：不同参与者把线索、进展、结论、待核实项和关系放到

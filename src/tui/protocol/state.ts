@@ -257,6 +257,7 @@ export function projectBoardView(
       items: Array<{
         id: string;
         title: string;
+        url?: string;
         status?: string;
         detail?: string;
         tone?: "default" | "muted" | "success" | "warning" | "error";
@@ -264,18 +265,24 @@ export function projectBoardView(
     }
   >();
   for (const item of items) {
-    let section = sections.get(item.pluginInstanceId);
+    const sectionId = JSON.stringify([
+      item.pluginInstanceId,
+      item.resourceApiVersion,
+      item.resourceKind,
+    ]);
+    let section = sections.get(sectionId);
     if (!section) {
       section = {
-        id: item.pluginInstanceId,
-        title: item.pluginId,
+        id: sectionId,
+        title: item.resourceShortName ?? item.resourceKind,
         items: [],
       };
-      sections.set(item.pluginInstanceId, section);
+      sections.set(sectionId, section);
     }
     section.items.push({
       id: item.id,
       title: item.title,
+      ...(item.url === undefined ? {} : { url: item.url }),
       ...(item.status === undefined ? {} : { status: item.status }),
       ...(item.detail === undefined ? {} : { detail: item.detail }),
       ...(item.tone === undefined ? {} : { tone: item.tone }),

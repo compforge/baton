@@ -458,10 +458,14 @@ describe("BatonChatProtocol Board", () => {
           id: "board-item-1",
           pluginId: "qiankun/reqloop",
           pluginInstanceId: "reqloop_default",
+          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
           resourceKind: "HelloCounter",
+          resourceShortName: "Counter",
           resourceId: "counter",
           title: "Hello counter",
+          url: "https://example.com/counters/hello",
           status: "2 / 3",
+          detail: "A long counter title",
           tone: "success" as const,
         },
       ];
@@ -487,13 +491,19 @@ describe("BatonChatProtocol Board", () => {
         mode: "auto",
         sections: [
           {
-            id: "reqloop_default",
-            title: "qiankun/reqloop",
+            id: JSON.stringify([
+              "reqloop_default",
+              "reqloop.baton.dev/v1alpha1",
+              "HelloCounter",
+            ]),
+            title: "Counter",
             items: [
               {
                 id: "board-item-1",
                 title: "Hello counter",
+                url: "https://example.com/counters/hello",
                 status: "2 / 3",
+                detail: "A long counter title",
                 tone: "success",
               },
             ],
