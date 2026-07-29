@@ -455,6 +455,12 @@ export class Manager {
         this.retry(controller, key, error);
       },
       onSourceResource: () => this.notifyBoardChanged(),
+      onResourceDeleted: (resource) => {
+        this.handlePluginResourceChange(Object.freeze({
+          kind: "deleted",
+          resource,
+        }));
+      },
     });
     return this.installController(controller, suspended);
   }

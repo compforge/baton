@@ -3,6 +3,8 @@ import type {
   PluginLogEntry,
   PluginSessionContext,
   Resource,
+  ResourceListOptions,
+  ResourceOwnerReference,
   ResourceType,
   ToastMessage,
 } from "@compforge/baton-plugin";
@@ -106,6 +108,7 @@ export type HostRequest =
   | {
       readonly method: "resource.list";
       readonly type: ResourceType;
+      readonly options?: ResourceListOptions;
     }
   | {
       readonly method: "resource.create";
@@ -114,6 +117,7 @@ export type HostRequest =
         readonly name: string;
         readonly labels?: Readonly<Record<string, string>>;
         readonly annotations?: Readonly<Record<string, string>>;
+        readonly owner?: ResourceOwnerReference;
         readonly spec: unknown;
       };
     }
@@ -121,6 +125,14 @@ export type HostRequest =
       readonly method: "resource.delete";
       readonly type: ResourceType;
       readonly name: string;
+    }
+  | {
+      readonly method: "resource.patchMetadata";
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+      readonly patch: {
+        readonly labels?: Readonly<Record<string, string | null>>;
+        readonly annotations?: Readonly<Record<string, string | null>>;
+      };
     }
   | {
       readonly method: "resource.patchStatus";
@@ -134,6 +146,7 @@ export type HostRequest =
         readonly name: string;
         readonly labels?: Readonly<Record<string, string>>;
         readonly annotations?: Readonly<Record<string, string>>;
+        readonly owner?: ResourceOwnerReference;
         readonly spec: unknown;
       };
     };

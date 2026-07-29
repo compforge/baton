@@ -1,3 +1,5 @@
+import type { ResourceOwnerReference } from "./resource.ts";
+
 /** Minimal AbortSignal contract without imposing DOM or Node types on Plugins. */
 export interface SourceSignal {
   readonly aborted: boolean;
@@ -20,6 +22,7 @@ export interface SourceContext<TSpec> {
     readonly name: string;
     readonly labels?: Readonly<Record<string, string>>;
     readonly annotations?: Readonly<Record<string, string>>;
+    readonly owner?: ResourceOwnerReference;
     readonly spec: TSpec;
   }): Promise<void>;
   /** Reports failures from callbacks that outlive start(). */

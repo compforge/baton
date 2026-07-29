@@ -214,7 +214,23 @@ type Task = Resource<
 - `generation` 只随 spec 变化；
 - `resourceVersion` 是 opaque 乐观并发 token；
 - `uid` 固定一次具体创建，删除重建后变化；
-- `labels/annotations` 只放 string metadata，不替代领域引用。
+- `owner` 只表达同一 PluginInstance 内的结构所有权，并用 `uid` 固定 owner incarnation；
+- `deletionTimestamp` 表示删除已经进入 reconcile 生命周期；
+- `labels` 是受 Kubernetes 风格 key / value 约束的可检索 metadata；
+- `annotations` 是不参与检索、仅要求非空 key 和 string value 的宽松 metadata。
+
+`ResourceClient.list(type, { matchLabels })` 对 label 做精确 AND 匹配；annotation 不提供
+selector。两类 metadata 都通过 `patchMetadata()` 按键更新，`null` 删除单键，并以
+`resourceVersion` 做乐观并发；metadata 更新不推进 `generation`。不要用二者替代 spec、
+status、identity、owner 或领域引用。
+
+`ResourceClient.delete()` 是删除请求，不是立即移除：Baton 先持久化
+`deletionTimestamp`，并对 `owner` 指向该 Resource 的所有后代做同样标记。terminating Resource
+会从 Board 隐藏，但仍交给所属 Controller reconcile；reconcile 成功后宿主最终删除，失败则沿用
+现有退避并在重启后恢复。首版只支持一个结构 owner，不提供 finalizer、多 owner 或 orphan
+policy。Source、使用关系和领域关联都不是结构 owner，不能借 owner cascade 表达保留策略。
+完整的创建、保留、删除状态机及与 controller-runtime 的差距见
+[Plugin Resource 生命周期](./resource-lifecycle.md)。
 
 Controller 管理一个 primary `resourceType`：
 
@@ -288,6 +304,7 @@ Package 默认在独立 Runner 中执行。0.1.x 的同步作者契约不作为�
 ## 4. References
 
 - [`packages/plugin/README.md`](../packages/plugin/README.md) — 最短作者示例
+- [`docs/resource-lifecycle.md`](./resource-lifecycle.md) — Resource 准入、owner、删除与恢复
 - [`docs/kernel.md`](./kernel.md) — Baton 进程、事件循环与稳定内核
 - [`docs/loop-engineering.md`](./loop-engineering.md) — Baton Plugin 与 Harness Plugin 的分层
 - [`controller-runtime`](https://github.com/kubernetes-sigs/controller-runtime) — level-based

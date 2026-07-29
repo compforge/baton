@@ -12,6 +12,8 @@ import { basename, dirname, join } from "node:path";
 
 import type {
   Resource,
+  ResourceListOptions,
+  ResourceOwnerReference,
   ResourceType,
 } from "@compforge/baton-plugin";
 
@@ -38,6 +40,7 @@ interface CreateResource<TSpec, TStatus> {
   name?: string;
   labels?: Readonly<Record<string, string>>;
   annotations?: Readonly<Record<string, string>>;
+  owner?: ResourceOwnerReference;
   spec: TSpec;
   status?: TStatus;
 }
@@ -47,12 +50,18 @@ interface EnsureResource<TSpec> {
   name: string;
   labels?: Readonly<Record<string, string>>;
   annotations?: Readonly<Record<string, string>>;
+  owner?: ResourceOwnerReference;
   spec: TSpec;
 }
 
 interface EnsureResourceResult<TSpec, TStatus> {
   resource: PluginResource<TSpec, TStatus>;
   created: boolean;
+}
+
+export interface ResourceDeletionUpdate {
+  readonly oldResource: PluginResource<unknown, unknown>;
+  readonly resource: PluginResource<unknown, unknown>;
 }
 
 interface ResourceControl {
@@ -68,6 +77,10 @@ const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const API_VERSION =
   /^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?\/v[0-9]+(?:(?:alpha|beta)[0-9]+)?$/;
 const RESOURCE_VERSION = /^[1-9][0-9]*$/;
+const LABEL_NAME =
+  /^[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?$/;
+const DNS_SUBDOMAIN =
+  /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$/;
 
 function assertPathSegment(name: string, value: string): void {
   if (!PATH_SEGMENT.test(value) || value === "." || value === "..") {
@@ -121,7 +134,7 @@ function jsonObject<T>(name: string, value: T): T {
   return parsed as T;
 }
 
-function stringMap(
+function annotationMap(
   name: string,
   value: Readonly<Record<string, string>> | undefined,
 ): Readonly<Record<string, string>> | undefined {
@@ -133,6 +146,98 @@ function stringMap(
     }
   }
   return map;
+}
+
+function annotationMapPatch(
+  name: string,
+  value: Readonly<Record<string, string | null>>,
+): Readonly<Record<string, string | null>> {
+  const map = jsonObject(name, value);
+  for (const [key, entry] of Object.entries(map)) {
+    if (!key || (typeof entry !== "string" && entry !== null)) {
+      throw new Error(`${name} must contain only non-empty keys and string or null values`);
+    }
+  }
+  return map;
+}
+
+function labelKey(name: string, key: string): void {
+  const parts = key.split("/");
+  if (parts.length > 2) {
+    throw new Error(`${name} key ${JSON.stringify(key)} must contain at most one "/"`);
+  }
+  const labelName = parts.at(-1)!;
+  if (labelName.length < 1 || labelName.length > 63 || !LABEL_NAME.test(labelName)) {
+    throw new Error(`${name} key ${JSON.stringify(key)} has an invalid label name`);
+  }
+  const prefix = parts.length === 2 ? parts[0]! : undefined;
+  if (
+    prefix !== undefined &&
+    (prefix.length < 1 || prefix.length > 253 || !DNS_SUBDOMAIN.test(prefix) ||
+      prefix.split(".").some((part) => part.length > 63))
+  ) {
+    throw new Error(`${name} key ${JSON.stringify(key)} has an invalid DNS prefix`);
+  }
+}
+
+function labelValue(name: string, key: string, value: string): void {
+  if (
+    value.length > 63 ||
+    (value.length > 0 && !LABEL_NAME.test(value))
+  ) {
+    throw new Error(`${name} value for ${JSON.stringify(key)} is not a valid label value`);
+  }
+}
+
+function labelMap(
+  name: string,
+  value: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (value === undefined) return;
+  const map = jsonObject(name, value);
+  for (const [key, entry] of Object.entries(map)) {
+    if (typeof entry !== "string") {
+      throw new Error(`${name} must contain only string values`);
+    }
+    labelKey(name, key);
+    labelValue(name, key, entry);
+  }
+  return map;
+}
+
+function labelMapPatch(
+  name: string,
+  value: Readonly<Record<string, string | null>>,
+): Readonly<Record<string, string | null>> {
+  const map = jsonObject(name, value);
+  for (const [key, entry] of Object.entries(map)) {
+    if (typeof entry !== "string" && entry !== null) {
+      throw new Error(`${name} must contain only string or null values`);
+    }
+    labelKey(name, key);
+    if (entry !== null) labelValue(name, key, entry);
+  }
+  return map;
+}
+
+function containsStringMap(
+  current: Readonly<Record<string, string>> | undefined,
+  expected: Readonly<Record<string, string>> | undefined,
+): boolean {
+  return expected === undefined ||
+    Object.entries(expected).every(([key, value]) => current?.[key] === value);
+}
+
+function applyStringMapPatch(
+  current: Readonly<Record<string, string>> | undefined,
+  patch: Readonly<Record<string, string | null>>,
+): Readonly<Record<string, string>> | undefined {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else next[key] = value;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 function positiveInteger(name: string, value: unknown): asserts value is number {
@@ -187,22 +292,25 @@ export class PluginResourceStore {
   ): PluginResource<TSpec, TStatus> {
     const type = validateResourceType(input.type);
     const name = input.name ?? newId("pr");
-    const labels = stringMap("metadata.labels", input.labels);
-    const annotations = stringMap(
+    const labels = labelMap("metadata.labels", input.labels);
+    const annotations = annotationMap(
       "metadata.annotations",
       input.annotations,
     );
     assertPathSegment("resource name", name);
+    const owner = this.ownerReference(input.owner, type, name);
     const path = this.resourcePath(type, name);
     return withFileLock(path, () => {
       if (existsSync(path)) {
         throw new Error(`plugin resource already exists: ${type.kind}/${name}`);
       }
+      this.assertOwnerActive(owner);
       const stored = this.initialStoredResource<TSpec, TStatus>({
         type,
         name,
         labels,
         annotations,
+        owner,
         spec: input.spec,
         status: input.status ?? ({} as TStatus),
       });
@@ -220,21 +328,24 @@ export class PluginResourceStore {
   ): EnsureResourceResult<TSpec, TStatus> {
     const type = validateResourceType(input.type);
     const name = input.name;
-    const labels = stringMap("metadata.labels", input.labels);
-    const annotations = stringMap(
+    const labels = labelMap("metadata.labels", input.labels);
+    const annotations = annotationMap(
       "metadata.annotations",
       input.annotations,
     );
     const spec = jsonObject("spec", input.spec);
     assertPathSegment("resource name", name);
+    const owner = this.ownerReference(input.owner, type, name);
     const path = this.resourcePath(type, name);
     return withFileLock(path, () => {
       if (!existsSync(path)) {
+        this.assertOwnerActive(owner);
         const stored = this.initialStoredResource<TSpec, TStatus>({
           type,
           name,
           labels,
           annotations,
+          owner,
           spec,
           status: {} as TStatus,
         });
@@ -244,8 +355,9 @@ export class PluginResourceStore {
       const current = this.readCurrentStored<TSpec, TStatus>(type, name).object;
       if (
         !isDeepStrictEqual(current.spec, spec) ||
-        !isDeepStrictEqual(current.metadata.labels, labels) ||
-        !isDeepStrictEqual(current.metadata.annotations, annotations)
+        !containsStringMap(current.metadata.labels, labels) ||
+        !containsStringMap(current.metadata.annotations, annotations) ||
+        !isDeepStrictEqual(current.metadata.owner, owner)
       ) {
         throw new Error(
           `Controller Source input conflicts with existing Resource: ${type.kind}/${name}`,
@@ -264,8 +376,13 @@ export class PluginResourceStore {
 
   list<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
     type: ResourceType,
+    options: ResourceListOptions = {},
   ): PluginResource<TSpec, TStatus>[] {
     validateResourceType(type);
+    const matchLabels = labelMap(
+      "resource list matchLabels",
+      options.matchLabels,
+    );
     const kindDir = this.kindDir(type);
     if (!existsSync(kindDir)) return [];
     return readdirSync(kindDir, { withFileTypes: true })
@@ -275,6 +392,9 @@ export class PluginResourceStore {
           type,
           basename(entry.name, ".json"),
         ).object
+      )
+      .filter((resource) =>
+        containsStringMap(resource.metadata.labels, matchLabels)
       )
       .sort((left, right) =>
         left.metadata.name.localeCompare(right.metadata.name)
@@ -333,16 +453,139 @@ export class PluginResourceStore {
     }).object;
   }
 
-  delete(type: ResourceType, name: string): void {
-    validateResourceType(type);
-    assertPathSegment("resource name", name);
-    const path = this.resourcePath(type, name);
-    withFileLock(path, () => {
-      if (!existsSync(path)) {
-        throw new Error(`plugin resource not found: ${type.kind}/${name}`);
+  patchMetadata<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
+    type: ResourceType,
+    name: string,
+    patch: {
+      readonly labels?: Readonly<Record<string, string | null>>;
+      readonly annotations?: Readonly<Record<string, string | null>>;
+    },
+    options: MutationOptions = {},
+  ): PluginResource<TSpec, TStatus> {
+    const metadataPatch = jsonObject("metadata patch", patch);
+    const labelPatch = metadataPatch.labels === undefined
+      ? undefined
+      : labelMapPatch("metadata labels patch", metadataPatch.labels);
+    const annotationPatch = metadataPatch.annotations === undefined
+      ? undefined
+      : annotationMapPatch(
+        "metadata annotations patch",
+        metadataPatch.annotations,
+      );
+    return this.mutate<TSpec, TStatus>(type, name, options, (current) => {
+      const labels = labelPatch === undefined
+        ? current.object.metadata.labels
+        : applyStringMapPatch(current.object.metadata.labels, labelPatch);
+      const annotations = annotationPatch === undefined
+        ? current.object.metadata.annotations
+        : applyStringMapPatch(
+          current.object.metadata.annotations,
+          annotationPatch,
+        );
+      if (
+        isDeepStrictEqual(current.object.metadata.labels, labels) &&
+        isDeepStrictEqual(current.object.metadata.annotations, annotations)
+      ) {
+        return current;
       }
-      rmSync(path, { force: true });
-    });
+      const metadata = {
+        ...current.object.metadata,
+        resourceVersion: nextResourceVersion(
+          current.object.metadata.resourceVersion,
+        ),
+      };
+      if (labels === undefined) delete metadata.labels;
+      else metadata.labels = labels;
+      if (annotations === undefined) delete metadata.annotations;
+      else metadata.annotations = annotations;
+      return {
+        ...current,
+        object: {
+          ...current.object,
+          metadata,
+        },
+      };
+    }).object;
+  }
+
+  /**
+   * Persists a deletion request for one Resource and every structural
+   * descendant. Existing timestamps are never rewritten.
+   */
+  requestDeletion(
+    type: ResourceType,
+    name: string,
+    now: Date = new Date(),
+  ): readonly ResourceDeletionUpdate[] {
+    if (Number.isNaN(now.getTime())) {
+      throw new Error("deletion time must be a valid Date");
+    }
+    const target = this.get<unknown, unknown>(type, name);
+    const updates: ResourceDeletionUpdate[] = [];
+    const pending = [target];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const resource = pending.shift()!;
+      if (visited.has(resource.metadata.uid)) continue;
+      visited.add(resource.metadata.uid);
+      if (resource.metadata.deletionTimestamp === undefined) {
+        const next = this.mutate<unknown, unknown>(
+          resource,
+          resource.metadata.name,
+          {},
+          (current) => {
+            if (current.object.metadata.deletionTimestamp !== undefined) {
+              return current;
+            }
+            return {
+              object: {
+                ...current.object,
+                metadata: {
+                  ...current.object.metadata,
+                  resourceVersion: nextResourceVersion(
+                    current.object.metadata.resourceVersion,
+                  ),
+                  deletionTimestamp: now.toISOString(),
+                },
+              },
+              control: {},
+            };
+          },
+        ).object;
+        if (
+          next.metadata.resourceVersion !==
+          resource.metadata.resourceVersion
+        ) {
+          updates.push(Object.freeze({
+            oldResource: resource,
+            resource: next,
+          }));
+        }
+      }
+
+      // Mark this node first so create() rejects new dependents before the
+      // scan. Repeating the scan also repairs partially propagated requests.
+      pending.push(
+        ...this.listAll().filter((candidate) => {
+          return candidate.metadata.owner?.uid === resource.metadata.uid;
+        }),
+      );
+    }
+    return Object.freeze(updates);
+  }
+
+  finalizeDeletion(
+    type: ResourceType,
+    name: string,
+  ): PluginResource<unknown, unknown> {
+    const resource = this.get<unknown, unknown>(type, name);
+    if (resource.metadata.deletionTimestamp === undefined) {
+      throw new Error(
+        `plugin resource deletion was not requested: ${type.kind}/${name}`,
+      );
+    }
+    this.remove(type, name);
+    return resource;
   }
 
   setNextReconcileAt<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
@@ -509,8 +752,15 @@ export class PluginResourceStore {
       "metadata.creationTimestamp",
       metadata.creationTimestamp,
     );
-    stringMap("metadata.labels", metadata.labels);
-    stringMap("metadata.annotations", metadata.annotations);
+    labelMap("metadata.labels", metadata.labels);
+    annotationMap("metadata.annotations", metadata.annotations);
+    this.ownerReference(metadata.owner, type, name);
+    if (metadata.deletionTimestamp !== undefined) {
+      isoTimestamp(
+        "metadata.deletionTimestamp",
+        metadata.deletionTimestamp,
+      );
+    }
     jsonObject("spec", resource.spec);
     jsonObject("status", resource.status);
     return resource as PluginResource<TSpec, TStatus>;
@@ -533,6 +783,7 @@ export class PluginResourceStore {
       name: string;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
+      owner?: ResourceOwnerReference;
       spec: TSpec;
       status: TStatus;
     },
@@ -547,6 +798,7 @@ export class PluginResourceStore {
         generation: 1,
         resourceVersion: "1",
         creationTimestamp: new Date().toISOString(),
+        ...(input.owner === undefined ? {} : { owner: input.owner }),
         ...(input.labels === undefined ? {} : { labels: input.labels }),
         ...(input.annotations === undefined
           ? {}
@@ -556,6 +808,82 @@ export class PluginResourceStore {
       status: jsonObject("status", input.status),
     };
     return { object: resource, control: {} };
+  }
+
+  private ownerReference(
+    value: ResourceOwnerReference | undefined,
+    dependentType: ResourceType,
+    dependentName: string,
+  ): ResourceOwnerReference | undefined {
+    if (value === undefined) return;
+    const owner = jsonObject("metadata.owner", value);
+    validateResourceType(owner);
+    assertPathSegment("metadata.owner.name", owner.name);
+    assertPathSegment("metadata.owner.uid", owner.uid);
+    if (owner.namespace !== this.pluginInstanceId) {
+      throw new Error(
+        `metadata.owner.namespace must be ${this.pluginInstanceId}`,
+      );
+    }
+    if (
+      sameResourceType(owner, dependentType) &&
+      owner.name === dependentName
+    ) {
+      throw new Error("plugin resource cannot own itself");
+    }
+    return owner;
+  }
+
+  private assertOwnerActive(
+    owner: ResourceOwnerReference | undefined,
+  ): void {
+    if (!owner) return;
+    const resource = this.get(owner, owner.name);
+    if (resource.metadata.uid !== owner.uid) {
+      throw new Error(
+        `plugin resource owner uid does not match: ${owner.kind}/${owner.name}`,
+      );
+    }
+    if (resource.metadata.deletionTimestamp !== undefined) {
+      throw new Error(
+        `plugin resource owner is being deleted: ${owner.kind}/${owner.name}`,
+      );
+    }
+  }
+
+  private listAll(): PluginResource<unknown, unknown>[] {
+    const root = this.resourcesDir();
+    if (!existsSync(root)) return [];
+    const resources: PluginResource<unknown, unknown>[] = [];
+    for (const group of readdirSync(root, { withFileTypes: true })) {
+      if (!group.isDirectory()) continue;
+      const groupDir = join(root, group.name);
+      for (const version of readdirSync(groupDir, { withFileTypes: true })) {
+        if (!version.isDirectory()) continue;
+        const versionDir = join(groupDir, version.name);
+        for (const kind of readdirSync(versionDir, { withFileTypes: true })) {
+          if (!kind.isDirectory()) continue;
+          const type = {
+            apiVersion: `${group.name}/${version.name}`,
+            kind: kind.name,
+          };
+          resources.push(...this.list(type));
+        }
+      }
+    }
+    return resources;
+  }
+
+  private remove(type: ResourceType, name: string): void {
+    validateResourceType(type);
+    assertPathSegment("resource name", name);
+    const path = this.resourcePath(type, name);
+    withFileLock(path, () => {
+      if (!existsSync(path)) {
+        throw new Error(`plugin resource not found: ${type.kind}/${name}`);
+      }
+      rmSync(path, { force: true });
+    });
   }
 
   private resourcesDir(): string {

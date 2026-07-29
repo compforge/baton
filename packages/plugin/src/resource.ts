@@ -18,6 +18,11 @@ export interface ResourceRef extends ResourceType {
   readonly uid?: string;
 }
 
+/** Pins a dependent Resource to one concrete owner incarnation. */
+export interface ResourceOwnerReference extends ResourceRef {
+  readonly uid: string;
+}
+
 export interface ResourceMetadata {
   /** Stable name within one namespace and Resource type. */
   readonly name: string;
@@ -30,6 +35,10 @@ export interface ResourceMetadata {
   /** Opaque optimistic-concurrency token. */
   readonly resourceVersion: string;
   readonly creationTimestamp: string;
+  /** Structural owner used by Baton for cascading deletion. */
+  readonly owner?: ResourceOwnerReference;
+  /** Set after deletion is requested and retained until reconcile succeeds. */
+  readonly deletionTimestamp?: string;
   /** Machine-readable grouping and selection metadata owned by the Plugin. */
   readonly labels?: Readonly<Record<string, string>>;
   /** Non-identifying extension metadata owned by the Plugin. */
@@ -45,6 +54,11 @@ export interface Resource<
   readonly status: TStatus;
 }
 
+/** Exact-match label selector. All entries must match the Resource. */
+export interface ResourceListOptions {
+  readonly matchLabels?: Readonly<Record<string, string>>;
+}
+
 export interface ResourceClient {
   get<TSpec, TStatus>(
     type: ResourceType,
@@ -52,6 +66,7 @@ export interface ResourceClient {
   ): Promise<Readonly<Resource<TSpec, TStatus>>>;
   list<TSpec, TStatus>(
     type: ResourceType,
+    options?: ResourceListOptions,
   ): Promise<readonly Readonly<Resource<TSpec, TStatus>>[]>;
   create<TSpec, TStatus>(
     type: ResourceType,
@@ -59,10 +74,25 @@ export interface ResourceClient {
       name: string;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
+      owner?: ResourceOwnerReference;
       spec: TSpec;
     },
   ): Promise<Readonly<Resource<TSpec, TStatus>>>;
+  /** Requests cascading deletion; final removal follows successful reconcile. */
   delete(type: ResourceType, name: string): Promise<void>;
+  /**
+   * Patches Plugin-owned metadata by key. A null value removes that key.
+   *
+   * Identity, desired state, and observed state remain in their dedicated
+   * fields and cannot be changed through this method.
+   */
+  patchMetadata<TSpec, TStatus>(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+    patch: {
+      readonly labels?: Readonly<Record<string, string | null>>;
+      readonly annotations?: Readonly<Record<string, string | null>>;
+    },
+  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
   patchStatus<TSpec, TStatus>(
     resource: Readonly<Resource<TSpec, TStatus>>,
     patch: Partial<TStatus>,

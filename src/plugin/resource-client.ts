@@ -1,6 +1,8 @@
 import type {
   Resource,
   ResourceClient as PublicResourceClient,
+  ResourceListOptions,
+  ResourceOwnerReference,
   ResourceType,
 } from "@compforge/baton-plugin";
 
@@ -15,6 +17,16 @@ export type ResourceClientChange =
     }
   | {
       readonly kind: "status-updated";
+      readonly oldResource: Readonly<Resource<unknown, unknown>>;
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+    }
+  | {
+      readonly kind: "metadata-updated";
+      readonly oldResource: Readonly<Resource<unknown, unknown>>;
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+    }
+  | {
+      readonly kind: "deletion-requested";
       readonly oldResource: Readonly<Resource<unknown, unknown>>;
       readonly resource: Readonly<Resource<unknown, unknown>>;
     }
@@ -37,13 +49,13 @@ export function createResourceClient(
   assertCanCreateType?: (type: ResourceType) => void,
 ): ResourceClient {
   const changed = (
-    kind: ResourceClientChange["kind"],
+    kind: "created" | "status-updated" | "metadata-updated" | "deleted",
     resource: Readonly<Resource<unknown, unknown>>,
     oldResource?: Readonly<Resource<unknown, unknown>>,
   ): void => {
     try {
       onChange?.(
-        kind === "status-updated"
+        kind === "status-updated" || kind === "metadata-updated"
           ? Object.freeze({
               kind,
               oldResource: oldResource!,
@@ -69,9 +81,12 @@ export function createResourceClient(
     async get<TSpec, TStatus>(type: ResourceType, name: string) {
       return deepFreeze(store.get<TSpec, TStatus>(type, name));
     },
-    async list<TSpec, TStatus>(type: ResourceType) {
+    async list<TSpec, TStatus>(
+      type: ResourceType,
+      options?: ResourceListOptions,
+    ) {
       return store
-        .list<TSpec, TStatus>(type)
+        .list<TSpec, TStatus>(type, options)
         .map((resource) => deepFreeze(resource));
     },
     async create<TSpec, TStatus>(
@@ -80,6 +95,7 @@ export function createResourceClient(
         name: string;
         labels?: Readonly<Record<string, string>>;
         annotations?: Readonly<Record<string, string>>;
+        owner?: ResourceOwnerReference;
         spec: TSpec;
       },
     ) {
@@ -92,6 +108,7 @@ export function createResourceClient(
           ...(init.annotations === undefined
             ? {}
             : { annotations: init.annotations }),
+          ...(init.owner === undefined ? {} : { owner: init.owner }),
           spec: init.spec,
         }),
       );
@@ -101,8 +118,43 @@ export function createResourceClient(
     async delete(type: ResourceType, name: string) {
       const resource = deepFreeze(store.get(type, name));
       assertOwned(resource);
-      store.delete(type, name);
-      changed("deleted", resource);
+      for (const update of store.requestDeletion(type, name)) {
+        try {
+          onChange?.(Object.freeze({
+            kind: "deletion-requested",
+            oldResource: deepFreeze(update.oldResource),
+            resource: deepFreeze(update.resource),
+          }));
+        } catch {
+          // Deletion is durable; host reactions must not turn it into failure.
+        }
+      }
+    },
+    async patchMetadata<TSpec, TStatus>(
+      resource: Readonly<Resource<TSpec, TStatus>>,
+      patch: {
+        readonly labels?: Readonly<Record<string, string | null>>;
+        readonly annotations?: Readonly<Record<string, string | null>>;
+      },
+    ) {
+      assertOwned(resource);
+      const patched = deepFreeze(
+        store.patchMetadata<TSpec, TStatus>(
+          resource,
+          resource.metadata.name,
+          patch,
+          {
+            expectedResourceVersion: resource.metadata.resourceVersion,
+          },
+        ),
+      );
+      if (
+        patched.metadata.resourceVersion !==
+        resource.metadata.resourceVersion
+      ) {
+        changed("metadata-updated", patched, resource);
+      }
+      return patched;
     },
     async patchStatus<TSpec, TStatus>(
       resource: Readonly<Resource<TSpec, TStatus>>,

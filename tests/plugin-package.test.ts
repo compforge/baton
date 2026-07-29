@@ -329,8 +329,8 @@ describe("Plugin Package lifecycle", () => {
 
     reconciled.length = 0;
     await context!.resources.delete(workspaceType, withRepoB.metadata.name);
-    await waitFor(() => reconciled.length === 1);
-    expect(reconciled).toEqual(["repo_b"]);
+    await waitFor(() => reconciled.includes("repo_b"));
+    expect(new Set(reconciled)).toEqual(new Set(["repo_b"]));
 
     await manager.close();
   });
@@ -495,8 +495,30 @@ describe("Plugin Package lifecycle", () => {
     expect(created.metadata.annotations).toEqual({
       "example.com/display-name": "Labeled run",
     });
+    expect(
+      await context!.resources.list(REQ_LOOP_RUN, {
+        matchLabels: { "reqloop.baton.dev/source": "test" },
+      }),
+    ).toEqual([created]);
     expect(Object.isFrozen(created.metadata.labels)).toBe(true);
     expect(Object.isFrozen(created.metadata.annotations)).toBe(true);
+    const annotated = await context!.resources.patchMetadata(created, {
+      labels: {
+        "reqloop.baton.dev/source": null,
+        "reqloop.baton.dev/retention": "user",
+      },
+      annotations: {
+        "example.com/display-name": null,
+        "reqloop.baton.dev/delete-after": "2026-08-01T00:00:00.000Z",
+      },
+    });
+    expect(annotated.metadata.labels).toEqual({
+      "reqloop.baton.dev/retention": "user",
+    });
+    expect(annotated.metadata.annotations).toEqual({
+      "reqloop.baton.dev/delete-after": "2026-08-01T00:00:00.000Z",
+    });
+    expect(annotated.metadata.generation).toBe(created.metadata.generation);
     const resource = await context!.resources.get<
       { requirement: string },
       { phase: string }
@@ -508,6 +530,11 @@ describe("Plugin Package lifecycle", () => {
     expect(updated.status.phase).toBe("running");
     await expect(
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
+    ).rejects.toThrow("outside reqloop_default");
+    await expect(
+      context!.resources.patchMetadata(foreign, {
+        annotations: { "example.com/forbidden": "true" },
+      }),
     ).rejects.toThrow("outside reqloop_default");
     await expect(
       context!.resources.create(BATON_TURN_RESOURCE_TYPE, {
