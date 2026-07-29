@@ -135,6 +135,7 @@ describe("Plugin Runner process boundary", () => {
           "sessions",
           "bs_runner",
           "plugins",
+          "tests%2Fprocess-plugin",
           "process_default",
         ),
       }),
