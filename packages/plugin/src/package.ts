@@ -55,22 +55,29 @@ export interface ToastSink {
 
 export type PluginLogLevel = "debug" | "info" | "warn" | "error";
 
-export type PluginLogDetails = Readonly<
-  Record<string, string | number | boolean | null>
->;
+export type PluginLogValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly PluginLogValue[]
+  | Readonly<{ [key: string]: PluginLogValue }>;
 
-export interface PluginLogEntry {
-  readonly level: PluginLogLevel;
+export type PluginLogAttributes = Readonly<Record<string, PluginLogValue>>;
+
+export interface PluginLogContext {
   /** Stable Plugin-local area, for example "devloop.pull-request-source". */
   readonly component?: string;
-  readonly message: string;
   readonly error?: unknown;
-  readonly details?: PluginLogDetails;
+  readonly attributes?: PluginLogAttributes;
 }
 
 export interface PluginLogger {
-  /** Best-effort diagnostics owned and persisted by the current BatonSession. */
-  write(entry: PluginLogEntry): void;
+  /** Best-effort diagnostics owned, enriched and persisted by the Baton host. */
+  debug(message: string, context?: PluginLogContext): void;
+  info(message: string, context?: PluginLogContext): void;
+  warn(message: string, context?: PluginLogContext): void;
+  error(message: string, context?: PluginLogContext): void;
 }
 
 export interface PluginActivationContext {
@@ -80,7 +87,7 @@ export interface PluginActivationContext {
   readonly resources: ResourceClient;
   /** Session-scoped, non-durable user feedback. Reconcile state belongs in Resource status / Board. */
   readonly toast: ToastSink;
-  /** Session-scoped diagnostics. Never log secrets or use logs as domain state. */
+  /** Session-scoped structured diagnostics. Never log secrets or use logs as domain state. */
   readonly logger: PluginLogger;
   registerCommand(command: Command): void;
   registerContextProvider(provider: ContextProvider): void;

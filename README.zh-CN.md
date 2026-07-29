@@ -131,6 +131,7 @@ baton -s bs_01...                  # 打开指定 BatonSession
 baton repl --agent codex           # 使用 Codex 的 headless REPL（别名：cx）
 baton repl --agent claude          # 使用 Claude 的 headless REPL（别名：cc）
 baton sessions                     # 查看可引用的历史会话
+baton logs [session-id]             # 查看 Baton/Harness/Plugin 结构化日志
 baton plugins marketplace add ./reqloop
 baton plugins marketplace remove reqloop
 baton plugins available
@@ -163,12 +164,13 @@ baton 的数据默认保存在 `~/.baton/`：
     └── sessions/<session-id>/
         ├── meta.json
         ├── session.jsonl
+        ├── session.log
         └── plugins/<plugin-instance-id>/
             ├── resources/
             └── proposals/
 ```
 
-Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
+Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
 
 ## License
 

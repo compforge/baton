@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -24,8 +25,13 @@ import {
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
-import type { DiagnosticEntry } from "../diagnostics.ts";
-import { diagnosticError } from "../diagnostics.ts";
+import {
+  type LogEntry,
+  type LogLevel,
+  logError,
+  SessionLogger,
+  type SessionLoggerOptions,
+} from "../logging.ts";
 import { newId } from "../event/ids.ts";
 import {
   ENVELOPE_VERSION,
@@ -182,9 +188,14 @@ function withSessionPreview(dir: string, meta: SessionMeta): SessionMeta {
 export class SessionStore {
   readonly rootDir: string;
   private legacyMigrated = false;
+  private readonly loggerOptions: SessionLoggerOptions;
 
-  constructor(rootDir?: string) {
+  constructor(
+    rootDir?: string,
+    loggerOptions: { readonly level?: LogLevel } = {},
+  ) {
     this.rootDir = rootDir ?? join(homedir(), ".baton");
+    this.loggerOptions = loggerOptions;
   }
 
   private projectsDir(): string {
@@ -225,7 +236,7 @@ export class SessionStore {
       harnessSessions: {},
     };
     writeMetaAtomic(dir, meta);
-    return new SessionHandle(id, dir, meta);
+    return new SessionHandle(id, dir, meta, this.loggerOptions);
   }
 
   /** 会话 ID 全局唯一，打开时不要求提供 cwd，跨项目扫描定位（@ 引用可指向任意项目的会话）。 */
@@ -236,7 +247,7 @@ export class SessionStore {
       const metaPath = join(dir, "meta.json");
       if (!existsSync(metaPath)) continue;
       const meta = withSessionPreview(dir, JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta);
-      return new SessionHandle(id, dir, meta);
+      return new SessionHandle(id, dir, meta, this.loggerOptions);
     }
     throw new Error(`baton session not found: ${id}`);
   }
@@ -330,7 +341,7 @@ export class SessionStore {
       forkedFrom: { batonSessionId: sourceSessionId, throughSeq: events.at(-1)?.seq ?? 0 },
     };
     writeMetaAtomic(dir, meta);
-    return new SessionHandle(id, dir, meta);
+    return new SessionHandle(id, dir, meta, this.loggerOptions);
   }
 
   private listProjectDirs(): string[] {
@@ -405,14 +416,25 @@ function writeMetaAtomic(dir: string, meta: SessionMeta): void {
 export class SessionHandle {
   readonly id: string;
   readonly dir: string;
+  readonly logger: SessionLogger;
   meta: SessionMeta;
   private nextSeq: number | undefined;
   private listeners = new Set<(ev: AnyEventEnvelope) => void>();
 
-  constructor(id: string, dir: string, meta: SessionMeta) {
+  constructor(
+    id: string,
+    dir: string,
+    meta: SessionMeta,
+    loggerOptions: SessionLoggerOptions = {},
+  ) {
     this.id = id;
     this.dir = dir;
     this.meta = meta;
+    this.logger = new SessionLogger(
+      join(this.dir, "session.log"),
+      this.id,
+      loggerOptions,
+    );
   }
 
   /**
@@ -429,26 +451,20 @@ export class SessionHandle {
     return join(this.dir, "session.jsonl");
   }
 
-  private logPath(): string {
-    return join(this.dir, "session.log");
+  /**
+   * Structured operational logs are deliberately separate from the event ledger:
+   * they support diagnosis, not replay or product state.
+   */
+  log(entry: LogEntry): void {
+    this.logger.log(entry);
   }
 
-  /**
-   * 本 run 的旁路诊断日志。日志失败必须静默：它服务排障，不能反向影响正典会话。
-   */
-  diagnostic(entry: DiagnosticEntry): void {
-    try {
-      appendFileSync(
-        this.logPath(),
-        `${JSON.stringify({
-          ts: new Date().toISOString(),
-          batonSessionId: this.id,
-          ...entry,
-        })}\n`,
-      );
-    } catch {
-      // session 目录本身不可写时只能放弃；调用方仍按自己的错误语义继续或失败。
-    }
+  async flushLogs(): Promise<void> {
+    await this.logger.flush();
+  }
+
+  async closeLogs(): Promise<void> {
+    await this.logger.close();
   }
 
   /**
@@ -465,6 +481,7 @@ export class SessionHandle {
       const path = join(this.dir, `native-${safeTarget}.jsonl`);
       if (existsSync(path) && statSync(path).size >= 10 * 1024 * 1024) {
         renameSync(path, `${path}.1`);
+        chmodSync(`${path}.1`, 0o600);
       }
       appendFileSync(
         path,
@@ -475,7 +492,9 @@ export class SessionHandle {
           harness,
           ...event,
         })}\n`,
+        { encoding: "utf8", mode: 0o600 },
       );
+      chmodSync(path, 0o600);
     } catch {
       // 原生 trace 只服务协议排障，不能反向影响 Harness 执行。
     }
@@ -572,11 +591,12 @@ export class SessionHandle {
     try {
       appendFileSync(this.jsonlPath(), line);
     } catch (error) {
-      this.diagnostic({
+      this.log({
         level: "error",
+        source: "baton",
         component: "store.session",
         message: "failed to append session.jsonl",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       throw error;
     }
@@ -585,12 +605,13 @@ export class SessionHandle {
         listener(envelope as AnyEventEnvelope);
       } catch (error) {
         // 投影侧异常不能污染写入路径：事件已落盘，订阅者自己负责健壮性
-        this.diagnostic({
+        this.log({
           level: "error",
+          source: "baton",
           component: "store.listener",
           message: "session event listener threw",
-          error: diagnosticError(error),
-          details: { seq: envelope.seq, kind: envelope.kind },
+          error: logError(error),
+          attributes: { seq: envelope.seq, kind: envelope.kind },
         });
       }
     }

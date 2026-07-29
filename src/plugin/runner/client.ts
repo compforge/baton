@@ -3,12 +3,12 @@ import { fileURLToPath } from "node:url";
 import type {
   PluginDataDirectories,
   PluginInstance,
-  PluginLogEntry,
   PluginSessionContext,
   ResourceClient,
   SourceContext,
   ToastMessage,
 } from "@compforge/baton-plugin";
+import type { PluginLogRecord } from "../package.ts";
 
 import {
   type ActivationResult,
@@ -38,12 +38,17 @@ interface SourceCallbacks {
 export interface PluginRunnerCallbacks {
   readonly resources: ResourceClient;
   readonly onToast: (message: ToastMessage) => void;
-  readonly onLog: (entry: PluginLogEntry) => void;
+  readonly onLog: (record: PluginLogRecord) => void;
+  readonly onOutput?: (
+    stream: "stdout" | "stderr",
+    output: string,
+  ) => void;
   readonly onFailure?: (error: Error) => void;
 }
 
 const RUNNER_CLOSE_GRACE_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_OUTPUT_LINE_CHARS = 8 * 1024;
 
 export interface PluginRunnerClientOptions extends PluginRunnerCallbacks {
   readonly requestTimeoutMs?: number;
@@ -54,7 +59,7 @@ export interface PluginRunnerClientOptions extends PluginRunnerCallbacks {
  * subprocess calls cannot occupy Baton's event loop.
  */
 export class PluginRunnerClient {
-  private readonly child: Bun.Subprocess<"ignore", "ignore", "ignore">;
+  private readonly child: Bun.Subprocess<"ignore", "pipe", "pipe">;
   private readonly callbacks: PluginRunnerCallbacks;
   private readonly requestTimeoutMs: number;
   private readonly pending = new Map<number, PendingCall>();
@@ -81,8 +86,8 @@ export class PluginRunnerClient {
       ],
       {
         stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
         ipc: (message) => {
           this.handleMessage(message);
         },
@@ -104,6 +109,53 @@ export class PluginRunnerClient {
         },
       },
     );
+    void this.captureOutput("stdout", this.child.stdout);
+    void this.captureOutput("stderr", this.child.stderr);
+  }
+
+  private async captureOutput(
+    stream: "stdout" | "stderr",
+    readable: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    const reader = readable.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        for (;;) {
+          const newline = buffer.indexOf("\n");
+          if (newline < 0) break;
+          this.emitOutput(stream, buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+        }
+        if (buffer.length > MAX_OUTPUT_LINE_CHARS) {
+          this.emitOutput(stream, buffer);
+          buffer = "";
+        }
+      }
+      buffer += decoder.decode();
+      this.emitOutput(stream, buffer);
+    } catch {
+      // Process termination can close the stream while the reader is pending.
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private emitOutput(stream: "stdout" | "stderr", output: string): void {
+    const text = output.trim();
+    if (!text) return;
+    try {
+      this.callbacks.onOutput?.(
+        stream,
+        text.slice(0, MAX_OUTPUT_LINE_CHARS),
+      );
+    } catch {
+      // Runtime output is diagnostic-only.
+    }
   }
 
   async activate(
@@ -245,7 +297,7 @@ export class PluginRunnerClient {
       return;
     }
     if (childMessage.kind === "log") {
-      this.callbacks.onLog(childMessage.entry);
+      this.callbacks.onLog(childMessage.record);
       return;
     }
     if (childMessage.kind === "source-error") {

@@ -31,6 +31,52 @@ describe("baton sessions", () => {
   });
 });
 
+describe("baton logs", () => {
+  test("filters structured session logs by level and Plugin", () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-cli-logs-"));
+    try {
+      const session = new SessionStore(root).createSession({ cwd: "/repo" });
+      writeFileSync(join(session.dir, "session.log"), [
+        {
+          timestamp: "2026-07-29T00:00:00.000Z",
+          batonSessionId: session.id,
+          level: "info",
+          source: "baton",
+          component: "session.lifecycle",
+          message: "Session created",
+        },
+        {
+          timestamp: "2026-07-29T00:00:01.000Z",
+          batonSessionId: session.id,
+          level: "warn",
+          source: "plugin",
+          component: "plugin.compforge/reqloop.forge",
+          pluginId: "compforge/reqloop",
+          message: "Forge request was rate limited",
+        },
+      ].map((record) => JSON.stringify(record)).join("\n"));
+
+      const result = runCli([
+        "logs",
+        session.id,
+        "--root",
+        root,
+        "--level",
+        "warn",
+        "--plugin",
+        "compforge/reqloop",
+        "--json",
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("Forge request was rate limited");
+      expect(result.stdout.toString()).not.toContain("Session created");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("baton plugins", () => {
   test("registers a Marketplace and installs a Package", () => {
     const root = mkdtempSync(join(tmpdir(), "baton-cli-plugins-"));

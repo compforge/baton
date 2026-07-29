@@ -11,6 +11,8 @@
 //   baton help       帮助
 
 import packageJson from "../../package.json" with { type: "json" };
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { pluginKey } from "../plugin/identity.ts";
 import { MarketplaceRegistry, type MarketplaceSource } from "../plugin/marketplace/index.ts";
@@ -39,6 +41,10 @@ Usage:
   baton sessions [--tree] [--cwd <dir>]
                         list current-project sessions (--tree shows fork
                         lineage; reference with @<id> in the input)
+  baton logs [bs_xxx] [--level <level>] [--component <prefix>]
+             [--plugin <plugin-id>] [--tail <count>] [--json] [--cwd <dir>]
+                        inspect the latest or selected Session's structured
+                        Baton, Harness, and Plugin logs
   baton plugins marketplace add <path-or-git-url> [--ref <git-ref>] [--root <dir>]
                         register a local or Git Marketplace
   baton plugins marketplace remove <name> [--root <dir>]
@@ -57,7 +63,7 @@ Usage:
 Config:
   ~/.baton/config.yaml      generated on first run; defaultAgent / claudeExecutable /
                             codexCommand / codexApprovalReviewer /
-                            mentionBudgetChars / showThoughts
+                            mentionBudgetChars / showThoughts / logLevel
   ~/.baton/plugin.yaml      globally enabled plugins keyed by plugin@marketplace
   BATON_CLAUDE_BIN          env var, takes precedence over claudeExecutable in config.yaml
 `;
@@ -190,6 +196,9 @@ async function run(command: string): Promise<void> {
       }
       break;
     }
+    case "logs":
+      runLogs();
+      break;
     case "plugins":
       await runPlugins();
       break;
@@ -198,6 +207,75 @@ async function run(command: string): Promise<void> {
       console.log(HELP);
       process.exit(1);
   }
+}
+
+interface StoredLogRecord {
+  readonly timestamp?: string;
+  readonly level?: string;
+  readonly source?: string;
+  readonly component?: string;
+  readonly message?: string;
+  readonly pluginId?: string;
+  readonly [key: string]: unknown;
+}
+
+function runLogs(): void {
+  const store = new SessionStore(argValue("--root"));
+  const cwd = argValue("--cwd") ?? process.cwd();
+  const sessionId = positionalArguments(
+    3,
+    new Set(["--root", "--cwd", "--level", "--component", "--plugin", "--tail"]),
+  )[0] ?? store.listSessions({ cwd })[0]?.batonSessionId;
+  if (!sessionId) fail(`no baton session found in ${cwd}`);
+  const session = store.openSession(sessionId);
+  const records = [`${join(session.dir, "session.log")}.1`, join(session.dir, "session.log")]
+    .flatMap((path) => readLogRecords(path));
+  const minimumLevel = argValue("--level");
+  const component = argValue("--component");
+  const pluginId = argValue("--plugin");
+  const priorities: Readonly<Record<string, number>> = {
+    debug: 10,
+    info: 20,
+    warn: 30,
+    error: 40,
+  };
+  if (minimumLevel && priorities[minimumLevel] === undefined) {
+    fail("--level must be debug, info, warn, or error");
+  }
+  const filtered = records.filter((record) =>
+    (!minimumLevel ||
+      (priorities[record.level ?? ""] ?? 0) >= (priorities[minimumLevel] as number)) &&
+    (!component || record.component?.startsWith(component)) &&
+    (!pluginId || record.pluginId === pluginId)
+  );
+  const tailArg = argValue("--tail");
+  const tail = tailArg === undefined ? filtered.length : Number(tailArg);
+  if (!Number.isSafeInteger(tail) || tail < 0) fail("--tail must be a non-negative integer");
+  for (const record of tail === 0 ? [] : filtered.slice(-tail)) {
+    if (process.argv.includes("--json")) {
+      console.log(JSON.stringify(record));
+      continue;
+    }
+    const plugin = record.pluginId ? ` plugin=${record.pluginId}` : "";
+    console.log(
+      `${record.timestamp ?? "-"} ${(record.level ?? "info").toUpperCase().padEnd(5)} ` +
+        `${record.component ?? record.source ?? "baton"}${plugin} ${record.message ?? ""}`,
+    );
+  }
+}
+
+function readLogRecords(path: string): StoredLogRecord[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .flatMap((line) => {
+      if (!line.trim()) return [];
+      try {
+        return [JSON.parse(line) as StoredLogRecord];
+      } catch {
+        return [];
+      }
+    });
 }
 
 async function runPlugins(): Promise<void> {

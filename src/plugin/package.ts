@@ -16,8 +16,9 @@ import type {
   PluginCommandResult,
   PluginActivationContext,
   PluginDataDirectories,
-  PluginLogEntry,
+  PluginLogContext,
   PluginLogger,
+  PluginLogLevel,
   PluginPackage,
   PluginSessionContext,
   Resource,
@@ -54,8 +55,9 @@ export type {
   PluginCommandResult,
   PluginActivationContext,
   PluginDataDirectories,
-  PluginLogEntry,
+  PluginLogContext,
   PluginLogger,
+  PluginLogLevel,
   PluginPackage,
   PluginSessionContext,
   Resource,
@@ -137,7 +139,13 @@ interface PluginRegistrars {
   registerContextProvider: ContextProviderRegistrar;
   registerController: ResourceRegistrar;
   showToast(message: ToastMessage): void;
-  writeLog(entry: PluginLogEntry): void;
+  writeLog(record: PluginLogRecord): void;
+}
+
+export interface PluginLogRecord {
+  readonly level: PluginLogLevel;
+  readonly message: string;
+  readonly context?: PluginLogContext;
 }
 
 function nonEmpty(name: string, value: string): void {
@@ -190,11 +198,27 @@ export class PluginBinding implements PluginActivationContext {
         this.registrars.showToast(message);
       },
     });
+    const write = (
+      level: PluginLogLevel,
+      message: string,
+      context?: PluginLogContext,
+    ): void => {
+      if (this.closed) throw new Error("plugin Binding is closed");
+      this.registrars.writeLog({
+        level,
+        message,
+        ...(context ? { context } : {}),
+      });
+    };
     this.logger = Object.freeze({
-      write: (entry: PluginLogEntry) => {
-        if (this.closed) throw new Error("plugin Binding is closed");
-        this.registrars.writeLog(entry);
-      },
+      debug: (message: string, context?: PluginLogContext) =>
+        write("debug", message, context),
+      info: (message: string, context?: PluginLogContext) =>
+        write("info", message, context),
+      warn: (message: string, context?: PluginLogContext) =>
+        write("warn", message, context),
+      error: (message: string, context?: PluginLogContext) =>
+        write("error", message, context),
     });
   }
 

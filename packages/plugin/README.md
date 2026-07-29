@@ -38,10 +38,9 @@ const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
   async activate(context: PluginActivationContext) {
-    context.logger.write({
-      level: "info",
+    context.logger.info("Example plugin activated", {
       component: "activation",
-      message: "Example plugin activated",
+      attributes: { resourceTypes: [EXAMPLE_RESOURCE.kind] },
     });
     context.toast.show({ text: "Example plugin ready", tone: "success" });
     context.registerCommand({
@@ -138,9 +137,10 @@ status and an optional Board presentation; do not emit a toast on every reconcil
 
 `context.logger` writes best-effort diagnostics to the owning BatonSession.
 Baton adds the Plugin identity and owns the log path and persistence. Use
-structured `details` for troubleshooting context, never include secrets, and
-never use diagnostics as Resource state. Polling code should deduplicate
-repeated failures instead of writing the same message every reconcile.
+`debug/info/warn/error(message, context)` with structured JSON `attributes`
+for troubleshooting context. Never include secrets or use diagnostics as
+Resource state. Keep lifecycle and aggregate results at `info`, entity details
+at `debug`, and deduplicate repeated polling output.
 
 `registerContextProvider` exposes searchable, read-only context that a user can
 explicitly add to one Harness turn with `@`. `kind` is local to the Package;

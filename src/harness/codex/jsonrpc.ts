@@ -1,7 +1,7 @@
 // 行分隔 JSON-RPC 2.0 peer（codex app-server 走 stdio）。
 
-import type { DiagnosticSink } from "../../diagnostics.ts";
-import { diagnosticError } from "../../diagnostics.ts";
+import type { LogSink } from "../../logging.ts";
+import { logError } from "../../logging.ts";
 // 三类入站消息：响应（id 无 method）、服务端请求（id + method，需要回包）、通知（仅 method）。
 
 export interface JsonRpcRequestMessage {
@@ -36,7 +36,7 @@ export class JsonRpcPeer {
 
   constructor(
     private write: (line: string) => void,
-    private diagnostic: DiagnosticSink = () => {},
+    private log: LogSink = () => {},
   ) {}
 
   onNotification(handler: NotificationHandler): void {
@@ -108,13 +108,14 @@ export class JsonRpcPeer {
     try {
       msg = JSON.parse(line);
     } catch (error) {
-      this.diagnostic({
+      this.log({
         level: "warn",
+        source: "harness",
         component: "codex.jsonrpc",
         harness: "codex",
         message: "ignored non-JSON app-server output",
-        error: diagnosticError(error),
-        details: { line: line.slice(0, 4096) },
+        error: logError(error),
+        attributes: { line: line.slice(0, 4096) },
       });
       return;
     }
@@ -124,13 +125,14 @@ export class JsonRpcPeer {
       try {
         this.notificationHandler?.(msg.method, msg.params);
       } catch (error) {
-        this.diagnostic({
+        this.log({
           level: "error",
+          source: "harness",
           component: "codex.notification",
           harness: "codex",
           message: `notification handler failed: ${msg.method}`,
-          error: diagnosticError(error),
-          details: { method: msg.method },
+          error: logError(error),
+          attributes: { method: msg.method },
         });
       }
     } else if (msg.id !== undefined) {
@@ -148,13 +150,14 @@ export class JsonRpcPeer {
       const result = await this.serverRequestHandler(msg.method, msg.params);
       this.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })}\n`);
     } catch (err) {
-      this.diagnostic({
+      this.log({
         level: "error",
+        source: "harness",
         component: "codex.server-request",
         harness: "codex",
         message: `server request handler failed: ${msg.method}`,
-        error: diagnosticError(err),
-        details: { method: msg.method },
+        error: logError(err),
+        attributes: { method: msg.method },
       });
       this.write(
         `${JSON.stringify({

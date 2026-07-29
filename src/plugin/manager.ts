@@ -37,7 +37,7 @@ import {
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   pluginPackageKey,
-  type PluginLogEntry,
+  type PluginLogRecord,
   type ToastMessage,
   type ToastTone,
   type Watch,
@@ -94,9 +94,9 @@ import {
 } from "./command/registry.ts";
 import { ContextProviderRegistry } from "../context/registry.ts";
 import {
-  diagnosticError,
-  type DiagnosticSink,
-} from "../diagnostics.ts";
+  type LogSink,
+  logError,
+} from "../logging.ts";
 import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 
@@ -143,7 +143,7 @@ export interface ManagerOptions {
    */
   session?: Pick<
     SessionHandle,
-    "id" | "dir" | "readEvents" | "subscribe" | "append" | "diagnostic"
+    "id" | "dir" | "readEvents" | "subscribe" | "append" | "log"
   >;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
   instances?: PluginInstanceRepository;
@@ -322,7 +322,7 @@ export class Manager {
   private readonly onReconcileError: ManagerOptions["onReconcileError"];
   private readonly onControllerSourceError:
     ManagerOptions["onControllerSourceError"];
-  private readonly diagnostic?: DiagnosticSink;
+  private readonly log?: LogSink;
   private readonly retryInitialDelayMs: number;
   private readonly retryMaxDelayMs: number;
   private readonly retries = new Map<string, RetryState>();
@@ -359,8 +359,8 @@ export class Manager {
     ) {
       throw new Error("plugin Manager session and ProposalStore must own the same BatonSession");
     }
-    this.diagnostic = options.session
-      ? (entry) => options.session!.diagnostic(entry)
+    this.log = options.session
+      ? (entry) => options.session!.log(entry)
       : undefined;
     for (const plugin of options.packages ?? []) {
       validatePluginPackage(plugin);
@@ -620,6 +620,15 @@ export class Manager {
                 onToast: (message) =>
                   this.notifyToast(instance.pluginInstanceId, message),
                 onLog: (entry) => this.writePluginLog(instance, entry),
+                onOutput: (stream, output) =>
+                  this.writePluginLog(instance, {
+                    level: stream === "stderr" ? "warn" : "debug",
+                    message: `Plugin Runner wrote to ${stream}`,
+                    context: {
+                      component: `runner.${stream}`,
+                      attributes: { output },
+                    },
+                  }),
                 onFailure: (error) =>
                   this.handleRunnerFailure(
                     instance.pluginInstanceId,
@@ -641,6 +650,15 @@ export class Manager {
           binding.completeActivation();
           if (this.closed) throw new Error("plugin Manager is closed");
           this.bindings.set(pluginInstanceId, binding);
+          this.log?.({
+            level: "info",
+            source: "baton",
+            component: "plugin.activation",
+            message: "Plugin activated",
+            pluginId: instance.pluginId,
+            pluginInstanceId: instance.pluginInstanceId,
+            packageVersion: instance.packageVersion,
+          });
           this.notifyCommandsChanged();
           await this.resumeControllers(pluginInstanceId);
           this.notifyBoardChanged();
@@ -1484,6 +1502,14 @@ export class Manager {
   }
 
   private reportActivationFailure(failure: PluginActivationFailure): void {
+    this.log?.({
+      level: "error",
+      source: "baton",
+      component: "plugin.activation",
+      message: "Plugin activation failed",
+      pluginInstanceId: failure.pluginInstanceId,
+      error: logError(failure.error),
+    });
     try {
       this.onActivationError?.(Object.freeze(failure));
     } catch {
@@ -1516,11 +1542,12 @@ export class Manager {
         }
       })
       .catch((error) => {
-        this.diagnostic?.({
+        this.log?.({
           level: "error",
+          source: "baton",
           component: "plugin.board",
           message: "Could not refresh Plugin Board projection",
-          error: diagnosticError(error),
+          error: logError(error),
         });
       })
       .finally(() => {
@@ -1574,13 +1601,14 @@ export class Manager {
       try {
         requests = await watchRequests(controller.watches, change);
       } catch (error) {
-        this.diagnostic?.({
+        this.log?.({
           level: "error",
+          source: "baton",
           component: "plugin.watch",
           message: "Plugin Controller EventHandler failed",
-          error: diagnosticError(error),
-          details: {
-            pluginInstanceId: controller.scope.pluginInstanceId,
+          pluginInstanceId: controller.scope.pluginInstanceId,
+          error: logError(error),
+          attributes: {
             primaryResource:
               `${controller.scope.resourceApiVersion}/${controller.scope.resourceKind}`,
             watchedResource: `${change.resource.apiVersion}/${change.resource.kind}`,
@@ -1627,53 +1655,42 @@ export class Manager {
 
   private writePluginLog(
     instance: PluginInstance,
-    entry: PluginLogEntry,
+    record: PluginLogRecord,
   ): void {
     try {
       if (
-        !entry ||
-        typeof entry !== "object" ||
-        !PLUGIN_LOG_LEVELS.has(entry.level)
+        !record ||
+        typeof record !== "object" ||
+        !PLUGIN_LOG_LEVELS.has(record.level)
       ) {
         return;
       }
-      const message = typeof entry.message === "string"
-        ? entry.message.trim()
+      const message = typeof record.message === "string"
+        ? record.message.trim()
         : "";
       if (!message) return;
-      const localComponent = typeof entry.component === "string"
-        ? entry.component.trim()
+      const context = record.context;
+      const localComponent = typeof context?.component === "string"
+        ? context.component.trim()
         : "";
-      const details: Record<string, string | number | boolean | null> = {};
-      if (
-        entry.details &&
-        typeof entry.details === "object" &&
-        !Array.isArray(entry.details)
-      ) {
-        for (const [key, value] of Object.entries(entry.details)) {
-          if (
-            value === null ||
-            typeof value === "string" ||
-            typeof value === "number" ||
-            typeof value === "boolean"
-          ) {
-            details[key] = value;
-          }
-        }
-      }
-      details.pluginId = instance.pluginId;
-      details.pluginInstanceId = instance.pluginInstanceId;
-      details.packageVersion = instance.packageVersion;
-      this.diagnostic?.({
-        level: entry.level,
+      this.log?.({
+        level: record.level,
+        source: "plugin",
         component: localComponent
           ? `plugin.${instance.pluginId}.${localComponent}`
           : `plugin.${instance.pluginId}`,
         message,
-        ...(entry.error === undefined
+        pluginId: instance.pluginId,
+        pluginInstanceId: instance.pluginInstanceId,
+        packageVersion: instance.packageVersion,
+        ...(context?.error === undefined
           ? {}
-          : { error: diagnosticError(entry.error) }),
-        details,
+          : { error: logError(context.error) }),
+        ...(context?.attributes &&
+            typeof context.attributes === "object" &&
+            !Array.isArray(context.attributes)
+          ? { attributes: context.attributes }
+          : {}),
       });
     } catch {
       // Diagnostics must never affect Plugin activation or reconciliation.
@@ -1693,6 +1710,14 @@ export class Manager {
     pluginInstanceId: string,
     error: Error,
   ): void {
+    this.log?.({
+      level: "error",
+      source: "baton",
+      component: "plugin.runner",
+      message: "Plugin Runner stopped unexpectedly",
+      pluginInstanceId,
+      error: logError(error),
+    });
     try {
       this.onRunnerFailure?.({ pluginInstanceId, error });
     } catch {
@@ -1783,13 +1808,14 @@ export class Manager {
     }
     await controller.startSources?.((sourceId, error) => {
       try {
-        this.diagnostic?.({
+        this.log?.({
           level: "error",
+          source: "baton",
           component: "plugin.source",
           message: `Plugin source ${sourceId} failed`,
-          error: diagnosticError(error),
-          details: {
-            pluginInstanceId: controller.scope.pluginInstanceId,
+          pluginInstanceId: controller.scope.pluginInstanceId,
+          error: logError(error),
+          attributes: {
             resourceApiVersion: controller.scope.resourceApiVersion,
             resourceKind: controller.scope.resourceKind,
             sourceId,
@@ -1900,6 +1926,23 @@ export class Manager {
   }
 
   private reportFailure(failure: ReconcileFailure): void {
+    this.log?.({
+      level: "error",
+      source: "baton",
+      component: "plugin.reconcile",
+      message: "Plugin reconcile failed",
+      pluginInstanceId: failure.key.pluginInstanceId,
+      error: logError(failure.error),
+      attributes: {
+        resourceApiVersion: failure.key.resourceApiVersion,
+        resourceKind: failure.key.resourceKind,
+        resourceId: failure.key.resourceId,
+        attempt: failure.attempt,
+        ...(failure.nextRetryAt
+          ? { nextRetryAt: failure.nextRetryAt }
+          : {}),
+      },
+    });
     try {
       this.onReconcileError?.(Object.freeze(failure));
     } catch {

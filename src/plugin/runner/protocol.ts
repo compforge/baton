@@ -1,7 +1,6 @@
 import type {
   PluginDataDirectories,
   PluginInstance,
-  PluginLogEntry,
   PluginSessionContext,
   Resource,
   ResourceListOptions,
@@ -9,6 +8,7 @@ import type {
   ResourceType,
   ToastMessage,
 } from "@compforge/baton-plugin";
+import type { PluginLogRecord } from "../package.ts";
 
 export interface PluginPackageEntry {
   readonly pluginId: string;
@@ -160,7 +160,7 @@ export type RunnerSignal =
     }
   | {
       readonly kind: "log";
-      readonly entry: PluginLogEntry;
+      readonly record: PluginLogRecord;
     }
   | {
       readonly kind: "source-error";

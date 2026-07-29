@@ -625,37 +625,42 @@ describe("Plugin Package lifecycle", () => {
       instances,
       proposals,
       packages: [reqloopPackage((activation) => {
-        activation.logger.write({
-          level: "warn",
-          component: "devloop.pull-request-source",
-          message: "Could not parse devloop PR state",
-          error: new SyntaxError("Unexpected end of JSON input"),
-          details: { path: "/repo/.devloop/pr.json" },
-        });
+        activation.logger.warn(
+          "Could not parse devloop PR state",
+          {
+            component: "devloop.pull-request-source",
+            error: new SyntaxError("Unexpected end of JSON input"),
+            attributes: { path: "/repo/.devloop/pr.json" },
+          },
+        );
       })],
       onProposal() {},
     });
 
     await manager.start();
+    await session.flushLogs();
 
-    const log = JSON.parse(
-      readFileSync(join(session.dir, "session.log"), "utf8").trim(),
-    );
+    const log = readFileSync(join(session.dir, "session.log"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.level === "warn");
     expect(log).toMatchObject({
       batonSessionId: session.id,
       level: "warn",
+      source: "plugin",
       component:
         "plugin.qiankun/reqloop.devloop.pull-request-source",
       message: "Could not parse devloop PR state",
+      pluginId: "qiankun/reqloop",
+      pluginInstanceId: "reqloop_default",
+      packageVersion: "1.2.0",
       error: {
         name: "SyntaxError",
         message: "Unexpected end of JSON input",
       },
-      details: {
+      attributes: {
         path: "/repo/.devloop/pr.json",
-        pluginId: "qiankun/reqloop",
-        pluginInstanceId: "reqloop_default",
-        packageVersion: "1.2.0",
       },
     });
     expect(session.readEvents()).toEqual([]);
