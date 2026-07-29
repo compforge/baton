@@ -41,7 +41,18 @@ export function openBatonSession(
   // 锁必须先于 recovery：见 recoverInterruptedState 的前提说明
   resolved.session.acquireLock();
   try {
-    return { ...resolved, recovered: recoverInterruptedState(resolved.session) };
+    const recovered = recoverInterruptedState(resolved.session);
+    resolved.session.log({
+      level: "info",
+      source: "baton",
+      component: "session.lifecycle",
+      message: resolved.resumed ? "Session resumed" : "Session created",
+      attributes: {
+        cwd: resolved.session.meta.cwd,
+        recovered,
+      },
+    });
+    return { ...resolved, recovered };
   } catch (err) {
     // recovery 失败不能把锁留在一个仍存活的进程名下（pid 探活会一直判"在用"），
     // 释放后原样上抛，让调用方看到真实错误

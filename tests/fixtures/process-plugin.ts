@@ -4,6 +4,13 @@ const plugin: PluginPackage = {
   pluginId: "tests/process-plugin",
   version: "1.0.0",
   async activate(context) {
+    context.logger.info("Process Plugin activated", {
+      component: "lifecycle",
+      attributes: {
+        capabilities: ["commands"],
+        runtime: { isolated: true },
+      },
+    });
     context.registerCommand({
       commandId: "process-check",
       name: "process-check",

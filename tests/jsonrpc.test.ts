@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { JsonRpcPeer } from "../src/harness/codex/jsonrpc.ts";
-import type { DiagnosticEntry } from "../src/diagnostics.ts";
+import type { LogEntry } from "../src/logging.ts";
 
-function pair(): { peer: JsonRpcPeer; sent: string[]; diagnostics: DiagnosticEntry[] } {
+function pair(): { peer: JsonRpcPeer; sent: string[]; diagnostics: LogEntry[] } {
   const sent: string[] = [];
-  const diagnostics: DiagnosticEntry[] = [];
+  const diagnostics: LogEntry[] = [];
   const peer = new JsonRpcPeer(
     (line) => sent.push(line),
     (entry) => diagnostics.push(entry),
@@ -60,7 +60,7 @@ describe("JsonRpcPeer", () => {
     expect(() => peer.feed("warning: something\n")).not.toThrow();
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]!.component).toBe("codex.jsonrpc");
-    expect(diagnostics[0]!.details?.line).toBe("warning: something");
+    expect(diagnostics[0]!.attributes?.line).toBe("warning: something");
   });
 
   test("notification handler failures are diagnosed without closing the peer", () => {

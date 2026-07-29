@@ -29,7 +29,7 @@ import {
   sessionContextProvider,
 } from "../../context/mention.ts";
 import { ContextProviderRegistry } from "../../context/registry.ts";
-import { diagnosticError } from "../../diagnostics.ts";
+import { logError } from "../../logging.ts";
 import {
   textOf,
   type EventKind,
@@ -510,6 +510,13 @@ export class BatonChatProtocol implements ChatProtocol {
     await this.plugins.close();
     this.marketplace.close();
     this.unsubscribeSession();
+    this.session.log({
+      level: "info",
+      source: "baton",
+      component: "session.lifecycle",
+      message: "Session closed",
+    });
+    await this.session.closeLogs();
     this.session.releaseLock();
     this.quit(this.session.id);
   }
@@ -778,8 +785,8 @@ export class BatonChatProtocol implements ChatProtocol {
         probeHarnessTarget(target, {
           cwd,
           config: this.config,
-          diagnostic: (entry) =>
-            this.session.diagnostic({ ...entry, harnessTargetId: target.id }),
+          log: (entry) =>
+            this.session.log({ ...entry, harnessTargetId: target.id }),
         }),
       onChange: () => this.changed(),
     });
@@ -921,6 +928,13 @@ export class BatonChatProtocol implements ChatProtocol {
     await this.controller.close();
     await this.plugins.close();
     this.unsubscribeSession();
+    this.session.log({
+      level: "info",
+      source: "baton",
+      component: "session.lifecycle",
+      message: "Session closed for session switch",
+    });
+    await this.session.closeLogs();
     this.session.releaseLock();
     this.session = next.session;
     this.syncTerminalTitle();
@@ -1041,13 +1055,14 @@ export class BatonChatProtocol implements ChatProtocol {
     try {
       return await this.plugins.executeCommand(name, input);
     } catch (error) {
-      this.session.diagnostic({
+      this.session.log({
         level: "error",
+        source: "baton",
         component: "plugin.command",
         message: `Plugin command /${name} failed`,
-        error: diagnosticError(error),
-        details: {
-          pluginId,
+        pluginId,
+        error: logError(error),
+        attributes: {
           command: name,
           phase: input.selectedValue !== undefined
             ? "select"

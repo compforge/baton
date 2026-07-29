@@ -6,7 +6,8 @@ import type {
   PluginActivationContext,
   PluginDataDirectories,
   PluginInstance,
-  PluginLogEntry,
+  PluginLogContext,
+  PluginLogLevel,
   PluginPackage,
   PluginSessionContext,
   Resource,
@@ -19,6 +20,7 @@ import type {
   ToastMessage,
   Watch,
 } from "@compforge/baton-plugin";
+import type { PluginLogRecord } from "../package.ts";
 
 import {
   type ActivationResult,
@@ -286,11 +288,7 @@ async function activate(
         send({ kind: "toast", message });
       },
     }),
-    logger: Object.freeze({
-      write(entry: PluginLogEntry) {
-        send({ kind: "log", entry });
-      },
-    }),
+    logger: pluginLogger(),
     registerCommand(command: Command) {
       assertRegistering();
       registrations.push(commandRegistration(command));
@@ -326,6 +324,35 @@ async function activate(
     await closeBinding();
     throw error;
   }
+}
+
+function pluginLogger(): PluginActivationContext["logger"] {
+  const write = (
+    level: PluginLogLevel,
+    message: string,
+    context?: PluginLogContext,
+  ): void => {
+    try {
+      const record: PluginLogRecord = {
+        level,
+        message,
+        ...(context ? { context } : {}),
+      };
+      send({ kind: "log", record });
+    } catch {
+      // Logging is best-effort and must not change Plugin behavior.
+    }
+  };
+  return Object.freeze({
+    debug: (message: string, context?: PluginLogContext) =>
+      write("debug", message, context),
+    info: (message: string, context?: PluginLogContext) =>
+      write("info", message, context),
+    warn: (message: string, context?: PluginLogContext) =>
+      write("warn", message, context),
+    error: (message: string, context?: PluginLogContext) =>
+      write("error", message, context),
+  });
 }
 
 async function startSource(

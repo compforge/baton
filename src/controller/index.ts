@@ -17,8 +17,8 @@ import {
   type ContextDeliveryTransport,
   type ContextSnapshotEnvelope,
 } from "../context/delivery.ts";
-import type { DiagnosticSink } from "../diagnostics.ts";
-import { diagnosticError } from "../diagnostics.ts";
+import type { LogSink } from "../logging.ts";
+import { logError } from "../logging.ts";
 import { newId } from "../event/ids.ts";
 import {
   type AnyEventDraft,
@@ -84,7 +84,7 @@ export type SendTurnOutcome =
 /** Controller 注入给 Adapter 的宿主能力；Interaction 必须经可信边界打开。 */
 export interface InteractionHandlers {
   interactionHandler: InteractionHandler;
-  diagnostic: DiagnosticSink;
+  log: LogSink;
   nativeEvent: NativeEventSink;
 }
 
@@ -437,14 +437,15 @@ export class Controller {
       await binding.adapter.compactContext(binding.ref, turnId);
       await admitted.released;
     } catch (error) {
-      this.options.session.diagnostic({
+      this.options.session.log({
         level: "error",
+        source: "baton",
         component: "controller.compact",
         harness: target.harness,
         harnessTargetId,
         turnId: record?.turnId,
         message: "harness context compaction failed",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       if (record && record.status !== "finalized") {
         this.synthesizeTerminal(record, {
@@ -501,14 +502,15 @@ export class Controller {
     try {
       await active.binding.adapter.cancel(active.binding.ref);
     } catch (error) {
-      this.options.session.diagnostic({
+      this.options.session.log({
         level: "error",
+        source: "baton",
         component: "controller.cancel",
         harness: active.harness,
         harnessTargetId: active.harnessTargetId,
         turnId: active.turnId,
         message: "harness cancel request failed",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       // cancel 请求本身失败（transport 已断等）：不再等 harness，直接合成终态
       this.synthesizeTerminal(active, {
@@ -524,13 +526,14 @@ export class Controller {
       if (binding.ref) {
         closing.push(
           binding.close().catch((error) => {
-            this.options.session.diagnostic({
+            this.options.session.log({
               level: "warn",
+              source: "baton",
               component: "controller.close",
               harness: binding.adapter.harness,
               harnessTargetId: binding.target.id,
               message: "harness close failed",
-              error: diagnosticError(error),
+              error: logError(error),
             });
           }),
         );
@@ -768,14 +771,15 @@ export class Controller {
       // 迟到的启动错误不再作为本 turn 的失败上抛（事件历史已闭合）
       if (record.status === "finalized") return;
       const detail = error instanceof Error ? error.message : String(error);
-      this.options.session.diagnostic({
+      this.options.session.log({
         level: "error",
+        source: "baton",
         component: "controller.turn",
         harness: turn.target.harness,
         harnessTargetId: targetKey,
         turnId: turn.turnId,
         message: "harness startup or prompt admission failed",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       // 启动/admission 失败：合成结构化终态（error + idle + summary）——user_message 已
       // 落盘，必须有结局，不允许"输入消失且无历史"的半状态；随后仍上抛给 submit 调用方。
@@ -976,8 +980,8 @@ export class Controller {
       const adapter = this.options.createAdapter(target, {
         interactionHandler: (interaction, context) =>
           this.openHarnessInteraction(target.id, interaction, context),
-        diagnostic: (entry) =>
-          this.options.session.diagnostic({ ...entry, harnessTargetId: target.id }),
+        log: (entry) =>
+          this.options.session.log({ ...entry, harnessTargetId: target.id }),
         nativeEvent: (event) =>
           this.options.session.nativeEvent(target.id, target.harness, event),
       });

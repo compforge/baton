@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { parse, stringify } from "yaml";
 
 import { parseHarness, type HarnessName } from "../harness/ids.ts";
+import type { LogLevel } from "../logging.ts";
 
 export interface BatonConfig {
   /** 打开 TUI / REPL 时的默认 agent（canonical harness id） */
@@ -27,6 +28,8 @@ export interface BatonConfig {
   mentionBudgetChars: number;
   /** 是否在时间线里显示 agent 的思考过程（reasoning 流） */
   showThoughts: boolean;
+  /** session.log 的最低记录级别。 */
+  logLevel: LogLevel;
 }
 
 // codexApprovalReviewer 有意不列：缺省就是"不下发、跟随 codex"。
@@ -35,6 +38,7 @@ export const DEFAULT_CONFIG: BatonConfig = {
   codexCommand: ["codex", "app-server"],
   mentionBudgetChars: 4096,
   showThoughts: true,
+  logLevel: "info",
 };
 
 export function batonRoot(rootDir?: string): string {
@@ -82,6 +86,9 @@ export function loadConfig(rootDir?: string): BatonConfig {
   }
   if (typeof merged.showThoughts !== "boolean") {
     merged.showThoughts = DEFAULT_CONFIG.showThoughts;
+  }
+  if (!["debug", "info", "warn", "error"].includes(merged.logLevel)) {
+    merged.logLevel = DEFAULT_CONFIG.logLevel;
   }
   // 只接受已知取值；其余（含缺省）落回 undefined = 不下发、跟随 codex 自己的解析。
   // 这里**不推导生效值**：曾经为了让 footer 准确，config 复刻了一遍 codex 的方言解析，

@@ -23,3 +23,7 @@ mentionBudgetChars: 4096
 
 # Show agent reasoning in the timeline.
 showThoughts: true
+
+# Minimum level persisted to each session.log. Use debug when diagnosing a
+# Baton component, Harness adapter, or third-party Plugin.
+logLevel: info # debug | info | warn | error

@@ -21,7 +21,7 @@ import {
   type SdkPluginConfig,
   type Settings,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { DiagnosticSink } from "../../diagnostics.ts";
+import type { LogSink } from "../../logging.ts";
 
 /**
  * Claude settings 文件的相关部分（只提取我们需要的）
@@ -46,7 +46,7 @@ export interface ClaudeSettings {
  */
 export async function readClaudeSettings(
   cwd: string,
-  diagnostic?: DiagnosticSink,
+  log?: LogSink,
 ): Promise<ClaudeSettings> {
   try {
     const resolved = await resolveSettings({ cwd });
@@ -68,13 +68,14 @@ export async function readClaudeSettings(
     };
   } catch (error) {
     // Settings 解析失败：记录但不阻断启动（大多数项目没有 settings）
-    if (diagnostic) {
-      diagnostic({
+    if (log) {
+      log({
         level: "info",
+        source: "harness",
         component: "claude.settings",
         harness: "claude",
         message: "Could not resolve Claude settings",
-        details: { error: error instanceof Error ? error.message : String(error), cwd },
+        attributes: { error: error instanceof Error ? error.message : String(error), cwd },
       });
     }
     return {};

@@ -89,6 +89,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 - `docs/user-input-lifecycle.md` — Input queue / steer / recall / interrupt 生命周期
 - `docs/harness-output-lifecycle.md` — Harness 输出归一、终态收口与自愈
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
+- `docs/logging.md` — Baton、Harness 与 Plugin 共用的结构化运维日志
 - `docs/harness-interaction-design.md` — Adapter 与交互契约
 - `docs/resume-fork.md`、`docs/session-paths.md` — Session 恢复、fork 与主线 / 草稿语义
 - `docs/backlog.md` — 暂缓能力及其启动条件

@@ -5,8 +5,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { FileHookTrustStore, type HookTrustStore } from "../../config/hook.ts";
-import type { DiagnosticSink } from "../../diagnostics.ts";
-import { diagnosticError } from "../../diagnostics.ts";
+import type { LogSink } from "../../logging.ts";
+import { logError } from "../../logging.ts";
 import { newId } from "../../event/ids.ts";
 import { closedTerminal } from "../normalize.ts";
 import type {
@@ -517,7 +517,7 @@ function stopReasonOf(turnStatus: string): StopReason {
 
 export interface CodexAdapterOptions {
   interactionHandler: InteractionHandler;
-  diagnostic?: DiagnosticSink;
+  log?: LogSink;
   nativeEvent?: NativeEventSink;
   /** 缺省由 auto-review 审批；显式 user 时请求进入 Baton TUI。 */
   approvalReviewer?: "user" | "auto_review";
@@ -664,20 +664,21 @@ export class CodexAdapter implements HarnessAdapter {
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const diagnostic = this.options.diagnostic ?? (() => {});
-    const peer = new JsonRpcPeer((line) => child.stdin.write(line), diagnostic);
+    const log = this.options.log ?? (() => {});
+    const peer = new JsonRpcPeer((line) => child.stdin.write(line), log);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => peer.feed(chunk));
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       const message = chunk.trim();
       if (!message) return;
-      diagnostic({
+      log({
         level: "warn",
+        source: "harness",
         component: "codex.stderr",
         harness: this.harness,
         message: "codex app-server wrote to stderr",
-        details: { output: message.slice(0, 4096) },
+        attributes: { output: message.slice(0, 4096) },
       });
     });
 
@@ -686,8 +687,9 @@ export class CodexAdapter implements HarnessAdapter {
     // 活跃 turn 必须在此合成终态，否则 controller 永远等不到 idle（design §4.1 终态保证）。
     child.on("close", (code) => {
       if (code !== 0) {
-        diagnostic({
+        log({
           level: "error",
+          source: "harness",
           component: "codex.process",
           harness: this.harness,
           message: `codex app-server exited (code ${code})`,
@@ -697,12 +699,13 @@ export class CodexAdapter implements HarnessAdapter {
       this.failTurn(rt, rt.activeTurn, `codex app-server exited (code ${code})`);
     });
     child.on("error", (error) => {
-      diagnostic({
+      log({
         level: "error",
+        source: "harness",
         component: "codex.process",
         harness: this.harness,
         message: "codex app-server spawn error",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       peer.close(`codex app-server spawn error: ${error.message}`);
       this.failTurn(rt, rt.activeTurn, `codex app-server error: ${error.message}`);
@@ -1500,13 +1503,14 @@ export class CodexAdapter implements HarnessAdapter {
           const count = (counts.get(method) ?? 0) + 1;
           counts.set(method, count);
           if (count === 1 || count % 100 === 0) {
-            this.options.diagnostic?.({
+            this.options.log?.({
               level: "warn",
+              source: "harness",
               component: "codex.notification",
               harness: this.harness,
               turnId: rt.activeTurn?.turnId,
               message: `unmapped codex notification: ${method}`,
-              details: { method, count },
+              attributes: { method, count },
             });
           }
           break;

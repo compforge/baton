@@ -3,6 +3,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import {
   restoredError,
   serializedError,
 } from "../src/plugin/runner/protocol.ts";
+import { SessionHandle } from "../src/store/store.ts";
 
 const roots: string[] = [];
 
@@ -27,6 +29,16 @@ function stores() {
     id: "bs_runner",
     dir: join(root, "projects", "project", "sessions", "bs_runner"),
   };
+  const sessionHandle = new SessionHandle(
+    session.id,
+    session.dir,
+    {
+      batonSessionId: session.id,
+      cwd: root,
+      createdAt: new Date().toISOString(),
+      harnessSessions: {},
+    },
+  );
   const packageDir = join(root, "installed-package");
   const entry = join(packageDir, "index.ts");
   mkdirSync(packageDir, { recursive: true });
@@ -37,6 +49,7 @@ function stores() {
     root,
     instances: new PluginInstanceStore({ session }),
     proposals: new ProposalStore({ session }),
+    session: sessionHandle,
     entry,
   };
 }
@@ -74,7 +87,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("keeps the host responsive and withdraws registrations after a crash", async () => {
-    const { root, instances, proposals, entry } = stores();
+    const { root, instances, proposals, session, entry } = stores();
     instances.create({
       pluginInstanceId: "process_default",
       pluginId: "tests/process-plugin",
@@ -86,6 +99,7 @@ describe("Plugin Runner process boundary", () => {
     const manager = new Manager({
       instances,
       proposals,
+      session,
       pluginSupervisor: new PluginSupervisor(),
       async loadPackageEntry(pluginId, version) {
         return {
@@ -104,8 +118,28 @@ describe("Plugin Runner process boundary", () => {
     });
 
     await manager.start();
+    await session.flushLogs();
     expect(activationFailures).toEqual([]);
     expect(manager.isInstanceActive("process_default")).toBe(true);
+    const activationLog = readFileSync(
+      join(session.dir, "session.log"),
+      "utf8",
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((record) => record.source === "plugin");
+    expect(activationLog).toMatchObject({
+      pluginId: "tests/process-plugin",
+      pluginInstanceId: "process_default",
+      packageVersion: "1.0.0",
+      component: "plugin.tests/process-plugin.lifecycle",
+      message: "Process Plugin activated",
+      attributes: {
+        capabilities: ["commands"],
+        runtime: { isolated: true },
+      },
+    });
     await expect(
       manager.executeCommand("process-check", { argument: "data-dirs" }),
     ).resolves.toEqual({

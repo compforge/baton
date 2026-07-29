@@ -7,7 +7,7 @@ import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
 import type { BatonConfig } from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
-import type { DiagnosticSink } from "../diagnostics.ts";
+import type { LogSink } from "../logging.ts";
 import { HARNESS_IDENTITIES, HARNESSES, parseHarness, type HarnessName } from "./ids.ts";
 import type { HarnessTarget, HarnessTargetProbeResult } from "./target.ts";
 
@@ -17,7 +17,7 @@ export interface HarnessAdapterOptions {
   /** Adapter 工厂的实例坐标；工厂负责把 Target 配置 lowering 成具体 Adapter 依赖。 */
   target: HarnessTarget;
   interactionHandler: InteractionHandler;
-  diagnostic?: DiagnosticSink;
+  log?: LogSink;
   nativeEvent?: NativeEventSink;
   config: BatonConfig;
   rootDir?: string;
@@ -48,7 +48,7 @@ export interface HarnessProbeOptions {
   target: HarnessTarget;
   cwd: string;
   env?: Record<string, string>;
-  diagnostic?: DiagnosticSink;
+  log?: LogSink;
   config: BatonConfig;
 }
 
@@ -60,10 +60,10 @@ export const HARNESS_REGISTRY = [
     sessionKey: "codex",
     shortName: "codex",
     color: "#73daca", // 青
-    create: ({ target, interactionHandler, diagnostic, nativeEvent, config, rootDir }) =>
+    create: ({ target, interactionHandler, log, nativeEvent, config, rootDir }) =>
       new CodexAdapter({
         interactionHandler,
-        diagnostic,
+        log,
         nativeEvent,
         command: config.codexCommand,
         approvalReviewer: config.codexApprovalReviewer,
@@ -76,18 +76,18 @@ export const HARNESS_REGISTRY = [
     sessionKey: "claude-code",
     shortName: "claude",
     color: "#ff9e64", // 橙
-    create: ({ interactionHandler, diagnostic, nativeEvent, config }) =>
+    create: ({ interactionHandler, log, nativeEvent, config }) =>
       new ClaudeAdapter({
         interactionHandler,
-        diagnostic,
+        log,
         nativeEvent,
         executablePath: config.claudeExecutable,
       }),
-    probe: ({ cwd, env, diagnostic, config }) =>
+    probe: ({ cwd, env, log, config }) =>
       probeClaudeTarget({
         cwd,
         env,
-        diagnostic,
+        log,
         executablePath: config.claudeExecutable,
       }),
   },

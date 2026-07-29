@@ -17,8 +17,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { newId } from "../../event/ids.ts";
-import type { DiagnosticSink } from "../../diagnostics.ts";
-import { diagnosticError } from "../../diagnostics.ts";
+import type { LogSink } from "../../logging.ts";
+import { logError } from "../../logging.ts";
 import { readClaudeSettings } from "./settings.ts";
 import type {
   ConfigValue,
@@ -461,11 +461,11 @@ export async function probeClaudeTarget(options: {
   cwd: string;
   env?: Record<string, string>;
   executablePath?: string;
-  diagnostic?: DiagnosticSink;
+  log?: LogSink;
   queryFactory?: typeof query;
 }): Promise<HarnessTargetProbeResult> {
   const idleInput = idleClaudeInput();
-  const settings = await readClaudeSettings(options.cwd, options.diagnostic);
+  const settings = await readClaudeSettings(options.cwd, options.log);
   const queryHandle = (options.queryFactory ?? query)({
     prompt: idleInput.stream,
     options: {
@@ -558,7 +558,7 @@ function claudeContextUsage(
 
 export interface ClaudeAdapterOptions {
   interactionHandler: InteractionHandler;
-  diagnostic?: DiagnosticSink;
+  log?: LogSink;
   nativeEvent?: NativeEventSink;
   /** claude 可执行文件路径；默认 BATON_CLAUDE_BIN 环境变量，再默认交给 SDK 自己找 */
   executablePath?: string;
@@ -587,7 +587,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       : opts.resumeSessionId;
 
     // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
-    const settings = await readClaudeSettings(opts.cwd, this.options.diagnostic);
+    const settings = await readClaudeSettings(opts.cwd, this.options.log);
 
     // 注意：虽然 SDK 通过子进程启动 Claude CLI，CLI 会自动读取配置文件层级：
     //   1. ~/.claude/settings.json (user-level)
@@ -868,13 +868,14 @@ export class ClaudeAdapter implements HarnessAdapter {
         rt.models = claudeModels(result.models);
       })
       .catch((error) => {
-        this.options.diagnostic?.({
+        this.options.log?.({
           level: "warn",
+          source: "harness",
           component: "claude.initialization",
           harness: this.harness,
           turnId: rt.currentTurn?.turnId,
           message: "Claude SDK initialization result failed",
-          error: diagnosticError(error),
+          error: logError(error),
         });
       });
     void this.consumeQuery(rt, q, channel);
@@ -917,13 +918,14 @@ export class ClaudeAdapter implements HarnessAdapter {
       const current = rt.currentTurn;
       if (!current) return;
       const emit: EventSink = (ev) => this.emit(rt, ev, current);
-      this.options.diagnostic?.({
+      this.options.log?.({
         level: current.cancelRequested ? "info" : "error",
+        source: "harness",
         component: "claude.query",
         harness: this.harness,
         turnId: current.turnId,
         message: current.cancelRequested ? "Claude SDK query stopped after cancellation" : "Claude SDK query failed",
-        error: diagnosticError(error),
+        error: logError(error),
       });
       if (current.cancelRequested) {
         this.finishTurn(rt, emit, current, "cancelled");
@@ -999,13 +1001,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     turn.cancelRequested = true;
     // streaming query 本身保持存活；SDK result 仍从 consumeQuery 收口当前 turn。
     await rt.activeQuery.interrupt().catch((error) => {
-      this.options.diagnostic?.({
+      this.options.log?.({
         level: "warn",
+        source: "harness",
         component: "claude.cancel",
         harness: this.harness,
         turnId: turn.turnId,
         message: "Claude SDK interrupt failed",
-        error: diagnosticError(error),
+        error: logError(error),
       });
     });
   }
@@ -1404,13 +1407,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     const seen = (rt.unmappedMessageKeys ??= new Set());
     if (seen.has(key)) return;
     seen.add(key);
-    this.options.diagnostic?.({
+    this.options.log?.({
       level: "warn",
+      source: "harness",
       component: "claude.protocol",
       harness: this.harness,
       turnId: rt.currentTurn?.turnId,
       message: `unmapped Claude SDK message: ${key}`,
-      details: { count: 1 },
+      attributes: { count: 1 },
     });
   }
 }

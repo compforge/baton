@@ -190,7 +190,8 @@ Plugin 自己决定是否在其中组织 `data/`、`cache/`、`state/` 等子目
 4. Event Ledger、Resource、Proposal、Interaction 等 Baton 事实继续使用宿主 API 和专用
    Store，不能复制到私有 JSON 形成第二真相源；
 5. Plugin 日志继续调用 `context.logger`，由 Baton 写入当前 `session.log` 并补齐 Plugin
-   provenance；不要直接在数据目录另建日志真相源；
+   provenance；不要直接在数据目录另建日志真相源。统一日志模型与运维入口见
+   [Baton 日志体系](./logging.md)；
 6. secret 不写日志、Resource、Project 或 Session 数据。普通配置文件即使权限受限也不等于
    secret store；正式 SecretBinding 落地前优先使用环境变量或既有凭证管理器。
 
@@ -246,6 +247,25 @@ Plugin 作者还必须遵守：
 
 Runner 隔离能保护 composer，不等于允许 Plugin 阻塞自己的进程。同步阻塞会让该 Binding 的
 所有 handler 一起停顿，并最终触发 deadline 回收。
+
+`context.logger` 提供 `debug/info/warn/error(message, context)`。生命周期和低频聚合结果使用
+`info`，实体列表、路径和轮询范围使用 `debug`；可继续运行的降级使用 `warn`，当前操作失败
+使用 `error`。`context.attributes` 可以保存嵌套 JSON 值，错误放 `context.error`，不要把数组
+拼成不可查询的字符串：
+
+```ts
+context.logger.info("PullRequest discovery completed", {
+  component: "pull-request-source.forge",
+  attributes: { repositories: 3, admitted: 2 },
+});
+context.logger.debug("Discovered PullRequests", {
+  component: "pull-request-source.forge",
+  attributes: { pullRequests: ["compforge/baton#228", "compforge/reqloop#52"] },
+});
+```
+
+Runner stdout/stderr 会被宿主有界采集用于兜底排障，但缺少结构化字段。Plugin 应使用 logger，
+并对轮询产生的相同结果去重。日志不是 Resource 状态，不得包含 secret。
 
 ### 3.3 Resource 与 Controller
 

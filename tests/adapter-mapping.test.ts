@@ -14,7 +14,7 @@ import {
   todoWritePlan,
 } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
-import type { DiagnosticEntry } from "../src/diagnostics.ts";
+import type { LogEntry } from "../src/logging.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
 import type { InteractionHandler } from "../src/harness/adapter.ts";
@@ -119,8 +119,8 @@ describe("codex: error notifications", () => {
 
 describe("codex: unmapped notifications", () => {
   test("writes a throttled diagnostic instead of entering the session timeline", () => {
-    const diagnostics: DiagnosticEntry[] = [];
-    const adapter = new CodexAdapter({ interactionHandler, diagnostic: (entry) => diagnostics.push(entry) });
+    const diagnostics: LogEntry[] = [];
+    const adapter = new CodexAdapter({ interactionHandler, log: (entry) => diagnostics.push(entry) });
     const rt = { threadId: "th1", activeTurn: { turnId: "t1", finalized: false } };
     const notify = () =>
       (adapter as unknown as { handleNotification: (r: unknown, m: string, p: unknown) => void }).handleNotification(
@@ -133,7 +133,7 @@ describe("codex: unmapped notifications", () => {
     notify();
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]!.message).toContain("future/event");
-    expect(diagnostics[0]!.details?.count).toBe(1);
+    expect(diagnostics[0]!.attributes?.count).toBe(1);
   });
 });
 
@@ -444,10 +444,10 @@ describe("native provider observability", () => {
   });
 
   test("Claude reports an unknown SDK message once instead of silently dropping it", () => {
-    const diagnostics: DiagnosticEntry[] = [];
+    const diagnostics: LogEntry[] = [];
     const adapter = new ClaudeAdapter({
       interactionHandler,
-      diagnostic: (entry) => diagnostics.push(entry),
+      log: (entry) => diagnostics.push(entry),
     });
     const rt = {
       cwd: "/tmp",

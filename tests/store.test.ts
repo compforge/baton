@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -235,7 +236,7 @@ describe("event append / read", () => {
     expect(reopened.readEvents()).toHaveLength(3);
   });
 
-  test("session diagnostics are paired with session.jsonl without entering its event stream", () => {
+  test("session logs are paired with session.jsonl without entering its event stream", async () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
 
     const event = h.append({
@@ -245,14 +246,16 @@ describe("event append / read", () => {
       turnId: "t_1",
       payload: { message: "harness failed" },
     });
-    h.diagnostic({
+    h.log({
       level: "error",
+      source: "harness",
       component: "codex.jsonrpc",
       harness: "codex",
       turnId: "t_1",
       message: "mapping failed",
       error: { name: "Error", message: "boom", stack: "stack" },
     });
+    await h.flushLogs();
 
     expect(h.readEvents()).toEqual([event]);
 
@@ -273,6 +276,9 @@ describe("event append / read", () => {
     });
 
     expect(h.readEvents()).toEqual([]);
+    expect(
+      statSync(join(h.dir, "native-claude-work.jsonl")).mode & 0o777,
+    ).toBe(0o600);
     const trace = JSON.parse(
       readFileSync(join(h.dir, "native-claude-work.jsonl"), "utf8").trim(),
     );

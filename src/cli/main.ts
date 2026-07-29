@@ -87,8 +87,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const cwd = argValue("--cwd") ?? process.cwd();
-  const store = new SessionStore(rootArg);
+  const store = new SessionStore(rootArg, { level: config.logLevel });
   const session = store.createSession({ cwd });
+  session.log({
+    level: "info",
+    source: "baton",
+    component: "session.lifecycle",
+    message: "Headless session created",
+    attributes: { cwd },
+  });
   stdout.write(`baton session: ${session.id}\nlog: ${session.dir}/session.jsonl\n`);
 
   const target = resolveDefaultHarnessTarget(agentName);
@@ -172,6 +179,13 @@ async function main(): Promise<void> {
   await interactionChain;
   unsubscribe();
   await controller.close();
+  session.log({
+    level: "info",
+    source: "baton",
+    component: "session.lifecycle",
+    message: "Headless session closed",
+  });
+  await session.closeLogs();
   rl.close();
 }
 

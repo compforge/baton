@@ -224,6 +224,7 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
       await expect(
         protocol.command("requirements", ""),
       ).rejects.toThrow("Meegle CLI failed: backend unavailable");
+      await session.flushLogs();
 
       const log = JSON.parse(
         readFileSync(join(session.dir, "session.log"), "utf8").trim(),
@@ -233,12 +234,12 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
         level: "error",
         component: "plugin.command",
         message: "Plugin command /requirements failed",
+        pluginId: "qiankun/reqloop",
         error: {
           name: "Error",
           message: "Meegle CLI failed: backend unavailable",
         },
-        details: {
-          pluginId: "qiankun/reqloop",
+        attributes: {
           command: "requirements",
           phase: "invoke",
         },
@@ -297,6 +298,7 @@ describe("BatonChatProtocol plugin source diagnostics", () => {
         text: "Plugin source forge failed for pi_reqloop/PullRequest",
         tone: "error",
       });
+      await session.flushLogs();
 
       const log = readFileSync(join(session.dir, "session.log"), "utf8")
         .trim()
@@ -308,14 +310,14 @@ describe("BatonChatProtocol plugin source diagnostics", () => {
         level: "error",
         component: "plugin.source",
         message: "Plugin source forge failed",
+        pluginInstanceId: "pi_reqloop",
         error: {
           message: "Could not list Forge PullRequests for openai/plugins",
           cause: {
             message: "GET /repos/openai/plugins/pulls returned 404",
           },
         },
-        details: {
-          pluginInstanceId: "pi_reqloop",
+        attributes: {
           resourceApiVersion: "reqloop.baton.dev/v1alpha1",
           resourceKind: "PullRequest",
           sourceId: "forge",

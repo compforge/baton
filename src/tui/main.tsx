@@ -41,7 +41,7 @@ function hasArg(...flags: string[]): boolean {
 const rootArg = argValue("--root");
 ensureConfigFile(rootArg);
 const config = loadConfig(rootArg);
-const store = new SessionStore(rootArg);
+const store = new SessionStore(rootArg, { level: config.logLevel });
 const requestedCwd = argValue("--cwd") ?? process.cwd();
 const projectSessions = store.listSessions({ cwd: requestedCwd });
 
