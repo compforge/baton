@@ -334,6 +334,12 @@ describe("PluginResourceStore", () => {
 
     const resources = store(root);
     expect(() =>
+      resources.list({
+        ...REQ_LOOP_RUN,
+        shortNames: ["PR"],
+      }),
+    ).toThrow("resource shortNames must be a non-empty list of lowercase aliases");
+    expect(() =>
       resources.create({
         type: REQ_LOOP_RUN,
         name: "run_1",

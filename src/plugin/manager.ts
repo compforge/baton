@@ -62,7 +62,9 @@ import {
 } from "./resource-client.ts";
 import {
   type BoardItem,
+  type BoardItemCandidate,
   presentBoardSource,
+  selectBoardItems,
 } from "./board.ts";
 import {
   PluginSupervisor,
@@ -255,7 +257,7 @@ type ActivatablePackage =
 
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
-  present(): Promise<readonly BoardItem[]>;
+  present(): Promise<readonly BoardItemCandidate[]>;
 }
 
 function positiveDelay(name: string, value: number): void {
@@ -1506,7 +1508,7 @@ export class Manager {
     )
       .then((groups) => {
         if (this.closed || revision !== this.boardRevision) return;
-        this.boardItemsCache = Object.freeze(groups.flat());
+        this.boardItemsCache = selectBoardItems(groups.flat());
         try {
           this.onBoardChanged?.();
         } catch {

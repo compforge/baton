@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { presentBoardSource } from "../src/plugin/board.ts";
+import {
+  presentBoardSource,
+  selectBoardItems,
+} from "../src/plugin/board.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
 const roots: string[] = [];
@@ -53,22 +56,27 @@ describe("Plugin Board presentation", () => {
     });
     resources.requestDeletion(REQ_LOOP_RUN, "run_deleting");
 
-    await expect(
-      presentBoardSource<{ title: string }, { phase: string }>({
-        pluginId: "qiankun/reqloop",
-        pluginInstanceId: "reqloop_default",
-        resourceType: REQ_LOOP_RUN,
-        list: () =>
-          resources.list<{ title: string }, { phase: string }>(REQ_LOOP_RUN),
-        async present(resource) {
-          if (resource.status.phase === "closed") return undefined;
-          return {
-            title: resource.spec.title,
-            status: resource.status.phase,
-          };
-        },
-      }),
-    ).resolves.toEqual([
+    const candidates = await presentBoardSource<
+      { title: string },
+      { phase: string }
+    >({
+      pluginId: "qiankun/reqloop",
+      pluginInstanceId: "reqloop_default",
+      resourceType: REQ_LOOP_RUN,
+      list: () =>
+        resources.list<{ title: string }, { phase: string }>(REQ_LOOP_RUN),
+      async present(resource) {
+        if (resource.status.phase === "closed") return undefined;
+        return {
+          title: resource.spec.title,
+          url: "https://example.com/requirements/run_active",
+          status: resource.status.phase,
+          detail: "A long requirement title",
+        };
+      },
+    });
+
+    expect(selectBoardItems(candidates)).toEqual([
       {
         id: JSON.stringify([
           "reqloop_default",
@@ -78,10 +86,13 @@ describe("Plugin Board presentation", () => {
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
+        resourceApiVersion: REQ_LOOP_RUN.apiVersion,
         resourceKind: "Requirement",
         resourceId: "run_active",
         title: "Ship it",
+        url: "https://example.com/requirements/run_active",
         status: "active",
+        detail: "A long requirement title",
       },
     ]);
   });
@@ -94,17 +105,17 @@ describe("Plugin Board presentation", () => {
       spec: { title: "Ship it" },
     });
 
-    await expect(
-      presentBoardSource({
-        pluginId: "qiankun/reqloop",
-        pluginInstanceId: "reqloop_default",
-        resourceType: REQ_LOOP_RUN,
-        list: () => resources.list(REQ_LOOP_RUN),
-        async present() {
-          throw new Error("connector unavailable");
-        },
-      }),
-    ).resolves.toEqual([
+    const candidates = await presentBoardSource({
+      pluginId: "qiankun/reqloop",
+      pluginInstanceId: "reqloop_default",
+      resourceType: REQ_LOOP_RUN,
+      list: () => resources.list(REQ_LOOP_RUN),
+      async present() {
+        throw new Error("connector unavailable");
+      },
+    });
+
+    expect(selectBoardItems(candidates)).toEqual([
       {
         id: JSON.stringify([
           "reqloop_default",
@@ -114,6 +125,7 @@ describe("Plugin Board presentation", () => {
         ]),
         pluginId: "qiankun/reqloop",
         pluginInstanceId: "reqloop_default",
+        resourceApiVersion: REQ_LOOP_RUN.apiVersion,
         resourceKind: "Requirement",
         resourceId: "run_1",
         title: "Requirement/run_1",
@@ -121,6 +133,84 @@ describe("Plugin Board presentation", () => {
         detail: "connector unavailable",
         tone: "error",
       },
+    ]);
+  });
+
+  test("keeps the five highest-priority items for each Plugin Resource type", async () => {
+    const resources = store();
+    const TASK = {
+      apiVersion: "reqloop.baton.dev/v1alpha1",
+      kind: "Task",
+    } as const;
+    for (let priority = 1; priority <= 6; priority += 1) {
+      resources.create({
+        type: REQ_LOOP_RUN,
+        name: `requirement_${priority}`,
+        spec: { title: `Requirement ${priority}`, priority },
+      });
+      resources.create({
+        type: TASK,
+        name: `task_${priority}`,
+        spec: { title: `Task ${priority}`, priority },
+      });
+    }
+
+    const requirementCandidates = await presentBoardSource<
+      { title: string; priority: number },
+      Record<string, never>
+    >({
+      pluginId: "qiankun/reqloop",
+      pluginInstanceId: "reqloop_default",
+      resourceType: REQ_LOOP_RUN,
+      list: () => resources.list(REQ_LOOP_RUN),
+      async present(resource) {
+        return {
+          title: resource.spec.title,
+          priority: resource.spec.priority,
+        };
+      },
+    });
+    const taskCandidates = await presentBoardSource<
+      { title: string; priority: number },
+      Record<string, never>
+    >({
+      pluginId: "qiankun/reqloop",
+      pluginInstanceId: "reqloop_default",
+      resourceType: TASK,
+      list: () => resources.list(TASK),
+      async present(resource) {
+        return {
+          title: resource.spec.title,
+          priority: resource.spec.priority,
+        };
+      },
+    });
+
+    const selected = selectBoardItems([
+      ...requirementCandidates,
+      ...taskCandidates,
+    ]);
+    expect(
+      selected
+        .filter((item) => item.resourceKind === "Requirement")
+        .map((item) => item.resourceId),
+    ).toEqual([
+      "requirement_6",
+      "requirement_5",
+      "requirement_4",
+      "requirement_3",
+      "requirement_2",
+    ]);
+    expect(
+      selected
+        .filter((item) => item.resourceKind === "Task")
+        .map((item) => item.resourceId),
+    ).toEqual([
+      "task_6",
+      "task_5",
+      "task_4",
+      "task_3",
+      "task_2",
     ]);
   });
 });

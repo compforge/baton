@@ -76,6 +76,7 @@ interface StoredPluginResource<TSpec, TStatus> {
 const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const API_VERSION =
   /^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?\/v[0-9]+(?:(?:alpha|beta)[0-9]+)?$/;
+const RESOURCE_SHORT_NAME = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/;
 const RESOURCE_VERSION = /^[1-9][0-9]*$/;
 const LABEL_NAME =
   /^[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?$/;
@@ -98,6 +99,17 @@ export function validateResourceType(type: ResourceType): ResourceType {
     );
   }
   assertPathSegment("resource kind", type.kind);
+  if (type.shortNames !== undefined) {
+    if (
+      !Array.isArray(type.shortNames) ||
+      type.shortNames.length === 0 ||
+      type.shortNames.some((name) => !RESOURCE_SHORT_NAME.test(name))
+    ) {
+      throw new Error(
+        "resource shortNames must be a non-empty list of lowercase aliases",
+      );
+    }
+  }
   return type;
 }
 
