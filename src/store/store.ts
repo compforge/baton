@@ -47,7 +47,7 @@ import {
   type UsageUpdate,
 } from "../event/types.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
-import type { HarnessResumeState } from "../harness/resume.ts";
+import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
 import { reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
@@ -81,6 +81,14 @@ export interface SessionForkOrigin {
   throughSeq: number;
 }
 
+/** 从 Harness 原生会话接入 Baton 时的来源；原生 id 只作谱系，不成为 BatonSession identity。 */
+export interface NativeSessionOrigin {
+  harnessTargetId: string;
+  harness: string;
+  nativeSessionId: string;
+  mode: "resume" | "fork";
+}
+
 export interface SessionMeta {
   batonSessionId: string;
   /** Session 名称：可由用户显式指定；fork 未命名时由第一条 queue 补齐。 */
@@ -95,6 +103,7 @@ export interface SessionMeta {
   /** harnessTargetId → 当前原生 HarnessSession 绑定与 target 级偏好。 */
   harnessSessions: Record<string, HarnessSessionMeta>;
   forkedFrom?: SessionForkOrigin;
+  nativeSessionOrigin?: NativeSessionOrigin;
 }
 
 /** 可读 basename + cwd 摘要；避免旧版纯字符替换把不同 cwd 放进同一项目目录。 */
@@ -148,7 +157,18 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
   if (meta.forkedFrom) {
     return explicitTitle ?? meta.description?.trim() ?? `fork: chat @ ${meta.cwd}`;
   }
-  return explicitTitle ?? meta.preview?.trim() ?? `chat @ ${meta.cwd}`;
+  return explicitTitle ?? meta.preview?.trim() ?? meta.description?.trim() ?? `chat @ ${meta.cwd}`;
+}
+
+export interface NativeSessionAdoption {
+  harnessTargetId: string;
+  harness: string;
+  sourceSessionId: string;
+  nativeSessionId: string;
+  mode: "resume" | "fork";
+  cwd: string;
+  title?: string;
+  turns: Array<{ userText?: string; agentText?: string }>;
 }
 
 function previewFromSessionLog(dir: string): string | undefined {
@@ -239,6 +259,76 @@ export class SessionStore {
     return new SessionHandle(id, dir, meta, this.loggerOptions);
   }
 
+  /**
+   * 把已由 Harness 验证（resume）或原生 fork 出来的会话接入 Baton。
+   *
+   * 原生协议细节不进入 core；归一后的 user/assistant 历史按 Baton 的普通 turn 主路径落盘，
+   * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
+   */
+  createFromNativeSession(adoption: NativeSessionAdoption): SessionHandle {
+    const session = this.createSession({ cwd: adoption.cwd, title: adoption.title });
+    const label = adoption.title?.trim() || adoption.sourceSessionId;
+    session.updateMeta({
+      description: `${adoption.mode}: ${adoption.harness} ${label}`,
+      nativeSessionOrigin: {
+        harnessTargetId: adoption.harnessTargetId,
+        harness: adoption.harness,
+        nativeSessionId: adoption.sourceSessionId,
+        mode: adoption.mode,
+      },
+    });
+    let syncedSeq = 0;
+    for (const turn of adoption.turns) {
+      const turnId = newId("t");
+      if (turn.userText) {
+        session.setPreviewIfEmpty(turn.userText);
+        session.append({
+          kind: "user_message",
+          source: { type: "user" },
+          harness: adoption.harness,
+          harnessTargetId: adoption.harnessTargetId,
+          turnId,
+          payload: {
+            messageId: newId("m"),
+            content: [{ type: "text", text: turn.userText }],
+          },
+        });
+      }
+      if (turn.agentText) {
+        session.append({
+          kind: "agent_message",
+          source: { type: "harness", harnessTargetId: adoption.harnessTargetId },
+          harness: adoption.harness,
+          harnessTargetId: adoption.harnessTargetId,
+          turnId,
+          payload: {
+            messageId: newId("m"),
+            content: [{ type: "text", text: turn.agentText }],
+          },
+        });
+      }
+      session.append({
+        kind: "state_update",
+        source: { type: "harness", harnessTargetId: adoption.harnessTargetId },
+        harness: adoption.harness,
+        harnessTargetId: adoption.harnessTargetId,
+        turnId,
+        payload: { state: "idle", stopReason: "end_turn" },
+      });
+      syncedSeq = session.summarizeTurnEvent(turnId).seq;
+    }
+    session.setHarnessSession(adoption.harnessTargetId, {
+      harnessTargetId: adoption.harnessTargetId,
+      harness: adoption.harness,
+      harnessSessionId: adoption.nativeSessionId,
+      resumeState: sessionIdResumeState(adoption.nativeSessionId),
+      contextEpochId: newId("ctxe"),
+      // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
+      syncedSeq,
+    });
+    return session;
+  }
+
   /** 会话 ID 全局唯一，打开时不要求提供 cwd，跨项目扫描定位（@ 引用可指向任意项目的会话）。 */
   openSession(id: string): SessionHandle {
     this.migrateLegacySessions();
@@ -281,6 +371,21 @@ export class SessionStore {
     }
     out.sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
     return out;
+  }
+
+  /** 已接入同一原生 HarnessSession 时复用其 Baton owner，避免 repeated resume 造多个写者。 */
+  findByNativeSession(harnessTargetId: string, nativeSessionId: string): SessionMeta | undefined {
+    const matches = this.listSessions().filter(
+      (meta) =>
+        meta.harnessSessions[harnessTargetId]?.harnessSessionId === nativeSessionId,
+    );
+    if (matches.length > 1) {
+      const owners = matches.map((meta) => meta.batonSessionId).join(", ");
+      throw new Error(
+        `native session ${harnessTargetId}/${nativeSessionId} is bound to multiple BatonSessions: ${owners}`,
+      );
+    }
+    return matches[0];
   }
 
   /**

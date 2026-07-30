@@ -54,6 +54,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
 - 使用 `baton -c` 继续当前项目最近会话，或用 `baton -s <id>` 打开指定会话
+- 按 ID 接入或 fork 已有 Codex / Claude Code 原生会话，并以只读方式自动识别来源
 - 使用分组可搜索的 `@` 上下文，引用内置 Session 或 Plugin 提供的对象并注入当前 turn
 - 统一记录消息、思考、工具调用、文件改动、计划和 token usage
 - 保留 Codex hook trust 等 harness 启动交互；已信任且未变化的定义会自动复用并明确留痕
@@ -128,6 +129,8 @@ baton                              # 启动 TUI
 baton --cwd /path/to/project       # 在指定项目目录启动
 baton -c                           # 继续当前目录最近的 BatonSession
 baton -s bs_01...                  # 打开指定 BatonSession
+baton resume [bs_xxx|native-id]    # 恢复/接入；歧义时用 cx:<id> 或 cc:<id>
+baton fork [bs_xxx|native-id]      # fork Baton/原生历史；--last 选择最近 BatonSession
 baton repl --agent codex           # 使用 Codex 的 headless REPL（别名：cx）
 baton repl --agent claude          # 使用 Claude 的 headless REPL（别名：cc）
 baton sessions                     # 查看可引用的历史会话
@@ -139,6 +142,13 @@ baton plugins install qiankun/requirement-loop
 baton plugins list
 baton help                         # 查看完整帮助
 ```
+
+对裸原生 ID，baton 会只读探测 Codex 与 Claude Code：只有一方命中时自动选择；两边都命中时
+可交互选择，或用 `cx:<id>` / `cc:<id>` 显式消歧。原生 resume 会优先复用已经存在的
+Baton owner；原生 fork 调用 Harness 自身的 fork。两种路径都会把原生 user/assistant 历史
+还原成归属于该 Harness 的普通 Baton turn，等价于这个 BatonSession 从一开始就存在、此前
+始终由该 Harness 问答，并继续绑定原生会话工作。接入后 Baton 是逻辑历史的唯一 owner；
+其它客户端继续写入同一个原生 Session 的 turn 不会自动镜像进 Baton。
 
 在输入中引用 `baton sessions` 列出的 ID：
 
