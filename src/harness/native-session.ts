@@ -116,9 +116,22 @@ export async function resolveNativeSession(
       inspectSource(source, reference, options),
     ),
   );
+  const failures = inspected.flatMap((result) =>
+    result.status === "rejected"
+      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+      : []
+  );
   const matches = inspected.flatMap((result) =>
     result.status === "fulfilled" && result.value ? [result.value] : []
   );
+  if (failures.length > 0 && matches.length > 0) {
+    throw new Error(
+      `native session lookup incomplete for ${reference}: ${failures.join("; ")}; use cx: or cc:`,
+    );
+  }
+  if (failures.length > 0) {
+    throw new Error(`native session lookup failed for ${reference}: ${failures.join("; ")}`);
+  }
   if (matches.length === 1) return matches[0] as ResolvedNativeSession;
   if (matches.length > 1) {
     if (options.choose) return options.choose(matches);
@@ -127,13 +140,7 @@ export async function resolveNativeSession(
       `native session id is ambiguous (${names}): ${reference}; use cx: or cc:`,
     );
   }
-  const failures = inspected.flatMap((result) =>
-    result.status === "rejected"
-      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
-      : []
-  );
-  const detail = failures.length ? `; lookup errors: ${failures.join("; ")}` : "";
-  throw new Error(`native session not found: ${reference}${detail}`);
+  throw new Error(`native session not found: ${reference}`);
 }
 
 /** 把 Harness 文本历史还原成 Baton 的逻辑 turn；连续 assistant 消息属于同一轮回复。 */
@@ -170,11 +177,7 @@ export function materializeNativeSession(
   match: ResolvedNativeSession,
   options: { cwd: string },
 ): MaterializedNativeSession {
-  const existing = store.findByNativeSession(match.target.id, match.source.nativeSessionId);
-  if (existing) {
-    return { session: store.openSession(existing.batonSessionId), match, reused: true };
-  }
-  const session = store.createFromNativeSession({
+  const materialized = store.materializeNativeSession({
     harnessTargetId: match.target.id,
     harness: match.harness,
     nativeSessionId: match.source.nativeSessionId,
@@ -182,5 +185,5 @@ export function materializeNativeSession(
     title: match.source.title,
     turns: nativeSessionTurns(match.source.transcript),
   });
-  return { session, match, reused: false };
+  return { ...materialized, match };
 }

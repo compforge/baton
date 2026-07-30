@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
@@ -122,6 +122,38 @@ describe("native session reference resolution", () => {
     });
     expect(chosen.target.harness).toBe("claude");
   });
+
+  test("bare id fails closed when another Harness lookup errors", async () => {
+    await expect(
+      resolveNativeSession("native-1", {
+        ...options,
+        sources: [
+          source("codex", provider({ "native-1": info("native-1") })),
+          source("claude", {
+            async inspect() {
+              throw new Error("claude lookup unavailable");
+            },
+          }),
+        ],
+      }),
+    ).rejects.toThrow(/lookup incomplete.*claude lookup unavailable.*use cx: or cc:/);
+  });
+
+  test("provider failures are not reported as session not found", async () => {
+    await expect(
+      resolveNativeSession("native-1", {
+        ...options,
+        sources: [
+          source("codex", {
+            async inspect() {
+              throw new Error("codex app-server unavailable");
+            },
+          }),
+          source("claude", provider({})),
+        ],
+      }),
+    ).rejects.toThrow("native session lookup failed for native-1: codex app-server unavailable");
+  });
 });
 
 describe("native session ownership", () => {
@@ -206,7 +238,7 @@ describe("native session ownership", () => {
     ]);
   });
 
-  test("rejects multiple Baton owners for one native session binding", () => {
+  test("store materialization atomically reuses one native session owner", () => {
     const root = mkdtempSync(`${tmpdir()}/baton-native-duplicate-`);
     roots.push(root);
     const store = new SessionStore(root);
@@ -217,11 +249,31 @@ describe("native session ownership", () => {
       cwd: "/repo",
       turns: [],
     };
-    store.createFromNativeSession(materialization);
-    store.createFromNativeSession(materialization);
+    const first = store.materializeNativeSession(materialization);
+    const second = store.materializeNativeSession(materialization);
 
-    expect(() => store.findByNativeSession("codex", "thread-1")).toThrow(
-      /bound to multiple BatonSessions/,
-    );
+    expect(first.reused).toBe(false);
+    expect(second.reused).toBe(true);
+    expect(second.session.id).toBe(first.session.id);
+    expect(second.session.meta.nativeSessionOrigin?.nativeSessionId).toBe("thread-1");
+    expect(second.session.meta.harnessSessions.codex?.harnessSessionId).toBe("thread-1");
+  });
+
+  test("a live cross-process materialization lock fails before creating an owner", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-native-lock-`);
+    roots.push(root);
+    writeFileSync(`${root}/native-session.lock`, String(process.pid));
+    const store = new SessionStore(root);
+
+    expect(() =>
+      store.materializeNativeSession({
+        harnessTargetId: "codex",
+        harness: "codex",
+        nativeSessionId: "thread-1",
+        cwd: "/repo",
+        turns: [],
+      }),
+    ).toThrow(/another baton process is materializing/);
+    expect(store.listSessions()).toHaveLength(0);
   });
 });

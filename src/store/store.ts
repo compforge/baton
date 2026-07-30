@@ -262,17 +262,24 @@ export class SessionStore {
    * 原生协议细节不进入 core；归一后的 user/assistant 历史按 Baton 的普通 turn 主路径落盘，
    * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
    */
-  createFromNativeSession(source: NativeSessionMaterialization): SessionHandle {
+  materializeNativeSession(
+    source: NativeSessionMaterialization,
+  ): { session: SessionHandle; reused: boolean } {
+    const release = this.acquireNativeSessionLock();
+    try {
+      const existing = this.findByNativeSession(source.harnessTargetId, source.nativeSessionId);
+      if (existing) {
+        return { session: this.openSession(existing.batonSessionId), reused: true };
+      }
+      return { session: this.createFromNativeSession(source), reused: false };
+    } finally {
+      release();
+    }
+  }
+
+  private createFromNativeSession(source: NativeSessionMaterialization): SessionHandle {
     const session = this.createSession({ cwd: source.cwd, title: source.title });
     const label = source.title?.trim() || source.nativeSessionId;
-    session.updateMeta({
-      description: `import: ${source.harness} ${label}`,
-      nativeSessionOrigin: {
-        harnessTargetId: source.harnessTargetId,
-        harness: source.harness,
-        nativeSessionId: source.nativeSessionId,
-      },
-    });
     let syncedSeq = 0;
     for (const turn of source.turns) {
       const turnId = newId("t");
@@ -313,14 +320,25 @@ export class SessionStore {
       });
       syncedSeq = session.summarizeTurnEvent(turnId).seq;
     }
-    session.setHarnessSession(source.harnessTargetId, {
-      harnessTargetId: source.harnessTargetId,
-      harness: source.harness,
-      harnessSessionId: source.nativeSessionId,
-      resumeState: sessionIdResumeState(source.nativeSessionId),
-      contextEpochId: newId("ctxe"),
-      // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
-      syncedSeq,
+    // 来源与原生 binding 必须在同一次原子 meta 替换中出现，避免崩溃留下半个 owner。
+    session.updateMeta({
+      description: `import: ${source.harness} ${label}`,
+      nativeSessionOrigin: {
+        harnessTargetId: source.harnessTargetId,
+        harness: source.harness,
+        nativeSessionId: source.nativeSessionId,
+      },
+      harnessSessions: {
+        [source.harnessTargetId]: {
+          harnessTargetId: source.harnessTargetId,
+          harness: source.harness,
+          harnessSessionId: source.nativeSessionId,
+          resumeState: sessionIdResumeState(source.nativeSessionId),
+          contextEpochId: newId("ctxe"),
+          // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
+          syncedSeq,
+        },
+      },
     });
     return session;
   }
@@ -459,6 +477,40 @@ export class SessionStore {
 
   private sessionDir(cwd: string, sessionId: string): string {
     return join(this.projectDir(cwd), "sessions", sessionId);
+  }
+
+  private acquireNativeSessionLock(): () => void {
+    mkdirSync(this.rootDir, { recursive: true });
+    const path = join(this.rootDir, "native-session.lock");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const fd = openSync(path, "wx");
+        writeSync(fd, String(process.pid));
+        closeSync(fd);
+        return () => {
+          try {
+            if (readFileSync(path, "utf8").trim() === String(process.pid)) {
+              rmSync(path);
+            }
+          } catch {
+            // 锁已被清理时无需额外动作。
+          }
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      let holder: number;
+      try {
+        holder = Number(readFileSync(path, "utf8").trim());
+      } catch {
+        continue;
+      }
+      if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
+        throw new Error(`another baton process is materializing a native session (pid ${holder})`);
+      }
+      rmSync(path, { force: true });
+    }
+    throw new Error("failed to acquire native session materialization lock");
   }
 
   private ensureProject(cwd: string): void {

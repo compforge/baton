@@ -218,8 +218,7 @@ async function run(command: string): Promise<void> {
       const cwd = argValue("--cwd") ?? process.cwd();
       const sourceId = positional ?? store.listSessions({ cwd })[0]?.batonSessionId;
       if (!sourceId) {
-        console.error(`no baton session to fork in ${cwd} (run baton first, or pass a session id)`);
-        process.exit(1);
+        fail(`no baton session to fork in ${cwd} (run baton first, or pass a session id)`);
       }
       let childId: string;
       try {
@@ -236,8 +235,7 @@ async function run(command: string): Promise<void> {
         childId = store.forkSession(batonSourceId, { cwd }).id;
         console.log(`forked ${batonSourceId} → ${childId}`);
       } catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        fail(err instanceof Error ? err.message : String(err));
       }
       // fork 本身是纯存储操作：无 TTY（管道/CI）时创建成功即成功退出，
       // 不能先落盘再因 TUI 起不来 exit 1——重试会制造一堆多余的 fork

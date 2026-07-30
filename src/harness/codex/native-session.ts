@@ -127,8 +127,12 @@ async function withCodexPeer<T>(
   const peer = new JsonRpcPeer((line) => child.stdin.write(line));
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => peer.feed(chunk));
-  // 必须持续消费 stderr，否则 app-server 写满 pipe 后会反压阻塞只读请求。
-  child.stderr.resume();
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    // 物化前还没有 BatonSession 日志；保留有界尾部，在发现失败时带回诊断。
+    stderr = `${stderr}${chunk}`.slice(-4096);
+  });
   child.once("error", (error) => peer.close(`codex app-server spawn error: ${error.message}`));
   child.once("close", (code) => peer.close(`codex app-server exited (${code})`));
   try {
@@ -142,6 +146,10 @@ async function withCodexPeer<T>(
     );
     peer.notify("initialized", {});
     return await operation(peer);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = stderr.trim();
+    throw new Error(detail ? `${message}; codex stderr: ${detail}` : message, { cause: error });
   } finally {
     child.kill();
   }
