@@ -2,24 +2,23 @@
 
 ## 理念 / 概念
 
-以 `bs_` 为来源时，resume 和 fork 都是 **BatonSession 自己的语义**，不依赖任何 harness
-的原生 resume/fork 能力：
+resume 和 fork 都是 **BatonSession 自己的语义**，不依赖任何 harness 的原生 fork 能力：
 
 - **resume**：沿用原 `bs_` ID 重新打开会话，恢复统一逻辑历史；harness 原生会话只是恢复加速，缺失时从 BatonSession 历史重建上下文（既有约定，见 `design.md`）。
 - **fork**：从一个 BatonSession 复制事件历史，得到一个独立的新会话。复制的前缀与源是**同一段逻辑历史**（git-branch 语义），谱系由 `meta.forkedFrom = { batonSessionId, throughSeq }` 表达。fork 是后续"草稿会话"（任务进行中拉草稿并行探索、成果由用户决定收录）的数据层基础，当前先以 CLI 子命令形态提供（`baton fork`），会话内运行中 fork（类 Codex `/side`）留待多 Session Controller。
 
 CLI 也接受 Harness 原生会话引用：裸 ID 会同时做只读发现，唯一命中时自动识别；
-`cx:<id>` / `cc:<id>` 显式指定 Codex / Claude Code。`resume` 首次接入时创建 BatonSession，
-后续按原生 binding 复用同一个 Baton owner；`fork` 调用 Adapter 提供的原生 fork，再创建
-绑定 child 原生会话的新 BatonSession。两者都会把原生 user/assistant 历史还原成归属于同一
-HarnessTarget 的普通 Baton turn 与 turn summary：语义上等价于 BatonSession 从一开始就存在，
-此前始终由该 Harness 问答。原生会话自己不重复消费这些历史；切换 Harness、原生会话丢失或
-再次执行 Baton fork 时，统一历史可沿用既有补课路径。
+`cx:<id>` / `cc:<id>` 显式指定 Codex / Claude Code。原生 ID 只是导入入口：先只读找到该
+HarnessSession，找不到即报错；再把 user/assistant 历史物化为归属于同一 HarnessTarget 的
+普通 Baton turn 与 turn summary，并绑定原生会话。语义上等价于 BatonSession 从一开始就存在，
+此前始终由该 Harness 问答。物化完成后，命令只持有一个 `bs_`：`resume` 打开它，`fork`
+调用普通 `forkSession()` 创建 child，不再有第二套原生 fork 生命周期。
 
-原生来源写入 `meta.nativeSessionOrigin = { harnessTargetId, harness, nativeSessionId, mode }`，
-不伪装成 `forkedFrom`：前者是 Baton 外部谱系，后者才是 BatonSession 树中的共享历史边。
-原生 resume / fork 创建的 BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）；
-`bs_` 来源的 Baton fork 则仍按下文规则归入发起位置。
+物化出的源写入
+`meta.nativeSessionOrigin = { harnessTargetId, harness, nativeSessionId }`，不伪装成
+`forkedFrom`：前者是 Baton 外部谱系，后者才是 BatonSession 树中的共享历史边。源
+BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）；无论命令最初接收 `bs_`
+还是原生 ID，fork child 都归入发起位置。
 
 接入完成后，BatonSession 是这段逻辑历史的唯一 owner，原生 Session 只是该 Harness 的执行后端。
 若用户继续从 Claude Code / Codex 等其它客户端写入同一个原生 Session，Baton 不会自动镜像这些
@@ -33,15 +32,16 @@ HarnessTarget 的普通 Baton turn 与 turn summary：语义上等价于 BatonSe
 
 ## 流程
 
-1. `baton resume [source]` / `baton fork [source]` 先解析 source：`bs_` 走 Baton store，
-   native ref 走 Harness registry 的只读 inspect / 原生 fork 能力。不带 id 时仍默认进
+1. `baton resume [source]` / `baton fork [source]` 先解析 source：`bs_` 直接走 Baton store；
+   native ref 通过 Harness registry 只读 inspect，随后物化或复用源 BatonSession。不带 id 时仍默认进
    **session picker**，只选择当前 project 的 BatonSession；显式 native id 才触发外部发现。
    picker 不预先打开任何会话，Enter 选中才 resume / 落盘 fork，Esc 取消，Ctrl+C 退出。
-2. 一切打开路径（CLI 启动、TUI `/sessions` 切换、`/new`）收敛到 `session/open.ts` 的 `openBatonSession()`：解析目标 → `acquireLock()` → `recoverInterruptedState()`。
-3. `bs_` 来源 fork 的 child 首次发消息时，`Controller.ensureHarness()` 发现无
+2. 原生来源在源 cwd 创建 BatonSession，将归一历史写入统一 ledger，并记录原生 binding；
+   已有同一 binding 的 Baton owner 时直接复用。此后 resume / fork 与原生 ID 无关。
+3. 一切打开路径（CLI 启动、TUI `/sessions` 切换、`/new`）收敛到 `session/open.ts` 的 `openBatonSession()`：解析目标 → `acquireLock()` → `recoverInterruptedState()`。
+4. 所有 fork child 首次发消息时，`Controller.ensureHarness()` 发现无
    `harnessSessionId` → 开 fresh 原生会话并签发新的 ContextEpoch → 从 revision 0 触发全量
-   补课（`buildTargetCatchUpContext`）；原生来源 fork 则已绑定 Harness 自己创建的 child。
-   两条路径都复用既有 Controller 能力，不增加 Harness 分支。
+   补课（`buildTargetCatchUpContext`）。输入来自 `bs_` 还是原生 ID 都走这一条路径。
 
 session picker 的可读名称对齐 Codex resume 的思路：`meta.title` 只表示用户显式命名；未命名会话以第一条有意义的用户文本预览作为名称，最后才回退到 cwd。chat-tui 粘贴图片产生的前导本地路径按附件处理，不占用名称。preview 在首次提交时只写一次；旧会话只在发现阶段有界读取日志回填展示，不改写历史数据。旧版本自动生成的 `chat/codex/claude @ cwd` 标题视为兼容占位，不遮住更有辨识度的 preview。
 
@@ -82,10 +82,10 @@ recovery 同时覆盖 fork：源会话若正在运行（或曾崩溃），复制
 
 child 的 harness 通过补课看到的是紧凑 turn 摘要（预算内优先保最近，默认 4KB 字符），不是全量事件回放。这与既有跨 harness 接力的保真度一致，不是 fork 引入的新损耗；但用户直觉可能预期"fork = 完整带走上下文"，故显式记录。完整历史仍在 child 的 `session.jsonl` 里，随时可被更高保真的注入策略消费。
 
-原生来源稍有不同：原生 child / resumed session 在 Harness 内拥有完整原生历史；Baton ledger
-逐 turn 记录可归一的 user/assistant 文本，但不伪造无法从只读接口恢复的工具事件。因此继续
-同一 Harness 的完整保真度由原生 session 保证，跨 Harness 接力和后续 Baton fork 则复用这些
-已进入统一 ledger 的文本 turn summary。
+物化出的源在 Harness 内拥有完整原生历史；Baton ledger 逐 turn 记录可归一的 user/assistant
+文本，但不伪造无法从只读接口恢复的工具事件。因此 resume 源并继续同一 Harness 时，完整
+保真度由原生 session 保证；fork child、跨 Harness 接力则与普通 BatonSession 一样，复用已进入
+统一 ledger 的文本 turn summary。
 
 ### 跨 project fork：历史跟源走，project 跟发起位置走
 

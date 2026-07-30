@@ -31,10 +31,6 @@ export interface NativeSessionProvider {
     sessionId: string,
     options: NativeSessionProviderOptions,
   ): Promise<NativeSessionInfo | null>;
-  fork(
-    source: NativeSessionInfo,
-    options: NativeSessionProviderOptions,
-  ): Promise<string>;
 }
 
 export interface ResolvedNativeSession {
@@ -162,18 +158,18 @@ export function nativeSessionTurns(
   return turns;
 }
 
-export interface OpenedNativeSession {
+export interface MaterializedNativeSession {
   session: SessionHandle;
   match: ResolvedNativeSession;
   reused: boolean;
 }
 
-/** resume 外部会话时复用既有 Baton owner；首次接入才重建逻辑历史与原生绑定。 */
-export function adoptNativeSession(
+/** 原生引用先物化为 BatonSession；后续 resume/fork 只走 Baton 自己的统一语义。 */
+export function materializeNativeSession(
   store: SessionStore,
   match: ResolvedNativeSession,
   options: { cwd: string },
-): OpenedNativeSession {
+): MaterializedNativeSession {
   const existing = store.findByNativeSession(match.target.id, match.source.nativeSessionId);
   if (existing) {
     return { session: store.openSession(existing.batonSessionId), match, reused: true };
@@ -181,40 +177,10 @@ export function adoptNativeSession(
   const session = store.createFromNativeSession({
     harnessTargetId: match.target.id,
     harness: match.harness,
-    sourceSessionId: match.source.nativeSessionId,
     nativeSessionId: match.source.nativeSessionId,
-    mode: "resume",
     cwd: match.source.cwd ?? options.cwd,
     title: match.source.title,
     turns: nativeSessionTurns(match.source.transcript),
-  });
-  return { session, match, reused: false };
-}
-
-export async function forkNativeSession(
-  store: SessionStore,
-  match: ResolvedNativeSession,
-  options: NativeSessionProviderOptions,
-): Promise<OpenedNativeSession> {
-  const forkedId = await match.provider.fork(match.source, options);
-  const child = await match.provider.inspect(forkedId, {
-    ...options,
-    cwd: match.source.cwd ?? options.cwd,
-  });
-  if (!child) {
-    throw new Error(
-      `${match.target.harness} native fork ${forkedId} could not be read after creation`,
-    );
-  }
-  const session = store.createFromNativeSession({
-    harnessTargetId: match.target.id,
-    harness: match.harness,
-    sourceSessionId: match.source.nativeSessionId,
-    nativeSessionId: forkedId,
-    mode: "fork",
-    cwd: child.cwd ?? match.source.cwd ?? options.cwd,
-    title: child.title ?? match.source.title,
-    turns: nativeSessionTurns(child.transcript),
   });
   return { session, match, reused: false };
 }

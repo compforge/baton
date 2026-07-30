@@ -114,24 +114,6 @@ export async function inspectCodexSession(
   };
 }
 
-export async function forkCodexSession(
-  peer: CodexNativePeer,
-  sessionId: string,
-): Promise<string> {
-  // excludeTurns 只省略 fork 响应中的 turn 数组；child 仍复制完整历史，
-  // 随后由 thread/turns/list 分页读取，避免一次响应无界膨胀。
-  const response = await peer.request(
-    "thread/fork",
-    { threadId: sessionId, excludeTurns: true },
-    { timeoutMs: REQUEST_TIMEOUT_MS },
-  );
-  const threadId = (response as { thread?: { id?: unknown } })?.thread?.id;
-  if (typeof threadId !== "string" || !threadId) {
-    throw new Error(`codex thread/fork returned no thread id for ${sessionId}`);
-  }
-  return threadId;
-}
-
 async function withCodexPeer<T>(
   options: { command?: string[]; cwd: string },
   operation: (peer: CodexNativePeer) => Promise<T>,
@@ -170,13 +152,6 @@ export const codexNativeSessions: NativeSessionProvider = {
     return withCodexPeer(
       { command: options.config.codexCommand, cwd: options.cwd },
       (peer) => inspectCodexSession(peer, sessionId),
-    );
-  },
-
-  fork(source, options) {
-    return withCodexPeer(
-      { command: options.config.codexCommand, cwd: source.cwd ?? options.cwd },
-      (peer) => forkCodexSession(peer, source.nativeSessionId),
     );
   },
 };

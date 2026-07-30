@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { claudeTranscript } from "../src/harness/claude/native-session.ts";
-import {
-  forkCodexSession,
-  inspectCodexSession,
-} from "../src/harness/codex/native-session.ts";
+import { inspectCodexSession } from "../src/harness/codex/native-session.ts";
 
 describe("Codex native sessions", () => {
   test("inspect is read-only and paginates the complete turn history", async () => {
@@ -92,22 +89,6 @@ describe("Codex native sessions", () => {
     expect(await inspectCodexSession(peer, "missing")).toBeNull();
   });
 
-  test("fork uses Codex native thread/fork without returning unbounded turns", async () => {
-    const calls: Array<{ method: string; params: unknown }> = [];
-    const peer = {
-      async request(method: string, params: unknown) {
-        calls.push({ method, params });
-        return { thread: { id: "thread-child" } };
-      },
-    };
-    expect(await forkCodexSession(peer, "thread-source")).toBe("thread-child");
-    expect(calls).toEqual([
-      {
-        method: "thread/fork",
-        params: { threadId: "thread-source", excludeTurns: true },
-      },
-    ]);
-  });
 });
 
 describe("Claude Code native sessions", () => {

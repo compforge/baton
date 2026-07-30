@@ -54,7 +54,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel and process model. 
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
 - Open a previous BatonSession with `/sessions`, or start a clean one with `/new`
 - Continue the latest session in a project with `baton -c`, or open one by ID with `baton -s <id>`
-- Adopt or fork an existing Codex/Claude Code native session by ID, with read-only auto-detection
+- Resume or fork an existing Codex/Claude Code native session by ID, with read-only auto-detection
 - Search grouped `@` context from built-in Session and Plugin ContextProviders, then inject it into the current turn
 - Record messages, thoughts, tool calls, file changes, plans, and token usage in a unified format
 - Preserve harness startup interactions such as Codex hook trust, reusing unchanged trusted definitions with a visible notice
@@ -129,8 +129,8 @@ baton                              # Start the TUI
 baton --cwd /path/to/project       # Start in a specific project directory
 baton -c                           # Continue the latest session in this directory
 baton -s bs_01...                  # Open a specific BatonSession
-baton resume [bs_xxx|native-id]    # Resume/adopt; use cx:<id> or cc:<id> to disambiguate
-baton fork [bs_xxx|native-id]      # Fork Baton/native history; --last uses the latest BatonSession
+baton resume [bs_xxx|native-id]    # Resume; native IDs are imported first
+baton fork [bs_xxx|native-id]      # Import if needed, then fork the BatonSession
 baton repl --agent codex           # Start the headless REPL with Codex (alias: cx)
 baton repl --agent claude          # Start the headless REPL with Claude (alias: cc)
 baton sessions                     # List sessions available for reference
@@ -145,10 +145,11 @@ baton help                         # Show full help
 
 For native IDs, baton probes Codex and Claude Code read-only. A unique match is selected
 automatically; if both Harnesses contain the same ID, use `cx:<id>` or `cc:<id>` (or choose
-interactively). Native resume reuses an existing Baton owner when one already exists. Native fork
-uses the Harness's own fork operation. In both cases, Baton reconstructs native user/assistant
-history as ordinary turns attributed to that Harness, as if the BatonSession had existed from the
-start; the native session remains bound for continued work. After adoption, Baton is the sole
+interactively). Baton first materializes or reuses a source BatonSession, reconstructing native
+user/assistant history as ordinary turns attributed to that Harness, as if the BatonSession had
+existed from the start. `resume` opens that source; `fork` applies the ordinary BatonSession fork
+to it, so the child starts with a fresh HarnessSession in the command's current project. The
+materialized source remains bound to the original native session. Baton then becomes the sole
 logical-history owner; turns written to the same native session by another client are not mirrored.
 
 Reference an ID returned by `baton sessions` in your prompt:

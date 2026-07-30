@@ -17,8 +17,7 @@ import { createInterface } from "node:readline/promises";
 
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import {
-  adoptNativeSession,
-  forkNativeSession,
+  materializeNativeSession,
   resolveNativeSession,
   type ResolvedNativeSession,
 } from "../harness/native-session.ts";
@@ -37,16 +36,15 @@ Usage:
                         specific session; /codex (/cx) and /claude (/cc) switch harness
   baton repl [--agent codex|cx|claude|cc] [--cwd <dir>]   headless REPL
   baton resume [bs_xxx|native-id|cx:<id>|cc:<id>]
-                        resume a BatonSession or adopt a Codex/Claude Code native
-                        session; bare native ids are detected read-only, while cx:
-                        and cc: explicitly disambiguate the Harness; without an id shows a
+                        resume a BatonSession; a Codex/Claude Code native session
+                        is detected read-only, copied into Baton, then resumed;
+                        cx: and cc: explicitly disambiguate the Harness; without an id shows a
                         session list for the current project first (enter resume · esc cancel ·
                         ctrl+c quit; starts fresh if there is no session yet)
   baton fork [bs_xxx|native-id|cx:<id>|cc:<id>|--last]
-                        fork a BatonSession or a Codex/Claude Code native session
-                        and open the Baton-owned child; bs_ forks live in the current
-                        project (cwd or --cwd), while native forks stay in their
-                        native source project; without an id shows
+                        fork a BatonSession; a native session is first copied into
+                        Baton and then forked through the same Baton path; the child
+                        lives in the current project (cwd or --cwd); without an id shows
                         current-project sessions to pick the source (--last
                         forks the latest in cwd)
   baton sessions [--tree] [--cwd <dir>]
@@ -160,20 +158,16 @@ async function chooseNativeSession(
 async function resolveNative(
   reference: string,
   options: { root?: string; cwd: string },
-): Promise<{
-  match: ResolvedNativeSession;
-  config: ReturnType<typeof loadConfig>;
-}> {
+): Promise<ResolvedNativeSession> {
   ensureConfigFile(options.root);
   const config = loadConfig(options.root);
-  const match = await resolveNativeSession(reference, {
+  return resolveNativeSession(reference, {
     config,
     cwd: options.cwd,
     ...(process.stdin.isTTY && process.stdout.isTTY
       ? { choose: chooseNativeSession }
       : {}),
   });
-  return { match, config };
 }
 
 async function run(command: string): Promise<void> {
@@ -199,10 +193,10 @@ async function run(command: string): Promise<void> {
       if (!process.stdout.isTTY) fail("baton resume requires a real terminal (TTY)");
       try {
         const store = new SessionStore(root);
-        const { match } = await resolveNative(id, { root, cwd });
-        const opened = adoptNativeSession(store, match, { cwd });
+        const match = await resolveNative(id, { root, cwd });
+        const opened = materializeNativeSession(store, match, { cwd });
         console.log(
-          `${opened.reused ? "resuming" : "adopted"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${opened.session.id}`,
+          `${opened.reused ? "resuming imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${opened.session.id}`,
         );
         process.argv.push("--session", opened.session.id);
       } catch (err) {
@@ -219,7 +213,8 @@ async function run(command: string): Promise<void> {
         await import("../tui/main.tsx");
         break;
       }
-      const store = new SessionStore(argValue("--root"));
+      const root = argValue("--root");
+      const store = new SessionStore(root);
       const cwd = argValue("--cwd") ?? process.cwd();
       const sourceId = positional ?? store.listSessions({ cwd })[0]?.batonSessionId;
       if (!sourceId) {
@@ -228,22 +223,18 @@ async function run(command: string): Promise<void> {
       }
       let childId: string;
       try {
-        if (sourceId.startsWith("bs_")) {
-          // 跨 project fork：历史跟源 session 走，fork 后的 project 跟命令执行位置走
-          childId = store.forkSession(sourceId, { cwd }).id;
-          console.log(`forked ${sourceId} → ${childId}`);
-        } else {
-          const root = argValue("--root");
-          const { match, config } = await resolveNative(sourceId, { root, cwd });
-          const opened = await forkNativeSession(store, match, {
-            config,
-            cwd,
-          });
-          childId = opened.session.id;
+        let batonSourceId = sourceId;
+        if (!sourceId.startsWith("bs_")) {
+          const match = await resolveNative(sourceId, { root, cwd });
+          const imported = materializeNativeSession(store, match, { cwd });
+          batonSourceId = imported.session.id;
           console.log(
-            `forked ${match.target.harness} native session ${match.source.nativeSessionId} → ${childId}`,
+            `${imported.reused ? "using imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${batonSourceId}`,
           );
         }
+        // 所有 source 到这里都已经是 BatonSession；只保留这一条 fork 主路径。
+        childId = store.forkSession(batonSourceId, { cwd }).id;
+        console.log(`forked ${batonSourceId} → ${childId}`);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);

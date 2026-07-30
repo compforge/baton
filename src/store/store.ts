@@ -86,7 +86,6 @@ export interface NativeSessionOrigin {
   harnessTargetId: string;
   harness: string;
   nativeSessionId: string;
-  mode: "resume" | "fork";
 }
 
 export interface SessionMeta {
@@ -160,12 +159,10 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
   return explicitTitle ?? meta.preview?.trim() ?? meta.description?.trim() ?? `chat @ ${meta.cwd}`;
 }
 
-export interface NativeSessionAdoption {
+export interface NativeSessionMaterialization {
   harnessTargetId: string;
   harness: string;
-  sourceSessionId: string;
   nativeSessionId: string;
-  mode: "resume" | "fork";
   cwd: string;
   title?: string;
   turns: Array<{ userText?: string; agentText?: string }>;
@@ -260,33 +257,32 @@ export class SessionStore {
   }
 
   /**
-   * 把已由 Harness 验证（resume）或原生 fork 出来的会话接入 Baton。
+   * 把 Harness 只读验证过的原生会话物化为 BatonSession。
    *
    * 原生协议细节不进入 core；归一后的 user/assistant 历史按 Baton 的普通 turn 主路径落盘，
    * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
    */
-  createFromNativeSession(adoption: NativeSessionAdoption): SessionHandle {
-    const session = this.createSession({ cwd: adoption.cwd, title: adoption.title });
-    const label = adoption.title?.trim() || adoption.sourceSessionId;
+  createFromNativeSession(source: NativeSessionMaterialization): SessionHandle {
+    const session = this.createSession({ cwd: source.cwd, title: source.title });
+    const label = source.title?.trim() || source.nativeSessionId;
     session.updateMeta({
-      description: `${adoption.mode}: ${adoption.harness} ${label}`,
+      description: `import: ${source.harness} ${label}`,
       nativeSessionOrigin: {
-        harnessTargetId: adoption.harnessTargetId,
-        harness: adoption.harness,
-        nativeSessionId: adoption.sourceSessionId,
-        mode: adoption.mode,
+        harnessTargetId: source.harnessTargetId,
+        harness: source.harness,
+        nativeSessionId: source.nativeSessionId,
       },
     });
     let syncedSeq = 0;
-    for (const turn of adoption.turns) {
+    for (const turn of source.turns) {
       const turnId = newId("t");
       if (turn.userText) {
         session.setPreviewIfEmpty(turn.userText);
         session.append({
           kind: "user_message",
           source: { type: "user" },
-          harness: adoption.harness,
-          harnessTargetId: adoption.harnessTargetId,
+          harness: source.harness,
+          harnessTargetId: source.harnessTargetId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -297,9 +293,9 @@ export class SessionStore {
       if (turn.agentText) {
         session.append({
           kind: "agent_message",
-          source: { type: "harness", harnessTargetId: adoption.harnessTargetId },
-          harness: adoption.harness,
-          harnessTargetId: adoption.harnessTargetId,
+          source: { type: "harness", harnessTargetId: source.harnessTargetId },
+          harness: source.harness,
+          harnessTargetId: source.harnessTargetId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -309,19 +305,19 @@ export class SessionStore {
       }
       session.append({
         kind: "state_update",
-        source: { type: "harness", harnessTargetId: adoption.harnessTargetId },
-        harness: adoption.harness,
-        harnessTargetId: adoption.harnessTargetId,
+        source: { type: "harness", harnessTargetId: source.harnessTargetId },
+        harness: source.harness,
+        harnessTargetId: source.harnessTargetId,
         turnId,
         payload: { state: "idle", stopReason: "end_turn" },
       });
       syncedSeq = session.summarizeTurnEvent(turnId).seq;
     }
-    session.setHarnessSession(adoption.harnessTargetId, {
-      harnessTargetId: adoption.harnessTargetId,
-      harness: adoption.harness,
-      harnessSessionId: adoption.nativeSessionId,
-      resumeState: sessionIdResumeState(adoption.nativeSessionId),
+    session.setHarnessSession(source.harnessTargetId, {
+      harnessTargetId: source.harnessTargetId,
+      harness: source.harness,
+      harnessSessionId: source.nativeSessionId,
+      resumeState: sessionIdResumeState(source.nativeSessionId),
       contextEpochId: newId("ctxe"),
       // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
       syncedSeq,

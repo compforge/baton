@@ -45,7 +45,7 @@ export interface HarnessDefinition<Id extends string = string> {
   color: string;
   create(options: HarnessAdapterOptions): HarnessAdapter;
   probe?: (options: HarnessProbeOptions) => Promise<HarnessTargetProbeResult>;
-  /** Baton 外部的原生 session 只读发现与原生 fork；差异不进入 CLI/store。 */
+  /** Baton 外部原生 session 的只读发现；物化后只走 BatonSession 语义。 */
   nativeSessions?: NativeSessionProvider;
 }
 

@@ -1,5 +1,4 @@
 import {
-  forkSession,
   getSessionInfo,
   getSessionMessages,
   type SessionMessage,
@@ -47,12 +46,5 @@ export const claudeNativeSessions: NativeSessionProvider = {
       title: info.customTitle || info.summary || info.firstPrompt,
       transcript: claudeTranscript(messages),
     };
-  },
-
-  async fork(source): Promise<string> {
-    const result = await forkSession(source.nativeSessionId, {
-      ...(source.cwd ? { dir: source.cwd } : {}),
-    });
-    return result.sessionId;
   },
 };
