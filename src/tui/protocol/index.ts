@@ -983,7 +983,7 @@ export class BatonChatProtocol implements ChatProtocol {
         (candidate.id === "mode" || candidate.category === "mode"),
     );
     if (!option || option.type !== "select" || option.options.length === 0) {
-      throw new Error(`${target} does not support Plan mode`);
+      throw new Error(`${target} does not support mode switching`);
     }
     return option;
   }

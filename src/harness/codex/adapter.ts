@@ -132,6 +132,11 @@ interface CodexModeInfo {
   effort?: string;
 }
 
+const CODEX_FALLBACK_MODES: readonly CodexModeInfo[] = [
+  { id: "default", label: "Default" },
+  { id: "plan", label: "Plan" },
+];
+
 function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
@@ -917,7 +922,9 @@ export class CodexAdapter implements HarnessAdapter {
     const modes = await rt.peer
       .request("collaborationMode/list", {})
       .then(codexModes)
-      .catch(() => []);
+      // Old app-servers may not expose this endpoint. Once a mode was selected,
+      // retain its two-state control during a transient catalog failure.
+      .catch(() => rt.mode ? [...CODEX_FALLBACK_MODES] : []);
     return [
       {
         id: "model",
@@ -976,6 +983,9 @@ export class CodexAdapter implements HarnessAdapter {
     } else if (configId === "effort") {
       await this.setEffort(ref, value);
     } else if (configId === "mode") {
+      if (value !== "default" && value !== "plan") {
+        throw new Error(`Unknown Codex mode: ${value}`);
+      }
       const rt = this.mustThread(ref);
       if (rt.activeTurn && !rt.activeTurn.finalized) {
         throw new Error("Cannot switch Codex mode while a turn is running");

@@ -746,7 +746,7 @@ export class ClaudeAdapter implements HarnessAdapter {
         throw new Error("Cannot switch Claude mode while a turn is running");
       }
       if (rt.activeQuery) await rt.activeQuery.setPermissionMode(value);
-      rt.permissionMode = value;
+      rt.permissionMode = value === "default" ? undefined : value;
     } else {
       throw new Error(`Unknown Claude session config: ${configId}`);
     }

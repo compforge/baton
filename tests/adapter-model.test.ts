@@ -157,6 +157,32 @@ describe("Claude model capability", () => {
     expect(queryOptions?.permissionMode).toBe("plan");
   });
 
+  test("omits Claude permissionMode after returning to Default mode", async () => {
+    let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
+    const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+      queryOptions = params.options;
+      const output = (async function* () {})();
+      return Object.assign(output, {
+        initializationResult: async () => ({ models: [] }),
+        close: () => {},
+      }) as unknown as Query;
+    }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+
+    await adapter.setConfig(ref, "mode", "plan");
+    const snapshot = await adapter.setConfig(ref, "mode", "default");
+    expect(snapshot.find((option) => option.id === "mode")?.value).toBe("default");
+    await adapter.sendTurn(ref, {
+      turnId: "t_default",
+      messageId: "m_default",
+      blocks: [{ type: "text", text: "implement this change" }],
+    });
+    await Bun.sleep(0);
+
+    expect(queryOptions?.permissionMode).toBeUndefined();
+  });
+
   test("restores Claude Code prompt and filesystem settings for normal turns", async () => {
     let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
     const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
@@ -328,6 +354,70 @@ describe("Codex model capability", () => {
     });
     expect(turnRequests[0]?.model).toBeUndefined();
     expect(turnRequests[0]?.effort).toBeUndefined();
+  });
+
+  test("rejects an invalid Codex mode before catalog requests", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    const requests: string[] = [];
+    const runtime = {
+      threadId: "thread-1",
+      peer: {
+        request: async (method: string) => {
+          requests.push(method);
+          throw new Error(`unexpected request: ${method}`);
+        },
+      },
+    };
+    (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    await expect(adapter.setConfig(ref, "mode", "invalid")).rejects.toThrow(
+      "Unknown Codex mode: invalid",
+    );
+    expect(requests).toEqual([]);
+  });
+
+  test("keeps the active Codex mode visible during a catalog failure", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    let modeRequests = 0;
+    const peer = {
+      request: async (method: string) => {
+        if (method === "model/list") {
+          return {
+            data: [{
+              id: "gpt-5",
+              displayName: "GPT-5",
+              isDefault: true,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: [],
+            }],
+          };
+        }
+        if (method === "collaborationMode/list") {
+          modeRequests++;
+          if (modeRequests > 1) throw new Error("temporary catalog failure");
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    };
+    const runtime = { threadId: "thread-1", peer };
+    (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    const snapshot = await adapter.setConfig(ref, "mode", "plan");
+    expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
+      value: "plan",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    });
   });
 
   test("normalizes model/list and sends the selected model on the next turn", async () => {
