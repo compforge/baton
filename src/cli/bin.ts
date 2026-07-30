@@ -13,7 +13,14 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 
+import { ensureConfigFile, loadConfig } from "../config/config.ts";
+import {
+  materializeNativeSession,
+  resolveNativeSession,
+  type ResolvedNativeSession,
+} from "../harness/native-session.ts";
 import { pluginKey } from "../plugin/identity.ts";
 import { MarketplaceRegistry, type MarketplaceSource } from "../plugin/marketplace/index.ts";
 import { PluginSettingsStore } from "../plugin/settings.ts";
@@ -28,14 +35,16 @@ Usage:
                         -c continues the latest session in the cwd, -s opens a
                         specific session; /codex (/cx) and /claude (/cc) switch harness
   baton repl [--agent codex|cx|claude|cc] [--cwd <dir>]   headless REPL
-  baton resume [bs_xxx] resume a BatonSession in the TUI; without an id shows a
+  baton resume [bs_xxx|native-id|cx:<id>|cc:<id>]
+                        resume a BatonSession; a Codex/Claude Code native session
+                        is detected read-only, copied into Baton, then resumed;
+                        cx: and cc: explicitly disambiguate the Harness; without an id shows a
                         session list for the current project first (enter resume · esc cancel ·
                         ctrl+c quit; starts fresh if there is no session yet)
-  baton fork [bs_xxx|--last]
-                        fork a BatonSession (full-history copy, fresh harness
-                        sessions) and open the fork; the fork lives in the
-                        current project (cwd or --cwd) even when an explicitly
-                        named source belongs to another one; without an id shows
+  baton fork [bs_xxx|native-id|cx:<id>|cc:<id>|--last]
+                        fork a BatonSession; a native session is first copied into
+                        Baton and then forked through the same Baton path; the child
+                        lives in the current project (cwd or --cwd); without an id shows
                         current-project sessions to pick the source (--last
                         forks the latest in cwd)
   baton sessions [--tree] [--cwd <dir>]
@@ -125,6 +134,42 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+async function chooseNativeSession(
+  matches: readonly ResolvedNativeSession[],
+): Promise<ResolvedNativeSession> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log("Native session id exists in more than one Harness:");
+    matches.forEach((match, index) => {
+      const title = match.source.title ? ` — ${match.source.title}` : "";
+      console.log(`  ${index + 1}. ${match.target.harness}${title}`);
+    });
+    for (;;) {
+      const answer = (await rl.question("Choose Harness> ")).trim();
+      const selected = matches[Number(answer) - 1];
+      if (selected) return selected;
+      console.log(`Enter 1-${matches.length}, or use cx:<id> / cc:<id>.`);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async function resolveNative(
+  reference: string,
+  options: { root?: string; cwd: string },
+): Promise<ResolvedNativeSession> {
+  ensureConfigFile(options.root);
+  const config = loadConfig(options.root);
+  return resolveNativeSession(reference, {
+    config,
+    cwd: options.cwd,
+    ...(process.stdin.isTTY && process.stdout.isTTY
+      ? { choose: chooseNativeSession }
+      : {}),
+  });
+}
+
 async function run(command: string): Promise<void> {
   switch (command) {
     case "repl":
@@ -136,7 +181,27 @@ async function run(command: string): Promise<void> {
     // Enter 选中才 resume / 落盘 fork，Esc/Ctrl+C 取消退出
     case "resume": {
       const id = positionalAfterCommand();
-      process.argv.push(...(id ? ["--session", id] : ["--pick-session", "resume"]));
+      if (!id || id.startsWith("bs_")) {
+        process.argv.push(...(id ? ["--session", id] : ["--pick-session", "resume"]));
+        await import("../tui/main.tsx");
+        break;
+      }
+      const root = argValue("--root");
+      const cwd = argValue("--cwd") ?? process.cwd();
+      // Native resume may materialize a new BatonSession, so reject non-interactive
+      // invocations before writing anything, matching the existing TUI contract.
+      if (!process.stdout.isTTY) fail("baton resume requires a real terminal (TTY)");
+      try {
+        const store = new SessionStore(root);
+        const match = await resolveNative(id, { root, cwd });
+        const opened = materializeNativeSession(store, match, { cwd });
+        console.log(
+          `${opened.reused ? "resuming imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${opened.session.id}`,
+        );
+        process.argv.push("--session", opened.session.id);
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
       await import("../tui/main.tsx");
       break;
     }
@@ -148,21 +213,29 @@ async function run(command: string): Promise<void> {
         await import("../tui/main.tsx");
         break;
       }
-      const store = new SessionStore(argValue("--root"));
+      const root = argValue("--root");
+      const store = new SessionStore(root);
       const cwd = argValue("--cwd") ?? process.cwd();
       const sourceId = positional ?? store.listSessions({ cwd })[0]?.batonSessionId;
       if (!sourceId) {
-        console.error(`no baton session to fork in ${cwd} (run baton first, or pass a session id)`);
-        process.exit(1);
+        fail(`no baton session to fork in ${cwd} (run baton first, or pass a session id)`);
       }
       let childId: string;
       try {
-        // 跨 project fork：历史跟源 session 走，fork 后的 project 跟命令执行位置走
-        childId = store.forkSession(sourceId, { cwd }).id;
-        console.log(`forked ${sourceId} → ${childId}`);
+        let batonSourceId = sourceId;
+        if (!sourceId.startsWith("bs_")) {
+          const match = await resolveNative(sourceId, { root, cwd });
+          const imported = materializeNativeSession(store, match, { cwd });
+          batonSourceId = imported.session.id;
+          console.log(
+            `${imported.reused ? "using imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${batonSourceId}`,
+          );
+        }
+        // 所有 source 到这里都已经是 BatonSession；只保留这一条 fork 主路径。
+        childId = store.forkSession(batonSourceId, { cwd }).id;
+        console.log(`forked ${batonSourceId} → ${childId}`);
       } catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        fail(err instanceof Error ? err.message : String(err));
       }
       // fork 本身是纯存储操作：无 TTY（管道/CI）时创建成功即成功退出，
       // 不能先落盘再因 TUI 起不来 exit 1——重试会制造一堆多余的 fork

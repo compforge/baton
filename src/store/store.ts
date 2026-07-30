@@ -47,7 +47,7 @@ import {
   type UsageUpdate,
 } from "../event/types.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
-import type { HarnessResumeState } from "../harness/resume.ts";
+import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
 import { reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
@@ -81,6 +81,13 @@ export interface SessionForkOrigin {
   throughSeq: number;
 }
 
+/** 从 Harness 原生会话接入 Baton 时的来源；原生 id 只作谱系，不成为 BatonSession identity。 */
+export interface NativeSessionOrigin {
+  harnessTargetId: string;
+  harness: string;
+  nativeSessionId: string;
+}
+
 export interface SessionMeta {
   batonSessionId: string;
   /** Session 名称：可由用户显式指定；fork 未命名时由第一条 queue 补齐。 */
@@ -95,6 +102,7 @@ export interface SessionMeta {
   /** harnessTargetId → 当前原生 HarnessSession 绑定与 target 级偏好。 */
   harnessSessions: Record<string, HarnessSessionMeta>;
   forkedFrom?: SessionForkOrigin;
+  nativeSessionOrigin?: NativeSessionOrigin;
 }
 
 /** 可读 basename + cwd 摘要；避免旧版纯字符替换把不同 cwd 放进同一项目目录。 */
@@ -148,7 +156,16 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
   if (meta.forkedFrom) {
     return explicitTitle ?? meta.description?.trim() ?? `fork: chat @ ${meta.cwd}`;
   }
-  return explicitTitle ?? meta.preview?.trim() ?? `chat @ ${meta.cwd}`;
+  return explicitTitle ?? meta.preview?.trim() ?? meta.description?.trim() ?? `chat @ ${meta.cwd}`;
+}
+
+export interface NativeSessionMaterialization {
+  harnessTargetId: string;
+  harness: string;
+  nativeSessionId: string;
+  cwd: string;
+  title?: string;
+  turns: Array<{ userText?: string; agentText?: string }>;
 }
 
 function previewFromSessionLog(dir: string): string | undefined {
@@ -239,6 +256,93 @@ export class SessionStore {
     return new SessionHandle(id, dir, meta, this.loggerOptions);
   }
 
+  /**
+   * 把 Harness 只读验证过的原生会话物化为 BatonSession。
+   *
+   * 原生协议细节不进入 core；归一后的 user/assistant 历史按 Baton 的普通 turn 主路径落盘，
+   * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
+   */
+  materializeNativeSession(
+    source: NativeSessionMaterialization,
+  ): { session: SessionHandle; reused: boolean } {
+    const release = this.acquireNativeSessionLock();
+    try {
+      const existing = this.findByNativeSession(source.harnessTargetId, source.nativeSessionId);
+      if (existing) {
+        return { session: this.openSession(existing.batonSessionId), reused: true };
+      }
+      return { session: this.createFromNativeSession(source), reused: false };
+    } finally {
+      release();
+    }
+  }
+
+  private createFromNativeSession(source: NativeSessionMaterialization): SessionHandle {
+    const session = this.createSession({ cwd: source.cwd, title: source.title });
+    const label = source.title?.trim() || source.nativeSessionId;
+    let syncedSeq = 0;
+    for (const turn of source.turns) {
+      const turnId = newId("t");
+      if (turn.userText) {
+        session.setPreviewIfEmpty(turn.userText);
+        session.append({
+          kind: "user_message",
+          source: { type: "user" },
+          harness: source.harness,
+          harnessTargetId: source.harnessTargetId,
+          turnId,
+          payload: {
+            messageId: newId("m"),
+            content: [{ type: "text", text: turn.userText }],
+          },
+        });
+      }
+      if (turn.agentText) {
+        session.append({
+          kind: "agent_message",
+          source: { type: "harness", harnessTargetId: source.harnessTargetId },
+          harness: source.harness,
+          harnessTargetId: source.harnessTargetId,
+          turnId,
+          payload: {
+            messageId: newId("m"),
+            content: [{ type: "text", text: turn.agentText }],
+          },
+        });
+      }
+      session.append({
+        kind: "state_update",
+        source: { type: "harness", harnessTargetId: source.harnessTargetId },
+        harness: source.harness,
+        harnessTargetId: source.harnessTargetId,
+        turnId,
+        payload: { state: "idle", stopReason: "end_turn" },
+      });
+      syncedSeq = session.summarizeTurnEvent(turnId).seq;
+    }
+    // 来源与原生 binding 必须在同一次原子 meta 替换中出现，避免崩溃留下半个 owner。
+    session.updateMeta({
+      description: `import: ${source.harness} ${label}`,
+      nativeSessionOrigin: {
+        harnessTargetId: source.harnessTargetId,
+        harness: source.harness,
+        nativeSessionId: source.nativeSessionId,
+      },
+      harnessSessions: {
+        [source.harnessTargetId]: {
+          harnessTargetId: source.harnessTargetId,
+          harness: source.harness,
+          harnessSessionId: source.nativeSessionId,
+          resumeState: sessionIdResumeState(source.nativeSessionId),
+          contextEpochId: newId("ctxe"),
+          // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
+          syncedSeq,
+        },
+      },
+    });
+    return session;
+  }
+
   /** 会话 ID 全局唯一，打开时不要求提供 cwd，跨项目扫描定位（@ 引用可指向任意项目的会话）。 */
   openSession(id: string): SessionHandle {
     this.migrateLegacySessions();
@@ -281,6 +385,21 @@ export class SessionStore {
     }
     out.sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
     return out;
+  }
+
+  /** 已接入同一原生 HarnessSession 时复用其 Baton owner，避免 repeated resume 造多个写者。 */
+  findByNativeSession(harnessTargetId: string, nativeSessionId: string): SessionMeta | undefined {
+    const matches = this.listSessions().filter(
+      (meta) =>
+        meta.harnessSessions[harnessTargetId]?.harnessSessionId === nativeSessionId,
+    );
+    if (matches.length > 1) {
+      const owners = matches.map((meta) => meta.batonSessionId).join(", ");
+      throw new Error(
+        `native session ${harnessTargetId}/${nativeSessionId} is bound to multiple BatonSessions: ${owners}`,
+      );
+    }
+    return matches[0];
   }
 
   /**
@@ -358,6 +477,40 @@ export class SessionStore {
 
   private sessionDir(cwd: string, sessionId: string): string {
     return join(this.projectDir(cwd), "sessions", sessionId);
+  }
+
+  private acquireNativeSessionLock(): () => void {
+    mkdirSync(this.rootDir, { recursive: true });
+    const path = join(this.rootDir, "native-session.lock");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const fd = openSync(path, "wx");
+        writeSync(fd, String(process.pid));
+        closeSync(fd);
+        return () => {
+          try {
+            if (readFileSync(path, "utf8").trim() === String(process.pid)) {
+              rmSync(path);
+            }
+          } catch {
+            // 锁已被清理时无需额外动作。
+          }
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      let holder: number;
+      try {
+        holder = Number(readFileSync(path, "utf8").trim());
+      } catch {
+        continue;
+      }
+      if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
+        throw new Error(`another baton process is materializing a native session (pid ${holder})`);
+      }
+      rmSync(path, { force: true });
+    }
+    throw new Error("failed to acquire native session materialization lock");
   }
 
   private ensureProject(cwd: string): void {
