@@ -188,7 +188,7 @@ async function run(command: string): Promise<void> {
       }
       const root = argValue("--root");
       const cwd = argValue("--cwd") ?? process.cwd();
-      // Native resume may adopt a new BatonSession, so reject non-interactive
+      // Native resume may materialize a new BatonSession, so reject non-interactive
       // invocations before writing anything, matching the existing TUI contract.
       if (!process.stdout.isTTY) fail("baton resume requires a real terminal (TTY)");
       try {

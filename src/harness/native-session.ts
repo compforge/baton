@@ -25,7 +25,7 @@ export interface NativeSessionProviderOptions {
   cwd: string;
 }
 
-/** Harness 私有发现/分叉停在 provider；core 只消费归一后的 metadata 与文本 turn。 */
+/** Provider 只读发现 Harness 私有会话；core 只消费归一后的 metadata 与文本 turn。 */
 export interface NativeSessionProvider {
   inspect(
     sessionId: string,
