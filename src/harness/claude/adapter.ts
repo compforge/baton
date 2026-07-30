@@ -8,6 +8,7 @@ import {
   type ModelInfo,
   type ModelUsage,
   type Options,
+  type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
@@ -331,6 +332,8 @@ interface ClaudeRuntime {
   modelInfos?: ModelInfo[];
   /** 用户在 baton 中选择的推理强度；下次 query 创建时生效。 */
   effort?: EffortLevel;
+  /** Baton 只统一 Claude Code 与 Codex 共有的 Default / Plan 两态。 */
+  permissionMode?: Extract<PermissionMode, "default" | "plan">;
   /** 已归一成 plan_update 的 tool_use id：其 tool_result 也要跳过，避免时间线出现重复工具卡 */
   suppressedToolIds: Set<string>;
   /** ExitPlanMode 可能从 assistant message 与 canUseTool 各到一次；按原生 id / 内容双重去重。 */
@@ -511,6 +514,10 @@ export async function probeClaudeTarget(options: {
 }
 
 const CLAUDE_EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const CLAUDE_MODES = [
+  { value: "default", name: "Default", description: "Allow normal implementation work" },
+  { value: "plan", name: "Plan", description: "Plan without modifying the workspace" },
+] as const;
 
 function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
@@ -707,6 +714,14 @@ export class ClaudeAdapter implements HarnessAdapter {
           ...(description ? { description } : {}),
         })),
       },
+      {
+        id: "mode",
+        type: "select",
+        name: "Mode",
+        category: "mode",
+        value: this.mustSession(ref).permissionMode ?? "default",
+        options: [...CLAUDE_MODES],
+      },
     ];
   }
 
@@ -722,6 +737,16 @@ export class ClaudeAdapter implements HarnessAdapter {
       await this.setModel(ref, value);
     } else if (configId === "effort") {
       await this.setEffort(ref, value);
+    } else if (configId === "mode") {
+      if (value !== "default" && value !== "plan") {
+        throw new Error(`Unknown Claude mode: ${value}`);
+      }
+      const rt = this.mustSession(ref);
+      if (rt.activeTurn && !rt.activeTurn.finalized) {
+        throw new Error("Cannot switch Claude mode while a turn is running");
+      }
+      if (rt.activeQuery) await rt.activeQuery.setPermissionMode(value);
+      rt.permissionMode = value;
     } else {
       throw new Error(`Unknown Claude session config: ${configId}`);
     }
@@ -842,6 +867,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       settingSources: [...CLAUDE_SETTING_SOURCES],
       ...(rt.model ? { model: rt.model } : {}),
       ...(rt.effort ? { effort: rt.effort } : {}),
+      ...(rt.permissionMode ? { permissionMode: rt.permissionMode } : {}),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       ...(rt.settings?.plugins ? { plugins: rt.settings.plugins } : {}),
       ...(rt.settings?.mcpServers ? { mcpServers: rt.settings.mcpServers } : {}),

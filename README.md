@@ -52,6 +52,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable kernel and process model. 
 
 - Use Claude Code and Codex from the same terminal interface
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
+- Use one Plan mode across Codex and Claude Code, with `/plan` or `Shift+Tab` to toggle back to Default
 - Open a previous BatonSession with `/sessions`, or start a clean one with `/new`
 - Continue the latest session in a project with `baton -c`, or open one by ID with `baton -s <id>`
 - Resume or fork an existing Codex/Claude Code native session by ID, with read-only auto-detection
@@ -110,12 +111,14 @@ Start the TUI and type a prompt to send it.
 /model <id>          Select the model used by subsequent turns
 /effort              Open the reasoning-effort picker for the active harness
 /effort <level>      Select the reasoning effort used by subsequent turns
+/plan                Switch the active harness to Plan mode
 /compact             Ask the active harness to compact its context
 /status              Show the active harness/model context usage and session information
 /sessions            Open the BatonSession picker
 /new                 Start a new BatonSession in the current project
 @                      Search grouped Session and Plugin context
 Tab                   Complete a command or reference
+Shift+Tab             Toggle the active harness between Default and Plan mode
 Esc                   Interrupt the current turn
 /exit                 Exit
 ```

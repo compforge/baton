@@ -110,12 +110,14 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 /model <id>          设置后续 turn 使用的模型
 /effort              打开当前 harness 的推理强度选择器
 /effort <level>      设置后续 turn 使用的推理强度
+/plan                将当前 harness 切换到 Plan 模式
 /compact             请求当前 harness 压缩上下文
 /status              查看当前 harness/model 的上下文用量和会话信息
 /sessions            打开 BatonSession 选择器
 /new                 在当前项目新建 BatonSession
 @                      分组搜索 Session 和 Plugin 上下文
 Tab                   补全命令或引用
+Shift+Tab             在 Default 与 Plan 模式间切换
 Esc                   中断当前 turn
 /exit                 退出
 ```

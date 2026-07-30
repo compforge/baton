@@ -94,6 +94,13 @@ interface ThreadRuntime {
   /** 仅显式选择返回值；default 对外仍显示为 null。 */
   effortSelection?: string;
   effortUsesDefault?: boolean;
+  /** Baton 统一暴露的 Codex collaboration mode；undefined 表示沿用原生默认。 */
+  mode?: "default" | "plan";
+  /** mode preset 对 effort 的覆盖；Plan 当前由 app-server catalog 返回 medium。 */
+  modeEffort?: string;
+  /** collaborationMode 需要完整 settings，catalog 用来解析默认 model / effort。 */
+  resolvedModel?: string;
+  resolvedEffort?: string;
   /** 上次 tokenUsage.total 快照，差分成 usage_update 增量 */
   prevUsage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number };
   /**
@@ -117,6 +124,12 @@ interface CodexModelInfo {
   isDefault: boolean;
   defaultEffort?: string;
   efforts: EffortOption[];
+}
+
+interface CodexModeInfo {
+  id: "default" | "plan";
+  label: string;
+  effort?: string;
 }
 
 function effortLabel(effort: string): string {
@@ -187,6 +200,41 @@ function codexEfforts(result: unknown, modelId?: string): EffortOption[] {
 
 function codexModelSupportsEffort(model: CodexModelInfo, effort: string): boolean {
   return model.efforts.some((candidate) => candidate.id === effort);
+}
+
+function codexModes(result: unknown): CodexModeInfo[] {
+  const data = (result as { data?: unknown[] })?.data;
+  if (!Array.isArray(data)) return [];
+  return data.flatMap((raw) => {
+    const row = raw as Record<string, unknown>;
+    const mode = String(row.mode ?? "").toLowerCase();
+    if (mode !== "default" && mode !== "plan") return [];
+    const effort = row.reasoning_effort;
+    return [{
+      id: mode,
+      label: String(row.name ?? (mode === "plan" ? "Plan" : "Default")),
+      ...(typeof effort === "string" ? { effort } : {}),
+    }];
+  });
+}
+
+function updateCodexResolvedSettings(rt: ThreadRuntime, catalog: unknown): void {
+  const selected = selectedCodexModel(catalog, rt.model);
+  rt.resolvedModel = selected?.id ?? rt.model;
+  rt.resolvedEffort = rt.effort ?? selected?.defaultEffort;
+}
+
+function codexCollaborationMode(rt: ThreadRuntime) {
+  if (!rt.mode || !rt.resolvedModel) return undefined;
+  return {
+    mode: rt.mode,
+    settings: {
+      model: rt.resolvedModel,
+      reasoning_effort: rt.modeEffort ?? rt.resolvedEffort ?? null,
+      // null asks app-server to use its version-matched built-in instructions.
+      developer_instructions: null,
+    },
+  };
 }
 
 // codex CommandExecutionApprovalDecision / FileChangeApprovalDecision 的字符串成员。
@@ -813,7 +861,7 @@ export class CodexAdapter implements HarnessAdapter {
     const rt = this.mustThread(ref);
     const model = !modelId || modelId === "default" ? undefined : modelId;
     const catalog =
-      rt.effortUsesDefault || rt.effortSelection
+      rt.effortUsesDefault || rt.effortSelection || rt.mode
         ? await rt.peer.request("model/list", { limit: 200 })
         : undefined;
     const selected = catalog === undefined ? undefined : selectedCodexModel(catalog, model);
@@ -822,6 +870,7 @@ export class CodexAdapter implements HarnessAdapter {
     }
     if (rt.effortUsesDefault) rt.effort = selected?.defaultEffort;
     rt.model = model;
+    if (catalog !== undefined) updateCodexResolvedSettings(rt, catalog);
   }
 
   currentModel(ref: HarnessSessionRef): string | null {
@@ -840,6 +889,7 @@ export class CodexAdapter implements HarnessAdapter {
       rt.effort = selectedCodexModel(catalog, rt.model)?.defaultEffort;
       rt.effortSelection = undefined;
       rt.effortUsesDefault = true;
+      updateCodexResolvedSettings(rt, catalog);
       return;
     }
     const catalog = await rt.peer.request("model/list", { limit: 200 });
@@ -850,6 +900,7 @@ export class CodexAdapter implements HarnessAdapter {
     rt.effort = effortId;
     rt.effortSelection = effortId;
     rt.effortUsesDefault = false;
+    updateCodexResolvedSettings(rt, catalog);
   }
 
   currentEffort(ref: HarnessSessionRef): string | null {
@@ -860,8 +911,13 @@ export class CodexAdapter implements HarnessAdapter {
     const rt = this.mustThread(ref);
     // 一次 model/list 生成整份快照，避免 model 与 effort 来自两个不同时点的 catalog。
     const catalog = await rt.peer.request("model/list", { limit: 200 });
+    updateCodexResolvedSettings(rt, catalog);
     const models = codexModels(catalog);
     const efforts = codexEfforts(catalog, rt.model);
+    const modes = await rt.peer
+      .request("collaborationMode/list", {})
+      .then(codexModes)
+      .catch(() => []);
     return [
       {
         id: "model",
@@ -887,6 +943,23 @@ export class CodexAdapter implements HarnessAdapter {
           ...(description ? { description } : {}),
         })),
       },
+      ...(modes.length > 0
+        ? [{
+            id: "mode",
+            type: "select" as const,
+            name: "Mode",
+            category: "mode",
+            value: rt.mode ?? "default",
+            options: modes.map(({ id, label }) => ({
+              value: id,
+              name: label,
+              description:
+                id === "plan"
+                  ? "Plan without modifying the workspace"
+                  : "Allow normal implementation work",
+            })),
+          }]
+        : []),
     ];
   }
 
@@ -902,6 +975,20 @@ export class CodexAdapter implements HarnessAdapter {
       await this.setModel(ref, value);
     } else if (configId === "effort") {
       await this.setEffort(ref, value);
+    } else if (configId === "mode") {
+      const rt = this.mustThread(ref);
+      if (rt.activeTurn && !rt.activeTurn.finalized) {
+        throw new Error("Cannot switch Codex mode while a turn is running");
+      }
+      const [modeResult, catalog] = await Promise.all([
+        rt.peer.request("collaborationMode/list", {}),
+        rt.peer.request("model/list", { limit: 200 }),
+      ]);
+      const selected = codexModes(modeResult).find((candidate) => candidate.id === value);
+      if (!selected) throw new Error(`Unknown Codex mode: ${value}`);
+      rt.mode = selected.id;
+      rt.modeEffort = selected.effort;
+      updateCodexResolvedSettings(rt, catalog);
     } else {
       throw new Error(`Unknown Codex session config: ${configId}`);
     }
@@ -1000,13 +1087,18 @@ export class CodexAdapter implements HarnessAdapter {
     const syncText = input.syncBlocks?.length ? textOf(input.syncBlocks) : undefined;
     // fast-submit：turn/start 的响应立即返回 status=inProgress 的 Turn（旧版本才会阻塞到结束）。
     // 因此响应只用于拿 codex turn id 和捕获终态；正常结束以 turn/completed 通知为准。
+    const collaborationMode = codexCollaborationMode(rt);
     void rt.peer
       .request("turn/start", {
         threadId: rt.threadId,
         input: [{ type: "text", text: textOf(input.blocks) }],
         ...(syncText ? { additionalContext: { "baton-sync": { value: syncText, kind: "untrusted" } } } : {}),
-        ...(rt.model ? { model: rt.model } : {}),
-        ...(rt.effort ? { effort: rt.effort } : {}),
+        ...(collaborationMode
+          ? { collaborationMode }
+          : {
+              ...(rt.model ? { model: rt.model } : {}),
+              ...(rt.effort ? { effort: rt.effort } : {}),
+            }),
         // 不显式开启则 codex 不发 item/reasoning/* 通知，中间过程对用户不可见
         summary: "auto",
       })
