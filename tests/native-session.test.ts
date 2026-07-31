@@ -52,7 +52,7 @@ function source(
   return {
     target: { id: harness, harness },
     harness: harness === "claude" ? "claude-code" : "codex",
-    provider,
+    inspector: provider,
   };
 }
 
@@ -118,7 +118,7 @@ describe("native session reference resolution", () => {
     });
 
     expect(match.target.harness).toBe("codex");
-    expect(match.source.nativeSessionId).toBe("native-1");
+    expect(match.snapshot.identity?.id).toBe("native-1");
   });
 
   test("cx:/cc: explicitly select a Harness without probing the other one", async () => {
@@ -149,7 +149,7 @@ describe("native session reference resolution", () => {
           source("claude", provider({})),
         ],
       }),
-    ).rejects.toThrow("native session not found: missing");
+    ).rejects.toThrow("HarnessSession not found: missing");
   });
 
   test("ambiguous bare id requires a chooser or explicit prefix", async () => {
@@ -199,7 +199,7 @@ describe("native session reference resolution", () => {
           source("claude", provider({})),
         ],
       }),
-    ).rejects.toThrow("native session lookup failed for native-1: codex app-server unavailable");
+    ).rejects.toThrow("HarnessSession lookup failed for native-1: codex app-server unavailable");
   });
 });
 
@@ -210,7 +210,7 @@ describe("native session ownership", () => {
     const store = new SessionStore(root);
     const match: ResolvedNativeSession = {
       ...source("codex", provider({})),
-      source: info("thread-1", "Fix cache isolation"),
+      snapshot: info("thread-1", "Fix cache isolation"),
     };
 
     const first = materializeNativeSession(store, match, { cwd: "/fallback" });
@@ -220,10 +220,16 @@ describe("native session ownership", () => {
     expect(second.reused).toBe(true);
     expect(second.session.id).toBe(first.session.id);
     expect(first.session.meta.cwd).toBe("/repo");
-    expect(first.session.meta.nativeSessionOrigin).toEqual({
-      harnessTargetId: "codex",
-      harness: "codex",
-      nativeSessionId: "thread-1",
+    expect(first.session.meta.adoptedFrom).toMatchObject({
+      session: {
+        harnessTargetId: "codex",
+        harness: "codex",
+        identity: { id: "thread-1" },
+      },
+      importedThrough: {
+        turnId: "history-2",
+        turnCount: 2,
+      },
     });
     expect(first.session.meta.title).toBe("Fix cache isolation");
     expect(first.session.meta.preview).toBe("investigate the cache");
@@ -283,6 +289,33 @@ describe("native session ownership", () => {
     expect(store.forkSession(first.session.id).loadState().turnSummaries).toHaveLength(3);
   });
 
+  test("adoptedFrom remains the owner index when the current binding changes", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-adopted-owner-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const source = {
+      harnessTargetId: "codex",
+      harness: "codex",
+      nativeSessionId: "thread-origin",
+      cwd: "/repo",
+      turns: [{ userText: "one", agentText: "answer one" }],
+    };
+    const first = store.materializeNativeSession(source);
+    first.session.setHarnessSession("codex", {
+      harnessTargetId: "codex",
+      harness: "codex",
+      harnessSessionId: "thread-current",
+    });
+
+    const reopened = store.materializeNativeSession(source);
+
+    expect(reopened.reused).toBe(true);
+    expect(reopened.session.id).toBe(first.session.id);
+    expect(store.listSessions()).toHaveLength(1);
+    expect(reopened.session.meta.adoptedFrom?.session.identity.id).toBe("thread-origin");
+    expect(reopened.session.meta.harnessSessions.codex?.harnessSessionId).toBe("thread-origin");
+  });
+
   test("native tail reconcile fails closed on divergence or another live Baton owner", () => {
     const root = mkdtempSync(`${tmpdir()}/baton-native-reconcile-guard-`);
     roots.push(root);
@@ -312,6 +345,40 @@ describe("native session ownership", () => {
       }),
     ).toThrow(/in use by another baton process/);
     expect(first.session.loadState().turnSummaries).toHaveLength(1);
+  });
+
+  test("history reconciliation detects tool fact divergence even when summary text is unchanged", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-history-boundary-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const turn = (output: string) => codexNativeTurns([{
+      id: "turn-1",
+      itemsView: "full",
+      status: "completed",
+      items: [
+        { type: "userMessage", id: "u1", content: [{ type: "text", text: "inspect" }] },
+        {
+          type: "commandExecution",
+          id: "cmd1",
+          status: "completed",
+          command: "cat result",
+          aggregatedOutput: output,
+        },
+        { type: "agentMessage", id: "a1", text: "done" },
+      ],
+    }]);
+    const source = {
+      harnessTargetId: "codex",
+      harness: "codex",
+      nativeSessionId: "thread-1",
+      cwd: "/repo",
+      turns: turn("first"),
+    };
+    store.materializeNativeSession(source);
+
+    expect(() =>
+      store.materializeNativeSession({ ...source, turns: turn("changed") }),
+    ).toThrow(/history diverged at turn 1/);
   });
 
   test("Codex live capture and full native import reduce to the same Baton content", () => {
@@ -560,7 +627,14 @@ describe("native session ownership", () => {
     }
     live.summarizeTurnEvent(turnId);
 
-    expect(logicalContent(imported)).toEqual(logicalContent(live));
+    const liveContent = logicalContent(live);
+    expect(logicalContent(imported)).toEqual({
+      ...liveContent,
+      turnSummaries: liveContent.turnSummaries.map((summary) => ({
+        ...summary,
+        stopReason: "unknown",
+      })),
+    });
   });
 
   test("forking a native id materializes a source, then uses ordinary Baton fork", () => {
@@ -569,16 +643,16 @@ describe("native session ownership", () => {
     const store = new SessionStore(root);
     const match: ResolvedNativeSession = {
       ...source("claude", provider({})),
-      source: info("claude-source"),
+      snapshot: info("claude-source"),
     };
 
     const imported = materializeNativeSession(store, match, { cwd: "/fallback" });
     const batonChild = store.forkSession(imported.session.id, { cwd: "/target" });
 
-    expect(imported.session.meta.nativeSessionOrigin?.nativeSessionId).toBe("claude-source");
+    expect(imported.session.meta.adoptedFrom?.session.identity.id).toBe("claude-source");
     expect(imported.session.meta.harnessSessions.claude?.harnessSessionId).toBe("claude-source");
     expect(batonChild.meta.forkedFrom?.batonSessionId).toBe(imported.session.id);
-    expect(batonChild.meta.nativeSessionOrigin).toBeUndefined();
+    expect(batonChild.meta.adoptedFrom).toBeUndefined();
     expect(batonChild.meta.cwd).toBe("/target");
     expect(batonChild.loadState().turnSummaries).toHaveLength(2);
     expect(batonChild.meta.harnessSessions.claude?.harnessSessionId).toBeUndefined();
@@ -616,7 +690,7 @@ describe("native session ownership", () => {
     expect(first.reused).toBe(false);
     expect(second.reused).toBe(true);
     expect(second.session.id).toBe(first.session.id);
-    expect(second.session.meta.nativeSessionOrigin?.nativeSessionId).toBe("thread-1");
+    expect(second.session.meta.adoptedFrom?.session.identity.id).toBe("thread-1");
     expect(second.session.meta.harnessSessions.codex?.harnessSessionId).toBe("thread-1");
   });
 
@@ -634,7 +708,7 @@ describe("native session ownership", () => {
         cwd: "/repo",
         turns: [],
       }),
-    ).toThrow(/another baton process is materializing/);
+    ).toThrow(/another baton process is adopting/);
     expect(store.listSessions()).toHaveLength(0);
   });
 });

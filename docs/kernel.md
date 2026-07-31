@@ -38,11 +38,14 @@ Controller / Harness 平铺为同一层概念；每个对象仍绑定一条不�
 | **Delivery Attempt** | Controller 域内向 Harness 投递一轮已 admit Input 的持久执行记录 | 先持久化 `prepared` 再 dispatch；`accepted` 只确认 Adapter 接受投递责任，Harness 终态才给出最终 `outcome`；无法证明是否接收或结束时保持 `uncertain`，不盲目重投 |
 | **Context delivery** | Controller 域内把有 owner/key 的 ContextSource 组装成 Snapshot，并向某个 HarnessSession 交付 | Snapshot 说明准备送什么；只有 transport 接受后落下的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch，不能用 Board 已更新或本地已组装代替 |
 | **HarnessTarget** | Baton 配置、调度与状态查询侧的一份具体 Harness 目标；可在不创建 HarnessSession 的前提下做只读 capability/catalog probe | 实例坐标与协议类型分离：Target ID 只经显式 resolver 解析，未知值 fail closed；Adapter 工厂接收完整 Target；`Controller` processing / queue、`HarnessBinding`、原生 session、同步水位、偏好 / 授权和 Target-scoped 投影状态均按 `harnessTargetId` 隔离，不按 Harness 名称混用；发现不借 Adapter.open 制造隐形 session |
+| **HarnessSession** | Harness 在某个 Target 内持有的持久执行会话；identity 可跨 Baton 进程恢复 | `HarnessSessionHandle` 只在当前 Adapter 进程内路由调用，不能持久化；`HarnessSessionBinding` 是当前 BatonSession 到它的 mutable 连接，由 Adapter 在 identity / resume state 可知时主动发布，Controller 不从 handle 或事件猜测 |
+| **HarnessHistorySnapshot / Boundary** | Inspector 对既有 HarnessSession 的一次只读持久历史观察，以及该历史前缀的内容边界 | Snapshot 的 `observedThrough` 与 Baton adoption 的 `importedThrough` 分离；Boundary digest 覆盖完整 turn 语义，不用最后一轮或 user/agent 摘要代替；`adoptedFrom` 永远指向最初来源，不随当前 Binding 改写 |
 | **Adapter + Capability** | harness 方言的**唯一**居所：小核心 `HarnessAdapter` + 可选能力 descriptor | 差异表达为"能力有无"，type-guard 发现、契约测试钉住；**内核永不 `if harness===`** |
 | **Projection** | 纯函数：event reduce → chat-tui State | 只产展示数据；chat-tui 消费 State 不消费领域语义；未变返回同引用（快照一致）|
 
-HarnessSession 不在此表——它是某 HarnessTarget 启动出的原生执行状态、内核的实现细节：
-baton 优先用 `harnessSessionId` 加速恢复，但它缺失只降级、不能阻止 BatonSession 续聊。
+HarnessSession 不是 BatonSession 的另一种名字：前者由 Harness 持有执行历史，后者由用户持有
+正典逻辑历史。baton 优先用稳定 HarnessSession identity 加速恢复，但它缺失只降级、不能阻止
+BatonSession 续聊；进程内 Handle 即使长得像 session id，也绝不能进入持久 meta。
 每次 create/resume 使用不可变 `HarnessLaunchSnapshot` 记录当时的 target、cwd、model 和 effort；
 快照解释既有执行，后续配置变化不能回写它。
 
@@ -166,10 +169,10 @@ Resource 等来源在真实接入时增加 kind，不预造注册表。
 interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;              // 可展示的能力 descriptor
-  open(opts, sink: EventSink): Promise<HarnessSessionRef>;
-  sendTurn(ref, input: PromptInput): Promise<SendTurnReceipt>; // adapter 决定 new_turn / steer / rejected
-  cancel(ref): Promise<void>;
-  close(ref): Promise<void>;
+  open(opts, sink: EventSink, binding: HarnessSessionBindingSink): Promise<HarnessSessionHandle>;
+  sendTurn(handle, input: PromptInput): Promise<SendTurnReceipt>; // adapter 决定 new_turn / steer / rejected
+  cancel(handle): Promise<void>;
+  close(handle): Promise<void>;
 }
 ```
 
@@ -179,8 +182,7 @@ interface HarnessAdapter {
 - `sendTurn` throw 只表示 Adapter 尚未接受投递责任；accepted 后的任何失败都必须经事件流
   给出 Harness 终态。Delivery Attempt 是 Controller 的记账，不进入 Adapter 输入契约。
 - 需要外部参与者时向宿主提交 typed `InteractionDraft` 并等待 resolution；不得自签 `interactionId`，也不得自行 emit `interaction.opened/resolved`。
-- 可选能力（`Reconcilable` / `SessionConfigurable` /
-  `NativeSessionCheckpointable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，
+- 可选能力（`Reconcilable` / `SessionConfigurable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，
   绝不是核心分支。
 - 经 `harness/registry`（Harness 定义 + adapter 工厂）+ `harness/ids`（无 SDK 身份目录：id + aliases）注册。
 

@@ -13,7 +13,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { textOf, type PromptBlock } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
@@ -33,12 +33,12 @@ class SendTurnFakeAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: `${this.harness}-ref`, resumed: false };
+    return { harness: this.harness, handleId: `${this.harness}-ref`, resumed: false };
   }
 
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     if (this.activeInput) {
       if (!this.steerSupported || this.activeInput.turnId !== input.turnId) {
         return { accepted: false, effective: "rejected" };
@@ -80,8 +80,8 @@ class SendTurnFakeAdapter implements HarnessAdapter {
     });
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 /** 无 steer 能力的最小 adapter：验证 capability 缺失时的降级 */

@@ -17,9 +17,9 @@ import { createInterface } from "node:readline/promises";
 
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import {
-  materializeNativeSession,
-  resolveNativeSession,
-  type ResolvedNativeSession,
+  adoptHarnessSession,
+  resolveHarnessSession,
+  type ResolvedHarnessSession,
 } from "../harness/native-session.ts";
 import { pluginKey } from "../plugin/identity.ts";
 import { MarketplaceRegistry, type MarketplaceSource } from "../plugin/marketplace/index.ts";
@@ -35,14 +35,14 @@ Usage:
                         -c continues the latest session in the cwd, -s opens a
                         specific session; /codex (/cx) and /claude (/cc) switch harness
   baton repl [--agent codex|cx|claude|cc] [--cwd <dir>]   headless REPL
-  baton resume [bs_xxx|native-id|cx:<id>|cc:<id>]
-                        resume a BatonSession; a Codex/Claude Code native session
-                        is detected read-only, copied into Baton, then resumed;
+  baton resume [bs_xxx|harness-session-id|cx:<id>|cc:<id>]
+                        resume a BatonSession; a Codex/Claude Code HarnessSession
+                        is inspected read-only, adopted into Baton, then resumed;
                         cx: and cc: explicitly disambiguate the Harness; without an id shows a
                         session list for the current project first (enter resume · esc cancel ·
                         ctrl+c quit; starts fresh if there is no session yet)
-  baton fork [bs_xxx|native-id|cx:<id>|cc:<id>|--last]
-                        fork a BatonSession; a native session is first copied into
+  baton fork [bs_xxx|harness-session-id|cx:<id>|cc:<id>|--last]
+                        fork a BatonSession; a HarnessSession is first adopted into
                         Baton and then forked through the same Baton path; the child
                         lives in the current project (cwd or --cwd); without an id shows
                         current-project sessions to pick the source (--last
@@ -134,14 +134,14 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function chooseNativeSession(
-  matches: readonly ResolvedNativeSession[],
-): Promise<ResolvedNativeSession> {
+async function chooseHarnessSession(
+  matches: readonly ResolvedHarnessSession[],
+): Promise<ResolvedHarnessSession> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    console.log("Native session id exists in more than one Harness:");
+    console.log("HarnessSession id exists in more than one Harness:");
     matches.forEach((match, index) => {
-      const title = match.source.title ? ` — ${match.source.title}` : "";
+      const title = match.snapshot.title ? ` — ${match.snapshot.title}` : "";
       console.log(`  ${index + 1}. ${match.target.harness}${title}`);
     });
     for (;;) {
@@ -155,17 +155,17 @@ async function chooseNativeSession(
   }
 }
 
-async function resolveNative(
+async function resolveExternalHarnessSession(
   reference: string,
   options: { root?: string; cwd: string },
-): Promise<ResolvedNativeSession> {
+): Promise<ResolvedHarnessSession> {
   ensureConfigFile(options.root);
   const config = loadConfig(options.root);
-  return resolveNativeSession(reference, {
+  return resolveHarnessSession(reference, {
     config,
     cwd: options.cwd,
     ...(process.stdin.isTTY && process.stdout.isTTY
-      ? { choose: chooseNativeSession }
+      ? { choose: chooseHarnessSession }
       : {}),
   });
 }
@@ -188,15 +188,15 @@ async function run(command: string): Promise<void> {
       }
       const root = argValue("--root");
       const cwd = argValue("--cwd") ?? process.cwd();
-      // Native resume may materialize a new BatonSession, so reject non-interactive
+      // HarnessSession adoption may create a BatonSession, so reject non-interactive
       // invocations before writing anything, matching the existing TUI contract.
       if (!process.stdout.isTTY) fail("baton resume requires a real terminal (TTY)");
       try {
         const store = new SessionStore(root);
-        const match = await resolveNative(id, { root, cwd });
-        const opened = materializeNativeSession(store, match, { cwd });
+        const match = await resolveExternalHarnessSession(id, { root, cwd });
+        const opened = adoptHarnessSession(store, match, { cwd });
         console.log(
-          `${opened.reused ? "resuming imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${opened.session.id}`,
+          `${opened.reused ? "resuming adopted" : "adopted"} ${match.target.harness} HarnessSession ${match.snapshot.identity?.id} as ${opened.session.id}`,
         );
         process.argv.push("--session", opened.session.id);
       } catch (err) {
@@ -224,11 +224,11 @@ async function run(command: string): Promise<void> {
       try {
         let batonSourceId = sourceId;
         if (!sourceId.startsWith("bs_")) {
-          const match = await resolveNative(sourceId, { root, cwd });
-          const imported = materializeNativeSession(store, match, { cwd });
+          const match = await resolveExternalHarnessSession(sourceId, { root, cwd });
+          const imported = adoptHarnessSession(store, match, { cwd });
           batonSourceId = imported.session.id;
           console.log(
-            `${imported.reused ? "using imported" : "imported"} ${match.target.harness} native session ${match.source.nativeSessionId} as ${batonSourceId}`,
+            `${imported.reused ? "using adopted" : "adopted"} ${match.target.harness} HarnessSession ${match.snapshot.identity?.id} as ${batonSourceId}`,
           );
         }
         // 所有 source 到这里都已经是 BatonSession；只保留这一条 fork 主路径。

@@ -41,20 +41,20 @@ import type {
   HarnessAdapter,
   EffortOption,
   EventSink,
+  HarnessSessionBindingSink,
   ModelOption,
   NativeEventSink,
   OpenOptions,
   PromptInput,
   PromptReceipt,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
   InteractionHandler,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
 import {
   sessionIdFromResumeState,
   sessionIdResumeState,
-  type HarnessResumeState,
 } from "../resume.ts";
 import type { HarnessTargetProbeResult } from "../target.ts";
 
@@ -457,7 +457,13 @@ export function claudeDurableMessageDrafts(
           kind: "tool_call_update",
           payload: {
             toolCallId: toolUseId,
+            title:
+              taskOp.op === "create"
+                ? `TaskCreate: ${taskOp.subject}`
+                : `TaskUpdate: ${taskOp.subject ?? taskOp.taskId}`,
+            kind: "other",
             status: "failed",
+            content: claudeToolResultBlocks(block.content),
             rawOutput: block.content,
           },
           raw,
@@ -517,8 +523,11 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   env?: Record<string, string>;
   /** open 时绑定的事件出口；session 生命周期内所有事件（含跨 turn）都走它 */
   sink: EventSink;
+  /** 稳定 HarnessSession 身份一旦可知，立即发布给宿主持久化。 */
+  bindingSink?: HarnessSessionBindingSink;
   /** SDK 的 session_id，首个 turn 的 init 消息里拿到；resume 靠它 */
   claudeSessionId?: string;
+  publishedSessionId?: string;
   activeQuery?: Query;
   promptChannel?: ClaudePromptChannel;
   /** 当前被接受、尚未逻辑终结的 turn */
@@ -788,11 +797,20 @@ export class ClaudeAdapter implements HarnessAdapter {
   constructor(private options: ClaudeAdapterOptions) {}
 
   /** SDK 无独立"启动"步骤：streaming query 在首个 sendTurn 时创建，这里只登记运行时。 */
-  async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     const id = newId("hs");
-    const resumeSessionId = opts.resumeState
+    const requestedSessionId = opts.resumeState
       ? sessionIdFromResumeState(opts.resumeState)
       : opts.resumeSessionId;
+    // 0.2.14 曾把进程内 hs_ handle 当稳定身份落盘。迁移知识留在 Claude Adapter
+    // 边界：core 不解析任何 Harness 的 ID 方言；新 init 随后会发布真实 binding。
+    const resumeSessionId = requestedSessionId?.startsWith("hs_")
+      ? undefined
+      : requestedSessionId;
 
     // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
     const settings = await readClaudeSettings(opts.cwd, this.options.log);
@@ -809,31 +827,24 @@ export class ClaudeAdapter implements HarnessAdapter {
     //
     // 这种"双保险"策略能最大程度保证 plugin 正常工作。
 
-    this.sessions.set(id, {
+    const runtime: ClaudeRuntime = {
       cwd: opts.cwd,
       env: opts.env,
       sink,
+      bindingSink: binding,
       claudeSessionId: resumeSessionId,
       suppressedToolIds: new Set(),
       capturedProposedPlanKeys: new Set(),
       tasks: new Map(),
       pendingTaskOps: new Map(),
       settings,
-    });
-    return { harness: this.harness, harnessSessionId: id, resumed: Boolean(resumeSessionId) };
+    };
+    this.sessions.set(id, runtime);
+    if (resumeSessionId) this.publishSessionBinding(runtime, resumeSessionId);
+    return { harness: this.harness, handleId: id, resumed: Boolean(resumeSessionId) };
   }
 
-  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined {
-    const sessionId = this.nativeSessionId(ref);
-    return sessionId ? sessionIdResumeState(sessionId) : undefined;
-  }
-
-  /** 拿 Claude 原生 session id（宿主存入 meta 以支持将来 resume） */
-  nativeSessionId(ref: HarnessSessionRef): string | undefined {
-    return this.sessions.get(ref.harnessSessionId)?.claudeSessionId;
-  }
-
-  async listModels(ref: HarnessSessionRef): Promise<ModelOption[]> {
+  async listModels(ref: HarnessSessionHandle): Promise<ModelOption[]> {
     const rt = this.mustSession(ref);
     try {
       await this.ensureModelCatalog(rt);
@@ -843,7 +854,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     return rt.models ?? CLAUDE_FALLBACK_MODELS;
   }
 
-  async setModel(ref: HarnessSessionRef, modelId: string | null): Promise<void> {
+  async setModel(ref: HarnessSessionHandle, modelId: string | null): Promise<void> {
     const rt = this.mustSession(ref);
     const model = !modelId || modelId === "default" ? undefined : modelId;
     if (rt.effort && !claudeEffortsForModel(rt, model).some((candidate) => candidate.id === rt.effort)) {
@@ -853,11 +864,11 @@ export class ClaudeAdapter implements HarnessAdapter {
     rt.model = model;
   }
 
-  currentModel(ref: HarnessSessionRef): string | null {
+  currentModel(ref: HarnessSessionHandle): string | null {
     return this.mustSession(ref).model ?? null;
   }
 
-  async listEfforts(ref: HarnessSessionRef): Promise<EffortOption[]> {
+  async listEfforts(ref: HarnessSessionHandle): Promise<EffortOption[]> {
     const rt = this.mustSession(ref);
     try {
       await this.ensureModelCatalog(rt);
@@ -867,7 +878,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     return claudeEfforts(rt);
   }
 
-  async setEffort(ref: HarnessSessionRef, effortId: string | null): Promise<void> {
+  async setEffort(ref: HarnessSessionHandle, effortId: string | null): Promise<void> {
     const rt = this.mustSession(ref);
     if (!effortId || effortId === "default") {
       rt.effort = undefined;
@@ -881,11 +892,11 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (rt.activeQuery) rt.queryOptionsDirty = true;
   }
 
-  currentEffort(ref: HarnessSessionRef): string | null {
+  currentEffort(ref: HarnessSessionHandle): string | null {
     return this.mustSession(ref).effort ?? null;
   }
 
-  async getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]> {
+  async getConfig(ref: HarnessSessionHandle): Promise<SessionConfigOption[]> {
     const [models, efforts] = await Promise.all([
       this.listModels(ref),
       this.listEfforts(ref),
@@ -927,7 +938,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   async setConfig(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     configId: string,
     value: ConfigValue,
   ): Promise<SessionConfigOption[]> {
@@ -965,7 +976,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     rt.models = CLAUDE_FALLBACK_MODELS;
   }
 
-  async compactContext(ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt> {
+  async compactContext(ref: HarnessSessionHandle, turnId: string): Promise<PromptReceipt> {
     const rt = this.mustSession(ref);
     if (!rt.claudeSessionId) throw new Error("Claude has no conversation to compact yet");
     if (rt.activeTurn && !rt.activeTurn.finalized) {
@@ -991,7 +1002,7 @@ export class ClaudeAdapter implements HarnessAdapter {
    * - turnId 不匹配时拒绝，由 Controller 排成 follow-up，绝不误注入别的回合。
    */
   async sendTurn(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     input: PromptInput,
   ): Promise<SendTurnReceipt> {
     const rt = this.mustSession(ref);
@@ -1119,7 +1130,7 @@ export class ClaudeAdapter implements HarnessAdapter {
         let current = rt.currentTurn;
         if (!current) {
           if (msg.type === "system" && msg.subtype === "init") {
-            rt.claudeSessionId = msg.session_id;
+            this.publishSessionBinding(rt, msg.session_id);
           }
           continue;
         }
@@ -1221,8 +1232,8 @@ export class ClaudeAdapter implements HarnessAdapter {
     });
   }
 
-  async cancel(ref: HarnessSessionRef): Promise<void> {
-    const rt = this.sessions.get(ref.harnessSessionId);
+  async cancel(ref: HarnessSessionHandle): Promise<void> {
+    const rt = this.sessions.get(ref.handleId);
     const turn = rt?.activeTurn;
     if (!rt?.activeQuery || !turn) return;
     turn.cancelRequested = true;
@@ -1240,10 +1251,10 @@ export class ClaudeAdapter implements HarnessAdapter {
     });
   }
 
-  async close(ref: HarnessSessionRef): Promise<void> {
-    const rt = this.sessions.get(ref.harnessSessionId);
+  async close(ref: HarnessSessionHandle): Promise<void> {
+    const rt = this.sessions.get(ref.handleId);
     if (!rt) return;
-    this.sessions.delete(ref.harnessSessionId);
+    this.sessions.delete(ref.handleId);
     const turn = rt.activeTurn;
     if (turn) turn.cancelRequested = true;
     this.closeStreamingQuery(rt);
@@ -1251,10 +1262,20 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (turn) this.finishTurn(rt, (ev) => this.emit(rt, ev, turn), turn, "cancelled");
   }
 
-  private mustSession(ref: HarnessSessionRef): ClaudeRuntime {
-    const rt = this.sessions.get(ref.harnessSessionId);
-    if (!rt) throw new Error(`unknown claude session: ${ref.harnessSessionId}`);
+  private mustSession(ref: HarnessSessionHandle): ClaudeRuntime {
+    const rt = this.sessions.get(ref.handleId);
+    if (!rt) throw new Error(`unknown claude session: ${ref.handleId}`);
     return rt;
+  }
+
+  private publishSessionBinding(rt: ClaudeRuntime, sessionId: string): void {
+    rt.claudeSessionId = sessionId;
+    if (rt.publishedSessionId === sessionId) return;
+    rt.publishedSessionId = sessionId;
+    rt.bindingSink?.({
+      identity: { id: sessionId },
+      resumeState: sessionIdResumeState(sessionId),
+    });
   }
 
   private async handleCanUseTool(
@@ -1360,7 +1381,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: SDKMessage, turn: ClaudeTurn): void {
     switch (msg.type) {
       case "system":
-        if (msg.subtype === "init") rt.claudeSessionId = msg.session_id;
+        if (msg.subtype === "init") this.publishSessionBinding(rt, msg.session_id);
         else if (msg.subtype === "status") {
           // SDK 的 status 原生就是 phase-or-null 形状（'compacting' | 'requesting' | null）。
           // 只有 compacting 值得成为可见阶段；requesting 是普通运行态，与 null 一样

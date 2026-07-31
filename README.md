@@ -146,16 +146,16 @@ baton plugins list
 baton help                         # Show full help
 ```
 
-For native IDs, baton probes Codex and Claude Code read-only. A unique match is selected
+For HarnessSession IDs, baton probes Codex and Claude Code read-only. A unique match is selected
 automatically; if both Harnesses contain the same ID, use `cx:<id>` or `cc:<id>` (or choose
-interactively). Baton first materializes or reuses a source BatonSession, reconstructing the
-durable native history as ordinary turns attributed to that Harness, as if the BatonSession had
+interactively). Baton first adopts or reuses a source BatonSession, reconstructing the
+durable history observed by the Inspector as ordinary turns attributed to that Harness, as if the BatonSession had
 existed from the start. Both bundled Harnesses import their durable full history: Codex includes
 reasoning, tools, and plan proposals; Claude Code includes thinking, tool calls/results, and plan
 state. `resume` opens that source; `fork` applies the ordinary BatonSession fork to it, so the child
-starts with a fresh HarnessSession in the command's current project. The materialized source remains
-bound to the original native session. Baton does not mirror other clients in the background;
-explicitly using the native ID again performs a read-only prefix check and appends a new native tail
+starts with a fresh HarnessSession in the command's current project. The adopted source remains
+bound to the original HarnessSession. Baton does not mirror other clients in the background;
+explicitly using the ID again verifies the full semantic prefix with HarnessHistoryBoundary and appends a new tail
 to the existing Baton owner before resume/fork.
 
 Reference an ID returned by `baton sessions` in your prompt:

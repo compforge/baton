@@ -16,7 +16,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
@@ -161,16 +161,16 @@ class WakingAdapter implements HarnessAdapter {
   /** 只在首个 driven turn 后唤醒一次，避免测试结束后仍有 pending 的异步 append */
   private woken = false;
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: "waking-ref", resumed: false };
+    return { harness: this.harness, handleId: "waking-ref", resumed: false };
   }
 
-  async listModels(_ref: HarnessSessionRef): Promise<ModelOption[]> {
+  async listModels(_ref: HarnessSessionHandle): Promise<ModelOption[]> {
     return [{ id: "default", label: "Default" }];
   }
 
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.sink?.({
       kind: "user_message",
       turnId: input.turnId,
@@ -205,8 +205,8 @@ class WakingAdapter implements HarnessAdapter {
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 describe("controller observed-turn accounting", () => {
@@ -258,7 +258,7 @@ describe("claude adapter observed-turn minting", () => {
       sessions: Map<string, unknown>;
       mintObservedTurn(rt: unknown): { turnId: string; finalized: boolean };
     };
-    const rt = seams.sessions.get(ref.harnessSessionId);
+    const rt = seams.sessions.get(ref.handleId);
 
     const observed = seams.mintObservedTurn(rt);
     expect(observed.finalized).toBe(false);

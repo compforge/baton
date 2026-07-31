@@ -18,7 +18,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
@@ -51,19 +51,19 @@ class OverlapAdapter implements HarnessAdapter {
   sink?: EventSink;
   driven?: PromptInput;
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: "ov1", resumed: false };
+    return { harness: this.harness, handleId: "ov1", resumed: false };
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.driven = input;
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 function summaryTurnIds(): string[] {
@@ -245,7 +245,7 @@ describe("adapter contract: terminal state_update carries a turnId", () => {
       emit(rt: unknown, ev: AnyEventDraft, turn?: unknown): void;
       finishTurn(rt: unknown, emit: (ev: AnyEventDraft) => void, turn: unknown, stopReason: string): void;
     };
-    const rt = seams.sessions.get(ref.harnessSessionId);
+    const rt = seams.sessions.get(ref.handleId);
     if (!rt) throw new Error("controller not registered by open()");
 
     for (const [turnId, stop] of [
@@ -297,7 +297,7 @@ describe("adapter contract: terminal state_update carries a turnId", () => {
     const turnC = { turnId: "t_close", finalized: false };
     rt.turnId = "t_close";
     rt.activeTurn = turnC;
-    void adapter.close({ harness: "codex", harnessSessionId: "th1" });
+    void adapter.close({ harness: "codex", handleId: "th1" });
 
     const idles = events.filter(
       (ev) => ev.kind === "state_update" && (ev.payload as { state?: string }).state === "idle",
@@ -333,7 +333,7 @@ describe("codex pending cancel (bug#4 regression)", () => {
       finishTurn(rt: unknown, turn: unknown, turnStatus: string): void;
     };
     seams.threads.set("th1", rt);
-    const ref: HarnessSessionRef = { harness: "codex", harnessSessionId: "th1" };
+    const ref: HarnessSessionHandle = { harness: "codex", handleId: "th1" };
     return { adapter, seams, rt, calls, ref };
   }
 

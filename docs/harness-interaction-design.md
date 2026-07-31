@@ -366,10 +366,14 @@ interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;
 
-  open(options: OpenOptions, sink: EventSink): Promise<HarnessSessionRef>;
-  sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt>;
-  cancel(ref: HarnessSessionRef): Promise<void>;
-  close(ref: HarnessSessionRef): Promise<void>;
+  open(
+    options: OpenOptions,
+    sink: EventSink,
+    binding: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle>;
+  sendTurn(handle: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt>;
+  cancel(handle: HarnessSessionHandle): Promise<void>;
+  close(handle: HarnessSessionHandle): Promise<void>;
 }
 
 type SendTurnReceipt =
@@ -380,8 +384,10 @@ type SendTurnReceipt =
 `OpenOptions.resumeState` 是 `{ version, data }` 形态的 adapter-owned checkpoint；
 Baton 只负责持久化并在下次 `open` 时原样回传，不把恢复能力压扁成单个 session id。
 当前 Claude/Codex 的 v1 `data` 只含原生 session id，旧 `resumeSessionId` 暂留迁移兼容。
-Adapter 在首轮执行后才拿到 checkpoint 时，通过可选 `NativeSessionCheckpointable.resumeState()`
-回填；未知版本由 Adapter 自己 fail closed 或新建，core 不猜测。
+`HarnessSessionHandle` 只在当前 Adapter 实例内路由调用，不能持久化或当作稳定 identity。
+Adapter 在 identity / checkpoint 首次可知或更新时通过 `HarnessSessionBindingSink` 主动发布；
+Claude 即使要等首个 system/init 也走同一通道，Controller 不轮询 Adapter，更不解析 `hs_`
+之类的 Harness 方言。未知 resume 版本由 Adapter 自己 fail closed 或新建，core 不猜测。
 
 `sendTurn()` throw 只表示 Adapter 尚未接受投递责任；accepted 不代表 turn 完成，此后的失败必须
 经事件流给出 Harness 终态。Delivery Attempt 是 Controller 的持久记账，不进入
@@ -486,7 +492,7 @@ descriptor 用显式 marker object，给以后扩字段留空间；不能使用 
 
 ```ts
 interface CommandDiscoverable {
-  listCommands(ref: HarnessSessionRef): Promise<AvailableCommand[]>;
+  listCommands(handle: HarnessSessionHandle): Promise<AvailableCommand[]>;
 }
 ```
 
@@ -501,9 +507,9 @@ interface CommandDiscoverable {
 
 ```ts
 interface SessionConfigurable {
-  getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]>;
+  getConfig(handle: HarnessSessionHandle): Promise<SessionConfigOption[]>;
   setConfig(
-    ref: HarnessSessionRef,
+    handle: HarnessSessionHandle,
     configId: string,
     value: ConfigValue,
   ): Promise<SessionConfigOption[]>;

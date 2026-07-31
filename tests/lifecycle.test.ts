@@ -15,7 +15,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import type { AnyEventEnvelope, AnyEventDraft, StopReason } from "../src/event/types.ts";
 import { Controller, INTERRUPTED_NOTICE_TITLE } from "../src/controller/index.ts";
@@ -32,13 +32,13 @@ class ScriptedAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string = "scripted") {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: `${this.harness}-ref` };
+    return { harness: this.harness, handleId: `${this.harness}-ref` };
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.submits.push(input);
     return { accepted: true, effective: "new_turn" };
   }
@@ -55,12 +55,12 @@ class ScriptedAdapter implements HarnessAdapter {
     });
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {
     this.cancels++;
     this.onCancel?.();
   }
 
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 async function until(cond: () => boolean, timeoutMs = 2000): Promise<void> {

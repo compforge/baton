@@ -5,7 +5,7 @@ import type { InteractionHandler } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
 
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
-import type { PromptInput, HarnessSessionRef } from "../src/harness/adapter.ts";
+import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 
 const interactionHandler: InteractionHandler = async (req) =>
@@ -42,7 +42,7 @@ function harness(opts: { requestError?: Error } = {}) {
   };
   // 私有 threads 表注入 seam：绕开真实子进程（同 codex-turn-race.test.ts 的做法）
   (adapter as unknown as { threads: Map<string, FakeRt> }).threads.set("th1", rt);
-  const ref: HarnessSessionRef = { harness: "codex", harnessSessionId: "th1" };
+  const ref: HarnessSessionHandle = { harness: "codex", handleId: "th1" };
   return { adapter, events, requests, rt, ref };
 }
 

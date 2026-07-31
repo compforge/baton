@@ -54,7 +54,8 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 1. **作用域决定 owner**：Project 组织同 cwd 的 Session，并拥有 workspace 级 Plugin 私有数据；
    BatonSession 拥有正典历史和 session 级 Plugin 数据；HarnessTarget 是配置、调度与状态坐标；
-   HarnessSession 只是 Target 启动的原生执行状态。
+   HarnessSession 是 Target 内由 Harness 持有的持久执行会话；进程内 Handle 只负责调用路由，
+   mutable Binding 只描述当前连接，二者都不能代替 HarnessSession identity。
    Binding、授权、偏好、上下文水位与投影状态按明确的 Session / Target 身份隔离，未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
 2. **事实与投影分层**：Event Ledger 是 Session 执行与感知历史的真相源，Plugin Resource
@@ -71,10 +72,10 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    chat-tui 只负责终端焦点、输入路由和 surface 投影。
 4. **Harness 差异只留在 Adapter / capability**：新增 Harness 默认只改对应 adapter、registry
    与 identity 目录；Session、store/reduce、Projection 和 chat-tui 不出现 Harness 分支。开放
-   wire 值在边界保守归一，原始形态保留在 `raw`；外部原生 Session 只经 Adapter 只读发现，
-   并物化为绑定原生会话的 BatonSession；此后 resume / fork 只走 BatonSession 主路径。
-   接入后 BatonSession 是唯一 owner，不后台镜像其它客户端的旁路写入；显式以 native ID
-   再次接入时只允许前缀对账后补尾，分叉即失败。Baton 不托管 Harness 凭证。
+   wire 值在边界保守归一，原始形态保留在 `raw`；外部 HarnessSession 只经只读 Inspector
+   生成 HarnessHistorySnapshot，再 adoption 为 BatonSession；此后 resume / fork 只走
+   BatonSession 主路径。adoptedFrom 是不可变 owner 来源，当前 Binding 可重建；显式再次接入
+   只允许按 HarnessHistoryBoundary 对账完整语义前缀后补尾，分叉即失败。Baton 不托管 Harness 凭证。
 5. **可信交付必须有显式事实**：Controller 拥有 Input、Attempt、Turn 与 Interaction 生命周期，
    Adapter 拥有 Harness 执行；投递先持久化再 dispatch，无法证明结果时保留 `uncertain`；
    Context 只有 DeliveryReceipt 才推进目标 HarnessSession 的 Epoch。审批、用户决议和自动 reviewer

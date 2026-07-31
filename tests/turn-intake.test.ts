@@ -15,7 +15,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { textOf } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
@@ -36,14 +36,14 @@ class GatedOpenAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     await this.gate;
-    return { harness: this.harness, harnessSessionId: `${this.harness}-ref`, resumed: false };
+    return { harness: this.harness, handleId: `${this.harness}-ref`, resumed: false };
   }
 
   /** admission 后立即自动完成本 turn（终态经 sink 报告） */
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.prompts.push(textOf(input.blocks));
     queueMicrotask(() => {
       this.sink?.({
@@ -60,8 +60,8 @@ class GatedOpenAdapter implements HarnessAdapter {
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 let root: string;

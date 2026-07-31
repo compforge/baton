@@ -28,7 +28,7 @@ test("late stream-drain finalize from the previous turn must not close the next 
     emit(rt: unknown, ev: AnyEventDraft, turn?: TurnState): void;
     finishTurn(rt: unknown, emit: (ev: AnyEventDraft) => void, turn: TurnState, stopReason: string): void;
   };
-  const rt = seams.sessions.get(ref.harnessSessionId);
+  const rt = seams.sessions.get(ref.handleId);
   if (!rt) throw new Error("runtime not registered by open()");
 
   // turn A：admission 后被 result 消息正常终结

@@ -7,7 +7,7 @@ import type {
   AdapterCapabilities,
   EventSink,
   HarnessAdapter,
-  HarnessSessionRef,
+  HarnessSessionHandle,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -30,13 +30,13 @@ class DeliveryAdapter implements HarnessAdapter {
 
   constructor(private readonly mode: "complete" | "reject" | "hold") {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: "hs-native", resumed: false };
+    return { harness: this.harness, handleId: "hs-native", resumed: false };
   }
 
   async sendTurn(
-    _ref: HarnessSessionRef,
+    _ref: HarnessSessionHandle,
     input: PromptInput,
   ): Promise<SendTurnReceipt> {
     this.submission = input;
@@ -54,8 +54,8 @@ class DeliveryAdapter implements HarnessAdapter {
     });
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 let root: string;

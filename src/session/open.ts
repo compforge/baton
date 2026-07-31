@@ -3,10 +3,6 @@ import {
   type HarnessDeliveryAttemptState,
 } from "../controller/attempt.ts";
 import type { AnyEventEnvelope, EventEnvelope } from "../event/types.ts";
-import {
-  sessionIdFromResumeState,
-  sessionIdResumeState,
-} from "../harness/resume.ts";
 import { reduceEvents } from "../store/reduce.ts";
 import type { SessionHandle, SessionStore } from "../store/store.ts";
 
@@ -96,7 +92,6 @@ function resolveSession(
 function recoverInterruptedState(session: SessionHandle): boolean {
   const events = session.readEvents();
   if (events.length === 0) return false;
-  const recoveredHarnessSession = recoverClaudeSessionMetadata(session, events);
   const state = reduceEvents(events);
   const recoveredAttempt = recoverDeliveryAttempts(session, events);
 
@@ -120,7 +115,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
         interaction.interaction.requester.type !== "plugin",
     )
   ) {
-    return recoveredAttempt || recoveredHarnessSession;
+    return recoveredAttempt;
   }
 
   for (const [interactionId, interaction] of state.interactions) {
@@ -168,42 +163,6 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   }
   for (const turnId of unsummarized) session.summarizeTurnEvent(turnId);
   return true;
-}
-
-/**
- * 旧版本可能在 Claude system/init 返回 UUID 前把 adapter-local hs_ ref 写进 meta。
- * 已观察到原生事件时恢复 UUID；否则清掉无效 ref，让下次 open 安全创建新会话。
- */
-function recoverClaudeSessionMetadata(
-  session: SessionHandle,
-  events: AnyEventEnvelope[],
-): boolean {
-  let recovered = false;
-  for (const [targetId, meta] of Object.entries(session.meta.harnessSessions)) {
-    if (meta.harness !== "claude-code") continue;
-    const resumeSessionId = sessionIdFromResumeState(meta.resumeState);
-    if (
-      !meta.harnessSessionId?.startsWith("hs_") &&
-      !resumeSessionId?.startsWith("hs_")
-    ) {
-      continue;
-    }
-    const nativeSessionId = events.findLast(
-      (event) =>
-        event.harnessTargetId === targetId &&
-        Boolean(event.harnessSessionId) &&
-        !event.harnessSessionId?.startsWith("hs_"),
-    )?.harnessSessionId;
-    session.setHarnessSession(targetId, {
-      ...meta,
-      harnessSessionId: nativeSessionId,
-      resumeState: nativeSessionId
-        ? sessionIdResumeState(nativeSessionId)
-        : undefined,
-    });
-    recovered = true;
-  }
-  return recovered;
 }
 
 /**

@@ -11,7 +11,7 @@ import { expect, test } from "bun:test";
 
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import { JsonRpcPeer } from "../src/harness/codex/jsonrpc.ts";
-import type { PromptInput, HarnessSessionRef } from "../src/harness/adapter.ts";
+import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
 import type { AnyEventDraft, Notice } from "../src/event/types.ts";
 
 const interactionHandler: InteractionHandler = async (req) =>
@@ -52,7 +52,7 @@ function wireHarness() {
       .handleNotification(rt, method, params),
   );
   (adapter as unknown as { threads: Map<string, unknown> }).threads.set("th1", rt);
-  const ref: HarnessSessionRef = { harness: "codex", harnessSessionId: "th1" };
+  const ref: HarnessSessionHandle = { harness: "codex", handleId: "th1" };
   const notifyIn = (method: string, params: unknown) =>
     peer.feed(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   const noticesOf = () => events.filter((ev) => ev.kind === "_baton_notice");

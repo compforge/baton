@@ -5,10 +5,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import type {
-  NativeSessionInfo,
-  NativeSessionProvider,
-  NativeSessionTurn,
+  HarnessHistorySnapshot,
+  HarnessHistoryTurn,
+  HarnessSessionInspector,
 } from "../native-session.ts";
+import { harnessHistoryBoundary } from "../../store/store.ts";
 import {
   claudeDurableMessageDrafts,
   type ClaudeDurableMappingState,
@@ -43,13 +44,13 @@ interface ClaudeNativeTurnBuilder {
   turnId: string;
   userTexts: string[];
   agentTexts: string[];
-  events: NonNullable<NativeSessionTurn["events"]>;
+  events: NonNullable<HarnessHistoryTurn["events"]>;
   running: boolean;
 }
 
 /** Claude getSessionMessages durable history → 与 live adapter 同构的 Baton turns。 */
-export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn[] {
-  const turns: NativeSessionTurn[] = [];
+export function claudeHistoryTurns(messages: SessionMessage[]): HarnessHistoryTurn[] {
+  const turns: HarnessHistoryTurn[] = [];
   const state: ClaudeDurableMappingState = {
     suppressedToolIds: new Set(),
     capturedProposedPlanKeys: new Set(),
@@ -58,15 +59,15 @@ export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn
   };
   let current: ClaudeNativeTurnBuilder | undefined;
 
-  const startTurn = (): ClaudeNativeTurnBuilder => ({
-    turnId: `native-${turns.length + 1}`,
+  const startTurn = (turnId: string): ClaudeNativeTurnBuilder => ({
+    turnId,
     userTexts: [],
     agentTexts: [],
     events: [],
     running: false,
   });
-  const ensureTurn = (): ClaudeNativeTurnBuilder =>
-    (current ??= startTurn());
+  const ensureTurn = (turnId: string): ClaudeNativeTurnBuilder =>
+    (current ??= startTurn(turnId));
   const pushRunning = (turn: ClaudeNativeTurnBuilder): void => {
     if (turn.running) return;
     turn.running = true;
@@ -82,10 +83,13 @@ export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn
       source: "harness",
       event: {
         kind: "state_update",
-        payload: { state: "idle", stopReason: "end_turn" },
+        // getSessionMessages 不提供 result/stop_reason；只能声明“观察到历史停在这里”，
+        // 不能把缺失的终态证据提升成 end_turn。
+        payload: { state: "idle", stopReason: "unknown" },
       },
     });
     turns.push({
+      turnId: current.turnId,
       userText: current.userTexts.join("\n") || undefined,
       agentText: current.agentTexts.join("\n") || undefined,
       events: current.events,
@@ -101,7 +105,7 @@ export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn
         : "";
     if (userText) {
       flush();
-      const turn = ensureTurn();
+      const turn = ensureTurn(message.uuid);
       turn.userTexts.push(userText);
       turn.events.push({
         source: "user",
@@ -129,7 +133,7 @@ export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn
     // 纯注入上下文在剥离后可能为空；不能为它伪造一个空 observed turn。
     if (!userText && !hasDurableActivity) continue;
 
-    const turn = ensureTurn();
+    const turn = ensureTurn(message.uuid);
     pushRunning(turn);
     if (message.type === "assistant" && !message.parent_tool_use_id) {
       const agentText = directTextContent(message.message);
@@ -151,22 +155,28 @@ export function claudeNativeTurns(messages: SessionMessage[]): NativeSessionTurn
   return turns;
 }
 
-export const claudeNativeSessions: NativeSessionProvider = {
-  async inspect(sessionId, options): Promise<NativeSessionInfo | null> {
+export const claudeSessionInspector: HarnessSessionInspector = {
+  async inspect(sessionId, options): Promise<HarnessHistorySnapshot | null> {
     const info = await getSessionInfo(sessionId);
     const messages = await getSessionMessages(sessionId, {
       ...(info?.cwd ? { dir: info.cwd } : { dir: options.cwd }),
     });
     // getSessionInfo 会跳过“没有可提取 summary”的有效 transcript；消息读取才是存在性兜底。
     if (!info && messages.length === 0) return null;
+    const turns = claudeHistoryTurns(messages);
     return {
-      nativeSessionId: info?.sessionId ?? sessionId,
+      identity: { id: info?.sessionId ?? sessionId },
       cwd: info?.cwd ?? options.cwd,
       title:
         info?.customTitle ||
         info?.summary ||
         (info?.firstPrompt ? stripBatonInjectedContext(info.firstPrompt) : undefined),
-      turns: claudeNativeTurns(messages),
+      turns,
+      observedThrough: harnessHistoryBoundary(turns),
     };
   },
 };
+
+/** @deprecated 使用 claudeHistoryTurns / claudeSessionInspector。 */
+export const claudeNativeTurns = claudeHistoryTurns;
+export const claudeNativeSessions = claudeSessionInspector;

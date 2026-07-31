@@ -8,13 +8,15 @@ import type {
   HarnessAdapter,
   EffortOption,
   EventSink,
+  HarnessSessionBindingSink,
   ModelOption,
   OpenOptions,
   PromptInput,
   PromptReceipt,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
+import { sessionIdResumeState } from "../src/harness/resume.ts";
 import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/types.ts";
 import { textOf } from "../src/event/types.ts";
 import { Controller, type InteractionHandlers } from "../src/controller/index.ts";
@@ -35,50 +37,52 @@ class FakeAdapter implements HarnessAdapter {
     private readonly hooks: { enter?: () => void; leave?: () => void; delayMs?: number } = {},
   ) {}
 
-  async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
     this.sink = sink;
+    const sessionId = `${this.harness}-native`;
+    binding?.({ identity: { id: sessionId }, resumeState: sessionIdResumeState(sessionId) });
     return {
       harness: this.harness,
-      harnessSessionId: `${this.harness}-controller-ref`,
+      handleId: `${this.harness}-controller-ref`,
       resumed: Boolean(opts.resumeSessionId),
     };
   }
 
-  nativeSessionId(_ref: HarnessSessionRef): string | undefined {
-    return `${this.harness}-native`;
-  }
-
-  async syncContext(_ref: HarnessSessionRef, blocks: PromptBlock[]): Promise<void> {
+  async syncContext(_ref: HarnessSessionHandle, blocks: PromptBlock[]): Promise<void> {
     this.synced.push(textOf(blocks));
   }
 
-  async listModels(_ref: HarnessSessionRef): Promise<ModelOption[]> {
+  async listModels(_ref: HarnessSessionHandle): Promise<ModelOption[]> {
     return [{ id: "default", label: "Default" }, { id: "fast", label: "Fast" }];
   }
 
-  async setModel(_ref: HarnessSessionRef, modelId: string | null): Promise<void> {
+  async setModel(_ref: HarnessSessionHandle, modelId: string | null): Promise<void> {
     this.model = modelId === "default" ? null : modelId;
   }
 
-  currentModel(_ref: HarnessSessionRef): string | null {
+  currentModel(_ref: HarnessSessionHandle): string | null {
     return this.model;
   }
 
-  async listEfforts(_ref: HarnessSessionRef): Promise<EffortOption[]> {
+  async listEfforts(_ref: HarnessSessionHandle): Promise<EffortOption[]> {
     return [{ id: "default", label: "Default" }, { id: "high", label: "High" }];
   }
 
-  async setEffort(_ref: HarnessSessionRef, effortId: string | null): Promise<void> {
+  async setEffort(_ref: HarnessSessionHandle, effortId: string | null): Promise<void> {
     this.effort = effortId === "default" ? null : effortId;
   }
 
-  currentEffort(_ref: HarnessSessionRef): string | null {
+  currentEffort(_ref: HarnessSessionHandle): string | null {
     return this.effort;
   }
 
   /** sendTurn 立即回执；事件（含终态）异步经 open 绑定的 sink 上报。user_message 由 controller 落盘 */
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.hooks.enter?.();
     this.prompts.push(textOf(input.blocks));
     void (async () => {
@@ -98,8 +102,8 @@ class FakeAdapter implements HarnessAdapter {
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 class TargetedFakeAdapter extends FakeAdapter {
@@ -107,52 +111,61 @@ class TargetedFakeAdapter extends FakeAdapter {
     super("codex");
   }
 
-  override async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  override async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
     this.sink = sink;
+    const sessionId = `${this.instanceId}-native`;
+    binding?.({ identity: { id: sessionId }, resumeState: sessionIdResumeState(sessionId) });
     return {
       harness: this.harness,
-      harnessSessionId: `${this.instanceId}-controller-ref`,
+      handleId: `${this.instanceId}-controller-ref`,
       resumed: Boolean(opts.resumeSessionId),
     };
   }
 
-  override nativeSessionId(_ref: HarnessSessionRef): string {
-    return `${this.instanceId}-native`;
-  }
 }
 
 class DelayedNativeIdAdapter extends FakeAdapter {
   nativeId?: string;
   turnId?: string;
   beforeNativeId?: () => void;
+  binding?: HarnessSessionBindingSink;
 
   constructor() {
     super("claude-code");
   }
 
-  override async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  override async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
     this.sink = sink;
+    this.binding = binding;
     return {
       harness: this.harness,
-      harnessSessionId: "hs_runtime_only",
+      handleId: "hs_runtime_only",
       resumed: false,
     };
   }
 
-  override nativeSessionId(_ref: HarnessSessionRef): string | undefined {
-    return this.nativeId;
-  }
-
   override async sendTurn(
-    _ref: HarnessSessionRef,
+    _ref: HarnessSessionHandle,
     input: PromptInput,
   ): Promise<SendTurnReceipt> {
     this.prompts.push(textOf(input.blocks));
     this.turnId = input.turnId;
     this.beforeNativeId?.();
     this.nativeId = "4bc983eb-f25c-4857-9ac2-28ac6442e74c";
+    this.binding?.({
+      identity: { id: this.nativeId },
+      resumeState: sessionIdResumeState(this.nativeId),
+    });
     this.sink?.({
       kind: "agent_message",
       turnId: input.turnId,
@@ -180,7 +193,7 @@ class CompactAdapter extends FakeAdapter {
   override readonly capabilities: AdapterCapabilities = { prompt: {}, compact: { supported: true } };
   compactCalls: string[] = [];
 
-  async compactContext(_ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt> {
+  async compactContext(_ref: HarnessSessionHandle, turnId: string): Promise<PromptReceipt> {
     this.compactCalls.push(turnId);
     this.sink?.({
       kind: "_baton_run_status",
@@ -324,7 +337,7 @@ describe("Controller", () => {
 
   test("overrides adapter-supplied event attribution at the trusted host boundary", async () => {
     class SpoofingAdapter extends FakeAdapter {
-      override async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+      override async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "agent_message",
           turnId: input.turnId,
@@ -366,7 +379,7 @@ describe("Controller", () => {
     class ManualAdapter extends FakeAdapter {
       turnId?: string;
 
-      override async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+      override async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
         this.turnId = input.turnId;
         return { accepted: true, effective: "new_turn" };
       }
@@ -785,12 +798,12 @@ describe("interaction resolver registry", () => {
 
     constructor(private readonly handlers: InteractionHandlers) {}
 
-    async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+    async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
       this.sink = sink;
-      return { harness: this.harness, harnessSessionId: "ia-ref", resumed: false };
+      return { harness: this.harness, handleId: "ia-ref", resumed: false };
     }
 
-    async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+    async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
       const emit = (ev: Parameters<EventSink>[0]) => this.sink?.({ ...ev, turnId: input.turnId });
       emit({ kind: "state_update", payload: { state: "running" } });
       void (async () => {
@@ -814,8 +827,8 @@ describe("interaction resolver registry", () => {
       return { accepted: true, effective: "new_turn" };
     }
 
-    async cancel(_ref: HarnessSessionRef): Promise<void> {}
-    async close(_ref: HarnessSessionRef): Promise<void> {}
+    async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+    async close(_ref: HarnessSessionHandle): Promise<void> {}
   }
 
   test("resolve wakes the adapter exactly once; unknown/stale ids report false", async () => {
@@ -886,7 +899,7 @@ describe("interaction resolver registry", () => {
 
       constructor(private readonly handlers: InteractionHandlers) {}
 
-      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
         const response = await this.handlers.interactionHandler({
           kind: "hook_trust" as const,
@@ -902,10 +915,10 @@ describe("interaction resolver registry", () => {
           ],
         });
         expect(response).toEqual({ kind: "hook_trust", outcome: "trusted" });
-        return { harness: this.harness, harnessSessionId: "startup-trust", resumed: false };
+        return { harness: this.harness, handleId: "startup-trust", resumed: false };
       }
 
-      async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+      async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "state_update",
           turnId: input.turnId,
@@ -952,7 +965,7 @@ describe("interaction resolver registry", () => {
 
       constructor(private readonly handlers: InteractionHandlers) {}
 
-      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
         const response = await this.handlers.interactionHandler({
           kind: "permission" as const,
@@ -962,10 +975,10 @@ describe("interaction resolver registry", () => {
           ],
         });
         expect(response).toMatchObject({ kind: "permission", optionId: "allow" });
-        return { harness: this.harness, harnessSessionId: "setup-permission", resumed: false };
+        return { harness: this.harness, handleId: "setup-permission", resumed: false };
       }
 
-      async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+      async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
         this.sink?.({
           kind: "state_update",
           turnId: input.turnId,

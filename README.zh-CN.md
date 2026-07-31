@@ -145,14 +145,14 @@ baton plugins list
 baton help                         # 查看完整帮助
 ```
 
-对裸原生 ID，baton 会只读探测 Codex 与 Claude Code：只有一方命中时自动选择；两边都命中时
-可交互选择，或用 `cx:<id>` / `cc:<id>` 显式消歧。baton 会先物化或复用一个源 BatonSession，
-把可只读恢复的原生持久历史还原成归属于该 Harness 的普通 Baton turn，等价于这个
+对裸 HarnessSession ID，baton 会只读探测 Codex 与 Claude Code：只有一方命中时自动选择；两边都命中时
+可交互选择，或用 `cx:<id>` / `cc:<id>` 显式消歧。baton 会先 adoption 或复用一个源 BatonSession，
+把 Inspector 可只读恢复的持久历史还原成归属于该 Harness 的普通 Baton turn，等价于这个
 BatonSession 从一开始就存在。两个内置 Harness 都会导入各自可持久恢复的完整历史：Codex
 包含 reasoning、工具和计划提案，Claude Code 包含 thinking、工具调用/结果和计划状态。
 `resume` 直接打开这个源；`fork` 对它执行普通 BatonSession fork，因此 child 会在命令当前
-project 中启动全新的 HarnessSession。物化出的源继续绑定原生会话。Baton 不会在后台自动镜像
-其它客户端的写入；再次显式使用原生 ID 时，会先只读校验历史前缀并把新增尾部补入已有
+project 中启动全新的 HarnessSession。adoption 源继续绑定原 HarnessSession。Baton 不会在后台自动镜像
+其它客户端的写入；再次显式使用该 ID 时，会用 HarnessHistoryBoundary 校验完整语义前缀并把新增尾部补入已有
 Baton owner，再 resume / fork。
 
 在输入中引用 `baton sessions` 列出的 ID：

@@ -14,12 +14,32 @@ import type {
 } from "../interaction/types.ts";
 import type { HarnessResumeState } from "./resume.ts";
 
-export interface HarnessSessionRef {
+/**
+ * Adapter 进程内的会话句柄。它只用于把后续调用路由回当前 Adapter 实例，
+ * 不能持久化，也不能当作 HarnessSession 的稳定身份。
+ */
+export interface HarnessSessionHandle {
   harness: string;
-  harnessSessionId: string;
+  handleId: string;
   /** 是否成功恢复了既有原生会话；false 表示新建，宿主需要从 BatonSession 补历史。 */
   resumed?: boolean;
 }
+
+/** HarnessSession 在所属 HarnessTarget 内的稳定身份。 */
+export interface HarnessSessionIdentity {
+  id: string;
+}
+
+/**
+ * 当前执行绑定可持久化的部分。Adapter 在身份首次可知以及 checkpoint 更新时主动发布；
+ * 宿主不从进程内 handle 猜测稳定身份。
+ */
+export interface HarnessSessionBinding {
+  identity: HarnessSessionIdentity;
+  resumeState: HarnessResumeState;
+}
+
+export type HarnessSessionBindingSink = (binding: HarnessSessionBinding) => void;
 
 /** Adapter 只报告事实内容；执行归属由绑定该 Adapter 的宿主补齐。 */
 export type EventSink = (ev: AnyEventDraft) => void;
@@ -140,8 +160,15 @@ export interface AdapterCapabilities {
 export interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;
-  /** 建立（或恢复）harness session 并绑定事件出口；此后包括 harness 主动事件在内都经 sink 上报 */
-  open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef>;
+  /**
+   * 建立（或恢复）HarnessSession 并绑定事实出口。`binding` 是稳定身份的唯一发布通道；
+   * 即使身份要到首个原生事件才出现，Adapter 也必须在可知时立即发布。
+   */
+  open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle>;
   /**
    * 发送输入。Adapter 根据自己的活跃 turn 决定开启新 turn、same-turn steer 或拒绝：
    * - 无活跃 turn 时，接受后必须返回 `new_turn`；
@@ -152,10 +179,10 @@ export interface HarnessAdapter {
    * 给出终态。入参是闭合的 PromptBlock（非开放 ContentBlock）：不支持的 block 类型
    * 必须在 admission 前报带类型的明确错误，禁止静默丢弃（design §4.2）。
    */
-  sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt>;
+  sendTurn(ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt>;
   /** 请求中断当前 turn；确认以最终 `idle/cancelled` 事件为准，发出后仍接受在途 update */
-  cancel(ref: HarnessSessionRef): Promise<void>;
-  close(ref: HarnessSessionRef): Promise<void>;
+  cancel(ref: HarnessSessionHandle): Promise<void>;
+  close(ref: HarnessSessionHandle): Promise<void>;
 }
 
 /** admission 检查：返回 capabilities 未声明支持的 block 类型（text 恒支持） */
@@ -192,9 +219,9 @@ export interface ModelOption {
  * 让 `/model` 在 harness busy 时也有稳定、跨 harness 一致的语义。
  */
 export interface ModelConfigurable {
-  listModels(ref: HarnessSessionRef): Promise<ModelOption[]>;
-  setModel(ref: HarnessSessionRef, modelId: string | null): Promise<void>;
-  currentModel(ref: HarnessSessionRef): string | null;
+  listModels(ref: HarnessSessionHandle): Promise<ModelOption[]>;
+  setModel(ref: HarnessSessionHandle, modelId: string | null): Promise<void>;
+  currentModel(ref: HarnessSessionHandle): string | null;
 }
 
 export function isModelConfigurable(adapter: HarnessAdapter): adapter is HarnessAdapter & ModelConfigurable {
@@ -217,9 +244,9 @@ export interface EffortOption {
  * 与 setModel 一样只影响后续 prompt，不改变正在运行的 turn。
  */
 export interface EffortConfigurable {
-  listEfforts(ref: HarnessSessionRef): Promise<EffortOption[]>;
-  setEffort(ref: HarnessSessionRef, effortId: string | null): Promise<void>;
-  currentEffort(ref: HarnessSessionRef): string | null;
+  listEfforts(ref: HarnessSessionHandle): Promise<EffortOption[]>;
+  setEffort(ref: HarnessSessionHandle, effortId: string | null): Promise<void>;
+  currentEffort(ref: HarnessSessionHandle): string | null;
 }
 
 export function isEffortConfigurable(adapter: HarnessAdapter): adapter is HarnessAdapter & EffortConfigurable {
@@ -236,9 +263,9 @@ export function isEffortConfigurable(adapter: HarnessAdapter): adapter is Harnes
  * `/model`、`/effort` 只是该快照中 model / thought_level 两项的快捷入口。
  */
 export interface SessionConfigurable {
-  getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]>;
+  getConfig(ref: HarnessSessionHandle): Promise<SessionConfigOption[]>;
   setConfig(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     configId: string,
     value: ConfigValue,
   ): Promise<SessionConfigOption[]>;
@@ -269,7 +296,7 @@ export interface ReconcileVerdict {
 
 /** 可选对账能力：只观察 Harness 当前状态，是否收口由 Controller 决定。 */
 export interface Reconcilable {
-  reconcile(ref: HarnessSessionRef, turnId: string): Promise<ReconcileVerdict>;
+  reconcile(ref: HarnessSessionHandle, turnId: string): Promise<ReconcileVerdict>;
 }
 
 export function isReconcilable(adapter: HarnessAdapter): adapter is HarnessAdapter & Reconcilable {
@@ -292,7 +319,7 @@ export interface ApprovalRoutable {
    * 能覆盖用户 config.toml 里写死的值、也能覆盖启动参数。无法确知时返回 null——
    * 不知道就别声称（不变量 #2），投影据此静默而不是编一个。
    */
-  approvalRoute(ref: HarnessSessionRef): ApprovalRoute | null;
+  approvalRoute(ref: HarnessSessionHandle): ApprovalRoute | null;
 }
 
 export function isApprovalRoutable(adapter: HarnessAdapter): adapter is HarnessAdapter & ApprovalRoutable {
@@ -306,7 +333,7 @@ export function isApprovalRoutable(adapter: HarnessAdapter): adapter is HarnessA
  * 到该 turn，并在所有终结路径发一次 idle。方法 resolve 只表示请求已被接收，不表示压缩完成。
  */
 export interface ContextCompactable {
-  compactContext(ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt>;
+  compactContext(ref: HarnessSessionHandle, turnId: string): Promise<PromptReceipt>;
 }
 
 export function isContextCompactable(adapter: HarnessAdapter): adapter is HarnessAdapter & ContextCompactable {
@@ -315,7 +342,7 @@ export function isContextCompactable(adapter: HarnessAdapter): adapter is Harnes
 
 /** 可把 BatonSession 的缺失历史追加到 harness 自己的 model-visible history。 */
 export interface ContextSynchronizable {
-  syncContext(ref: HarnessSessionRef, blocks: PromptBlock[]): Promise<void>;
+  syncContext(ref: HarnessSessionHandle, blocks: PromptBlock[]): Promise<void>;
 }
 
 export function isContextSynchronizable(
@@ -325,27 +352,6 @@ export function isContextSynchronizable(
 }
 
 /** Adapter 显式暴露可持久化 checkpoint；Baton 不解析其中的 adapter 私有 data。 */
-export interface NativeSessionCheckpointable {
-  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined;
-}
-
-export function isNativeSessionCheckpointable(
-  adapter: HarnessAdapter,
-): adapter is HarnessAdapter & NativeSessionCheckpointable {
-  return typeof (adapter as Partial<NativeSessionCheckpointable>).resumeState === "function";
-}
-
-/** @deprecated 迁移兼容；新 adapter 实现 NativeSessionCheckpointable。 */
-export interface NativeSessionIdentifiable {
-  nativeSessionId(ref: HarnessSessionRef): string | undefined;
-}
-
-export function isNativeSessionIdentifiable(
-  adapter: HarnessAdapter,
-): adapter is HarnessAdapter & NativeSessionIdentifiable {
-  return typeof (adapter as Partial<NativeSessionIdentifiable>).nativeSessionId === "function";
-}
-
 /**
  * Adapter 报告 Interaction 时附带的执行坐标与原始协议消息。它们进入 Event 信封，
  * 不混入 Interaction 的稳定内容。

@@ -50,6 +50,7 @@ import {
   type UsageUpdate,
 } from "../event/types.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
+import type { HarnessSessionIdentity } from "../harness/adapter.ts";
 import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
 import { reduceEvents, type SessionState } from "./reduce.ts";
 
@@ -86,7 +87,31 @@ export interface SessionForkOrigin {
   throughSeq: number;
 }
 
-/** 从 Harness 原生会话接入 Baton 时的来源；原生 id 只作谱系，不成为 BatonSession identity。 */
+/** 从 HarnessSession 接入 Baton 时的不可变来源坐标。 */
+export interface AdoptedHarnessSession {
+  harnessTargetId: string;
+  harness: string;
+  identity: HarnessSessionIdentity;
+}
+
+/**
+ * 某一段 Harness 历史前缀的内容边界。digest 覆盖从首轮到 turnCount 的完整语义投影，
+ * 因而能发现早期工具/推理/计划事实被旁路改写，而不只比较最后一轮文本。
+ */
+export interface HarnessHistoryBoundary {
+  /** digest 语义版本；算法或归一投影变化时递增，禁止拿不同版本直接比较。 */
+  version: 1;
+  turnId?: string;
+  turnCount: number;
+  prefixDigest: string;
+}
+
+export interface HarnessSessionAdoption {
+  session: AdoptedHarnessSession;
+  importedThrough: HarnessHistoryBoundary;
+}
+
+/** @deprecated 仅用于读取 0.2.14 及更早版本的 meta。 */
 export interface NativeSessionOrigin {
   harnessTargetId: string;
   harness: string;
@@ -107,6 +132,9 @@ export interface SessionMeta {
   /** harnessTargetId → 当前原生 HarnessSession 绑定与 target 级偏好。 */
   harnessSessions: Record<string, HarnessSessionMeta>;
   forkedFrom?: SessionForkOrigin;
+  /** 首次 adoption 的 HarnessSession 永不随当前执行 binding 改写。 */
+  adoptedFrom?: HarnessSessionAdoption;
+  /** @deprecated 读取时迁移到 adoptedFrom；新写入不再产生。 */
   nativeSessionOrigin?: NativeSessionOrigin;
 }
 
@@ -170,20 +198,34 @@ export interface NativeSessionMaterialization {
   nativeSessionId: string;
   cwd: string;
   title?: string;
-  turns: NativeSessionMaterializationTurn[];
+  turns: HarnessHistoryTurn[];
 }
 
-export interface NativeSessionMaterializationEvent {
+export interface HarnessHistoryEvent {
   source: "user" | "baton" | "harness";
   event: AnyEventDraft;
 }
 
-export interface NativeSessionMaterializationTurn {
+export interface HarnessHistoryTurn {
+  /** Harness 中该 turn 的稳定 id；旧 Provider 缺失时用快照内位置兼容。 */
+  turnId?: string;
   userText?: string;
   agentText?: string;
   /** Harness 已归一的完整 turn；缺省时兼容只提供 user/assistant 文本的 provider。 */
-  events?: NativeSessionMaterializationEvent[];
+  events?: HarnessHistoryEvent[];
 }
+
+export interface HarnessSessionAdoptionSource {
+  session: AdoptedHarnessSession;
+  cwd: string;
+  title?: string;
+  turns: HarnessHistoryTurn[];
+  observedThrough: HarnessHistoryBoundary;
+}
+
+/** @deprecated 0.2.14 public type aliases. */
+export type NativeSessionMaterializationEvent = HarnessHistoryEvent;
+export type NativeSessionMaterializationTurn = HarnessHistoryTurn;
 
 function previewFromSessionLog(dir: string): string | undefined {
   const path = join(dir, "session.jsonl");
@@ -273,57 +315,70 @@ export class SessionStore {
     return new SessionHandle(id, dir, meta, this.loggerOptions);
   }
 
-  /**
-   * 把 Harness 只读验证过的原生会话物化为 BatonSession。
-   *
-   * 原生协议细节不进入 core；Provider 已归一的持久历史按 Baton 的普通 turn 主路径落盘，
-   * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
-   */
-  materializeNativeSession(
-    source: NativeSessionMaterialization,
+  /** 把只读 HarnessHistorySnapshot 接入唯一 BatonSession owner。 */
+  adoptHarnessSession(
+    source: HarnessSessionAdoptionSource,
   ): { session: SessionHandle; reused: boolean } {
-    const release = this.acquireNativeSessionLock();
+    assertObservedBoundary(source);
+    const release = this.acquireHarnessSessionAdoptionLock();
     try {
-      const existing = this.findByNativeSession(source.harnessTargetId, source.nativeSessionId);
+      const existing = this.findByHarnessSession(source.session);
       if (existing) {
         const session = this.openSession(existing.batonSessionId);
         const ownsLock = session.acquireLock();
         try {
-          this.reconcileNativeSession(session, source);
+          this.reconcileHarnessSession(session, source);
         } finally {
           if (ownsLock) session.releaseLock();
         }
         return { session, reused: true };
       }
-      return { session: this.createFromNativeSession(source), reused: false };
+      return { session: this.createFromHarnessSession(source), reused: false };
     } finally {
       release();
     }
   }
 
-  private createFromNativeSession(source: NativeSessionMaterialization): SessionHandle {
+  /** @deprecated 0.2.14 Provider 兼容入口；新调用方传 HarnessHistorySnapshot。 */
+  materializeNativeSession(
+    source: NativeSessionMaterialization,
+  ): { session: SessionHandle; reused: boolean } {
+    return this.adoptHarnessSession({
+      session: {
+        harnessTargetId: source.harnessTargetId,
+        harness: source.harness,
+        identity: { id: source.nativeSessionId },
+      },
+      cwd: source.cwd,
+      title: source.title,
+      turns: source.turns,
+      observedThrough: harnessHistoryBoundary(source.turns),
+    });
+  }
+
+  private createFromHarnessSession(source: HarnessSessionAdoptionSource): SessionHandle {
     const session = this.createSession({ cwd: source.cwd, title: source.title });
-    const label = source.title?.trim() || source.nativeSessionId;
+    const { harnessTargetId, harness, identity } = source.session;
+    const label = source.title?.trim() || identity.id;
     let syncedSeq = 0;
     for (const turn of source.turns) {
       syncedSeq = this.appendMaterializedTurn(session, source, turn);
     }
-    // 来源与原生 binding 必须在同一次原子 meta 替换中出现，避免崩溃留下半个 owner。
+    // 不可变来源、已导入边界与当前 binding 必须原子出现，避免崩溃留下半个 owner。
     session.updateMeta({
-      description: `import: ${source.harness} ${label}`,
-      nativeSessionOrigin: {
-        harnessTargetId: source.harnessTargetId,
-        harness: source.harness,
-        nativeSessionId: source.nativeSessionId,
+      description: `import: ${harness} ${label}`,
+      adoptedFrom: {
+        session: source.session,
+        importedThrough: source.observedThrough,
       },
       harnessSessions: {
-        [source.harnessTargetId]: {
-          harnessTargetId: source.harnessTargetId,
-          harness: source.harness,
-          harnessSessionId: source.nativeSessionId,
-          resumeState: sessionIdResumeState(source.nativeSessionId),
+        [harnessTargetId]: {
+          harnessTargetId,
+          harness,
+          harnessSessionId: identity.id,
+          resumeState: sessionIdResumeState(identity.id),
           contextEpochId: newId("ctxe"),
-          // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
+          // HarnessSession 已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
           syncedSeq,
         },
       },
@@ -332,63 +387,92 @@ export class SessionStore {
   }
 
   /**
-   * 显式用 native id 再次 resume/fork 时做一次单向前缀对账：既有 Baton 历史必须是当前
-   * 原生历史的前缀，只追加原生新增尾部。这样不会引入第二个 owner，也不会让后台旁路写入
-   * 永久卡在首次导入水位；直接用 bs_ 打开仍不触发原生读取。
+   * 再次 adoption 时先对账完整语义前缀，再只追加 Harness 新增尾部。当前 execution binding
+   * 可以重建或切换，但 adoptedFrom 始终指向第一次接入的 HarnessSession。
    */
-  private reconcileNativeSession(
+  private reconcileHarnessSession(
     session: SessionHandle,
-    source: NativeSessionMaterialization,
+    source: HarnessSessionAdoptionSource,
   ): void {
+    const { harnessTargetId, harness, identity } = source.session;
     const summaries = session
       .readEvents()
       .filter(
         (event): event is EventEnvelope<"_baton_turn_summary"> =>
           event.kind === "_baton_turn_summary" &&
-          event.harnessTargetId === source.harnessTargetId,
+          event.harnessTargetId === harnessTargetId,
       );
-    const shared = Math.min(summaries.length, source.turns.length);
-    for (let index = 0; index < shared; index++) {
-      const existing = summaries[index]!.payload;
-      const incoming = source.turns[index]!;
-      if (
-        comparableTurnText(existing.userText) !== comparableTurnText(incoming.userText) ||
-        comparableTurnText(existing.agentText) !== comparableTurnText(incoming.agentText)
-      ) {
+    if (summaries.length > source.turns.length) {
+      throw new Error(
+        `HarnessSession history is behind its Baton owner for ${harnessTargetId}/${identity.id}`,
+      );
+    }
+
+    const existingTurns = materializedHistoryTurns(session, summaries);
+    for (let count = 1; count <= summaries.length; count++) {
+      const existing = existingTurns[count - 1]!;
+      const incoming = source.turns[count - 1]!;
+      const diverged = incoming.events
+        ? harnessHistoryTurnDigest(existing) !== harnessHistoryTurnDigest(incoming)
+        : comparableTurnText(existing.userText) !== comparableTurnText(incoming.userText) ||
+          comparableTurnText(existing.agentText) !== comparableTurnText(incoming.agentText);
+      if (diverged) {
         throw new Error(
-          `native session history diverged at turn ${index + 1} for ${source.harnessTargetId}/${source.nativeSessionId}`,
+          `HarnessSession history diverged at turn ${count} for ${harnessTargetId}/${identity.id}`,
         );
       }
     }
-    if (summaries.length > source.turns.length) {
-      throw new Error(
-        `native session history is behind its Baton owner for ${source.harnessTargetId}/${source.nativeSessionId}`,
+
+    const importedThrough = adoptionFor(session.meta)?.importedThrough;
+    if (importedThrough) {
+      const incomingImported = harnessHistoryBoundary(
+        source.turns,
+        importedThrough.turnCount,
       );
+      if (
+        incomingImported.version !== importedThrough.version ||
+        incomingImported.turnCount !== importedThrough.turnCount ||
+        incomingImported.turnId !== importedThrough.turnId ||
+        incomingImported.prefixDigest !== importedThrough.prefixDigest
+      ) {
+        throw new Error(
+          `HarnessSession imported history boundary diverged for ${harnessTargetId}/${identity.id}`,
+        );
+      }
     }
 
     let syncedSeq = summaries.at(-1)?.seq ?? 0;
     for (const turn of source.turns.slice(summaries.length)) {
       syncedSeq = this.appendMaterializedTurn(session, source, turn);
     }
-    if (source.turns.length === summaries.length) return;
 
-    const existing = session.meta.harnessSessions[source.harnessTargetId];
-    session.setHarnessSession(source.harnessTargetId, {
-      ...existing,
-      harnessTargetId: source.harnessTargetId,
-      harness: source.harness,
-      harnessSessionId: source.nativeSessionId,
-      resumeState: existing?.resumeState ?? sessionIdResumeState(source.nativeSessionId),
-      contextEpochId: existing?.contextEpochId ?? newId("ctxe"),
-      syncedSeq,
+    const existing = session.meta.harnessSessions[harnessTargetId];
+    session.updateMeta({
+      adoptedFrom: {
+        session: source.session,
+        importedThrough: source.observedThrough,
+      },
+      harnessSessions: {
+        ...session.meta.harnessSessions,
+        [harnessTargetId]: {
+          ...existing,
+          harnessTargetId,
+          harness,
+          harnessSessionId: identity.id,
+          resumeState: sessionIdResumeState(identity.id),
+          contextEpochId: existing?.contextEpochId ?? newId("ctxe"),
+          syncedSeq,
+        },
+      },
     });
   }
 
   private appendMaterializedTurn(
     session: SessionHandle,
-    source: NativeSessionMaterialization,
-    turn: NativeSessionMaterializationTurn,
+    source: Pick<HarnessSessionAdoptionSource, "session">,
+    turn: HarnessHistoryTurn,
   ): number {
+    const { harnessTargetId, harness } = source.session;
     const turnId = newId("t");
     if (turn.userText) session.setPreviewIfEmpty(turn.userText);
 
@@ -396,9 +480,9 @@ export class SessionStore {
       for (const imported of turn.events) {
         session.append({
           ...imported.event,
-          source: materializedEventSource(imported.source, source.harnessTargetId),
-          harness: source.harness,
-          harnessTargetId: source.harnessTargetId,
+          source: materializedEventSource(imported.source, harnessTargetId),
+          harness,
+          harnessTargetId,
           turnId,
         } as AnyNewEvent);
       }
@@ -407,8 +491,8 @@ export class SessionStore {
         session.append({
           kind: "user_message",
           source: { type: "user" },
-          harness: source.harness,
-          harnessTargetId: source.harnessTargetId,
+          harness,
+          harnessTargetId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -419,9 +503,9 @@ export class SessionStore {
       if (turn.agentText) {
         session.append({
           kind: "agent_message",
-          source: { type: "harness", harnessTargetId: source.harnessTargetId },
-          harness: source.harness,
-          harnessTargetId: source.harnessTargetId,
+          source: { type: "harness", harnessTargetId },
+          harness,
+          harnessTargetId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -431,9 +515,9 @@ export class SessionStore {
       }
       session.append({
         kind: "state_update",
-        source: { type: "harness", harnessTargetId: source.harnessTargetId },
-        harness: source.harness,
-        harnessTargetId: source.harnessTargetId,
+        source: { type: "harness", harnessTargetId },
+        harness,
+        harnessTargetId,
         turnId,
         payload: { state: "idle", stopReason: "end_turn" },
       });
@@ -485,19 +569,40 @@ export class SessionStore {
     return out;
   }
 
-  /** 已接入同一原生 HarnessSession 时复用其 Baton owner，避免 repeated resume 造多个写者。 */
-  findByNativeSession(harnessTargetId: string, nativeSessionId: string): SessionMeta | undefined {
-    const matches = this.listSessions().filter(
-      (meta) =>
-        meta.harnessSessions[harnessTargetId]?.harnessSessionId === nativeSessionId,
-    );
+  /** adoptedFrom 是 owner 索引；当前 mutable binding 只为尚未 adoption 的 Baton 会话兜底。 */
+  findByHarnessSession(source: AdoptedHarnessSession): SessionMeta | undefined {
+    const { harnessTargetId, harness, identity } = source;
+    const matches = this.listSessions().filter((meta) => {
+      const adoption = adoptionFor(meta);
+      if (adoption) {
+        return (
+          adoption.session.harnessTargetId === harnessTargetId &&
+          adoption.session.harness === harness &&
+          adoption.session.identity.id === identity.id
+        );
+      }
+      return meta.harnessSessions[harnessTargetId]?.harnessSessionId === identity.id;
+    });
     if (matches.length > 1) {
       const owners = matches.map((meta) => meta.batonSessionId).join(", ");
       throw new Error(
-        `native session ${harnessTargetId}/${nativeSessionId} is bound to multiple BatonSessions: ${owners}`,
+        `HarnessSession ${harnessTargetId}/${identity.id} is owned by multiple BatonSessions: ${owners}`,
       );
     }
     return matches[0];
+  }
+
+  /** @deprecated 使用 findByHarnessSession。 */
+  findByNativeSession(harnessTargetId: string, nativeSessionId: string): SessionMeta | undefined {
+    const harness = this.listSessions()
+      .map((meta) => meta.harnessSessions[harnessTargetId]?.harness)
+      .find(Boolean);
+    if (!harness) return undefined;
+    return this.findByHarnessSession({
+      harnessTargetId,
+      harness,
+      identity: { id: nativeSessionId },
+    });
   }
 
   /**
@@ -578,8 +683,9 @@ export class SessionStore {
     return join(this.projectDir(cwd), "sessions", sessionId);
   }
 
-  private acquireNativeSessionLock(): () => void {
+  private acquireHarnessSessionAdoptionLock(): () => void {
     mkdirSync(this.rootDir, { recursive: true });
+    // 沿用 0.2.14 锁文件名，保证滚动升级时新旧进程仍竞争同一把 owner 创建锁。
     const path = join(this.rootDir, "native-session.lock");
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -605,11 +711,11 @@ export class SessionStore {
         continue;
       }
       if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
-        throw new Error(`another baton process is materializing a native session (pid ${holder})`);
+        throw new Error(`another baton process is adopting a HarnessSession (pid ${holder})`);
       }
       rmSync(path, { force: true });
     }
-    throw new Error("failed to acquire native session materialization lock");
+    throw new Error("failed to acquire HarnessSession adoption lock");
   }
 
   private ensureProject(cwd: string): void {
@@ -996,6 +1102,127 @@ export class SessionHandle {
   }
 }
 
+const HISTORY_OPERATIONAL_KINDS = new Set<EventKind>([
+  "_baton_turn_summary",
+  "_baton_delivery_attempt_update",
+  "_baton_context_snapshot",
+  "_baton_context_delivery_receipt",
+]);
+
+function canonicalHistoryValue(value: unknown, key?: string): unknown {
+  // Baton 和 Harness 各自签发的局部 ID、时间戳不属于历史语义；保留它们会让同一事实
+  // 因承载坐标不同而误报 divergence。
+  if (key && (/Id$/.test(key) || key === "ts" || key.endsWith("At"))) return undefined;
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalHistoryValue(item));
+  }
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>).sort(
+    ([left], [right]) => left.localeCompare(right),
+  )) {
+    const normalized = canonicalHistoryValue(entryValue, entryKey);
+    if (normalized !== undefined) out[entryKey] = normalized;
+  }
+  return out;
+}
+
+function historyTurnProjection(turn: HarnessHistoryTurn): unknown {
+  return {
+    userText: comparableTurnText(turn.userText) || undefined,
+    agentText: comparableTurnText(turn.agentText) || undefined,
+    events: turn.events?.map(({ source, event }) => ({
+      source,
+      kind: event.kind,
+      payload: canonicalHistoryValue(event.payload),
+    })),
+  };
+}
+
+function harnessHistoryTurnDigest(turn: HarnessHistoryTurn): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalHistoryValue(historyTurnProjection(turn))))
+    .digest("hex");
+}
+
+export function harnessHistoryBoundary(
+  turns: readonly HarnessHistoryTurn[],
+  throughCount = turns.length,
+): HarnessHistoryBoundary {
+  const prefix = turns.slice(0, throughCount);
+  return {
+    version: 1,
+    turnId: prefix.at(-1)?.turnId,
+    turnCount: prefix.length,
+    prefixDigest: createHash("sha256")
+      .update(JSON.stringify(prefix.map(historyTurnProjection)))
+      .digest("hex"),
+  };
+}
+
+function assertObservedBoundary(source: HarnessSessionAdoptionSource): void {
+  const calculated = harnessHistoryBoundary(source.turns);
+  if (
+    calculated.version !== source.observedThrough.version ||
+    calculated.turnCount !== source.observedThrough.turnCount ||
+    calculated.turnId !== source.observedThrough.turnId ||
+    calculated.prefixDigest !== source.observedThrough.prefixDigest
+  ) {
+    throw new Error(
+      `invalid HarnessHistoryBoundary for ` +
+        `${source.session.harnessTargetId}/${source.session.identity.id}`,
+    );
+  }
+}
+
+function adoptionFor(meta: SessionMeta): HarnessSessionAdoption | undefined {
+  if (meta.adoptedFrom) return meta.adoptedFrom;
+  if (!meta.nativeSessionOrigin) return undefined;
+  return {
+    session: {
+      harnessTargetId: meta.nativeSessionOrigin.harnessTargetId,
+      harness: meta.nativeSessionOrigin.harness,
+      identity: { id: meta.nativeSessionOrigin.nativeSessionId },
+    },
+    // 旧 meta 没保存内容边界；首次刷新仍会和已落盘的完整 turn 做逐轮对账，成功后升级。
+    importedThrough: harnessHistoryBoundary([]),
+  };
+}
+
+function materializedHistoryTurns(
+  session: SessionHandle,
+  summaries: readonly EventEnvelope<"_baton_turn_summary">[],
+): HarnessHistoryTurn[] {
+  const events = session.readEvents();
+  return summaries.map((summary) => ({
+    turnId: summary.turnId,
+    userText: summary.payload.userText,
+    agentText: summary.payload.agentText,
+    events: events.flatMap((event): HarnessHistoryEvent[] => {
+      if (
+        event.turnId !== summary.turnId ||
+        event.seq >= summary.seq ||
+        HISTORY_OPERATIONAL_KINDS.has(event.kind)
+      ) {
+        return [];
+      }
+      const source =
+        event.source.type === "user"
+          ? "user"
+          : event.source.type === "harness"
+            ? "harness"
+            : "baton";
+      return [{
+        source,
+        event: {
+          kind: event.kind,
+          payload: event.payload,
+        } as AnyEventDraft,
+      }];
+    }),
+  }));
+}
+
 /** kill(pid, 0) 探活：EPERM 表示进程存在但无权限发信号，同样算活。 */
 function pidAlive(pid: number): boolean {
   try {
@@ -1020,7 +1247,7 @@ function joinMessages(state: SessionState, role: "user" | "agent"): string {
 }
 
 function materializedEventSource(
-  source: NativeSessionMaterializationEvent["source"],
+  source: HarnessHistoryEvent["source"],
   harnessTargetId: string,
 ): EventSource {
   switch (source) {

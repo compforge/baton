@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 
 import type {
-  NativeSessionInfo,
-  NativeSessionProvider,
-  NativeSessionTurn,
-  NativeTranscriptEntry,
+  HarnessHistorySnapshot,
+  HarnessHistoryTurn,
+  HarnessSessionInspector,
+  HarnessTranscriptEntry,
 } from "../native-session.ts";
+import { harnessHistoryBoundary } from "../../store/store.ts";
 import {
   codexItemLifecycleDrafts,
   codexLaunchCommand,
@@ -37,11 +38,11 @@ function textInputs(content: unknown): string {
     .join("\n");
 }
 
-export function codexTranscript(turns: unknown[]): NativeTranscriptEntry[] {
+export function codexTranscript(turns: unknown[]): HarnessTranscriptEntry[] {
   return turns.flatMap((rawTurn) => {
     const items = (rawTurn as { items?: unknown[] })?.items;
     if (!Array.isArray(items)) return [];
-    return items.flatMap((rawItem): NativeTranscriptEntry[] => {
+    return items.flatMap((rawItem): HarnessTranscriptEntry[] => {
       if (!rawItem || typeof rawItem !== "object") return [];
       const item = rawItem as Record<string, unknown>;
       if (item.type === "userMessage") {
@@ -65,7 +66,7 @@ function codexStopReason(status: string): string {
 }
 
 /** app-server full Turn → 与 live Codex adapter 同构的 Baton turn。 */
-export function codexNativeTurns(turns: unknown[]): NativeSessionTurn[] {
+export function codexHistoryTurns(turns: unknown[]): HarnessHistoryTurn[] {
   return turns.map((rawTurn, index) => {
     const turn = (rawTurn ?? {}) as Record<string, unknown>;
     const items = Array.isArray(turn.items) ? turn.items : [];
@@ -77,7 +78,7 @@ export function codexNativeTurns(turns: unknown[]): NativeSessionTurn[] {
       throw new Error(`codex native turn ${String(turn.id ?? index + 1)} is not a full history view`);
     }
 
-    const events: NonNullable<NativeSessionTurn["events"]> = [];
+    const events: NonNullable<HarnessHistoryTurn["events"]> = [];
     const userTexts: string[] = [];
     const agentTexts: string[] = [];
     let running = false;
@@ -156,6 +157,7 @@ export function codexNativeTurns(turns: unknown[]): NativeSessionTurn[] {
       },
     });
     return {
+      turnId: String(turn.id ?? `history-${index + 1}`),
       userText: userTexts.join("\n") || undefined,
       agentText: agentTexts.join("\n") || undefined,
       events,
@@ -195,7 +197,7 @@ async function readCodexTurns(peer: CodexNativePeer, sessionId: string): Promise
 export async function inspectCodexSession(
   peer: CodexNativePeer,
   sessionId: string,
-): Promise<NativeSessionInfo | null> {
+): Promise<HarnessHistorySnapshot | null> {
   let response: unknown;
   try {
     response = await peer.request(
@@ -212,8 +214,9 @@ export async function inspectCodexSession(
     throw new Error(`codex thread/read returned no thread for ${sessionId}`);
   }
   const turns = await readCodexTurns(peer, sessionId);
+  const history = codexHistoryTurns(turns);
   return {
-    nativeSessionId: thread.id,
+    identity: { id: thread.id },
     cwd: typeof thread.cwd === "string" ? thread.cwd : undefined,
     title:
       typeof thread.name === "string" && thread.name.trim()
@@ -221,7 +224,8 @@ export async function inspectCodexSession(
         : typeof thread.preview === "string" && thread.preview.trim()
           ? thread.preview
           : undefined,
-    turns: codexNativeTurns(turns),
+    turns: history,
+    observedThrough: harnessHistoryBoundary(history),
   };
 }
 
@@ -266,7 +270,7 @@ async function withCodexPeer<T>(
   }
 }
 
-export const codexNativeSessions: NativeSessionProvider = {
+export const codexSessionInspector: HarnessSessionInspector = {
   inspect(sessionId, options) {
     return withCodexPeer(
       { command: options.config.codexCommand, cwd: options.cwd },
@@ -274,3 +278,7 @@ export const codexNativeSessions: NativeSessionProvider = {
     );
   },
 };
+
+/** @deprecated 使用 codexHistoryTurns / codexSessionInspector。 */
+export const codexNativeTurns = codexHistoryTurns;
+export const codexNativeSessions = codexSessionInspector;

@@ -210,7 +210,7 @@ describe("Codex hook trust harness interaction", () => {
       },
     });
     const firstRef = await first.open({ cwd: "/tmp" }, (event) => firstEvents.push(event));
-    expect(firstRef.harnessSessionId).toBe("thread");
+    expect(firstRef.handleId).toBe("thread");
     expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(2);
     expect(questions).toBe(1);
     expect(firstEvents).toEqual([]);
@@ -225,7 +225,7 @@ describe("Codex hook trust harness interaction", () => {
       },
     });
     const secondRef = await second.open({ cwd: "/tmp" }, (event) => secondEvents.push(event));
-    expect(secondRef.harnessSessionId).toBe("thread");
+    expect(secondRef.handleId).toBe("thread");
     expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(4);
     expect(secondEvents.find((event) => event.kind === "_baton_notice")?.payload).toMatchObject({
       title: "Enabled 2 previously trusted Codex hooks",

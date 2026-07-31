@@ -435,7 +435,7 @@ export class Controller {
       const turnId = newId("t");
       const admitted = this.admitDrivenTurn(binding, {
         turnId,
-        harnessSessionId: binding.nativeSessionId(),
+        harnessSessionId: binding.sessionIdentity()?.id,
       });
       record = admitted.record;
       await binding.adapter.compactContext(binding.ref, turnId);
@@ -661,7 +661,7 @@ export class Controller {
       const catchUp = buildTargetCatchUpContext(session, {
         target: binding.target,
         sinceSeq,
-        includeTargetTurns: binding.freshNative,
+        includeTargetTurns: binding.freshHarnessSession,
         budgetChars: this.options.mentionBudgetChars,
       });
       let blocks = turn.blocks;
@@ -678,7 +678,7 @@ export class Controller {
       if (catchUp) {
         const snapshot = this.contextDeliveries.prepare(binding, {
           turnId: turn.turnId,
-          harnessSessionId: binding.nativeSessionId() ?? binding.ref.harnessSessionId,
+          harnessSessionId: binding.sessionIdentity()?.id,
           source: sessionHistoryContextSource(session.id),
           afterSeq: sinceSeq,
           throughSeq: catchUp.throughSeq,
@@ -714,7 +714,7 @@ export class Controller {
         inputEventId: record.inputEventId,
         inputId: turn.messageId,
         launchSnapshot: meta.launchSnapshot,
-        harnessSessionId: meta.harnessSessionId ?? binding.nativeSessionId(),
+        harnessSessionId: meta.harnessSessionId ?? binding.sessionIdentity()?.id,
       });
       this.deliveryAttempts.markDispatching(binding, attempt);
 
@@ -810,11 +810,10 @@ export class Controller {
     if (!contextEpochId) {
       throw new Error(`${binding.target.id} cannot accept context without a ContextEpoch`);
     }
-    const nativeSessionId = binding.nativeSessionId();
-    const deliverySessionId = nativeSessionId ?? binding.ref?.harnessSessionId;
+    const harnessSessionId = binding.sessionIdentity()?.id;
     this.contextDeliveries.accept(binding, snapshot, {
       contextEpochId,
-      harnessSessionId: deliverySessionId,
+      harnessSessionId,
       transport,
     });
     const session = this.options.session;
@@ -824,11 +823,11 @@ export class Controller {
       harnessTargetId: targetKey,
       harness: binding.adapter.harness,
       harnessSessionId:
-        session.meta.harnessSessions?.[targetKey]?.harnessSessionId ?? nativeSessionId,
+        session.meta.harnessSessions?.[targetKey]?.harnessSessionId ?? harnessSessionId,
       contextEpochId,
       syncedSeq: snapshot.payload.throughSeq,
     });
-    binding.freshNative = false;
+    binding.freshHarnessSession = false;
   }
 
   /**
@@ -849,17 +848,6 @@ export class Controller {
       harness: binding.adapter.harness,
       harnessTargetId: binding.target.id,
     } as AnyNewEvent) as AnyEventEnvelope;
-    // Claude 的原生 UUID 直到 system/init 才出现。首个后续 Harness 事件到达时立即
-    // 持久化，避免进程在 turn finalize 前退出后只剩 adapter-local hs_ ref。
-    const observedNativeSessionId = binding.nativeSessionId();
-    if (
-      source.type === "harness" &&
-      observedNativeSessionId &&
-      observedNativeSessionId !==
-        this.options.session.meta.harnessSessions[binding.target.id]?.harnessSessionId
-    ) {
-      this.backfillHarnessResumeState(binding);
-    }
     if (envelope.kind === "state_update") {
       const p = envelope.payload;
       if (p.state === "running" && envelope.source.type === "harness" && envelope.turnId) {
@@ -919,37 +907,10 @@ export class Controller {
     }
 
     session.summarizeTurnEvent(turnId);
-    if (record.role === "driven") record.binding.freshNative = false;
-    this.backfillHarnessResumeState(record.binding);
+    if (record.role === "driven") record.binding.freshHarnessSession = false;
 
     this.turns.finish(record, stopReason);
     this.changed();
-  }
-
-  /**
-   * turn 收界后的元数据回填：原生 session id 首轮结束才拿得到（claude）。
-   * 刻意**不**推进 syncedSeq——水位只在注入时前进（见 runTurn）：finalize 推尾水位
-   * 会越过并发期间其它 harness 落盘、尚未注入本 harness 的事件，形成永久同步洞。
-   */
-  private backfillHarnessResumeState(binding: HarnessBinding): void {
-    const session = this.options.session;
-    const key = binding.target.id;
-    const existing = session.meta.harnessSessions[key];
-    const nativeId = binding.nativeSessionId() ?? existing?.harnessSessionId;
-    const resumeState = binding.resumeState() ?? existing?.resumeState;
-    if (
-      nativeId === existing?.harnessSessionId &&
-      JSON.stringify(resumeState) === JSON.stringify(existing?.resumeState)
-    ) {
-      return;
-    }
-    session.setHarnessSession(key, {
-      ...existing,
-      harnessTargetId: key,
-      harness: binding.adapter.harness,
-      harnessSessionId: nativeId,
-      resumeState,
-    });
   }
 
   /**

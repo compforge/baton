@@ -60,7 +60,7 @@ describe("openBatonSession", () => {
 });
 
 describe("crash recovery on open", () => {
-  test("repairs a persisted Claude runtime ref from native event history", () => {
+  test("does not infer a stable HarnessSession identity from event envelopes", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.setHarnessSession("claude", {
       harnessTargetId: "claude",
@@ -93,17 +93,15 @@ describe("crash recovery on open", () => {
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
 
-    expect(result.recovered).toBe(true);
-    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBe(
-      "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
-    );
+    expect(result.recovered).toBe(false);
+    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBe("hs_runtime_only");
     expect(result.session.meta.harnessSessions.claude?.resumeState).toEqual({
       version: 1,
-      data: { sessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c" },
+      data: { sessionId: "hs_runtime_only" },
     });
   });
 
-  test("drops a persisted Claude runtime ref when no native session was created", () => {
+  test("does not apply provider-specific handle recovery in session core", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.setHarnessSession("claude", {
       harnessTargetId: "claude",
@@ -136,9 +134,12 @@ describe("crash recovery on open", () => {
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
 
-    expect(result.recovered).toBe(true);
-    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBeUndefined();
-    expect(result.session.meta.harnessSessions.claude?.resumeState).toBeUndefined();
+    expect(result.recovered).toBe(false);
+    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBe("hs_runtime_only");
+    expect(result.session.meta.harnessSessions.claude?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "hs_runtime_only" },
+    });
   });
 
   test("normalizes an interrupted turn: idle + notice + summary", () => {
