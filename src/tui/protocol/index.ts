@@ -627,7 +627,10 @@ export class BatonChatProtocol implements ChatProtocol {
     }, PICKER_SEARCH_DEBOUNCE_MS);
   }
 
-  async resolveInteraction(id: string, response: InteractionResponse): Promise<void> {
+  async resolveInteraction(
+    id: string,
+    response: InteractionResponse,
+  ): Promise<void> {
     if (response.kind === "suggested_input") {
       const pending = this.plugins
         .listPendingProposals()

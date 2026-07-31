@@ -8,7 +8,10 @@ import {
   type TestRendererSetup,
 } from "@opentui/core/testing";
 import { createRoot, type Root } from "@opentui/react";
-import { createChatStore, defaultTheme } from "chat-tui";
+import {
+  createChatStore,
+  defaultTheme,
+} from "chat-tui";
 import { createElement, createRef } from "react";
 
 import type { Manager } from "../src/plugin/manager.ts";
@@ -74,6 +77,61 @@ async function settle(setup: TestRendererSetup): Promise<void> {
 }
 
 describe("Plugin screen interaction", () => {
+  test("routes Esc to the active interaction without exiting Baton", async () => {
+    const setup = await createTestRenderer({
+      width: 120,
+      height: 30,
+      kittyKeyboard: true,
+      screenMode: "main-screen",
+    });
+    const root = createRoot(setup.renderer);
+    mounted = { root, setup };
+    const chat = protocol();
+    const resolved: unknown[] = [];
+    let exits = 0;
+    chat.resolveInteraction = async (id, response) => {
+      resolved.push({ id, response });
+    };
+    chat.exit = async () => {
+      exits += 1;
+    };
+    chat.stateStore.commit({
+      composer: {
+        interactions: [{
+          id: "proposal_esc",
+          kind: "suggested_input",
+          blocking: false,
+          title: "Suggested follow-up",
+          text: "Review the previous turn",
+          cancelResponse: {
+            kind: "suggested_input",
+            outcome: "dismissed",
+          },
+        }],
+      },
+    });
+
+    root.render(
+      createElement(BatonTui, {
+        protocol: chat,
+        theme: defaultTheme,
+      }),
+    );
+    await settle(setup);
+
+    setup.mockInput.pressEscape();
+    await settle(setup);
+
+    expect(resolved).toEqual([{
+      id: "proposal_esc",
+      response: {
+        kind: "suggested_input",
+        outcome: "dismissed",
+      },
+    }]);
+    expect(exits).toBe(0);
+  });
+
   test("switches sections with arrows and restores the chat composer after Esc", async () => {
     const setup = await createTestRenderer({
       width: 120,
