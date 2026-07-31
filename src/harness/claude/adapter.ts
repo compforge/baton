@@ -449,6 +449,19 @@ export function claudeDurableMessageDrafts(
           payload: { planId: `pl_${options.turnId}`, entries: taskPlanEntries(state.tasks) },
           raw,
         });
+      } else {
+        // Task 工具的 tool_use 在入参阶段被 plan_update 取代（suppressedToolIds），失败
+        // 时若也静默，错误将彻底不可见（任务表不变、UI 无任何痕迹）；补一条 failed 让
+        // 失败可感知。任务表不动是对的——op 没有生效。
+        drafts.push({
+          kind: "tool_call_update",
+          payload: {
+            toolCallId: toolUseId,
+            status: "failed",
+            rawOutput: block.content,
+          },
+          raw,
+        });
       }
     }
     if (state.suppressedToolIds.has(toolUseId)) continue;

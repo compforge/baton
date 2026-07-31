@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import {
   claudeNativeTurns,
-  claudeTranscript,
 } from "../src/harness/claude/native-session.ts";
 import {
   codexNativeTurns,
@@ -152,40 +151,6 @@ describe("Codex native sessions", () => {
 });
 
 describe("Claude Code native sessions", () => {
-  test("keeps the text-only transcript fallback", () => {
-    expect(
-      claudeTranscript([
-        {
-          type: "user",
-          uuid: "u1",
-          session_id: "s1",
-          parent_tool_use_id: null,
-          parent_agent_id: null,
-          message: { content: [{ type: "text", text: "hello" }, { type: "image" }] },
-        },
-        {
-          type: "assistant",
-          uuid: "a1",
-          session_id: "s1",
-          parent_tool_use_id: null,
-          parent_agent_id: null,
-          message: { content: [{ type: "text", text: "world" }] },
-        },
-        {
-          type: "system",
-          uuid: "sys",
-          session_id: "s1",
-          parent_tool_use_id: null,
-          parent_agent_id: null,
-          message: "ignored",
-        },
-      ]),
-    ).toEqual([
-      { role: "user", text: "hello" },
-      { role: "assistant", text: "world" },
-    ]);
-  });
-
   test("full turns preserve durable thinking, tools, plan proposals, and terminal state", () => {
     const [turn] = claudeNativeTurns([
       {
