@@ -10,9 +10,9 @@ resume 和 fork 都是 **BatonSession 自己的语义**，不依赖任何 harnes
 CLI 也接受 Harness 原生会话引用：裸 ID 会同时做只读发现，唯一命中时自动识别；
 `cx:<id>` / `cc:<id>` 显式指定 Codex / Claude Code。原生 ID 只是导入入口：先只读找到该
 HarnessSession，找不到即报错；再把 Provider 能只读恢复的完整持久历史物化为归属于同一
-HarnessTarget 的普通 Baton turn 与 turn summary，并绑定原生会话。Codex 使用 full Turn，
-其持久 ThreadItem 与 live notification 共用同一套归一规则。语义上等价于 BatonSession
-从一开始就存在，此前始终由该 Harness 问答。物化完成后，命令只持有一个 `bs_`：
+HarnessTarget 的普通 Baton turn 与 turn summary，并绑定原生会话。Codex 的 full Turn 与
+Claude Code 的 durable SessionMessage 都和各自 live adapter 共用归一规则。语义上等价于
+BatonSession 从一开始就存在，此前始终由该 Harness 问答。物化完成后，命令只持有一个 `bs_`：
 `resume` 打开它，`fork` 调用普通 `forkSession()` 创建 child，不再有第二套原生 fork 生命周期。
 
 物化出的源写入
@@ -89,9 +89,11 @@ child 的 harness 通过补课看到的是紧凑 turn 摘要（预算内优先�
 物化出的源在 Harness 内拥有完整原生历史；Baton ledger 逐 turn 记录 Provider 能从只读接口
 恢复的持久语义。Codex full Turn 能恢复 user/assistant、reasoning、工具、计划提案与终态，并与
 live adapter 共用 ThreadItem 归一；流式 delta、瞬时运行状态或只存在于通知流而未持久化的数据
-不伪造。Claude Code 当前只读接口仍按 user/assistant 文本恢复。resume 源并继续同一 Harness 时，
-更完整的运行上下文由原生 session 保证；fork child、跨 Harness 接力则复用已进入统一 ledger 的
-turn summary。
+不伪造。Claude Code 的 SessionMessage 能恢复 user/assistant、thinking、工具调用与文本结果、
+Todo/Task 计划投影和计划提案，并与 live adapter 共用 durable block 归一；只读接口不提供
+stream delta、result usage / 终态和消息级私有 `structuredPatch`，因此 Baton 不猜测这些字段，
+重建 turn 统一以 `end_turn` 收口。resume 源并继续同一 Harness 时，更完整的运行上下文由原生
+session 保证；fork child、跨 Harness 接力则复用已进入统一 ledger 的 turn summary。
 
 ### 跨 project fork：历史跟源走，project 跟发起位置走
 

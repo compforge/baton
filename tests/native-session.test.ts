@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import { textOf, type AnyEventDraft } from "../src/event/types.ts";
+import { ClaudeAdapter } from "../src/harness/claude/adapter.ts";
+import { claudeNativeTurns } from "../src/harness/claude/native-session.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import { codexNativeTurns } from "../src/harness/codex/native-session.ts";
 import {
@@ -393,6 +395,167 @@ describe("native session ownership", () => {
         source: { type: "harness", harnessTargetId: "codex" },
         harness: "codex",
         harnessTargetId: "codex",
+      });
+    }
+    live.summarizeTurnEvent(turnId);
+
+    expect(logicalContent(imported)).toEqual(logicalContent(live));
+  });
+
+  test("Claude live capture and full native import reduce to the same Baton content", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-claude-native-equivalence-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const messages: Parameters<typeof claudeNativeTurns>[0] = [
+      {
+        type: "user",
+        uuid: "u1",
+        session_id: "claude-session",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "text",
+            text: "<baton-sync>injected context</baton-sync>\n\ninspect the cache",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a1",
+        session_id: "claude-session",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [
+            { type: "thinking", thinking: "Tracing the cache key" },
+            { type: "text", text: "The tenant is missing from the cache key." },
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "Bash",
+              input: { command: "rg cache_key" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        uuid: "r1",
+        session_id: "claude-session",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tool-1",
+            content: "src/cache.ts\n",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        session_id: "claude-session",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_use",
+            id: "plan-1",
+            name: "ExitPlanMode",
+            input: { plan: "Add the tenant to the key" },
+          }],
+        },
+      },
+      {
+        type: "user",
+        uuid: "r2",
+        session_id: "claude-session",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "plan-1",
+            content: "Plan accepted",
+          }],
+        },
+      },
+    ];
+    const [nativeTurn] = claudeNativeTurns(messages);
+    const imported = store.materializeNativeSession({
+      harnessTargetId: "claude",
+      harness: "claude-code",
+      nativeSessionId: "claude-imported",
+      cwd: "/repo",
+      turns: [nativeTurn!],
+    }).session;
+
+    const live = store.createSession({ cwd: "/repo" });
+    const turnId = "t-live";
+    live.append({
+      kind: "user_message",
+      source: { type: "user" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId,
+      payload: {
+        messageId: "u1",
+        content: [{ type: "text", text: "inspect the cache" }],
+      },
+    });
+    live.append({
+      kind: "state_update",
+      source: { type: "baton" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId,
+      payload: { state: "running" },
+    });
+    const adapter = new ClaudeAdapter({ interactionHandler });
+    const drafts: AnyEventDraft[] = [];
+    const runtime = {
+      cwd: "/repo",
+      suppressedToolIds: new Set<string>(),
+      capturedProposedPlanKeys: new Set<string>(),
+      claudeSessionId: "claude-session",
+      tasks: new Map(),
+      pendingTaskOps: new Map(),
+    };
+    const turn = { turnId, finalized: false, cancelRequested: false };
+    const feed = (
+      adapter as unknown as {
+        handleMessage: (
+          runtime: unknown,
+          emit: (event: AnyEventDraft) => void,
+          message: unknown,
+          turn: unknown,
+        ) => void;
+      }
+    ).handleMessage.bind(adapter, runtime, (event) => drafts.push(event));
+    feed({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      event: {
+        type: "content_block_delta",
+        delta: { type: "thinking_delta", thinking: "Tracing the cache key" },
+      },
+    }, turn);
+    for (const message of messages.slice(1)) feed(message, turn);
+    feed({
+      type: "result",
+      subtype: "success",
+      usage: undefined,
+      modelUsage: {},
+    }, turn);
+    for (const draft of drafts) {
+      live.append({
+        ...draft,
+        source: { type: "harness", harnessTargetId: "claude" },
+        harness: "claude-code",
+        harnessTargetId: "claude",
+        turnId,
       });
     }
     live.summarizeTurnEvent(turnId);
