@@ -107,7 +107,7 @@ function interactionView(interaction: Interaction): InteractionView {
       kind: "approval",
       blocking: true,
       requester,
-      escapeResponse: { kind: "cancelled" },
+      cancelResponse: { kind: "cancelled" },
       approval: {
         title: interaction.title,
         description: interaction.description,
@@ -127,7 +127,7 @@ function interactionView(interaction: Interaction): InteractionView {
     const rejectOption = onlyQuestion?.options?.find(
       (option) => option.role === "reject",
     );
-    const escapeResponse: InteractionResponse =
+    const cancelResponse: InteractionResponse =
       onlyQuestion && rejectOption
         ? {
             kind: "question",
@@ -141,7 +141,7 @@ function interactionView(interaction: Interaction): InteractionView {
       kind: "question",
       blocking: true,
       requester,
-      escapeResponse,
+      cancelResponse,
       question: {
         questions: interaction.questions.map((prompt) => ({
           id: prompt.questionId,
@@ -164,7 +164,7 @@ function interactionView(interaction: Interaction): InteractionView {
     kind: "approval",
     blocking: true,
     requester,
-    escapeResponse: { kind: "approval", optionId: "skip" },
+    cancelResponse: { kind: "approval", optionId: "skip" },
     approval: {
       title: `Trust ${interaction.hooks.length} ${interaction.harnessName} hook${interaction.hooks.length === 1 ? "" : "s"}?`,
       description: hookTrustDescription(interaction),
@@ -344,7 +344,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       requester: proposal.key.pluginInstanceId,
       title: "Suggested follow-up",
       text: proposal.text,
-      escapeResponse: {
+      cancelResponse: {
         kind: "suggested_input" as const,
         outcome: "dismissed" as const,
       },

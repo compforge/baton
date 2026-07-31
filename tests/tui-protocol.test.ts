@@ -1433,7 +1433,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "approval",
         blocking: true,
         requester: "claude",
-        escapeResponse: { kind: "cancelled" },
+        cancelResponse: { kind: "cancelled" },
         approval: {
           title: "Write file?",
           description: "/repo/output.txt",
@@ -1487,7 +1487,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "question",
         blocking: true,
         requester: "codex",
-        escapeResponse: { kind: "cancelled" },
+        cancelResponse: { kind: "cancelled" },
       });
       let resolution: unknown;
       const internals = protocol as unknown as {
@@ -1591,7 +1591,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         id: "ix_plugin",
         kind: "question",
         requester: "reqloop_default",
-        escapeResponse: {
+        cancelResponse: {
           kind: "question",
           answers: { decision: ["Do not associate"] },
         },
@@ -1684,7 +1684,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "approval",
         blocking: true,
         requester: "codex",
-        escapeResponse: { kind: "approval", optionId: "skip" },
+        cancelResponse: { kind: "approval", optionId: "skip" },
         approval: {
           title: "Trust 1 Codex hook?",
           options: [{ optionId: "trust" }, { optionId: "skip" }],
@@ -1754,7 +1754,7 @@ describe("Plugin Proposal projection", () => {
           requester: "reqloop_default",
           title: "Suggested follow-up",
           text: "Review the requirement",
-          escapeResponse: {
+          cancelResponse: {
             kind: "suggested_input",
             outcome: "dismissed",
           },

@@ -228,6 +228,13 @@ permission、question、hook trust 从内核 Interaction 投影为 blocking view
 `suggested_input`，与前述请求共享 `InteractionDock` 的排序和响应入口，不伪造
 `interaction.opened/resolved`。
 
+键盘事件不进入这条协议。chat-tui 把 Esc、方向键和 Enter 等物理输入路由成当前组件声明的
+cancel / navigate / confirm 行为；纯 UI 行为在组件内闭环，需要改变 durable lifecycle 时才
+调用 `resolveInteraction` 等 intent。Baton 只在 view 中声明 `cancelResponse`，表示取消应映射
+为明确 reject option 还是 `cancelled`，不感知取消由 Esc、鼠标还是其它键位触发。每个
+Interaction requester 仍必须处理 `cancelled`，因为它还可能由 turn、requester、timeout 或
+recovery 产生。
+
 #### Permission
 
 - title、description、subject preview、harness 给出的 options；

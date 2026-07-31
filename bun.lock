@@ -8,9 +8,10 @@
         "@anthropic-ai/claude-agent-sdk": "^0.3.205",
         "@compforge/baton-plugin": "0.2.4",
         "@opentui/core": "^0.4.5",
+        "@opentui/keymap": "^0.4.5",
         "@opentui/react": "^0.4.5",
         "bun": "^1.3.14",
-        "chat-tui": "github:compforge/chat-tui#43a070004b41ac8ad498b3283a733ebac15d67b9",
+        "chat-tui": "github:compforge/chat-tui#beee01e2527f9ed636030705b95b35eea6632326",
         "cron-parser": "^5.6.2",
         "react": "^19.2.7",
         "yaml": "^2.9.0",
@@ -76,6 +77,8 @@
 
     "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.4.5", "", { "os": "win32", "cpu": "x64" }, "sha512-Y8T/yXCDGagRGiQrtmuB6AhRcPucKFs/Dre3v8kJwNYqDccI4FzUPKclZ7djfmRZNjl7JUqPhZZP/PwDpQocMg=="],
 
+    "@opentui/keymap": ["@opentui/keymap@0.4.5", "", { "dependencies": { "@opentui/core": "0.4.5" }, "peerDependencies": { "@opentui/react": "0.4.5", "@opentui/solid": "0.4.5", "react": ">=19.2.0", "solid-js": "1.9.12" }, "optionalPeers": ["@opentui/react", "@opentui/solid", "react", "solid-js"] }, "sha512-S1wzKHhF70zT6bH+VBFY+lSeTImLcIFW28JNQiME8MoPcy6KGPs7rKFSHrb/U7P8rsTJeRfW5A4d1Cy6PKodDg=="],
+
     "@opentui/react": ["@opentui/react@0.4.5", "", { "dependencies": { "@opentui/core": "0.4.5", "react-reconciler": "^0.33.0" }, "peerDependencies": { "react": ">=19.2.0", "react-devtools-core": "^7.0.1", "ws": "^8.18.0" } }, "sha512-n88Vx0cMmAu++/S14WscjvdcT46IDcxve02jMtcfHQ9j6cySRHfILfGEpOB7xxc8RpCwQceEyOjkKkfzPzm6Jg=="],
 
     "@oven/bun-darwin-aarch64": ["@oven/bun-darwin-aarch64@1.3.14", "https://registry.npmmirror.com/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.3.14.tgz", { "os": "darwin", "cpu": "arm64" }, "sha512-Omj20SuiHBOUjUBIyqtkNjSUIjOtEOJwmbix/ZyFH4BaQ6OZTaaRWIR4TjHVz0yadHgli6lLTiAh1uarnvD49A=="],
@@ -140,7 +143,7 @@
 
     "call-bound": ["call-bound@1.0.4", "https://registry.npmmirror.com/call-bound/-/call-bound-1.0.4.tgz", { "dependencies": { "call-bind-apply-helpers": "^1.0.2", "get-intrinsic": "^1.3.0" } }, "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg=="],
 
-    "chat-tui": ["chat-tui@github:compforge/chat-tui#43a0700", { "peerDependencies": { "@opentui/core": "^0.4.5", "@opentui/react": "^0.4.5", "react": "^19.0.0" } }, "compforge-chat-tui-43a0700", "sha512-WnQk+oltzg8NYaQ/bl6soJaywJkLJiYl09HLg7S4GeNrg9GVbrDPg0xzoaQtcVlXJ3Ajc44e5fHACrqzIR0KQw=="],
+    "chat-tui": ["chat-tui@github:compforge/chat-tui#beee01e", { "peerDependencies": { "@opentui/core": "^0.4.5", "@opentui/keymap": "^0.4.5", "@opentui/react": "^0.4.5", "react": "^19.0.0" } }, "compforge-chat-tui-beee01e", "sha512-M6gf5q7VCeuQ87LmoPrx0seyoK25hwaVlaCkRAPtUcE0EY7VTtUVafUVa2UaT6sH886GzXhhroF9gMHF4XKxRQ=="],
 
     "content-disposition": ["content-disposition@1.1.0", "https://registry.npmmirror.com/content-disposition/-/content-disposition-1.1.0.tgz", {}, "sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g=="],
 

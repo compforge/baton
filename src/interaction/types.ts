@@ -108,7 +108,8 @@ export type Interaction = InteractionDraft & {
 
 /**
  * Interaction 的终结结果。resolved 只表示不再等待外部参与者，不代表随后触发的
- * Harness 操作或 Plugin Action 已经执行成功。
+ * Harness 操作或 Plugin Action 已经执行成功。cancelled 可由用户、turn、requester、
+ * timeout 或恢复清理产生，因此每个 Interaction 接收方都必须显式收口它。
  */
 export type InteractionResolution =
   | { kind: "permission"; outcome: "selected"; optionId: string }
