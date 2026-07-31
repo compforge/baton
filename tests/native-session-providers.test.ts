@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { claudeTranscript } from "../src/harness/claude/native-session.ts";
-import { inspectCodexSession } from "../src/harness/codex/native-session.ts";
+import {
+  codexNativeTurns,
+  inspectCodexSession,
+} from "../src/harness/codex/native-session.ts";
 
 describe("Codex native sessions", () => {
   test("inspect is read-only and paginates the complete turn history", async () => {
@@ -24,8 +27,11 @@ describe("Codex native sessions", () => {
           ? {
               data: [
                 {
+                  id: "turn-old",
+                  itemsView: "full",
+                  status: "completed",
                   items: [
-                    { type: "userMessage", content: [{ type: "text", text: "old question" }] },
+                    { type: "userMessage", id: "u-old", content: [{ type: "text", text: "old question" }] },
                   ],
                 },
               ],
@@ -35,9 +41,12 @@ describe("Codex native sessions", () => {
               // app-server returns desc; provider restores chronological order after all pages.
               data: [
                 {
+                  id: "turn-new",
+                  itemsView: "full",
+                  status: "completed",
                   items: [
-                    { type: "userMessage", content: [{ type: "text", text: "new question" }] },
-                    { type: "agentMessage", text: "new answer" },
+                    { type: "userMessage", id: "u-new", content: [{ type: "text", text: "new question" }] },
+                    { type: "agentMessage", id: "a-new", text: "new answer" },
                   ],
                 },
               ],
@@ -46,16 +55,20 @@ describe("Codex native sessions", () => {
       },
     };
 
-    expect(await inspectCodexSession(peer, "thread-1")).toEqual({
+    const inspected = await inspectCodexSession(peer, "thread-1");
+    expect(inspected).toMatchObject({
       nativeSessionId: "thread-1",
       cwd: "/repo",
       title: "Fix cache",
-      transcript: [
-        { role: "user", text: "old question" },
-        { role: "user", text: "new question" },
-        { role: "assistant", text: "new answer" },
+      turns: [
+        { userText: "old question", agentText: undefined },
+        { userText: "new question", agentText: "new answer" },
       ],
     });
+    expect(inspected?.turns?.map((turn) => turn.events?.map((entry) => entry.event.kind))).toEqual([
+      ["user_message", "state_update", "state_update"],
+      ["user_message", "state_update", "agent_message", "state_update"],
+    ]);
     expect(calls).toEqual([
       { method: "thread/read", params: { threadId: "thread-1" } },
       {
@@ -64,7 +77,7 @@ describe("Codex native sessions", () => {
           threadId: "thread-1",
           limit: 50,
           sortDirection: "desc",
-          itemsView: "summary",
+          itemsView: "full",
         },
       },
       {
@@ -73,7 +86,7 @@ describe("Codex native sessions", () => {
           threadId: "thread-1",
           limit: 50,
           sortDirection: "desc",
-          itemsView: "summary",
+          itemsView: "full",
           cursor: "older",
         },
       },
@@ -87,6 +100,50 @@ describe("Codex native sessions", () => {
       },
     };
     expect(await inspectCodexSession(peer, "missing")).toBeNull();
+  });
+
+  test("full turns preserve durable reasoning, tools, plan proposals, and terminal state", () => {
+    const [turn] = codexNativeTurns([
+      {
+        id: "turn-1",
+        itemsView: "full",
+        status: "failed",
+        error: { message: "model failed", codexErrorInfo: "server_error" },
+        items: [
+          { type: "userMessage", id: "u1", content: [{ type: "text", text: "inspect it" }] },
+          { type: "reasoning", id: "r1", summary: ["Checking the call path"] },
+          {
+            type: "commandExecution",
+            id: "cmd1",
+            status: "completed",
+            command: "rg cache",
+            aggregatedOutput: "src/cache.ts\n",
+          },
+          { type: "plan", id: "plan1", text: "Fix the cache key" },
+          { type: "agentMessage", id: "a1", text: "The cache key is missing the tenant." },
+        ],
+      },
+    ]);
+
+    expect(turn).toMatchObject({
+      userText: "inspect it",
+      agentText: "The cache key is missing the tenant.",
+    });
+    expect(turn?.events?.map((entry) => entry.event.kind)).toEqual([
+      "user_message",
+      "state_update",
+      "agent_thought",
+      "tool_call_update",
+      "tool_call_update",
+      "proposed_plan",
+      "agent_message",
+      "_baton_error_update",
+      "state_update",
+    ]);
+    expect(turn?.events?.at(-1)?.event).toMatchObject({
+      kind: "state_update",
+      payload: { state: "idle", stopReason: "failed" },
+    });
   });
 
 });

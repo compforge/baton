@@ -3,9 +3,13 @@ import { spawn } from "node:child_process";
 import type {
   NativeSessionInfo,
   NativeSessionProvider,
+  NativeSessionTurn,
   NativeTranscriptEntry,
 } from "../native-session.ts";
-import { codexLaunchCommand } from "./adapter.ts";
+import {
+  codexItemLifecycleDrafts,
+  codexLaunchCommand,
+} from "./adapter.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -52,6 +56,113 @@ export function codexTranscript(turns: unknown[]): NativeTranscriptEntry[] {
   });
 }
 
+function codexStopReason(status: string): string {
+  return status === "completed"
+    ? "end_turn"
+    : status === "interrupted"
+      ? "cancelled"
+      : status;
+}
+
+/** app-server full Turn → 与 live Codex adapter 同构的 Baton turn。 */
+export function codexNativeTurns(turns: unknown[]): NativeSessionTurn[] {
+  return turns.map((rawTurn, index) => {
+    const turn = (rawTurn ?? {}) as Record<string, unknown>;
+    const items = Array.isArray(turn.items) ? turn.items : [];
+    const status = String(turn.status ?? "");
+    if (status === "inProgress") {
+      throw new Error(`codex native session has an in-progress turn at position ${index + 1}`);
+    }
+    if (turn.itemsView !== undefined && turn.itemsView !== "full") {
+      throw new Error(`codex native turn ${String(turn.id ?? index + 1)} is not a full history view`);
+    }
+
+    const events: NonNullable<NativeSessionTurn["events"]> = [];
+    const userTexts: string[] = [];
+    const agentTexts: string[] = [];
+    let running = false;
+    const pushRunning = () => {
+      if (running) return;
+      running = true;
+      events.push({
+        source: "baton",
+        event: {
+          kind: "state_update",
+          payload: { state: "running" },
+        },
+      });
+    };
+
+    for (const rawItem of items) {
+      if (!rawItem || typeof rawItem !== "object") continue;
+      const item = rawItem as Record<string, unknown>;
+      if (item.type === "userMessage") {
+        const text = textInputs(item.content);
+        if (!text) continue;
+        userTexts.push(text);
+        events.push({
+          source: "user",
+          event: {
+            kind: "user_message",
+            payload: {
+              messageId: String(item.id ?? `native-user-${index}`),
+              content: [{ type: "text", text }],
+            },
+            raw: item,
+          },
+        });
+        pushRunning();
+        continue;
+      }
+
+      pushRunning();
+      if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
+        agentTexts.push(item.text.trim());
+      }
+      for (const lifecycle of ["started", "completed"] as const) {
+        for (const event of codexItemLifecycleDrafts(lifecycle, item)) {
+          events.push({ source: "harness", event: { ...event, raw: item } });
+        }
+      }
+    }
+    pushRunning();
+
+    const error = turn.error;
+    if (status === "failed" && error && typeof error === "object") {
+      const detail = error as Record<string, unknown>;
+      events.push({
+        source: "harness",
+        event: {
+          kind: "_baton_error_update",
+          payload: {
+            message: String(detail.message ?? "Codex turn failed"),
+            ...(typeof detail.codexErrorInfo === "string"
+              ? { code: detail.codexErrorInfo }
+              : {}),
+          },
+          raw: error,
+        },
+      });
+    }
+    events.push({
+      source: "harness",
+      event: {
+        kind: "state_update",
+        payload: {
+          state: "idle",
+          stopReason: codexStopReason(status || "completed"),
+        },
+        raw: rawTurn,
+      },
+    });
+    return {
+      userText: userTexts.join("\n") || undefined,
+      agentText: agentTexts.join("\n") || undefined,
+      events,
+    };
+  });
+}
+
 async function readCodexTurns(peer: CodexNativePeer, sessionId: string): Promise<unknown[]> {
   const descending: unknown[] = [];
   const seenCursors = new Set<string>();
@@ -63,7 +174,7 @@ async function readCodexTurns(peer: CodexNativePeer, sessionId: string): Promise
         threadId: sessionId,
         limit: HISTORY_TURN_LIMIT,
         sortDirection: "desc",
-        itemsView: "summary",
+        itemsView: "full",
         ...(cursor ? { cursor } : {}),
       },
       { timeoutMs: REQUEST_TIMEOUT_MS },
@@ -110,7 +221,7 @@ export async function inspectCodexSession(
         : typeof thread.preview === "string" && thread.preview.trim()
           ? thread.preview
           : undefined,
-    transcript: codexTranscript(turns),
+    turns: codexNativeTurns(turns),
   };
 }
 

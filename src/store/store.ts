@@ -36,10 +36,13 @@ import { newId } from "../event/ids.ts";
 import {
   ENVELOPE_VERSION,
   textOf,
+  type AnyEventDraft,
   type AnyEventEnvelope,
+  type AnyNewEvent,
   type ContentBlock,
   type EventEnvelope,
   type EventKind,
+  type EventSource,
   type NewEvent,
   type StopReason,
   type TurnSummary,
@@ -167,7 +170,19 @@ export interface NativeSessionMaterialization {
   nativeSessionId: string;
   cwd: string;
   title?: string;
-  turns: Array<{ userText?: string; agentText?: string }>;
+  turns: NativeSessionMaterializationTurn[];
+}
+
+export interface NativeSessionMaterializationEvent {
+  source: "user" | "baton" | "harness";
+  event: AnyEventDraft;
+}
+
+export interface NativeSessionMaterializationTurn {
+  userText?: string;
+  agentText?: string;
+  /** Harness 已归一的完整 turn；缺省时兼容只提供 user/assistant 文本的 provider。 */
+  events?: NativeSessionMaterializationEvent[];
 }
 
 function previewFromSessionLog(dir: string): string | undefined {
@@ -261,7 +276,7 @@ export class SessionStore {
   /**
    * 把 Harness 只读验证过的原生会话物化为 BatonSession。
    *
-   * 原生协议细节不进入 core；归一后的 user/assistant 历史按 Baton 的普通 turn 主路径落盘，
+   * 原生协议细节不进入 core；Provider 已归一的持久历史按 Baton 的普通 turn 主路径落盘，
    * 使接入后的会话等价于“从一开始就由这个 Harness 执行的 BatonSession”。
    */
   materializeNativeSession(
@@ -271,7 +286,14 @@ export class SessionStore {
     try {
       const existing = this.findByNativeSession(source.harnessTargetId, source.nativeSessionId);
       if (existing) {
-        return { session: this.openSession(existing.batonSessionId), reused: true };
+        const session = this.openSession(existing.batonSessionId);
+        const ownsLock = session.acquireLock();
+        try {
+          this.reconcileNativeSession(session, source);
+        } finally {
+          if (ownsLock) session.releaseLock();
+        }
+        return { session, reused: true };
       }
       return { session: this.createFromNativeSession(source), reused: false };
     } finally {
@@ -284,9 +306,104 @@ export class SessionStore {
     const label = source.title?.trim() || source.nativeSessionId;
     let syncedSeq = 0;
     for (const turn of source.turns) {
-      const turnId = newId("t");
+      syncedSeq = this.appendMaterializedTurn(session, source, turn);
+    }
+    // 来源与原生 binding 必须在同一次原子 meta 替换中出现，避免崩溃留下半个 owner。
+    session.updateMeta({
+      description: `import: ${source.harness} ${label}`,
+      nativeSessionOrigin: {
+        harnessTargetId: source.harnessTargetId,
+        harness: source.harness,
+        nativeSessionId: source.nativeSessionId,
+      },
+      harnessSessions: {
+        [source.harnessTargetId]: {
+          harnessTargetId: source.harnessTargetId,
+          harness: source.harness,
+          harnessSessionId: source.nativeSessionId,
+          resumeState: sessionIdResumeState(source.nativeSessionId),
+          contextEpochId: newId("ctxe"),
+          // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
+          syncedSeq,
+        },
+      },
+    });
+    return session;
+  }
+
+  /**
+   * 显式用 native id 再次 resume/fork 时做一次单向前缀对账：既有 Baton 历史必须是当前
+   * 原生历史的前缀，只追加原生新增尾部。这样不会引入第二个 owner，也不会让后台旁路写入
+   * 永久卡在首次导入水位；直接用 bs_ 打开仍不触发原生读取。
+   */
+  private reconcileNativeSession(
+    session: SessionHandle,
+    source: NativeSessionMaterialization,
+  ): void {
+    const summaries = session
+      .readEvents()
+      .filter(
+        (event): event is EventEnvelope<"_baton_turn_summary"> =>
+          event.kind === "_baton_turn_summary" &&
+          event.harnessTargetId === source.harnessTargetId,
+      );
+    const shared = Math.min(summaries.length, source.turns.length);
+    for (let index = 0; index < shared; index++) {
+      const existing = summaries[index]!.payload;
+      const incoming = source.turns[index]!;
+      if (
+        comparableTurnText(existing.userText) !== comparableTurnText(incoming.userText) ||
+        comparableTurnText(existing.agentText) !== comparableTurnText(incoming.agentText)
+      ) {
+        throw new Error(
+          `native session history diverged at turn ${index + 1} for ${source.harnessTargetId}/${source.nativeSessionId}`,
+        );
+      }
+    }
+    if (summaries.length > source.turns.length) {
+      throw new Error(
+        `native session history is behind its Baton owner for ${source.harnessTargetId}/${source.nativeSessionId}`,
+      );
+    }
+
+    let syncedSeq = summaries.at(-1)?.seq ?? 0;
+    for (const turn of source.turns.slice(summaries.length)) {
+      syncedSeq = this.appendMaterializedTurn(session, source, turn);
+    }
+    if (source.turns.length === summaries.length) return;
+
+    const existing = session.meta.harnessSessions[source.harnessTargetId];
+    session.setHarnessSession(source.harnessTargetId, {
+      ...existing,
+      harnessTargetId: source.harnessTargetId,
+      harness: source.harness,
+      harnessSessionId: source.nativeSessionId,
+      resumeState: existing?.resumeState ?? sessionIdResumeState(source.nativeSessionId),
+      contextEpochId: existing?.contextEpochId ?? newId("ctxe"),
+      syncedSeq,
+    });
+  }
+
+  private appendMaterializedTurn(
+    session: SessionHandle,
+    source: NativeSessionMaterialization,
+    turn: NativeSessionMaterializationTurn,
+  ): number {
+    const turnId = newId("t");
+    if (turn.userText) session.setPreviewIfEmpty(turn.userText);
+
+    if (turn.events) {
+      for (const imported of turn.events) {
+        session.append({
+          ...imported.event,
+          source: materializedEventSource(imported.source, source.harnessTargetId),
+          harness: source.harness,
+          harnessTargetId: source.harnessTargetId,
+          turnId,
+        } as AnyNewEvent);
+      }
+    } else {
       if (turn.userText) {
-        session.setPreviewIfEmpty(turn.userText);
         session.append({
           kind: "user_message",
           source: { type: "user" },
@@ -320,29 +437,8 @@ export class SessionStore {
         turnId,
         payload: { state: "idle", stopReason: "end_turn" },
       });
-      syncedSeq = session.summarizeTurnEvent(turnId).seq;
     }
-    // 来源与原生 binding 必须在同一次原子 meta 替换中出现，避免崩溃留下半个 owner。
-    session.updateMeta({
-      description: `import: ${source.harness} ${label}`,
-      nativeSessionOrigin: {
-        harnessTargetId: source.harnessTargetId,
-        harness: source.harness,
-        nativeSessionId: source.nativeSessionId,
-      },
-      harnessSessions: {
-        [source.harnessTargetId]: {
-          harnessTargetId: source.harnessTargetId,
-          harness: source.harness,
-          harnessSessionId: source.nativeSessionId,
-          resumeState: sessionIdResumeState(source.nativeSessionId),
-          contextEpochId: newId("ctxe"),
-          // 原生会话已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
-          syncedSeq,
-        },
-      },
-    });
-    return session;
+    return session.summarizeTurnEvent(turnId).seq;
   }
 
   /** 会话 ID 全局唯一，打开时不要求提供 cwd，跨项目扫描定位（@ 引用可指向任意项目的会话）。 */
@@ -666,9 +762,10 @@ export class SessionHandle {
    * 否则往活会话里合成终态会污染它。不承担并发追加的完整保护。
    * 同进程重入直接通过，且不做引用计数——约定同一进程内一个 session 至多
    * 一个活 handle（TUI 单前台会话；将来多 Session Controller 由 session slot
-   * 唯一性保证），进程内并发归上层，锁只管跨进程。
+   * 唯一性保证），进程内并发归上层，锁只管跨进程。返回 true 表示本次新建了锁，
+   * 调用方应负责释放；false 表示同进程已持有，不能替原 owner 释放。
    */
-  acquireLock(): void {
+  acquireLock(): boolean {
     const path = this.lockPath();
     // 每轮要么 O_EXCL 原子创建成功，要么排除一个失效持有者再试；
     // 不用 existsSync 预检查——检查与创建之间的窗口就是 TOCTOU。
@@ -677,7 +774,7 @@ export class SessionHandle {
         const fd = openSync(path, "wx");
         writeSync(fd, String(process.pid));
         closeSync(fd);
-        return;
+        return true;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       }
@@ -687,7 +784,7 @@ export class SessionHandle {
       } catch {
         continue; // 持有者恰在此刻释放了锁，直接重试创建
       }
-      if (holder === process.pid) return; // 同进程重入
+      if (holder === process.pid) return false; // 同进程重入
       if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
         throw new Error(`baton session ${this.id} is in use by another baton process (pid ${holder})`);
       }
@@ -920,6 +1017,24 @@ function joinMessages(state: SessionState, role: "user" | "agent"): string {
     }
   }
   return parts.join("\n");
+}
+
+function materializedEventSource(
+  source: NativeSessionMaterializationEvent["source"],
+  harnessTargetId: string,
+): EventSource {
+  switch (source) {
+    case "user":
+      return { type: "user" };
+    case "baton":
+      return { type: "baton" };
+    case "harness":
+      return { type: "harness", harnessTargetId };
+  }
+}
+
+function comparableTurnText(text: string | undefined): string {
+  return text?.replace(/\r\n/g, "\n").replace(/\n{2,}/g, "\n").trim() ?? "";
 }
 
 function stripBatonInjectedContext(text: string): string {

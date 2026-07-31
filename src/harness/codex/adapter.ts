@@ -13,6 +13,7 @@ import type {
   ConfigValue,
   ContentBlock,
   DiffBlock,
+  AnyEventDraft,
   SessionConfigOption,
   StopReason,
   ToolCallStatus,
@@ -465,6 +466,112 @@ const CODEX_TERMINAL_STATUS: Record<string, ToolCallStatus> = {
 
 export function codexToolTerminalStatus(rawStatus: unknown): ToolCallStatus {
   return closedTerminal(rawStatus, CODEX_TERMINAL_STATUS, "failed", "completed");
+}
+
+/**
+ * Codex ThreadItem 的持久语义归一。live notification 与只读 full Turn 导入共同走这里，
+ * 避免中途接管时得到一套“只有首尾文本”的缩水 BatonSession。
+ */
+export function codexItemLifecycleDrafts(
+  lifecycle: "started" | "completed",
+  item: Record<string, unknown>,
+): AnyEventDraft[] {
+  const itemType = String(item.type ?? "");
+  if (!itemType || itemType === "userMessage") return [];
+
+  if (itemType === "agentMessage") {
+    return lifecycle === "completed"
+      ? [{
+          kind: "agent_message",
+          payload: {
+            messageId: String(item.id),
+            content: [{ type: "text", text: String(item.text ?? "") }],
+          },
+        }]
+      : [];
+  }
+
+  if (itemType === "reasoning") {
+    if (lifecycle !== "completed") return [];
+    const summary = Array.isArray(item.summary) ? item.summary : [];
+    return summary.flatMap((value, index) => {
+      const text = String(value).trim();
+      return text
+        ? [{
+            kind: "agent_thought" as const,
+            payload: {
+              messageId: `${String(item.id)}:summary:${index}`,
+              content: [{ type: "text" as const, text }],
+            },
+          }]
+        : [];
+    });
+  }
+
+  if (itemType === "plan") {
+    const content = String(item.text ?? "").trim();
+    return lifecycle === "completed" && content
+      ? [{
+          kind: "proposed_plan",
+          payload: { planId: String(item.id), content },
+        }]
+      : [];
+  }
+
+  if (itemType === "contextCompaction") {
+    return [{
+      kind: "_baton_run_status",
+      payload:
+        lifecycle === "started"
+          ? { phase: "compacting", title: "Compacting context…" }
+          : { phase: null },
+    }];
+  }
+
+  if (itemType === "collabAgentToolCall") {
+    const terminal = codexToolTerminalStatus(item.status);
+    const title = item.prompt ?? item.description;
+    const taskType = item.agentType ?? item.subagentType;
+    return [{
+      kind: "task_update",
+      payload: {
+        taskId: String(item.id),
+        status:
+          lifecycle === "started"
+            ? "in_progress"
+            : terminal === "completed"
+              ? "completed"
+              : "failed",
+        ...(title !== undefined
+          ? { title: String(title) }
+          : lifecycle === "started"
+            ? { title: toolTitleOf(item) }
+            : {}),
+        ...(taskType !== undefined ? { taskType: String(taskType) } : {}),
+        ...(lifecycle === "completed" && (item.result ?? item.output) !== undefined
+          ? { summary: String(item.result ?? item.output) }
+          : {}),
+      },
+    }];
+  }
+
+  return [{
+    kind: "tool_call_update",
+    payload: {
+      toolCallId: String(item.id),
+      title: toolTitleOf(item),
+      kind: toolKindOf(itemType),
+      status: lifecycle === "started" ? "in_progress" : codexToolTerminalStatus(item.status),
+      content:
+        lifecycle === "completed"
+          ? completedToolContent(itemType, item)
+          : itemType === "fileChange"
+            ? fileChangeDiffs(item)
+            : undefined,
+      rawInput: lifecycle === "started" ? item : undefined,
+      rawOutput: lifecycle === "completed" ? item : undefined,
+    },
+  }];
 }
 
 /**
@@ -1304,126 +1411,36 @@ export class CodexAdapter implements HarnessAdapter {
       case "item/completed": {
         const item = (p.item ?? {}) as Record<string, unknown>;
         const itemType = String(item.type ?? "");
-        if (itemType === "agentMessage") {
-          // completed 携带全文：整消息 upsert 纠正 delta 累积（乱序/丢包时的自愈点）
-          if (method === "item/completed") {
-            this.emit(
-              rt,
-              {
-                kind: "agent_message",
-                payload: { messageId: String(item.id), content: [{ type: "text", text: String(item.text ?? "") }] },
-              },
-              params,
-            );
-          }
-        } else if (itemType === "reasoning") {
-          // summary part 是 Codex TUI 的展示边界；保留它，避免多个中间状态挤进同一块。
-          if (method === "item/completed") {
-            const summaryArr = Array.isArray(item.summary) ? (item.summary as string[]) : [];
-            for (const [index, summary] of summaryArr.entries()) {
-              const full = String(summary).trim();
-              if (!full) continue;
-              this.emit(
-                rt,
-                {
-                  kind: "agent_thought",
-                  payload: {
-                    messageId: `${String(item.id)}:summary:${index}`,
-                    content: [{ type: "text", text: full }],
-                  },
-                },
-                params,
-              );
-            }
-          }
-        } else if (itemType === "userMessage" || itemType === "plan") {
-          // userMessage 由 prompt() 侧发；plan 走 turn/plan/updated
-        } else if (itemType === "contextCompaction") {
-          // 运行阶段不是工具调用（无输入输出契约，不占工具卡），归一成 run status（design §5.2/§5.9）
-          this.emit(
-            rt,
-            {
-              kind: "_baton_run_status",
-              payload:
-                method === "item/started"
-                  ? { phase: "compacting", title: "Compacting context…" }
-                  : { phase: null },
-            },
-            params,
+        const lifecycle = method === "item/started" ? "started" : "completed";
+        const terminal = lifecycle === "completed" ? codexToolTerminalStatus(item.status) : undefined;
+        const isTool =
+          itemType &&
+          !["agentMessage", "reasoning", "userMessage", "plan", "contextCompaction", "collabAgentToolCall"].includes(
+            itemType,
           );
-        } else if (itemType === "collabAgentToolCall") {
-          const terminal = codexToolTerminalStatus(item.status);
-          const title = item.prompt ?? item.description;
-          const taskType = item.agentType ?? item.subagentType;
+        // 对账：declined 却从未向 baton 发过 requestApproval → 决策权被 harness 侧
+        // 策略（auto-review 等）截走了，用户全程不知情。显式提示，不静默渲染。
+        if (
+          isTool &&
+          terminal === "declined" &&
+          !rt.approvalSeenItemIds?.has(String(item.id)) &&
+          !rt.autoReviewedItemIds?.has(String(item.id))
+        ) {
           this.emit(
             rt,
             {
-              kind: "task_update",
+              kind: "_baton_notice",
               payload: {
-                taskId: String(item.id),
-                status:
-                  method === "item/started"
-                    ? "in_progress"
-                    : terminal === "completed"
-                      ? "completed"
-                      : "failed",
-                ...(title !== undefined
-                  ? { title: String(title) }
-                  : method === "item/started"
-                    ? { title: toolTitleOf(item) }
-                    : {}),
-                ...(taskType !== undefined ? { taskType: String(taskType) } : {}),
-                ...(method === "item/completed" && (item.result ?? item.output) !== undefined
-                  ? { summary: String(item.result ?? item.output) }
-                  : {}),
+                level: "warning",
+                title: "Approval bypassed by harness-side policy",
+                detail: `codex declined "${toolTitleOf(item)}" without asking you — check approvals_reviewer / auto-review in codex config`,
               },
             },
             params,
           );
-        } else if (itemType) {
-          const status = method === "item/started" ? "in_progress" : codexToolTerminalStatus(item.status);
-          // 对账：declined 却从未向 baton 发过 requestApproval → 决策权被 harness 侧
-          // 策略（auto-review 等）截走了，用户全程不知情。显式提示，不静默渲染。
-          if (
-            status === "declined" &&
-            !rt.approvalSeenItemIds?.has(String(item.id)) &&
-            !rt.autoReviewedItemIds?.has(String(item.id))
-          ) {
-            this.emit(
-              rt,
-              {
-                kind: "_baton_notice",
-                payload: {
-                  level: "warning",
-                  title: "Approval bypassed by harness-side policy",
-                  detail: `codex declined "${toolTitleOf(item)}" without asking you — check approvals_reviewer / auto-review in codex config`,
-                },
-              },
-              params,
-            );
-          }
-          this.emit(
-            rt,
-            {
-              kind: "tool_call_update",
-              payload: {
-                toolCallId: String(item.id),
-                title: toolTitleOf(item),
-                kind: toolKindOf(itemType),
-                status,
-                // completed 携带的完整结果覆盖流式 chunk，兼作 outputDelta 丢失时的自愈点。
-                content:
-                  method === "item/completed"
-                    ? completedToolContent(itemType, item)
-                    : itemType === "fileChange"
-                      ? fileChangeDiffs(item)
-                      : undefined,
-                rawInput: method === "item/started" ? item : undefined,
-                rawOutput: method === "item/completed" ? item : undefined,
-              },
-            },
-            params,
-          );
+        }
+        for (const draft of codexItemLifecycleDrafts(lifecycle, item)) {
+          this.emit(rt, draft, params);
         }
         break;
       }

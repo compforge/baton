@@ -73,7 +73,8 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    与 identity 目录；Session、store/reduce、Projection 和 chat-tui 不出现 Harness 分支。开放
    wire 值在边界保守归一，原始形态保留在 `raw`；外部原生 Session 只经 Adapter 只读发现，
    并物化为绑定原生会话的 BatonSession；此后 resume / fork 只走 BatonSession 主路径。
-   接入后 BatonSession 是唯一 owner，不镜像其它客户端的旁路写入，且 Baton 不托管 Harness 凭证。
+   接入后 BatonSession 是唯一 owner，不后台镜像其它客户端的旁路写入；显式以 native ID
+   再次接入时只允许前缀对账后补尾，分叉即失败。Baton 不托管 Harness 凭证。
 5. **可信交付必须有显式事实**：Controller 拥有 Input、Attempt、Turn 与 Interaction 生命周期，
    Adapter 拥有 Harness 执行；投递先持久化再 dispatch，无法证明结果时保留 `uncertain`；
    Context 只有 DeliveryReceipt 才推进目标 HarnessSession 的 Epoch。审批、用户决议和自动 reviewer

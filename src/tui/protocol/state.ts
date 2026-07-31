@@ -2,6 +2,7 @@
 
 import type {
   ChatState,
+  InteractionResponse,
   InteractionView,
   PickerSearchView,
   RunStatusItem,
@@ -106,6 +107,7 @@ function interactionView(interaction: Interaction): InteractionView {
       kind: "approval",
       blocking: true,
       requester,
+      escapeResponse: { kind: "cancelled" },
       approval: {
         title: interaction.title,
         description: interaction.description,
@@ -118,11 +120,28 @@ function interactionView(interaction: Interaction): InteractionView {
     };
   }
   if (interaction.kind === "question") {
+    const onlyQuestion =
+      interaction.questions.length === 1
+        ? interaction.questions[0]
+        : undefined;
+    const rejectOption = onlyQuestion?.options?.find(
+      (option) => option.role === "reject",
+    );
+    const escapeResponse: InteractionResponse =
+      onlyQuestion && rejectOption
+        ? {
+            kind: "question",
+            answers: {
+              [onlyQuestion.questionId]: [rejectOption.label],
+            },
+          }
+        : { kind: "cancelled" };
     return {
       id: interaction.interactionId,
       kind: "question",
       blocking: true,
       requester,
+      escapeResponse,
       question: {
         questions: interaction.questions.map((prompt) => ({
           id: prompt.questionId,
@@ -145,6 +164,7 @@ function interactionView(interaction: Interaction): InteractionView {
     kind: "approval",
     blocking: true,
     requester,
+    escapeResponse: { kind: "approval", optionId: "skip" },
     approval: {
       title: `Trust ${interaction.hooks.length} ${interaction.harnessName} hook${interaction.hooks.length === 1 ? "" : "s"}?`,
       description: hookTrustDescription(interaction),
@@ -324,6 +344,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       requester: proposal.key.pluginInstanceId,
       title: "Suggested follow-up",
       text: proposal.text,
+      escapeResponse: {
+        kind: "suggested_input" as const,
+        outcome: "dismissed" as const,
+      },
     })),
   ];
   const observedRuns = [...state.activeTurns.values()].filter(

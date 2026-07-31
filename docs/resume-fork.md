@@ -9,10 +9,11 @@ resume 和 fork 都是 **BatonSession 自己的语义**，不依赖任何 harnes
 
 CLI 也接受 Harness 原生会话引用：裸 ID 会同时做只读发现，唯一命中时自动识别；
 `cx:<id>` / `cc:<id>` 显式指定 Codex / Claude Code。原生 ID 只是导入入口：先只读找到该
-HarnessSession，找不到即报错；再把 user/assistant 历史物化为归属于同一 HarnessTarget 的
-普通 Baton turn 与 turn summary，并绑定原生会话。语义上等价于 BatonSession 从一开始就存在，
-此前始终由该 Harness 问答。物化完成后，命令只持有一个 `bs_`：`resume` 打开它，`fork`
-调用普通 `forkSession()` 创建 child，不再有第二套原生 fork 生命周期。
+HarnessSession，找不到即报错；再把 Provider 能只读恢复的完整持久历史物化为归属于同一
+HarnessTarget 的普通 Baton turn 与 turn summary，并绑定原生会话。Codex 使用 full Turn，
+其持久 ThreadItem 与 live notification 共用同一套归一规则。语义上等价于 BatonSession
+从一开始就存在，此前始终由该 Harness 问答。物化完成后，命令只持有一个 `bs_`：
+`resume` 打开它，`fork` 调用普通 `forkSession()` 创建 child，不再有第二套原生 fork 生命周期。
 
 物化出的源写入
 `meta.nativeSessionOrigin = { harnessTargetId, harness, nativeSessionId }`，不伪装成
@@ -22,8 +23,10 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
 
 接入完成后，BatonSession 是这段逻辑历史的唯一 owner，原生 Session 只是该 Harness 的执行后端。
 若用户继续从 Claude Code / Codex 等其它客户端写入同一个原生 Session，Baton 不会自动镜像这些
-旁路 turn；再次 `baton resume <native-id>` 只会复用已有 Baton owner。需要持续双向同步时必须
-引入原生 turn checkpoint 与 reconcile，而不能让两个 writer 共享一个未对账的会话。
+旁路 turn；但显式再次执行 `baton resume <native-id>` 或 `baton fork <native-id>` 会做一次
+只读前缀对账：已有 Baton 历史必须与原生历史前缀一致，然后把新增尾部追加到同一个 owner。
+若前缀分叉则 fail closed，不猜测合并。直接按 `bs_` 打开不触发原生读取；需要持续双向同步仍须
+引入原生 turn checkpoint 与后台 reconcile，不能让两个 writer 共享一个未对账的会话。
 
 配套引入两个打开期机制：
 
@@ -37,7 +40,8 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
    **session picker**，只选择当前 project 的 BatonSession；显式 native id 才触发外部发现。
    picker 不预先打开任何会话，Enter 选中才 resume / 落盘 fork，Esc 取消，Ctrl+C 退出。
 2. 原生来源在源 cwd 创建 BatonSession，将归一历史写入统一 ledger，并记录原生 binding；
-   已有同一 binding 的 Baton owner 时直接复用。此后 resume / fork 与原生 ID 无关。
+   已有同一 binding 的 Baton owner 时先校验前缀并补齐新增尾部，再复用该 owner。物化完成后，
+   resume / fork 仍走 BatonSession 主路径。
 3. 一切打开路径（CLI 启动、TUI `/sessions` 切换、`/new`）收敛到 `session/open.ts` 的 `openBatonSession()`：解析目标 → `acquireLock()` → `recoverInterruptedState()`。
 4. 所有 fork child 首次发消息时，`Controller.ensureHarness()` 发现无
    `harnessSessionId` → 开 fresh 原生会话并签发新的 ContextEpoch → 从 revision 0 触发全量
@@ -82,10 +86,12 @@ recovery 同时覆盖 fork：源会话若正在运行（或曾崩溃），复制
 
 child 的 harness 通过补课看到的是紧凑 turn 摘要（预算内优先保最近，默认 4KB 字符），不是全量事件回放。这与既有跨 harness 接力的保真度一致，不是 fork 引入的新损耗；但用户直觉可能预期"fork = 完整带走上下文"，故显式记录。完整历史仍在 child 的 `session.jsonl` 里，随时可被更高保真的注入策略消费。
 
-物化出的源在 Harness 内拥有完整原生历史；Baton ledger 逐 turn 记录可归一的 user/assistant
-文本，但不伪造无法从只读接口恢复的工具事件。因此 resume 源并继续同一 Harness 时，完整
-保真度由原生 session 保证；fork child、跨 Harness 接力则与普通 BatonSession 一样，复用已进入
-统一 ledger 的文本 turn summary。
+物化出的源在 Harness 内拥有完整原生历史；Baton ledger 逐 turn 记录 Provider 能从只读接口
+恢复的持久语义。Codex full Turn 能恢复 user/assistant、reasoning、工具、计划提案与终态，并与
+live adapter 共用 ThreadItem 归一；流式 delta、瞬时运行状态或只存在于通知流而未持久化的数据
+不伪造。Claude Code 当前只读接口仍按 user/assistant 文本恢复。resume 源并继续同一 Harness 时，
+更完整的运行上下文由原生 session 保证；fork child、跨 Harness 接力则复用已进入统一 ledger 的
+turn summary。
 
 ### 跨 project fork：历史跟源走，project 跟发起位置走
 

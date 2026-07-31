@@ -1,23 +1,26 @@
 import type { BatonConfig } from "../config/config.ts";
 import { parseHarness, HARNESS_REGISTRY, resolveDefaultHarnessTarget } from "./registry.ts";
 import type { HarnessTarget } from "./target.ts";
-import type { SessionHandle, SessionStore } from "../store/store.ts";
+import type {
+  NativeSessionMaterializationTurn,
+  SessionHandle,
+  SessionStore,
+} from "../store/store.ts";
 
 export interface NativeTranscriptEntry {
   role: "user" | "assistant";
   text: string;
 }
 
-export interface NativeSessionTurn {
-  userText?: string;
-  agentText?: string;
-}
+export type NativeSessionTurn = NativeSessionMaterializationTurn;
 
 export interface NativeSessionInfo {
   nativeSessionId: string;
   cwd?: string;
   title?: string;
-  transcript: NativeTranscriptEntry[];
+  /** 完整归一 Turn 优先；只提供文本历史的 Harness 可继续使用 transcript。 */
+  turns?: NativeSessionTurn[];
+  transcript?: NativeTranscriptEntry[];
 }
 
 export interface NativeSessionProviderOptions {
@@ -183,7 +186,7 @@ export function materializeNativeSession(
     nativeSessionId: match.source.nativeSessionId,
     cwd: match.source.cwd ?? options.cwd,
     title: match.source.title,
-    turns: nativeSessionTurns(match.source.transcript),
+    turns: match.source.turns ?? nativeSessionTurns(match.source.transcript ?? []),
   });
   return { ...materialized, match };
 }
