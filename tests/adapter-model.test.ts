@@ -1,5 +1,6 @@
 import type { InteractionHandler } from "../src/harness/adapter.ts";
 import { describe, expect, test } from "bun:test";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   ClaudeAdapter,
@@ -122,6 +123,64 @@ describe("Claude model capability", () => {
     expect(snapshot.find((option) => option.id === "effort")).toMatchObject({
       category: "thought_level",
     });
+    expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
+      value: "default",
+      category: "mode",
+    });
+  });
+
+  test("maps Plan mode to Claude permissionMode", async () => {
+    let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
+    const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+      queryOptions = params.options;
+      const output = (async function* () {})();
+      return Object.assign(output, {
+        initializationResult: async () => ({ models: [] }),
+        close: () => {},
+      }) as unknown as Query;
+    }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+
+    const snapshot = await adapter.setConfig(ref, "mode", "plan");
+    expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
+      value: "plan",
+      category: "mode",
+    });
+    await adapter.sendTurn(ref, {
+      turnId: "t_plan",
+      messageId: "m_plan",
+      blocks: [{ type: "text", text: "design this change" }],
+    });
+    await Bun.sleep(0);
+
+    expect(queryOptions?.permissionMode).toBe("plan");
+  });
+
+  test("omits Claude permissionMode after returning to Default mode", async () => {
+    let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
+    const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+      queryOptions = params.options;
+      const output = (async function* () {})();
+      return Object.assign(output, {
+        initializationResult: async () => ({ models: [] }),
+        close: () => {},
+      }) as unknown as Query;
+    }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+
+    await adapter.setConfig(ref, "mode", "plan");
+    const snapshot = await adapter.setConfig(ref, "mode", "default");
+    expect(snapshot.find((option) => option.id === "mode")?.value).toBe("default");
+    await adapter.sendTurn(ref, {
+      turnId: "t_default",
+      messageId: "m_default",
+      blocks: [{ type: "text", text: "implement this change" }],
+    });
+    await Bun.sleep(0);
+
+    expect(queryOptions?.permissionMode).toBeUndefined();
   });
 
   test("restores Claude Code prompt and filesystem settings for normal turns", async () => {
@@ -234,6 +293,131 @@ describe("Codex model capability", () => {
     await Bun.sleep(0);
 
     expect(requests).toEqual([{ method: "thread/compact/start", params: { threadId: "thread-1" } }]);
+  });
+
+  test("maps Plan mode to Codex collaborationMode", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    const turnRequests: Record<string, unknown>[] = [];
+    const peer = {
+      request: async (method: string, params: Record<string, unknown>) => {
+        if (method === "model/list") {
+          return {
+            data: [{
+              id: "gpt-5",
+              displayName: "GPT-5",
+              isDefault: true,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: [],
+            }],
+          };
+        }
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        if (method === "turn/start") {
+          turnRequests.push(params);
+          return { turn: { id: "turn-plan", status: "inProgress" } };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    };
+    const runtime = { threadId: "thread-1", peer };
+    (
+      adapter as unknown as { threads: Map<string, typeof runtime> }
+    ).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    const snapshot = await adapter.setConfig(ref, "mode", "plan");
+    expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
+      value: "plan",
+      category: "mode",
+    });
+    await adapter.sendTurn(ref, {
+      turnId: "t_plan",
+      messageId: "m_plan",
+      blocks: [{ type: "text", text: "design this change" }],
+    });
+    await Bun.sleep(0);
+
+    expect(turnRequests[0]?.collaborationMode).toEqual({
+      mode: "plan",
+      settings: {
+        model: "gpt-5",
+        reasoning_effort: "medium",
+        developer_instructions: null,
+      },
+    });
+    expect(turnRequests[0]?.model).toBeUndefined();
+    expect(turnRequests[0]?.effort).toBeUndefined();
+  });
+
+  test("rejects an invalid Codex mode before catalog requests", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    const requests: string[] = [];
+    const runtime = {
+      threadId: "thread-1",
+      peer: {
+        request: async (method: string) => {
+          requests.push(method);
+          throw new Error(`unexpected request: ${method}`);
+        },
+      },
+    };
+    (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    await expect(adapter.setConfig(ref, "mode", "invalid")).rejects.toThrow(
+      "Unknown Codex mode: invalid",
+    );
+    expect(requests).toEqual([]);
+  });
+
+  test("keeps the active Codex mode visible during a catalog failure", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    let modeRequests = 0;
+    const peer = {
+      request: async (method: string) => {
+        if (method === "model/list") {
+          return {
+            data: [{
+              id: "gpt-5",
+              displayName: "GPT-5",
+              isDefault: true,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: [],
+            }],
+          };
+        }
+        if (method === "collaborationMode/list") {
+          modeRequests++;
+          if (modeRequests > 1) throw new Error("temporary catalog failure");
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    };
+    const runtime = { threadId: "thread-1", peer };
+    (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+
+    const snapshot = await adapter.setConfig(ref, "mode", "plan");
+    expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
+      value: "plan",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    });
   });
 
   test("normalizes model/list and sends the selected model on the next turn", async () => {

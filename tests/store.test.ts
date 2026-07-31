@@ -188,6 +188,7 @@ describe("session lifecycle", () => {
       resumeCursor: "42",
       model: "gpt-5",
       effort: "high",
+      mode: "plan",
     });
     const reopened = store.openSession(h.id);
     expect(reopened.meta.harnessSessions["codex"]!.harnessSessionId).toBe("thread_123");
@@ -198,6 +199,7 @@ describe("session lifecycle", () => {
     expect(reopened.meta.harnessSessions["codex"]!.resumeCursor).toBe("42");
     expect(reopened.meta.harnessSessions["codex"]!.model).toBe("gpt-5");
     expect(reopened.meta.harnessSessions["codex"]!.effort).toBe("high");
+    expect(reopened.meta.harnessSessions["codex"]!.mode).toBe("plan");
   });
 
   test("harness session metadata cannot be stored under another target", () => {
@@ -545,6 +547,7 @@ describe("forkSession", () => {
       syncedSeq: 7,
       model: "gpt-5",
       effort: "high",
+      mode: "plan",
     });
     source.setHarnessSession("claude", {
       harnessTargetId: "claude",
@@ -558,6 +561,7 @@ describe("forkSession", () => {
       harness: "codex",
       model: "gpt-5",
       effort: "high",
+      mode: "plan",
     });
     expect(child.meta.harnessSessions.claude).toEqual({
       harnessTargetId: "claude",

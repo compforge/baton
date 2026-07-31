@@ -226,6 +226,7 @@ export class HarnessBinding {
       harness: this.adapter.harness,
       model: selected("model"),
       effort: selected("effort"),
+      mode: selected("mode"),
     });
     return snapshot;
   }
@@ -261,6 +262,10 @@ export class HarnessBinding {
     return this.session.meta.harnessSessions[this.target.id]?.effort ?? this.effortPreference;
   }
 
+  private preferredMode(): string | undefined {
+    return this.session.meta.harnessSessions[this.target.id]?.mode;
+  }
+
   private async open(): Promise<void> {
     try {
       const existing = this.session.meta.harnessSessions[this.target.id];
@@ -269,6 +274,7 @@ export class HarnessBinding {
       const effortAdapter = isEffortConfigurable(this.adapter) ? this.adapter : undefined;
       const model = configAdapter || modelAdapter ? this.preferredModel() : undefined;
       const effort = configAdapter || effortAdapter ? this.preferredEffort() : undefined;
+      const mode = configAdapter ? this.preferredMode() : undefined;
       const launchSnapshot = createHarnessLaunchSnapshot({
         target: this.target,
         harnessSessionKey: this.adapter.harness,
@@ -284,6 +290,7 @@ export class HarnessBinding {
         launchSnapshot,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(mode ? { mode } : {}),
       });
       this.ref = await this.adapter.open(
         {
@@ -311,6 +318,7 @@ export class HarnessBinding {
         if (configAdapter) await configAdapter.setConfig(this.ref, "effort", effort);
         else await effortAdapter?.setEffort(this.ref, effort);
       }
+      if (mode) await configAdapter?.setConfig(this.ref, "mode", mode);
       this.session.setHarnessSession(this.target.id, {
         ...this.session.meta.harnessSessions[this.target.id],
         harnessTargetId: this.target.id,
@@ -322,6 +330,7 @@ export class HarnessBinding {
         syncedSeq: this.ref.resumed ? existing?.syncedSeq : 0,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(mode ? { mode } : {}),
       });
     } finally {
       this.setupTurnId = undefined;

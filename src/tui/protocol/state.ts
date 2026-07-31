@@ -351,6 +351,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     statusTargetId === activeTargetId || statusTargetId === harnessTargetId
       ? controller.currentEffort(statusTargetId)
       : session.meta.harnessSessions[statusTargetId]?.effort;
+  const statusMode = controller.currentMode(statusTargetId);
   const modelAndEffort = statusEffort
     ? `${statusModel} · ${statusEffort}`
     : statusModel;
@@ -362,7 +363,8 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller.approvalRoute(statusTargetId) === "delegated"
       ? "approvals:auto-review"
       : undefined;
-  const statusDetails = [contextStatus, approvalStatus].filter(
+  const modeStatus = statusMode === "default" ? undefined : `${statusMode} mode`;
+  const statusDetails = [modeStatus, contextStatus, approvalStatus].filter(
     (detail): detail is string => detail !== undefined,
   );
   const splitStatus = (item: RunStatusItem): RunStatusItem[] => {
@@ -444,7 +446,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
           }
         : null,
       interactions,
-      placeholder: `Message ${harnessTargetId} (/ commands, @ mentions, ${
+      placeholder: `Message ${harnessTargetId} (/ commands, @ mentions, Shift+Tab mode, ${
         controller.queueLength > 0
           ? "↑ recall queued"
           : controller.isBusy

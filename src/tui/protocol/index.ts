@@ -363,6 +363,10 @@ export class BatonChatProtocol implements ChatProtocol {
         this.changed();
         return;
       }
+      case "plan": {
+        if (argument) throw new Error("/plan takes no arguments");
+        return this.configureMode(this.harnessTargetId, "plan");
+      }
       case "implement-plan": {
         const explicitId = argument.trim();
         const proposal = explicitId
@@ -490,6 +494,17 @@ export class BatonChatProtocol implements ChatProtocol {
         return this.runPluginCommand(name, argument);
       }
     }
+  }
+
+  async cycleMode(): Promise<void> {
+    const target = this.harnessTargetId;
+    const option = await this.modeOption(target);
+    const currentIndex = option.options.findIndex(
+      (candidate) => candidate.value === option.value,
+    );
+    const next = option.options[(currentIndex + 1) % option.options.length];
+    if (!next) throw new Error(`${target} has no available modes`);
+    await this.configureMode(target, next.value);
   }
 
   cancel(): void {
@@ -961,6 +976,27 @@ export class BatonChatProtocol implements ChatProtocol {
     this.changed();
   }
 
+  private async modeOption(target: string) {
+    const option = (await this.controller.getConfig(target)).find(
+      (candidate) =>
+        candidate.type === "select" &&
+        (candidate.id === "mode" || candidate.category === "mode"),
+    );
+    if (!option || option.type !== "select" || option.options.length === 0) {
+      throw new Error(`${target} does not support mode switching`);
+    }
+    return option;
+  }
+
+  private async configureMode(target: string, value: string): Promise<void> {
+    const option = await this.modeOption(target);
+    const selected = option.options.find((candidate) => candidate.value === value);
+    if (!selected) throw new Error(`Unknown ${target} mode: ${value}`);
+    await this.controller.setConfig(target, option.id, selected.value);
+    this.toast = { text: `${target} mode: ${selected.name}`, tone: "info" };
+    this.changed();
+  }
+
   private async configureEffort(target: string, effort: { id: string; label: string }): Promise<void> {
     await this.controller.setEffort(target, effort.id);
     saveEffortPreference(this.store.rootDir, target, effort.id);
@@ -976,6 +1012,7 @@ export class BatonChatProtocol implements ChatProtocol {
     const activeTargetId = this.controller.activeHarnessTargetId;
     const selectedModel = this.controller.currentModel(this.harnessTargetId) ?? "default";
     const selectedEffort = this.controller.currentEffort(this.harnessTargetId) ?? "default";
+    const selectedMode = this.controller.currentMode(this.harnessTargetId);
     const context = this.state.perTarget.get(this.harnessTargetId)?.contextUsage;
     const contextText = contextUsageText(context, selectedModel);
     const targets = meta.harnessSessions
@@ -986,7 +1023,7 @@ export class BatonChatProtocol implements ChatProtocol {
       `Name: ${sessionDisplayTitle(meta)}`,
       ...(meta.description ? [`Description: ${meta.description}`] : []),
       `Directory: ${meta.cwd}`,
-      `Current: ${this.harnessTargetId} - model ${selectedModel} - effort ${selectedEffort}`,
+      `Current: ${this.harnessTargetId} - model ${selectedModel} - effort ${selectedEffort} - mode ${selectedMode}`,
       `Context: ${contextText}`,
       `Targets: ${targets}`,
       `Turns: ${this.state.turnSummaries.length} - tokens in ${this.state.usage.inputTokens} / out ${this.state.usage.outputTokens}`,

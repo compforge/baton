@@ -380,6 +380,10 @@ export class Controller {
     );
   }
 
+  currentMode(harnessTargetId: string): string {
+    return this.options.session.meta.harnessSessions?.[harnessTargetId]?.mode ?? "default";
+  }
+
   async getConfig(harnessTargetId: string): Promise<SessionConfigOption[]> {
     return (await this.ensureHarness(harnessTargetId)).getConfig();
   }

@@ -779,6 +779,63 @@ describe("BatonChatProtocol harness commands", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("switches Plan mode with /plan and cycles back with Shift+Tab intent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-mode-command-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
+      let mode = "default";
+      const controller = (
+        protocol as unknown as {
+          controller: {
+            getConfig: () => Promise<Array<{
+              id: string;
+              type: "select";
+              name: string;
+              category: string;
+              value: string;
+              options: Array<{ value: string; name: string }>;
+            }>>;
+            setConfig: (_target: string, _id: string, value: string) => Promise<unknown>;
+          };
+        }
+      ).controller;
+      controller.getConfig = async () => [{
+        id: "mode",
+        type: "select",
+        name: "Mode",
+        category: "mode",
+        value: mode,
+        options: [
+          { value: "default", name: "Default" },
+          { value: "plan", name: "Plan" },
+        ],
+      }];
+      controller.setConfig = async (_target, _id, value) => {
+        mode = value;
+        session.setHarnessSession("codex", {
+          harnessTargetId: "codex",
+          harness: "codex",
+          ...(value === "default" ? {} : { mode: value }),
+        });
+        return [];
+      };
+
+      await protocol.command("plan", "");
+      expect(mode).toBe("plan");
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex mode: Plan");
+      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("plan mode");
+
+      await protocol.cycleMode();
+      expect(mode).toBe("default");
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex mode: Default");
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("BatonChatProtocol State projection", () => {

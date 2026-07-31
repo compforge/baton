@@ -62,6 +62,8 @@ export interface HarnessSessionMeta {
   model?: string;
   /** 该 harness session 后续 turn 使用的推理强度；缺省表示 harness 默认值。 */
   effort?: string;
+  /** 该 harness session 后续 turn 使用的协作模式；缺省表示 default。 */
+  mode?: string;
   /** harness 侧恢复所需的游标（如 Claude SDK resume cursor），语义归 adapter */
   resumeCursor?: string;
   /**
@@ -408,7 +410,7 @@ export class SessionStore {
    * interaction 等领域对象 ID 原样保留，只换 session scope。Event 是 ledger append 的身份，
    * 换 scope 时重新签发 eventId，保证一个 eventId 只属于一个权威 ledger。
    * 谱系由 meta.forkedFrom 表达。
-   * harnessSessions 只保留 target identity、Harness 与 model / effort 偏好：child 不得
+   * harnessSessions 只保留 target identity、Harness 与 model / effort / mode 偏好：child 不得
    * 继承原生 session 绑定或 launch snapshot（否则两个 BatonSession 会写进同一份 harness
    * 历史）；child 首 turn 由 controller 走 fresh native + 新 ContextEpoch + 全量补课重建上下文。
    * opts.cwd 支持跨 project fork：历史跟源走，project 归属跟 fork 发起位置走；
@@ -445,6 +447,7 @@ export class SessionStore {
         harness: hs.harness,
         ...(hs.model !== undefined ? { model: hs.model } : {}),
         ...(hs.effort !== undefined ? { effort: hs.effort } : {}),
+        ...(hs.mode !== undefined ? { mode: hs.mode } : {}),
       };
     }
     const now = new Date().toISOString();

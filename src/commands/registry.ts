@@ -9,6 +9,7 @@ export type CommandName =
   | HarnessName
   | "model"
   | "effort"
+  | "plan"
   | "compact"
   | "implement-plan"
   | "board"
@@ -45,6 +46,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     description: "Set the reasoning effort for the current harness's next turns",
     scope: "harness",
     runPolicy: "always",
+  },
+  {
+    name: "plan",
+    description: "Switch the current harness to Plan mode",
+    scope: "harness",
+    runPolicy: "idle",
   },
   {
     name: "compact",
