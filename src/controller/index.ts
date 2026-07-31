@@ -810,11 +810,11 @@ export class Controller {
     if (!contextEpochId) {
       throw new Error(`${binding.target.id} cannot accept context without a ContextEpoch`);
     }
-    const harnessSessionId =
-      binding.nativeSessionId() ?? binding.ref?.harnessSessionId;
+    const nativeSessionId = binding.nativeSessionId();
+    const deliverySessionId = nativeSessionId ?? binding.ref?.harnessSessionId;
     this.contextDeliveries.accept(binding, snapshot, {
       contextEpochId,
-      harnessSessionId,
+      harnessSessionId: deliverySessionId,
       transport,
     });
     const session = this.options.session;
@@ -824,7 +824,7 @@ export class Controller {
       harnessTargetId: targetKey,
       harness: binding.adapter.harness,
       harnessSessionId:
-        session.meta.harnessSessions?.[targetKey]?.harnessSessionId ?? harnessSessionId,
+        session.meta.harnessSessions?.[targetKey]?.harnessSessionId ?? nativeSessionId,
       contextEpochId,
       syncedSeq: snapshot.payload.throughSeq,
     });
@@ -849,6 +849,17 @@ export class Controller {
       harness: binding.adapter.harness,
       harnessTargetId: binding.target.id,
     } as AnyNewEvent) as AnyEventEnvelope;
+    // Claude 的原生 UUID 直到 system/init 才出现。首个后续 Harness 事件到达时立即
+    // 持久化，避免进程在 turn finalize 前退出后只剩 adapter-local hs_ ref。
+    const observedNativeSessionId = binding.nativeSessionId();
+    if (
+      source.type === "harness" &&
+      observedNativeSessionId &&
+      observedNativeSessionId !==
+        this.options.session.meta.harnessSessions[binding.target.id]?.harnessSessionId
+    ) {
+      this.backfillHarnessResumeState(binding);
+    }
     if (envelope.kind === "state_update") {
       const p = envelope.payload;
       if (p.state === "running" && envelope.source.type === "harness" && envelope.turnId) {

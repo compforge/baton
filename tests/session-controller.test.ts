@@ -45,7 +45,7 @@ class FakeAdapter implements HarnessAdapter {
     };
   }
 
-  nativeSessionId(_ref: HarnessSessionRef): string {
+  nativeSessionId(_ref: HarnessSessionRef): string | undefined {
     return `${this.harness}-native`;
   }
 
@@ -119,6 +119,60 @@ class TargetedFakeAdapter extends FakeAdapter {
 
   override nativeSessionId(_ref: HarnessSessionRef): string {
     return `${this.instanceId}-native`;
+  }
+}
+
+class DelayedNativeIdAdapter extends FakeAdapter {
+  nativeId?: string;
+  turnId?: string;
+  beforeNativeId?: () => void;
+
+  constructor() {
+    super("claude-code");
+  }
+
+  override async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+    this.openOptions = opts;
+    this.sink = sink;
+    return {
+      harness: this.harness,
+      harnessSessionId: "hs_runtime_only",
+      resumed: false,
+    };
+  }
+
+  override nativeSessionId(_ref: HarnessSessionRef): string | undefined {
+    return this.nativeId;
+  }
+
+  override async sendTurn(
+    _ref: HarnessSessionRef,
+    input: PromptInput,
+  ): Promise<SendTurnReceipt> {
+    this.prompts.push(textOf(input.blocks));
+    this.turnId = input.turnId;
+    this.beforeNativeId?.();
+    this.nativeId = "4bc983eb-f25c-4857-9ac2-28ac6442e74c";
+    this.sink?.({
+      kind: "agent_message",
+      turnId: input.turnId,
+      harnessSessionId: this.nativeId,
+      payload: {
+        messageId: `${input.turnId}-agent`,
+        content: [{ type: "text", text: "working" }],
+      },
+    });
+    return { accepted: true, effective: "new_turn" };
+  }
+
+  finish(): void {
+    if (!this.turnId) throw new Error("turn not started");
+    this.sink?.({
+      kind: "state_update",
+      turnId: this.turnId,
+      harnessSessionId: this.nativeId,
+      payload: { state: "idle", stopReason: "end_turn" },
+    });
   }
 }
 
@@ -581,6 +635,34 @@ describe("Controller", () => {
     expect(claude.synced[0]).toContain("existing work");
     expect(claude.prompts).toEqual(["continue"]);
     expect(session.meta.harnessSessions.claude?.syncedSeq).toBeGreaterThan(0);
+  });
+
+  test("persists a delayed native session id before the first turn finalizes", async () => {
+    completedTurn(session, "codex", "t_old", "existing work");
+    const claude = new DelayedNativeIdAdapter();
+    claude.beforeNativeId = () => {
+      expect(session.meta.harnessSessions.claude?.harnessSessionId).toBeUndefined();
+    };
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => claude,
+    });
+
+    const turn = controller.submit("claude", [{ type: "text", text: "continue" }]);
+    while (!claude.turnId) await Bun.sleep(0);
+
+    expect(session.meta.harnessSessions.claude?.harnessSessionId).toBe(
+      "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
+    );
+    expect(session.meta.harnessSessions.claude?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c" },
+    });
+
+    claude.finish();
+    await turn;
   });
 
   test("resumes native session, restores config, and syncs only other-harness progress", async () => {

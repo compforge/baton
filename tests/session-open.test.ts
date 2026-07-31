@@ -60,6 +60,87 @@ describe("openBatonSession", () => {
 });
 
 describe("crash recovery on open", () => {
+  test("repairs a persisted Claude runtime ref from native event history", () => {
+    const h = store.createSession({ cwd: "/repo" });
+    h.setHarnessSession("claude", {
+      harnessTargetId: "claude",
+      harness: "claude-code",
+      harnessSessionId: "hs_runtime_only",
+      resumeState: {
+        version: 1,
+        data: { sessionId: "hs_runtime_only" },
+      },
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      harnessSessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
+      turnId: "t1",
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "state_update",
+      payload: { state: "idle", stopReason: "end_turn" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      harnessSessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
+      turnId: "t1",
+    });
+    h.summarizeTurn("t1");
+
+    const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
+
+    expect(result.recovered).toBe(true);
+    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBe(
+      "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
+    );
+    expect(result.session.meta.harnessSessions.claude?.resumeState).toEqual({
+      version: 1,
+      data: { sessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c" },
+    });
+  });
+
+  test("drops a persisted Claude runtime ref when no native session was created", () => {
+    const h = store.createSession({ cwd: "/repo" });
+    h.setHarnessSession("claude", {
+      harnessTargetId: "claude",
+      harness: "claude-code",
+      harnessSessionId: "hs_runtime_only",
+      resumeState: {
+        version: 1,
+        data: { sessionId: "hs_runtime_only" },
+      },
+    });
+    h.append({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      harnessSessionId: "hs_runtime_only",
+      turnId: "t1",
+    });
+    h.append({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "idle", stopReason: "error" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      harnessSessionId: "hs_runtime_only",
+      turnId: "t1",
+    });
+    h.summarizeTurn("t1");
+
+    const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
+
+    expect(result.recovered).toBe(true);
+    expect(result.session.meta.harnessSessions.claude?.harnessSessionId).toBeUndefined();
+    expect(result.session.meta.harnessSessions.claude?.resumeState).toBeUndefined();
+  });
+
   test("normalizes an interrupted turn: idle + notice + summary", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.append({
