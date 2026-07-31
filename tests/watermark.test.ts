@@ -12,11 +12,13 @@ import type {
   AdapterCapabilities,
   HarnessAdapter,
   EventSink,
+  HarnessSessionBindingSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
+import { sessionIdResumeState } from "../src/harness/resume.ts";
 import type { PromptBlock } from "../src/event/types.ts";
 import { textOf } from "../src/event/types.ts";
 import { ContextDeliveryLedger } from "../src/context/delivery.ts";
@@ -33,17 +35,23 @@ class ManualAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string) {}
 
-  async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     this.sink = sink;
+    const sessionId = `${this.harness}-session`;
+    binding?.({ identity: { id: sessionId }, resumeState: sessionIdResumeState(sessionId) });
     return {
       harness: this.harness,
-      harnessSessionId: `${this.harness}-ref`,
-      resumed: Boolean(opts.resumeSessionId),
+      handleId: `${this.harness}-ref`,
+      resumed: Boolean(opts.resumeState ?? opts.resumeSessionId),
     };
   }
 
   // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.activeTurn = input;
     this.prompts.push(textOf(input.blocks));
     return { accepted: true, effective: "new_turn" };
@@ -65,15 +73,15 @@ class ManualAdapter implements HarnessAdapter {
     });
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {}
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 /** 支持 syncContext 的变体（急切注入形态：resolve 即送达，不占 prompt） */
 class SyncableManualAdapter extends ManualAdapter {
   synced: string[] = [];
 
-  async syncContext(_ref: HarnessSessionRef, blocks: PromptBlock[]): Promise<void> {
+  async syncContext(_ref: HarnessSessionHandle, blocks: PromptBlock[]): Promise<void> {
     this.synced.push(textOf(blocks));
   }
 }
@@ -84,7 +92,7 @@ class SyncBlocksManualAdapter extends ManualAdapter {
   syncPayloads: string[] = [];
   failNextSubmit = false;
 
-  override async sendTurn(ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  override async sendTurn(ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     if (this.failNextSubmit) {
       this.failNextSubmit = false;
       throw new Error("admission down");

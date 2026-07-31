@@ -59,13 +59,14 @@ describe("Codex native sessions", () => {
 
     const inspected = await inspectCodexSession(peer, "thread-1");
     expect(inspected).toMatchObject({
-      nativeSessionId: "thread-1",
+      identity: { id: "thread-1" },
       cwd: "/repo",
       title: "Fix cache",
       turns: [
-        { userText: "old question", agentText: undefined },
-        { userText: "new question", agentText: "new answer" },
+        { turnId: "turn-old", userText: "old question", agentText: undefined },
+        { turnId: "turn-new", userText: "new question", agentText: "new answer" },
       ],
+      observedThrough: { turnId: "turn-new", turnCount: 2 },
     });
     expect(inspected?.turns?.map((turn) => turn.events?.map((entry) => entry.event.kind))).toEqual([
       ["user_message", "state_update", "state_update"],
@@ -247,7 +248,7 @@ describe("Claude Code native sessions", () => {
     ]);
     expect(turn?.events?.at(-1)?.event).toMatchObject({
       kind: "state_update",
-      payload: { state: "idle", stopReason: "end_turn" },
+      payload: { state: "idle", stopReason: "unknown" },
     });
   });
 });

@@ -79,13 +79,17 @@ describe("Claude model capability", () => {
 
   test("records a native session id for resume", async () => {
     const adapter = new ClaudeAdapter({ interactionHandler });
+    const bindings: unknown[] = [];
     const ref = await adapter.open(
       { cwd: "/tmp", resumeState: sessionIdResumeState("claude-session-1") },
       () => {},
+      (binding) => bindings.push(binding),
     );
     expect(ref.resumed).toBe(true);
-    expect(adapter.nativeSessionId(ref)).toBe("claude-session-1");
-    expect(adapter.resumeState(ref)).toEqual(sessionIdResumeState("claude-session-1"));
+    expect(bindings).toEqual([{
+      identity: { id: "claude-session-1" },
+      resumeState: sessionIdResumeState("claude-session-1"),
+    }]);
   });
 
   test("generic config returns a full snapshot after mutation", async () => {
@@ -101,7 +105,7 @@ describe("Claude model capability", () => {
           }
         >;
       }
-    ).sessions.get(ref.harnessSessionId);
+    ).sessions.get(ref.handleId);
     if (!runtime) throw new Error("missing Claude test runtime");
     runtime.models = [
       { id: "default", label: "Default" },
@@ -220,7 +224,7 @@ describe("Claude model capability", () => {
       adapter as unknown as {
         sessions: Map<string, { modelInfos?: unknown[] }>;
       }
-    ).sessions.get(ref.harnessSessionId);
+    ).sessions.get(ref.handleId);
     if (!runtime) throw new Error("missing Claude test runtime");
     runtime.modelInfos = [
       { value: "opus", displayName: "Opus", supportedEffortLevels: ["high"] },
@@ -261,7 +265,7 @@ describe("Codex model capability", () => {
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     const snapshot = await adapter.setConfig(ref, "model", "gpt-5");
     expect(snapshot.find((option) => option.id === "model")).toMatchObject({
@@ -271,7 +275,6 @@ describe("Codex model capability", () => {
     expect(snapshot.find((option) => option.id === "effort")).toMatchObject({
       category: "thought_level",
     });
-    expect(adapter.resumeState(ref)).toEqual(sessionIdResumeState("thread-1"));
   });
 
   test("maps context compaction to thread/compact/start", async () => {
@@ -287,7 +290,7 @@ describe("Codex model capability", () => {
       },
     };
     (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     await adapter.compactContext(ref, "t_compact");
     await Bun.sleep(0);
@@ -330,7 +333,7 @@ describe("Codex model capability", () => {
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     const snapshot = await adapter.setConfig(ref, "mode", "plan");
     expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
@@ -369,7 +372,7 @@ describe("Codex model capability", () => {
       },
     };
     (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     await expect(adapter.setConfig(ref, "mode", "invalid")).rejects.toThrow(
       "Unknown Codex mode: invalid",
@@ -408,7 +411,7 @@ describe("Codex model capability", () => {
     };
     const runtime = { threadId: "thread-1", peer };
     (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     const snapshot = await adapter.setConfig(ref, "mode", "plan");
     expect(snapshot.find((option) => option.id === "mode")).toMatchObject({
@@ -453,7 +456,7 @@ describe("Codex model capability", () => {
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     expect((await adapter.listModels(ref)).map((model) => model.id)).toEqual(["default", "gpt-5"]);
     await adapter.setModel(ref, "gpt-5");
@@ -506,7 +509,7 @@ describe("Codex model capability", () => {
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     await adapter.setModel(ref, "gpt-5");
     await adapter.setEffort(ref, "high");
@@ -534,7 +537,7 @@ describe("Codex model capability", () => {
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
-    const ref = { harness: "codex", harnessSessionId: "thread-1" };
+    const ref = { harness: "codex", handleId: "thread-1" };
 
     expect(adapter.capabilities.sync?.supported).toBe(true);
     await adapter.sendTurn(ref, {
@@ -569,7 +572,7 @@ describe("Codex model capability", () => {
     ).threads.set("thread-1", runtime);
 
     await adapter.sendTurn(
-      { harness: "codex", harnessSessionId: "thread-1" },
+      { harness: "codex", handleId: "thread-1" },
       {
         turnId: "t_1",
         messageId: "m_1",

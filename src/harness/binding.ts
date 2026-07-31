@@ -2,24 +2,20 @@ import {
   isApprovalRoutable,
   isEffortConfigurable,
   isModelConfigurable,
-  isNativeSessionCheckpointable,
-  isNativeSessionIdentifiable,
   isSessionConfigurable,
   type ApprovalRoute,
   type EffortOption,
   type EventSink,
   type HarnessAdapter,
-  type HarnessSessionRef,
+  type HarnessSessionBinding,
+  type HarnessSessionHandle,
+  type HarnessSessionIdentity,
   type ModelOption,
 } from "./adapter.ts";
 import { newId } from "../event/ids.ts";
 import type { ConfigValue, SessionConfigOption } from "../event/types.ts";
 import type { SessionHandle } from "../store/store.ts";
-import {
-  sessionIdFromResumeState,
-  sessionIdResumeState,
-  type HarnessResumeState,
-} from "./resume.ts";
+import { sessionIdResumeState, type HarnessResumeState } from "./resume.ts";
 import { createHarnessLaunchSnapshot, type HarnessTarget } from "./target.ts";
 
 export interface HarnessBindingOptions {
@@ -42,13 +38,13 @@ export interface HarnessBindingOptions {
 export class HarnessBinding {
   readonly target: HarnessTarget;
   readonly adapter: HarnessAdapter;
-  ref?: HarnessSessionRef;
+  ref?: HarnessSessionHandle;
   /**
    * setup 阶段由哪个 driven turn 触发。无显式 turnId 的 setup Interaction 由
    * Controller 使用它归属到触发冷启动的 turn。
    */
   setupTurnId?: string;
-  freshNative = true;
+  freshHarnessSession = true;
   /** 当前原生 HarnessSession 的上下文基线身份；resume 保留、fresh 重新签发。 */
   contextEpochId?: string;
 
@@ -57,6 +53,7 @@ export class HarnessBinding {
   private readonly eventSink: EventSink;
   private readonly modelPreference?: string;
   private readonly effortPreference?: string;
+  private publishedBinding?: HarnessSessionBinding;
 
   constructor(options: HarnessBindingOptions) {
     this.target = options.target;
@@ -130,7 +127,7 @@ export class HarnessBinding {
       ...existing,
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
-      harnessSessionId: existing.harnessSessionId ?? this.nativeSessionId(),
+      harnessSessionId: existing.harnessSessionId ?? this.sessionIdentity()?.id,
       model: !modelId || modelId === "default" ? undefined : modelId,
     });
   }
@@ -180,7 +177,7 @@ export class HarnessBinding {
       ...existing,
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
-      harnessSessionId: existing.harnessSessionId ?? this.nativeSessionId(),
+      harnessSessionId: existing.harnessSessionId ?? this.sessionIdentity()?.id,
       effort: !effortId || effortId === "default" ? undefined : effortId,
     });
   }
@@ -232,22 +229,11 @@ export class HarnessBinding {
   }
 
   resumeState(): HarnessResumeState | undefined {
-    if (!this.ref) return undefined;
-    if (isNativeSessionCheckpointable(this.adapter)) {
-      return this.adapter.resumeState(this.ref);
-    }
-    const nativeId = isNativeSessionIdentifiable(this.adapter)
-      ? this.adapter.nativeSessionId(this.ref)
-      : this.ref.harnessSessionId;
-    return nativeId ? sessionIdResumeState(nativeId) : undefined;
+    return this.publishedBinding?.resumeState;
   }
 
-  nativeSessionId(): string | undefined {
-    if (!this.ref) return undefined;
-    if (isNativeSessionIdentifiable(this.adapter)) {
-      return this.adapter.nativeSessionId(this.ref);
-    }
-    return sessionIdFromResumeState(this.resumeState()) ?? this.ref.harnessSessionId;
+  sessionIdentity(): HarnessSessionIdentity | undefined {
+    return this.publishedBinding?.identity;
   }
 
   async close(): Promise<void> {
@@ -304,8 +290,9 @@ export class HarnessBinding {
           resumeSessionId: existing?.harnessSessionId,
         },
         this.eventSink,
+        (binding) => this.acceptSessionBinding(binding),
       );
-      this.freshNative = !this.ref.resumed;
+      this.freshHarnessSession = !this.ref.resumed;
       this.contextEpochId =
         this.ref.resumed && existing?.contextEpochId
           ? existing.contextEpochId
@@ -324,7 +311,7 @@ export class HarnessBinding {
         harnessTargetId: this.target.id,
         harness: this.adapter.harness,
         launchSnapshot,
-        harnessSessionId: this.nativeSessionId(),
+        harnessSessionId: this.sessionIdentity()?.id,
         resumeState: this.resumeState(),
         contextEpochId: this.contextEpochId,
         syncedSeq: this.ref.resumed ? existing?.syncedSeq : 0,
@@ -335,5 +322,27 @@ export class HarnessBinding {
     } finally {
       this.setupTurnId = undefined;
     }
+  }
+
+  private acceptSessionBinding(binding: HarnessSessionBinding): void {
+    if (
+      this.publishedBinding &&
+      this.publishedBinding.identity.id !== binding.identity.id
+    ) {
+      throw new Error(
+        `${this.target.id} changed HarnessSession identity from ` +
+          `${this.publishedBinding.identity.id} to ${binding.identity.id}`,
+      );
+    }
+    this.publishedBinding = binding;
+    const existing = this.session.meta.harnessSessions[this.target.id];
+    this.session.setHarnessSession(this.target.id, {
+      ...existing,
+      harnessTargetId: this.target.id,
+      harness: this.adapter.harness,
+      harnessSessionId: binding.identity.id,
+      resumeState: binding.resumeState,
+      ...(this.contextEpochId ? { contextEpochId: this.contextEpochId } : {}),
+    });
   }
 }

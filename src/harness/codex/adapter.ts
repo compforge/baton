@@ -30,13 +30,14 @@ import type {
   HarnessAdapter,
   EffortOption,
   EventSink,
+  HarnessSessionBindingSink,
   ModelOption,
   NativeEventSink,
   OpenOptions,
   PromptInput,
   PromptReceipt,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
   InteractionHandler,
   ApprovalRoute,
   ReconcileState,
@@ -887,7 +888,11 @@ export class CodexAdapter implements HarnessAdapter {
     rt.peer.notify("initialized", {});
   }
 
-  async open(opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(
+    opts: OpenOptions,
+    sink: EventSink,
+    binding?: HarnessSessionBindingSink,
+  ): Promise<HarnessSessionHandle> {
     const command = codexLaunchCommand(this.options.command);
     let rt = this.launch(command, opts, sink);
     try {
@@ -946,30 +951,29 @@ export class CodexAdapter implements HarnessAdapter {
       rt.threadId = threadId;
       rt.approvalRoute = opened.route;
       this.threads.set(threadId, rt);
-      return { harness: this.harness, harnessSessionId: threadId, resumed: opened.resumed };
+      binding?.({
+        identity: { id: threadId },
+        resumeState: sessionIdResumeState(threadId),
+      });
+      return { harness: this.harness, handleId: threadId, resumed: opened.resumed };
     } catch (error) {
-      // open() 尚未返回 HarnessSessionRef，controller 无法调用 close()；adapter 必须清掉自己已启动的进程。
+      // open() 尚未返回 HarnessSessionHandle，controller 无法调用 close()；adapter 必须清掉自己已启动的进程。
       rt.child.kill();
       throw error;
     }
   }
 
   /** ApprovalRoutable：报告 codex 回吐的生效路由，而非 baton 请求的值（企业策略可能打回）。 */
-  approvalRoute(ref: HarnessSessionRef): ApprovalRoute | null {
-    return this.threads.get(ref.harnessSessionId)?.approvalRoute ?? null;
+  approvalRoute(ref: HarnessSessionHandle): ApprovalRoute | null {
+    return this.threads.get(ref.handleId)?.approvalRoute ?? null;
   }
 
-  resumeState(ref: HarnessSessionRef): HarnessResumeState | undefined {
-    const threadId = this.threads.get(ref.harnessSessionId)?.threadId;
-    return threadId ? sessionIdResumeState(threadId) : undefined;
-  }
-
-  async listModels(ref: HarnessSessionRef): Promise<ModelOption[]> {
+  async listModels(ref: HarnessSessionHandle): Promise<ModelOption[]> {
     const rt = this.mustThread(ref);
     return codexModels(await rt.peer.request("model/list", { limit: 200 }));
   }
 
-  async setModel(ref: HarnessSessionRef, modelId: string | null): Promise<void> {
+  async setModel(ref: HarnessSessionHandle, modelId: string | null): Promise<void> {
     const rt = this.mustThread(ref);
     const model = !modelId || modelId === "default" ? undefined : modelId;
     const catalog =
@@ -985,16 +989,16 @@ export class CodexAdapter implements HarnessAdapter {
     if (catalog !== undefined) updateCodexResolvedSettings(rt, catalog);
   }
 
-  currentModel(ref: HarnessSessionRef): string | null {
+  currentModel(ref: HarnessSessionHandle): string | null {
     return this.mustThread(ref).model ?? null;
   }
 
-  async listEfforts(ref: HarnessSessionRef): Promise<EffortOption[]> {
+  async listEfforts(ref: HarnessSessionHandle): Promise<EffortOption[]> {
     const rt = this.mustThread(ref);
     return codexEfforts(await rt.peer.request("model/list", { limit: 200 }), rt.model);
   }
 
-  async setEffort(ref: HarnessSessionRef, effortId: string | null): Promise<void> {
+  async setEffort(ref: HarnessSessionHandle, effortId: string | null): Promise<void> {
     const rt = this.mustThread(ref);
     if (!effortId || effortId === "default") {
       const catalog = await rt.peer.request("model/list", { limit: 200 });
@@ -1015,11 +1019,11 @@ export class CodexAdapter implements HarnessAdapter {
     updateCodexResolvedSettings(rt, catalog);
   }
 
-  currentEffort(ref: HarnessSessionRef): string | null {
+  currentEffort(ref: HarnessSessionHandle): string | null {
     return this.mustThread(ref).effortSelection ?? null;
   }
 
-  async getConfig(ref: HarnessSessionRef): Promise<SessionConfigOption[]> {
+  async getConfig(ref: HarnessSessionHandle): Promise<SessionConfigOption[]> {
     const rt = this.mustThread(ref);
     // 一次 model/list 生成整份快照，避免 model 与 effort 来自两个不同时点的 catalog。
     const catalog = await rt.peer.request("model/list", { limit: 200 });
@@ -1078,7 +1082,7 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   async setConfig(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     configId: string,
     value: ConfigValue,
   ): Promise<SessionConfigOption[]> {
@@ -1113,7 +1117,7 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   async reconcile(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     _turnId: string,
   ): Promise<ReconcileVerdict> {
     const rt = this.mustThread(ref);
@@ -1130,7 +1134,7 @@ export class CodexAdapter implements HarnessAdapter {
     return { state: mapThreadStatus(status), detail: status?.type };
   }
 
-  async compactContext(ref: HarnessSessionRef, turnId: string): Promise<PromptReceipt> {
+  async compactContext(ref: HarnessSessionHandle, turnId: string): Promise<PromptReceipt> {
     const rt = this.mustThread(ref);
     if (rt.activeTurn && !rt.activeTurn.finalized) {
       throw new Error(`codex turn ${rt.activeTurn.turnId} still active; cannot compact`);
@@ -1149,7 +1153,7 @@ export class CodexAdapter implements HarnessAdapter {
    * `turn/start`。Adapter 以自身运行态做最终判断，Controller 不感知 Codex turn id。
    */
   async sendTurn(
-    ref: HarnessSessionRef,
+    ref: HarnessSessionHandle,
     input: PromptInput,
   ): Promise<SendTurnReceipt> {
     const rt = this.mustThread(ref);
@@ -1238,7 +1242,7 @@ export class CodexAdapter implements HarnessAdapter {
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(ref: HarnessSessionRef): Promise<void> {
+  async cancel(ref: HarnessSessionHandle): Promise<void> {
     const rt = this.mustThread(ref);
     const turn = rt.activeTurn;
     if (!turn || turn.finalized) return;
@@ -1258,18 +1262,18 @@ export class CodexAdapter implements HarnessAdapter {
     void rt.peer.request("turn/interrupt", { threadId: rt.threadId, turnId: rt.codexTurnId }).catch(() => {});
   }
 
-  async close(ref: HarnessSessionRef): Promise<void> {
-    const rt = this.threads.get(ref.harnessSessionId);
+  async close(ref: HarnessSessionHandle): Promise<void> {
+    const rt = this.threads.get(ref.handleId);
     if (!rt) return;
-    this.threads.delete(ref.harnessSessionId);
+    this.threads.delete(ref.handleId);
     // 宿主主动关闭：活跃 turn 读作 cancelled；先终结再 kill，child close 回调就不会再合成 failed
     this.finishTurn(rt, rt.activeTurn, "interrupted");
     rt.child.kill();
   }
 
-  private mustThread(ref: HarnessSessionRef): ThreadRuntime {
-    const rt = this.threads.get(ref.harnessSessionId);
-    if (!rt) throw new Error(`unknown codex thread: ${ref.harnessSessionId}`);
+  private mustThread(ref: HarnessSessionHandle): ThreadRuntime {
+    const rt = this.threads.get(ref.handleId);
+    if (!rt) throw new Error(`unknown codex thread: ${ref.handleId}`);
     return rt;
   }
 

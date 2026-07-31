@@ -13,7 +13,7 @@ import type {
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
-  HarnessSessionRef,
+  HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import type { PromptBlock } from "../src/event/types.ts";
 import { Controller, type InteractionHandlers } from "../src/controller/index.ts";
@@ -29,12 +29,12 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
 
   constructor(private readonly handlers: InteractionHandlers) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionRef> {
+  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
-    return { harness: this.harness, harnessSessionId: "hold-ref", resumed: false };
+    return { harness: this.harness, handleId: "hold-ref", resumed: false };
   }
 
-  async sendTurn(_ref: HarnessSessionRef, input: PromptInput): Promise<SendTurnReceipt> {
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.active = input;
     void (async () => {
       await this.handlers.interactionHandler({
@@ -46,7 +46,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
     return { accepted: true, effective: "new_turn" };
   }
 
-  async cancel(_ref: HarnessSessionRef): Promise<void> {
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {
     const input = this.active;
     if (input) {
       this.sink?.({
@@ -56,7 +56,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
       });
     }
   }
-  async close(_ref: HarnessSessionRef): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
 }
 
 let root: string;

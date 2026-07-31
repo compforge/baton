@@ -319,7 +319,13 @@ describe("claude: Task 工具族 → plan_update", () => {
     // 失败不能静默：任务表不动，但要出一张 failed 工具卡让错误可感知
     const failedCards = events.filter((e) => e.kind === "tool_call_update");
     expect(failedCards).toHaveLength(1);
-    expect(failedCards.at(0)!.payload).toMatchObject({ toolCallId: "tu1", status: "failed" });
+    expect(failedCards.at(0)!.payload).toMatchObject({
+      toolCallId: "tu1",
+      title: "TaskUpdate: 9",
+      kind: "other",
+      status: "failed",
+      content: [{ type: "text", text: "no such task" }],
+    });
   });
 
   test("applyTaskOp upserts unknown taskId and falls back when result text has no id", () => {

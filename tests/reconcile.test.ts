@@ -45,7 +45,7 @@ describe("Codex reconcile capability", () => {
 
     await expect(
       adapter.reconcile(
-        { harness: "codex", harnessSessionId: "thread-1" },
+        { harness: "codex", handleId: "thread-1" },
         "t_1",
       ),
     ).resolves.toEqual({

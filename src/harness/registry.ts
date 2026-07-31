@@ -4,14 +4,14 @@
 
 import type { HarnessAdapter, InteractionHandler, NativeEventSink } from "./adapter.ts";
 import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
-import { claudeNativeSessions } from "./claude/native-session.ts";
+import { claudeSessionInspector } from "./claude/native-session.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
-import { codexNativeSessions } from "./codex/native-session.ts";
+import { codexSessionInspector } from "./codex/native-session.ts";
 import type { BatonConfig } from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
 import type { LogSink } from "../logging.ts";
 import { HARNESS_IDENTITIES, HARNESSES, parseHarness, type HarnessName } from "./ids.ts";
-import type { NativeSessionProvider } from "./native-session.ts";
+import type { HarnessSessionInspector } from "./native-session.ts";
 import type { HarnessTarget, HarnessTargetProbeResult } from "./target.ts";
 
 export { HARNESSES, parseHarness, type HarnessName };
@@ -45,8 +45,8 @@ export interface HarnessDefinition<Id extends string = string> {
   color: string;
   create(options: HarnessAdapterOptions): HarnessAdapter;
   probe?: (options: HarnessProbeOptions) => Promise<HarnessTargetProbeResult>;
-  /** Baton 外部原生 session 的只读发现；物化后只走 BatonSession 语义。 */
-  nativeSessions?: NativeSessionProvider;
+  /** Baton 外部 HarnessSession 的只读历史观察；不得启动或修改会话。 */
+  sessionInspector?: HarnessSessionInspector;
 }
 
 export interface HarnessProbeOptions {
@@ -65,7 +65,7 @@ export const HARNESS_REGISTRY = [
     sessionKey: "codex",
     shortName: "codex",
     color: "#73daca", // 青
-    nativeSessions: codexNativeSessions,
+    sessionInspector: codexSessionInspector,
     create: ({ target, interactionHandler, log, nativeEvent, config, rootDir }) =>
       new CodexAdapter({
         interactionHandler,
@@ -82,7 +82,7 @@ export const HARNESS_REGISTRY = [
     sessionKey: "claude-code",
     shortName: "claude",
     color: "#ff9e64", // 橙
-    nativeSessions: claudeNativeSessions,
+    sessionInspector: claudeSessionInspector,
     create: ({ interactionHandler, log, nativeEvent, config }) =>
       new ClaudeAdapter({
         interactionHandler,

@@ -96,7 +96,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     emit(rt: unknown, ev: AnyEventDraft, turn?: TurnState): void;
     finishTurn(rt: unknown, emit: (ev: AnyEventDraft) => void, turn: TurnState, stopReason: string): void;
   };
-  const rt = seams.sessions.get(ref.harnessSessionId);
+  const rt = seams.sessions.get(ref.handleId);
   const firstTurn = rt?.activeTurn;
   if (!rt || !firstTurn) throw new Error("missing active Claude test turn");
   seams.finishTurn(rt, (ev) => seams.emit(rt, ev, firstTurn), firstTurn, "end_turn");
