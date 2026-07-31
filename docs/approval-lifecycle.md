@@ -1,12 +1,17 @@
 # 审批生命周期
 
-本文是 `harness-interaction-design.md` 中**用户确认（审批）主题的专项设计与统一跟踪入口**，与 `user-input-lifecycle.md`（输入）、`harness-output-lifecycle.md`（输出）并列为交互面的第三条轴。审批既不是纯输入也不是纯输出：它是 harness 向用户**请求执行某操作**、用户（或被委托方）作出决策、再由 baton 如实留痕的一条独立生命周期。
+本文展开 [工作流](./workflow.md) 中的 permission Interaction：Harness 请求执行某项操作，
+用户或被委托方作出决策，Baton 再把结果回传并如实留痕。普通 Input、Harness 输出和其他
+Interaction kind 的公共生命周期以 `workflow.md` 为准。
 
-**范围约定：所有 harness 的权限 / 审批问题都落在本文**——交互审批、审批选项、权限模式、自动审批/委托、静默处置的诚实兜底等，无论 Claude Code、Codex 还是将来接入的新 harness，都在此记录并扩展 §1 末尾的跨 harness 现状表；harness 专有的 wire 细节下沉到对应 adapter 注释，本文只留“有这件事、归一到哪、为什么”。
+**范围约定：所有 harness 的权限 / 审批问题都落在本文**——交互审批、审批选项、权限模式、
+自动审批/委托、静默处置的诚实兜底等，无论 Claude Code、Codex 还是将来接入的新 harness，
+都在此记录并扩展 §1 末尾的跨 harness 现状表；harness 专有的 wire 细节下沉到
+`docs/harness/<provider>.md` 与对应 Adapter，本文只留“有这件事、归一到哪、为什么”。
 
 ## 1. 理念与概念
 
-本文聚焦 **permission**——它是 Interaction（见 `harness-interaction-design.md` §3.5）的一个
+本文聚焦 **permission**——它是 Interaction（见 [工作流](./workflow.md#5-interaction-闭环)）的一个
 `kind`；question / hook_trust / 未来的 elicitation 复用同一生命周期，但各自保持 typed
 payload 和 resolution。ApprovalReview 则是**未打开 Interaction 时**观察到的委托代批审计事实。
 
@@ -83,7 +88,7 @@ live waiter，recovery 会将 dangling Interaction 明确 resolve 为 cancelled�
 - 消费 `item/autoApprovalReview/started` 与 `/completed`（payload `{threadId, turnId, targetItemId, review, action}`）。
 - `started` → **只**驱动临时 “Reviewing approval…” 运行相位（`_baton_run_status`），不落回执。
 - `completed` → 铸造一条 `approval_review_update` 落事件流，携带 `reviewId`（一等 id，`arv_` 前缀，adapter 铸）+ `decision / riskLevel? / userAuthorization? / rationale? / actionType? / toolCallId?` + 原始 `raw`；approved 走 §3.5 的 warning、denied 走 declined。
-- **一等回执，按 `reviewId` 归档（kernel.md §6）**：codex 不给 review 自身 id，故只在终态铸一条回执、无需关联 started/completed；无 `targetItemId` 的 review（如网络策略审查）也留痕、同一操作上的多次决策各自成条，不再按被审 `toolCallId` 覆盖或丢弃。回执是 timeline 的一等公民（首见即入 timeline），投影按 `reviewId` 渲染、未知 decision fail-closed 到 failed。
+- **一等回执，按 `reviewId` 归档**：codex 不给 review 自身 id，故只在终态铸一条回执、无需关联 started/completed；无 `targetItemId` 的 review（如网络策略审查）也留痕、同一操作上的多次决策各自成条，不再按被审 `toolCallId` 覆盖或丢弃。回执是 timeline 的一等公民（首见即入 timeline），投影按 `reviewId` 渲染、未知 decision fail-closed 到 failed。
 - **收敛 §2.3 的启发式 notice**：有了权威事件后，declined 的兜底 notice 由 `approval_review_update` 承接，不再让同一事实存在两条代码路径。
 
 ### 3.3 UNSTABLE 隔离（硬约束）

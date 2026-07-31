@@ -1,4 +1,4 @@
-// driven turn 的用户事实由 controller 出队即落盘（owner 边界，design §4.1）：
+// driven turn 的用户事实由 controller 出队即落盘（owner 边界，见 docs/workflow.md）：
 // - user_message/running 不等 harness 冷启动——首启延迟不能绑住 Transcript；
 // - 正典 user_message 是原始输入，<baton-sync> prepend 只进 harness transport；
 // - preparing（冷启动中）可取消：Esc 立即合成 cancelled 终态 + notice + summary；

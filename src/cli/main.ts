@@ -154,7 +154,7 @@ async function main(): Promise<void> {
       continue;
     }
 
-    // @bs_xxx 急切展开：把被引用会话的紧凑摘要拼进 prompt（design §5.6）
+    // @bs_xxx 急切展开：把被引用会话的紧凑摘要拼进 prompt（见 docs/workflow.md）
     session.setPreviewIfEmpty(line);
     const { prompt, mentions } = expandMentions(store, line, config.mentionBudgetChars);
     if (mentions.length) stdout.write(`(injected context summaries from ${mentions.length} session(s))\n`);

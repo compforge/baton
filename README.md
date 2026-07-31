@@ -46,7 +46,7 @@ v2 keeps that pipeline and layers long-running domain loops around it. baton cor
 
 The terminal has one focus and one host event loop; chat-tui isolates updates by surface, while Baton isolates third-party Package code in one Runner process per active Binding. A blocked or crashed Plugin therefore cannot occupy composer input, and its registrations are withdrawn as one unit.
 
-See [`docs/kernel.md`](docs/kernel.md) for the stable kernel and process model. See [`docs/plugin.md`](docs/plugin.md) for the Plugin host and third-party authoring contract, and [`docs/loop-engineering.md`](docs/loop-engineering.md) for the layered loop model.
+See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflow.md`](docs/workflow.md) for the end-to-end user/Harness flow, [`docs/harness.md`](docs/harness.md) for the adapter contract, and [`docs/plugin.md`](docs/plugin.md) for long-running domain loops and third-party authoring.
 
 ## Features
 

@@ -1,234 +1,174 @@
-# baton 内核（kernel）
+# Baton Kernel
 
-> 本文定义 baton 的**稳定内核**：少数核心概念 + 少数不变量 + 一条流水线 + 一份扩展契约。判据只有一条——**新增一个 harness 默认只改 `harness/<harness>/` + `harness/registry` + `harness/ids`（+ 或许 `harness/adapter.ts` 中的新 capability 接口），不触碰 session / store-reduce / projection / chat-tui**。改动若渗进内核，通常说明"有个概念还没一等化"（见 §7）。内核并非冻结：当一个特性被多个 harness 共同印证，它也会演进——但改内核比改 adapter 贵一个量级，门槛见 §6。
->
-> 内核之外的设计（产品定位、存储路径、外部会话纳管、@ 引用、里程碑）见 `design.md`；输入 / 输出 / 审批三轴的展开见 `user-input-lifecycle.md`、`harness-output-lifecycle.md`、`approval-lifecycle.md`；Adapter 契约的完整条款见 `harness-interaction-design.md`。
+本文定义 Baton 的稳定内核：它解决什么问题、核心对象由谁拥有、依赖如何流动，以及所有
+Harness 和 Plugin 都不能绕过的约束。一次用户输入如何到达 Harness、Harness 结果如何返回
+用户，统一见 [工作流](./workflow.md)；适配协议见 [Harness](./harness.md)，长期领域 loop 见
+[Plugin](./plugin.md)。
 
-## 1. 核心概念
+## 1. 理念与边界
 
-### 三域视角：Input / Controller / Harness
+Baton 是 terminal-native 的 Loop Engineering 控制面，也是跨 coding agent 的统一工作区。
+用户拥有的不是某个 agent 进程，而是可持久、可恢复、可跨 Harness 接力的 `BatonSession`。
+Codex、Claude Code 等原生会话用于执行与加速恢复，不能成为逻辑历史的唯一载体。
 
-从最高层看，Baton 内核先收束为三个协作域。这是判断概念归属、依赖方向与新能力落点的
-**指导模型**，不等同于当前物理目录，也不要求代码立即按三域重排：
+Baton 按三层协作：
 
-| 域 | 负责什么 | 不负责什么 |
+1. **Baton core** 负责 Input、Interaction、Event、Context、权限、Harness routing、调度和
+   Projection，不理解 Requirement、Deployment、Review 等领域语义。
+2. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
+   当前只能通过受控 Output 建议下一条 Input 或请求用户决议，不能直接调用 Harness。
+3. **Harness** 提供智能执行能力，Adapter 把各家协议归一成稳定契约。devloop 等 Harness
+   Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
+
+chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 Session、队列、Harness 或 Plugin
+生命周期，也不解释领域语义。
+
+## 2. 核心模型
+
+### 2.1 三域视角
+
+从控制关系看，内核收束为三个协作域：
+
+| 域 | 负责 | 不负责 |
 |---|---|---|
-| **Input** | 抽象进入 Baton 的刺激；以 `source` 区分 user、monitor、external event 等来源，各来源再以 `kind` / `mode` 表达 prompt、control、interaction resolution、steer 等真实语义 | 不感知 Harness wire，不决定排队、重试或 Turn 生命周期 |
-| **Controller** | 连接两侧并拥有 Baton 的协调状态：接收 Input，完成 admission、queue、Attempt、Turn / Interaction 收口、Event 持久化，并将 Projection 反馈给页面 / 用户 | 不实现 Harness 方言，也不把某个 UI 的展示形状下沉为核心规则 |
-| **Harness** | 抽象执行侧：HarnessTarget、Adapter、Capability、原生 HarnessSession，以及 Harness 操作和输出事实的归一 | 不拥有用户输入生命周期，不直接向页面投影 |
+| **Input** | 表达进入 Baton 的刺激；当前主要是用户 prompt、interaction resolution 和 control | 不理解 Harness wire，不决定执行终态 |
+| **Controller** | admission、queue、Attempt、Turn、Interaction、Event 持久化和 Projection | 不实现 Harness 方言，不依赖具体 UI shape |
+| **Harness** | Target、原生 Session、Adapter、Capability 和原生事件归一 | 不拥有用户输入生命周期，不直接向页面投影 |
 
-依赖与数据流保持单向可解释：`Input → Controller → Harness` 表达控制，
-`Harness → Controller → Projection → 页面 / 用户` 表达感知；Input 与 Harness 不直接依赖，
-只有 Controller 同时理解两侧契约。store、event、queue、projection 等是支撑这条协调链路的
-内核机制，不再各自升级成与三域平级的问题域。
+控制方向是 `Input → Controller → Harness`；感知方向是
+`Harness → Controller → Projection → 用户`。Input 与 Harness 不直接依赖，只有 Controller
+同时理解两侧稳定契约。
 
-当前主要来源是 user；未来出现 monitor 输入或外部事件时，先作为 Input 的新 `source` / 子类型；
-只有其 owner、生命周期或不变量确实独立时，才提升为新的平级域。三域视角先作为演进方向约束
-概念归属，代码结构按真实改动压力渐进收敛。
+### 2.2 身份、owner 与生命周期
 
-在三域之下，当前由以下内核对象承载具体语义。它们是域内对象，不再与 Input /
-Controller / Harness 平铺为同一层概念；每个对象仍绑定一条不能被 harness 差异侵蚀的不变量。
+| 概念 | 语义与 owner |
+|---|---|
+| **Project** | 按 cwd 组织和发现 BatonSession，并承载同 workspace 跨 Session 的 Plugin 私有数据；不拥有 Session 历史 |
+| **BatonSession** | 用户拥有的正典逻辑历史和 session-scoped Plugin 数据；跨 Harness 的唯一时间线 |
+| **HarnessTarget** | Baton 配置、调度和状态查询侧的一份具体执行目标；同一 Harness 可有多个 Target，状态必须按 Target 隔离 |
+| **HarnessSession** | Harness 在某个 Target 内持有的持久原生执行会话；缺失只影响恢复优化，不阻止 BatonSession 继续 |
+| **HarnessSessionBinding** | 当前 BatonSession 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
+| **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
+| **Input** | Controller 拥有的待处理刺激；用户 prompt 具有稳定 message/turn identity 和可查询消费状态 |
+| **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
+| **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
+| **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
+| **Interaction** | 需要外部参与者给出结果后才能继续的持久待决对象；Controller 拥有 opened/resolved 生命周期 |
+| **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
+| **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 
-| 概念 | 语义 | 绑定的不变量 |
-|---|---|---|
-| **BatonSession** | 用户拥有的持久逻辑历史、跨 harness 的唯一时间线，也是 Plugin 数据与执行 owner | 身份锚点：历史与 Plugin 数据跟随 session；项目只按发起 cwd 组织 Session（跨项目 fork = 同一段逻辑历史落到另一 cwd + 全新 HarnessSession，Plugin Binding 不隐式复制）|
-| **Event（信封）** | 最小 append-only 事实：稳定 `eventId` + 单一 `scope` + 必填 `source` + 归一 `payload` + 原始 wire `raw`；归属、来源与执行坐标正交，归因字段由可信宿主入口填写 | 事件流是**感知的唯一真相源**；UI / 崩溃恢复 / resume 全是它的 reduce/投影，无旁路通道 |
-| **Turn** | 一段有始有终的 harness 活动（带 stopReason）| "谁发起"是属性（driven / observed），不是存在条件；**每个被 admit 的 turn 恰好收口一次** |
-| **Interaction** | Baton 持有的持久待决交互；`kind` 区分 permission / question / hook trust，`requester` 指明谁在等待 | identity 与 opened/resolved 生命周期由 Controller 统一签发和收口；Adapter 只提交 kind-specific draft 并等待结果 |
-| **Delivery Attempt** | Controller 域内向 Harness 投递一轮已 admit Input 的持久执行记录 | 先持久化 `prepared` 再 dispatch；`accepted` 只确认 Adapter 接受投递责任，Harness 终态才给出最终 `outcome`；无法证明是否接收或结束时保持 `uncertain`，不盲目重投 |
-| **Context delivery** | Controller 域内把有 owner/key 的 ContextSource 组装成 Snapshot，并向某个 HarnessSession 交付 | Snapshot 说明准备送什么；只有 transport 接受后落下的 DeliveryReceipt 才推进该 HarnessSession 的 ContextEpoch，不能用 Board 已更新或本地已组装代替 |
-| **HarnessTarget** | Baton 配置、调度与状态查询侧的一份具体 Harness 目标；可在不创建 HarnessSession 的前提下做只读 capability/catalog probe | 实例坐标与协议类型分离：Target ID 只经显式 resolver 解析，未知值 fail closed；Adapter 工厂接收完整 Target；`Controller` processing / queue、`HarnessBinding`、原生 session、同步水位、偏好 / 授权和 Target-scoped 投影状态均按 `harnessTargetId` 隔离，不按 Harness 名称混用；发现不借 Adapter.open 制造隐形 session |
-| **HarnessSession** | Harness 在某个 Target 内持有的持久执行会话；identity 可跨 Baton 进程恢复 | `HarnessSessionHandle` 只在当前 Adapter 进程内路由调用，不能持久化；`HarnessSessionBinding` 是当前 BatonSession 到它的 mutable 连接，由 Adapter 在 identity / resume state 可知时主动发布，Controller 不从 handle 或事件猜测 |
-| **HarnessHistorySnapshot / Boundary** | Inspector 对既有 HarnessSession 的一次只读持久历史观察，以及该历史前缀的内容边界 | Snapshot 的 `observedThrough` 与 Baton adoption 的 `importedThrough` 分离；Boundary digest 覆盖完整 turn 语义，不用最后一轮或 user/agent 摘要代替；`adoptedFrom` 永远指向最初来源，不随当前 Binding 改写 |
-| **Adapter + Capability** | harness 方言的**唯一**居所：小核心 `HarnessAdapter` + 可选能力 descriptor | 差异表达为"能力有无"，type-guard 发现、契约测试钉住；**内核永不 `if harness===`** |
-| **Projection** | 纯函数：event reduce → chat-tui State | 只产展示数据；chat-tui 消费 State 不消费领域语义；未变返回同引用（快照一致）|
+`Event.scope` 回答事实属于哪条 ledger，`Event.source` 回答谁报告事实，HarnessTarget、
+HarnessSession 和 Turn 则是执行坐标。这些维度正交，不能从 Harness 名、alias 或 wire key
+猜测彼此。
 
-HarnessSession 不是 BatonSession 的另一种名字：前者由 Harness 持有执行历史，后者由用户持有
-正典逻辑历史。baton 优先用稳定 HarnessSession identity 加速恢复，但它缺失只降级、不能阻止
-BatonSession 续聊；进程内 Handle 即使长得像 session id，也绝不能进入持久 meta。
-每次 create/resume 使用不可变 `HarnessLaunchSnapshot` 记录当时的 target、cwd、model 和 effort；
-快照解释既有执行，后续配置变化不能回写它。
+Baton 签发的 Event、Interaction、Context Snapshot/Epoch、Session、Turn、Message、Tool Call
+和 Attempt 使用带前缀的稳定 ULID。HarnessTarget、PluginInstance 等配置对象使用各自作用域内
+的稳定 ID。fork 复制逻辑对象时保留对象 ID，进入 child ledger 的 Event envelope 重新签发
+`eventId`；详细语义见 [resume 与 fork](./resume-fork.md)。
 
-**ID 规则**：Baton 签发的 event / interaction / context snapshot / context epoch / session /
-turn / message / tool call / delivery attempt 等对象使用带前缀 ULID（`ev_` / `ix_` / `ctx_` /
-`ctxe_` / `bs_` / `hs_` / `t_` / `m_` / `tc_` / `att_`），从第一天起稳定、可外部引用；
-HarnessTarget、PluginInstance 等配置对象使用
-各自作用域内的稳定配置 ID。fork 复制的 turn / interaction / message / tool call 等领域对象
-与源**共享对象 ID**（git-branch 语义）；Event envelope 因进入新的 session scope 而重新签发
-`eventId`，保证一个 event id 只属于一个权威 ledger。跨会话引用领域对象以
-`bs_ + 对象 ID` 消歧（why 见 `resume-fork.md`）。
-
-## 2. 进程、线程与事件循环
-
-Baton 的并发边界按**故障与所有权**划分，不按页面区域划分：
+## 3. 整体设计
 
 ```text
-Baton host process
-  └── main JS thread / event loop
-        ├── stdin、键盘路由、焦点
-        ├── chat-tui + React/OpenTUI render
-        ├── Controller、SessionStore、Plugin Manager
-        └── IPC / async subprocess coordination
-
-child processes
-  ├── Plugin Runner × active Binding
-  └── Harness process × Adapter-owned execution
+                         Baton host process
+┌──────────┐ intent   ┌──────────────────────────────────────┐
+│ chat-tui │─────────▶│ Controller / Session / Event Ledger  │
+│          │◀─────────│ Context / Interaction / Projection   │
+└──────────┘ render   │ Plugin Manager / Runner supervision  │
+                     └──────────────┬───────────────┬─────────┘
+                                    │               │
+                              stable contract       │ IPC
+                                    ▼               ▼
+                            Harness Adapter     Plugin Runner
+                                    │               │
+                                    ▼               ▼
+                                 Harness       Connector / domain
 ```
 
-终端只有一条 stdin 和一个当前键盘焦点。composer、timeline、activity、footer、sidecar 是
-**surface 粒度的订阅和渲染边界**：它们只订阅所需 ChatStore slice，避免无关 state 触发重绘；
-但它们不各自拥有 TTY、焦点或 JS event loop。输入先由 chat-tui 在 host 主线程翻译成 intent，
-再路由给 Baton。sidecar 不监听文本输入，也不能移动 composer 的 buffer。
+host 主线程拥有 stdin、焦点、Controller、SessionStore、Plugin Manager 和展示快照。render、键盘
+handler 与同步 getter 只读内存，不执行文件、网络、Git、Package import 或 Plugin 回调。
+I/O 使用 async API；三方 Plugin 按活动 Binding 运行在独立 Runner 进程，Harness 进程或 SDK
+生命周期由对应 Adapter 持有。
 
-进程和未来 Worker 的编排归 Baton，不归 chat-tui。chat-tui 是可复用视图层，只维护焦点、
-输入缓冲、surface selector 和 render；它不能知道 Plugin、Harness、Session 锁或进程恢复。
-Baton 当前应用层不为 surface 创建 Worker：跨 Worker 复制完整 React / ChatStore 状态会增加
-一致性协议，却不能改变终端单焦点事实。OpenTUI 或依赖内部使用的 native thread 是实现细节，
-不属于 Baton 契约。
+进程边界按故障与 owner 划分，不按页面区域划分。chat-tui 的 composer、timeline、footer、
+sidecar 只是 surface 订阅边界，共享一条终端焦点和一条 host event loop。进程关闭按 owner
+反向进行：停止接收 intent → cancel/close Harness → 关闭 Plugin Binding/Runner → flush Session
+→ destroy renderer。
 
-host 主线程上的代码必须满足两条纪律：
+内核只有一条双向流水线。这里仅给出拓扑；admission、Context、Attempt、Interaction 和终态的
+顺序以 [工作流](./workflow.md) 为准。
 
-1. render、键盘 handler 和同步 getter 只读取内存快照，不做文件、Git、网络、Package import
-   或 Plugin 回调；
-2. I/O 使用 async API；可能执行三方代码、同步子进程或不可控模块初始化的工作进入独立进程。
+![Baton 内核双向流水线](./kernel-pipeline_v1.svg)
 
-因此 Marketplace Plugin 按活动 Binding 进入独立 Runner。同步死循环只阻塞该 Runner；
-Supervisor 的 deadline 到期后终止进程，Manager 撤销 Binding。Harness 的进程或 SDK 生命周期
-由对应 Adapter 持有；Git 等短命工具由所属进程使用异步 subprocess，并显式设置 timeout、
-取消和输出上限。详细 Plugin 协议见 `plugin.md`。
+## 4. 关键不变量
 
-Worker thread 只在未来出现**可信、CPU 密集、可结构化传输、可取消**的 Baton core 计算时引入，
-例如大型纯投影。届时仍由 Baton 定义请求、deadline 和关闭协议；不能让某个 surface 私自创建
-线程。三方 Plugin 默认继续用进程，因为 Worker 不是权限沙箱，且进程退出与资源回收边界更清楚。
+### 4.1 单通道真相
 
-关闭顺序由 owner 反向执行：停止接收新 intent → cancel/close Harness → 关闭 Plugin Binding 与
-Runner → flush/release Session → destroy renderer。子进程意外退出必须转换成 Baton 可观察的
-失败并释放注册；不能让一个失联 Promise 永久占住队列。
-
-这是一套多进程、每进程单 JS event loop 的应用模型。0.2.0 的不兼容点是 Plugin 公共回调
-Promise 化和三方 Package 进程化，不把“surface 独立重渲染”误称为“surface 独立线程”。
-
-## 3. 三条不变量
-
-内核的正确性压在这三条上；违反任意一条，加 harness 就会渗进核心。
-
-1. **单通道真相**：一切经 `event → append → broadcast → reduce → projection`。live 与 resume 是同一条 reduce 路径。不允许第二条投影通道（per-turn 回调曾是第二通道，导致 observed turn 的回复"只持久化、不投影"，重开会话才可见）。自愈也走这条：合成的终态事件重新进 `appendEvent`，不直接改 state。由 `tests/harness-initiated-turn.test.ts` 的参数化契约测试钉住。
-
-2. **终态封闭 + 悲观兜底**：内部状态是**封闭词表**，adapter 在边界把 harness 的开放 / UNSTABLE 字符串归一进来；**未知一律保守**（未知终态 → `failed` 不是 `completed`；未知 verdict → 不 finalize）。"悲观、绝不失声"是感知面的承重原则。
-
-3. **核心无 harness 分支**：harness 差异只以 capability 有无出现在内核视野里。渲染层与存储层不出现 harness 分支；harness 私有形态留在信封 `raw`。归一是"最大公约数 + raw 保真"：形状统一，粒度差异不掩盖。
-
-## 4. 内核流程：一条双向流水线
-
-内核只有一条流水线，双向流动。observed turn、stall 自愈、审批闭环都是它的特例，不是另起的机制。
-
-**开发次序：两个边界的形态先钉死，中间处理慢慢打磨。** 先定死 Input 域的入站形态（当前 user 输入按 kind 区分 prompt / interaction resolution / control，未来可增加 monitor / external event source）和 Harness 域的 I/O 形态（harness→baton：归一 Event 或 Interaction draft；baton→harness：capability 操作与 Interaction resolution）。这两个边界一旦稳定，baton 的**中间处理**（Controller 调度、queue、reduce、projection）就能渐进重构而不惊动边界契约——接入方（chat-tui）与 harness（adapter）不被中间打磨波及。这也是内核纪律钉在**边界**（§5 扩展契约、§3 不变量）、而演进（§6）主要作用于中间与概念提升的原因。
-
-![baton 内核：一条双向流水线（用户→baton 有 Input、Interaction resolution 与 Control；baton→用户 render 分 transcript、Interaction 浮层和 status；中间 Controller+queue、event/turn 单通道、Adapter 的 capability 出站与归一入站、session.jsonl 持久化）](kernel-pipeline_v1.svg)
-
-两点要害：入站归一箭头标注的 `driven + observed`——`Adapter → event` 路径同时承载用户驱动与 harness 自发两种 turn，独立于是否有待决 Input（单通道真相，不变量 #1）；Input 经 composer+queue 被调度成 turn，而 Interaction 在浮层被 resolve，就地解开等待方，不进入输入队列（见 §7）。
+一切可恢复、可展示的执行事实都经过：
 
 ```text
-控制（出站）  chat-tui intent
-             → Controller（拥有 Input 生命周期，调度 driven turn）
-             → Delivery Attempt（prepared → dispatching → accepted）
-             → Adapter（sendTurn 归一 new turn / steer，并映射 cancel / approve）
-             → harness wire
-感知（入站）  harness wire
-             → Adapter 归一（→ 封闭词表，未知 fail-closed，保留 raw）
-             → 宿主可信入口盖 source:harness + Harness + HarnessTarget
-             → Event append → broadcast
-             → reduce → Projection 快照
-             → chat-tui 渲染
+Event → append → broadcast → reduce → Projection
 ```
 
-**Turn 生命周期**（内核心跳）：
+live、resume 和自愈使用同一条 reduce 路径。Adapter、Controller 或 TUI 都不能再开一条
+per-turn callback 或直接改视图状态的旁路。Plugin Resource 和外部系统可以拥有各自领域事实，
+但不能冒充 Session Event Ledger。
 
-- `admit`（Controller，driven turn）：出队即落 `user_message(source:user)` + `state_update(running, source:baton)`——用户输入是 BatonSession 的事实，不等 harness 冷启动；driven turn 全局串行、finalize 推进队列。
-- `observe`（adapter，observed turn）：harness 自发。adapter 在终态后的同一消息流上检测到新活动，铸新 turnId、以 `state_update(running, source:harness)` 开界、idle 收界；controller 只划界记账、投影，**不进队列**（它已在跑，调度它无意义、阻塞用户输入更是倒置）。全局串行约定据此收窄为：**driven turn 全局串行，observed turn 与其正交**。
-- `terminal`（恰好一次）：adapter 在任何退出路径（正常 / wire error / 子进程退出 / transport close）都必须报告或合成一次 `state_update(idle)`；错误路径先发 `_baton_error_update`。重复 / 迟到的物理终态允许存在，controller 按 baton turn id 幂等 finalize。
-- `setup`（harness 冷启动，turn 之外的活动窗口）：`HarnessBinding` 创建 → open 完成之间，adapter 可能阻塞征询用户（hook trust / 登录确认）、拉模型目录、失败退出。setup 不自成 turn——其间打开的 Interaction 一律归属**触发冷启动的 driven turn**（Controller 按交互生命周期统一补归属，不按 kind 特判）；setup 期间 adapter 自行启动的资源（子进程、探测 query）由 **adapter 负责清理**——open 未返回 ref 前 controller 无从 close，失败路径不清理即泄漏。
-- `finalize`：落 turn-summary、推进队列（仅 driven）。
+### 4.2 终态封闭，未知悲观
 
-**自愈旁支**（harness 静默悬挂时）：stall 在事件流上被观测（L1，`_baton_stall_notice`）→ 若 adapter 声明 `Reconcilable` 则探权威快照（L2）→ 用修复事件结算被丢的 item 级终态 → 合成终态重新进同一条流水线。silence 是观察不是判决，权威探测应能 clear / refine 而非直接判死。
+每个被接受的 Turn 必须恰好逻辑收口一次；正常结束、wire error、子进程退出、transport close
+和 cancel 都必须报告或合成终态。物理终态可以重复或迟到，Controller 按 Baton turn ID 幂等
+finalize。
 
-**人工审批闭环**（Interaction 的一个 kind）：Adapter 提交 permission draft → Controller 签发 `ix_`、append `interaction.opened`（state → requires_action）→ 用户在 TUI 决策 → Controller append `interaction.resolved` 并解开 Adapter await → Adapter 回传 Harness。自动 reviewer 未向 Baton 打开 Interaction 时，`ApprovalReview` 是独立审计事实，不伪造 opened/resolved 配对。declined 是一等终态；委托状态对当前活跃 harness 可见。
+内部状态使用封闭词表，Adapter 在边界归一 Harness 的开放值；未知终态不能乐观映射为成功。
+原始协议保留在 Event `raw`，未知通知进入有界诊断而不是静默丢弃。
 
-**上下文接力旁支**：`ContextSource(kind + owner + key)` → 组装并持久化
-`ContextSnapshot` → 通过 `syncContext`、sendTurn side-channel 或 prompt prepend 交付 →
-transport 接受后持久化 `ContextDeliveryReceipt` → 从 Receipt 重放该 HarnessSession 的
-`ContextEpoch`。`meta.syncedSeq` 只是兼容缓存；存在 Snapshot 但没有 Receipt 时水位不前进，
-下次仍需补投。当前首个 source kind 是 BatonSession 的 `session_history`，Board / Plugin /
-Resource 等来源在真实接入时增加 kind，不预造注册表。
+### 4.3 Core 无 Harness 分支
 
-## 5. 扩展契约：加一个 harness
+Harness 差异只能存在于 Adapter、Definition、Inspector 和 Capability。Session、Event Store、
+reduce、Projection 与 chat-tui 不出现 `if harness === ...`。新增 Harness 默认只修改：
 
-`HarnessAdapter` 是内核唯一面向 harness 的接口（完整条款见 `harness-interaction-design.md`）：
-
-```ts
-interface HarnessAdapter {
-  readonly harness: string;
-  readonly capabilities: AdapterCapabilities;              // 可展示的能力 descriptor
-  open(opts, sink: EventSink, binding: HarnessSessionBindingSink): Promise<HarnessSessionHandle>;
-  sendTurn(handle, input: PromptInput): Promise<SendTurnReceipt>; // adapter 决定 new_turn / steer / rejected
-  cancel(handle): Promise<void>;
-  close(handle): Promise<void>;
-}
+```text
+src/harness/<harness>/
+src/harness/registry.ts
+src/harness/ids.ts
 ```
 
-**MUST**：
+只有被多个 Harness 共同印证、且确实改变稳定契约的能力，才可提升为新的 Capability 或内核概念。
 
-- 实现小核心 `HarnessAdapter`；把 wire 方言归一成 Event 草稿并保 `raw`；adapter 不能自填 `source`、Harness 或 HarnessTarget，宿主在接入边界按绑定关系统一补齐；未知终态按不变量 #2 保守收口。
-- `sendTurn` throw 只表示 Adapter 尚未接受投递责任；accepted 后的任何失败都必须经事件流
-  给出 Harness 终态。Delivery Attempt 是 Controller 的记账，不进入 Adapter 输入契约。
-- 需要外部参与者时向宿主提交 typed `InteractionDraft` 并等待 resolution；不得自签 `interactionId`，也不得自行 emit `interaction.opened/resolved`。
-- 可选能力（`Reconcilable` / `SessionConfigurable` / …）**声明即必须实现**，由契约测试保证；不声明 = 优雅降级，
-  绝不是核心分支。
-- 经 `harness/registry`（Harness 定义 + adapter 工厂）+ `harness/ids`（无 SDK 身份目录：id + aliases）注册。
+### 4.4 事实先于副作用和投影
 
-**MUST NOT**（默认边界；确需突破时走 §6 的演进门槛，不在此私自扩核心）：
+用户输入先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
+再调用 Adapter。Plugin Output 先持久化，再通知 UI。Context Snapshot 只说明准备送什么，只有
+DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发生时保留 `uncertain`，不盲目
+重投。
 
-- 为**单个** harness 的方言给 BatonSession / Turn / Event 核心加字段或分支；
-- 开第二条投影通道；
-- 让 harness 字符串越过 adapter 边界（封闭词表在此收口）；
-- 静默持有审批授权（必须产生可见、带 id 的回执）。
+### 4.5 长期 loop 与执行小闭环分层
 
-**自检**：新增 harness 的 diff 只落在 `harness/<harness>/` + `harness/registry.ts` + `harness/ids.ts`（+ 或许 `harness/adapter.ts` 中的新 capability 接口）。一旦落进 `session/`、`store/reduce`、projection 语义或 chat-tui，先自问："这是这一家的方言，还是 ≥2 家的共性？"——前者归 adapter/`raw`，后者才按 §6 慎重提升内核。
+Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
+Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 建议的
+`proposed-input` 经用户确认后成为普通 Input，继续走同一 Context、Permission、Attempt 和
+Harness routing 主路径。
 
-## 6. 内核的演进规则
+## 5. 演进规则
 
-内核不是冻结的。BatonSession / Turn / Event 也会演进——但内核是所有 harness 与全部投影 / 存储的共同约束，改它比改一个 adapter 贵一个量级，因此要很慎重，有明确的门槛与方向。
+判断一个新能力落点时依次问：
 
-**判据：默认下沉，共性才上浮。**
+1. 它的事实由谁拥有，生命周期由谁收口？
+2. 它是单个 Harness 的协议差异，还是多个 Harness 共享的稳定语义？
+3. 它是否需要持久身份、恢复和对账，还是仅是短寿命 signal/view？
+4. 是否可以通过现有 Input、Interaction、Event、Context 或 Capability 表达？
+5. 提升内核后，能否保持新增 Harness 不修改 Session/store/projection/chat-tui？
 
-- **默认：单个 harness 的特性留在 adapter + `raw`**，或表达为一个 optional capability。一家有、别家没有的东西不进内核——否则内核长出只服务一家的字段，就退化成"harness 分支的联合体"，§3 不变量 #3 名存实亡。
-- **提升触发：同一特性在 ≥2 个 harness 上独立出现**，说明它是这个问题域的普遍形状、而非某家方言——此时才把它归一进内核。cross-harness 证据是门槛，单家便利不是。
-- **加法优先、语义封闭**：优先新增事件类型 / Turn 属性 / capability，尽量不改既有 `payload` 的既定含义。确需改变信封契约时递增 envelope version，明确迁移或不兼容边界，不能让两种语义共用同一版本。v3 以 `eventId + scope` 取代顶层 `batonSessionId`，明确不兼容 v2 信封。能用 optional capability 表达的，就不进核心必选。
+signal 只提示重新读取权威状态，不能冒充 Event；Board 更新、Context 已交付和 Harness 已被唤醒
+是三个独立事实。尚未满足真实场景的自动 Harness Work、多 Harness 并行汇总和主线/草稿收录
+留在 [Backlog](./backlog.md)，不提前向 Plugin 暴露 Harness 句柄。
 
-**两个演进方向：**
+## 6. References
 
-1. **capability 毕业**：一个可选能力（如 `Reconcilable`）若被所有活跃 harness 支持、且成为交互刚需，可从"可选"升为"核心约定"。代价是新 harness 从此必须实现它、接入门槛随之抬高——所以非刚需不升。
-2. **概念提升**：一个反复在投影 / 存储层打补丁的隐式概念，被确认为跨 harness 的普遍需求后，提升为一等内核概念。§7 列出各轴的一等概念，就是这条路径的落点。
-
-**每次内核改动回答三问**：① 这是 ≥2 家的共性，还是一家的方言？② 能否用 optional capability 而非核心字段表达？③ 持久协议是保持兼容，还是以新 envelope version 明确切断？三问没有明确答案，就先留在 adapter 层。
-
-## 7. 各轴的一等概念
-
-内核在每条轴上都要求一个"一等"的承载对象：隐式或泄漏的概念会让局部修复反复打补丁、扩展被迫改核心。五条轴的一等概念与其绑定规则——
-
-- **输入轴 · Input family**——Input 域进入 Controller 的信号统一收束为 `Input`；先通过 `source` 区分 user / monitor / external event，再在 user source 内通过 `kind` 区分 **prompt**（模型可见内容，`mode` 再区分 submit / steer）、**interaction resolution**（回答一个已打开交互，就地解阻）与 **control**（无模型可见内容，命令 Turn 生命周期，如 `interrupt`）。其中 prompt Input 是一等持久概念（身份即其 messageId），消费状态可查，统一 draft / queued / admitted / steer / recall；缺了它，"Esc + 第二条待决意图"这类时序本质不可判定（见 `user-input-lifecycle.md` S3）。三类 variant 共享 Input→Controller 的入口契约，但保留各自生命周期，不强行共用 queue 或 Attempt。
-
-- **交互轴 · Interaction**——任何需要外部参与者给出结果后才能继续的阻塞协作，都使用同一个持久对象：`interactionId + requester + kind-specific payload`。`kind` 当前为 permission / question / hook_trust，后续 Plugin 授权或 elicitation 继续增加 kind，而不是再造 Request/Fact 名词。Controller 是 lifecycle owner：先 `interaction.opened`，后且仅后一个 `interaction.resolved`；cancel / timeout / recovery 也是 resolution。`Event.source` 回答谁报告事实，`Interaction.requester` 回答谁在等待，二者正交。自动 reviewer 没有向 Baton 打开 Interaction 时，`ApprovalReview` 保持独立审计 Event。详见 `harness-interaction-design.md` §3.5。
-
-- **输出轴 · 封闭终态词表**——harness 的开放 / UNSTABLE 终态在 adapter 边界经统一原语收口到内部闭集，未知一律保守回落（不变量 #2）。闭合值进入事件流后 reduce / 投影不再面对未知；原始值留在 `raw`。反面参照 `StopReason`：有意保持开放（forward-compat 元数据）——turn 靠 `idle` 无条件收口、不依赖 reason 字符串，故无需封闭。判据是"未知会不会导致失声"，不是"凡开放皆封闭"。
-
-- **上下文轴 · ContextSource family**——不同来源收束为同一个 `ContextSource` 判别联合，以 `kind` 表达来源类型、`owner + key` 表达稳定身份；来源组装结果是不可变 Snapshot，目标已知基线是从 DeliveryReceipt 重放出的 ContextEpoch。Board 更新、Snapshot 生成和 Harness 接受是三个事实，不能共用一个 `synced` 布尔值。当前只实现 `session_history`，新来源优先增加 kind；只有来源自己的读取契约和生命周期真正独立时才增加子类 / adapter。
-
-- **展示轴 · outcome 与 tone 双轴**——展示态分两根正交轴：lifecycle/outcome（completed / failed / declined）与 tone/severity（warning…）。二者混进单一 union，会让"跑了但需留痕"与真实结果争用一个状态位、共用一个颜色 token，枚举随特性膨胀。此轴在 chat-tui 侧，是纯展示取舍。
-
-## 8. References
-
-- `design.md` — 内核之外的完整设计（定位、问题域、架构、存储、纳管、@、里程碑）
-- `harness-interaction-design.md` — Adapter 契约完整条款（生命周期 / 能力 descriptor / admission）
-- `user-input-lifecycle.md` / `harness-output-lifecycle.md` / `approval-lifecycle.md` — 输入 / 输出 / 审批三轴展开
-- `resume-fork.md` — resume/fork 语义（fork = 同一段逻辑历史的复制）、会话锁与 crash recovery
+- [工作流](./workflow.md) — 用户输入、Harness 执行、事件投影与 Interaction 闭环
+- [Harness](./harness.md) — Target、Session、Adapter、Capability 与扩展契约
+- [Plugin](./plugin.md) — Resource/Controller、Runner、Board、Context 与长期 loop
+- [审批生命周期](./approval-lifecycle.md) — permission、授权方与 auto-review 回执
+- [Session Paths](./session-paths.md)、[resume 与 fork](./resume-fork.md) — 会话分支、恢复与收录
+- [日志体系](./logging.md) — Baton、Harness 与 Plugin 的结构化诊断
+- [Backlog](./backlog.md) — 有意识暂缓的能力和启动条件

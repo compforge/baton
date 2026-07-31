@@ -1,5 +1,5 @@
 // 把事件流 reduce 成会话状态：TUI 渲染的唯一来源，崩溃恢复 = 重放 session.jsonl。
-// upsert 语义保证重放幂等。见 docs/design.md §5.3。
+// upsert 语义保证重放幂等。见 docs/workflow.md“Adapter 归一”。
 
 import type {
   AnyEventEnvelope,
@@ -117,7 +117,7 @@ export interface ActiveTurnState {
   turnId: string;
   harness?: string;
   harnessTargetId?: string;
-  /** driven 由 Baton admit；observed 由 Harness 自发开界（design §5.10）。 */
+  /** driven 由 Baton admit；observed 由 Harness 自发开界（见 docs/workflow.md）。 */
   role: "driven" | "observed";
   /** 本 turn 当前非 idle 态（running / requires_action）：保真透传，不折叠成 running */
   state: Exclude<SessionRunState, "idle">;
@@ -156,7 +156,7 @@ export interface SessionState {
   /** Interaction 是统一持久对象；是否 pending 由 resolution 是否存在派生。 */
   interactions: Map<string, InteractionState>;
   /**
-   * auto-review 回执，按回执自身的 `reviewId` 归档（kernel.md §6）。与 Interaction
+   * auto-review 回执，按回执自身的 `reviewId` 归档（见 docs/approval-lifecycle.md）。与 Interaction
    * 正交：这是“已被 reviewer 决策”的留痕，不是待决，不派生 requires_action。每条回执是
    * timeline 的一等公民（首见即入 timeline），无 target 也留痕、同一操作多次决策各自成条。
    */
@@ -333,7 +333,7 @@ function hasPendingBlocking(state: SessionState, turnId: string): boolean {
 }
 
 /**
- * 会话级 runState 派生（harness-interaction-design：存在 pending Interaction 时
+ * 会话级 runState 派生（workflow：存在 pending Interaction 时
  * projection 必须产出 requires_action）。requires_action 比 running 优先上浮——它意味着
  * "没有用户动作会话无法完整推进"；未归属 turn 的 setup Interaction 也不能漏。
  */
@@ -461,9 +461,9 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       break;
     }
     // Interaction opened/resolved 驱动 per-turn requires_action ↔ running：不变量收在 reducer，
-    // 不要求 adapter 自觉配对 state_update（事件流是唯一真相源；design §4.1）。
+    // 不要求 adapter 自觉配对 state_update（事件流是唯一真相源；见 docs/kernel.md）。
     // 原生 state_update(requires_action) 仍然有效——覆盖登录、设备确认等没有结构化
-    // Interaction 的场景（harness-interaction-design：反向不强制成立）。
+    // Interaction 的场景（workflow：反向不强制成立）。
     case "interaction.opened": {
       const interaction = ev.payload;
       const existing = state.interactions.get(interaction.interactionId);
@@ -525,7 +525,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     case "_baton_run_status": {
       const p = ev.payload;
       // per-turn 运行阶段；无 turnId 或未命中活跃 turn 时丢弃——phase 是短寿命
-      // 装饰信息（design §5.9），turn 已收口后的迟到 phase 没有呈现意义。
+      // 短寿命装饰信息；turn 已收口后的迟到 phase 没有呈现意义。
       const turn = ev.turnId ? state.activeTurns.get(ev.turnId) : undefined;
       if (turn) turn.phase = p.phase === null ? undefined : { phase: p.phase, title: p.title };
       break;

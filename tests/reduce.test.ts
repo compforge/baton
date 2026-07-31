@@ -337,7 +337,7 @@ describe("emptySessionState", () => {
   });
 });
 
-// Phase 1 新事件（design §4.8）：快照 vs 增量、append-only 的语义边界
+// Event 快照 vs 增量、append-only 的语义边界（见 docs/workflow.md）
 describe("snapshot vs delta semantics", () => {
   test("available_commands_update replaces the whole snapshot — no merge, stale items gone", () => {
     const state = reduceEvents([
@@ -366,7 +366,7 @@ describe("snapshot vs delta semantics", () => {
   });
 
   test("usage_update accumulates (delta) while context_usage_update replaces (snapshot)", () => {
-    // 守住 design §4.8 的关键区分：usage delta 在 replay 时累加，
+    // 守住 workflow 的关键区分：usage delta 在 replay 时累加，
     // context 快照则后写覆盖先写。
     const state = reduceEvents([
       ev("usage_update", { inputTokens: 10, outputTokens: 5 }),

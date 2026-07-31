@@ -46,7 +46,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 
 终端只有一个焦点和一个宿主事件循环；chat-tui 按 surface 隔离订阅与重绘，Baton 则让每个活动的三方 Plugin Binding 进入独立 Runner 进程。某个 Plugin 阻塞或崩溃不会占住 composer，它的注册会作为一个整体撤销。
 
-稳定内核与进程模型见 [`docs/kernel.md`](docs/kernel.md)；Plugin host 与三方开发规范见 [`docs/plugin.md`](docs/plugin.md)，分层 loop 模型见 [`docs/loop-engineering.md`](docs/loop-engineering.md)。
+稳定内核见 [`docs/kernel.md`](docs/kernel.md)，用户与 Harness 的端到端流程见 [`docs/workflow.md`](docs/workflow.md)，Harness 适配契约见 [`docs/harness.md`](docs/harness.md)，长期领域 loop 与三方 Plugin 开发见 [`docs/plugin.md`](docs/plugin.md)。
 
 ## 功能
 

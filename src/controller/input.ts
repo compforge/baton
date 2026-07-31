@@ -3,7 +3,7 @@ import type { PromptBlock } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 
 /**
- * 一条用户输入的生命周期状态（kernel.md §6 · user-input-lifecycle.md §1）。让 recall /
+ * 一条用户输入的生命周期状态（见 docs/workflow.md“采集与准入”）。让 recall /
  * interrupt / steer / race 的迁移成为对同一 Input 的状态查询，而不是散落在 submit /
  * steer / Esc 里的时序特判。
  */

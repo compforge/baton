@@ -1,4 +1,4 @@
-// steer 的 controller 语义（design §4.3 / 验收矩阵 §7.6）：
+// steer 的 controller 语义（见 docs/workflow.md“Busy 输入、steer 与 interrupt”）：
 // 正确 turn 成功注入且不新开 turn；不可 steer / harness 拒绝 / wire 故障一律显式
 // 降级为 follow-up（effective 如实上报），输入永不静默丢失。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

@@ -4,7 +4,7 @@
 
 resume 和 fork 都是 **BatonSession 自己的语义**，不依赖任何 harness 的原生 fork 能力：
 
-- **resume**：沿用原 `bs_` ID 重新打开会话，恢复统一逻辑历史；harness 原生会话只是恢复加速，缺失时从 BatonSession 历史重建上下文（既有约定，见 `design.md`）。
+- **resume**：沿用原 `bs_` ID 重新打开会话，恢复统一逻辑历史；Harness 原生会话只是恢复加速，缺失时从 BatonSession 历史重建上下文（见 [Kernel](./kernel.md) 与 [工作流](./workflow.md)）。
 - **fork**：从一个 BatonSession 复制事件历史，得到一个独立的新会话。复制的前缀与源是**同一段逻辑历史**（git-branch 语义），谱系由 `meta.forkedFrom = { batonSessionId, throughSeq }` 表达。fork 是后续"草稿会话"（任务进行中拉草稿并行探索、成果由用户决定收录）的数据层基础，当前先以 CLI 子命令形态提供（`baton fork`），会话内运行中 fork（类 Codex `/side`）留待多 Session Controller。
 
 CLI 也接受 HarnessSession 引用：裸 ID 会同时做只读发现，唯一命中时自动识别；

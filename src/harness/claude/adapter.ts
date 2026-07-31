@@ -1,6 +1,6 @@
 // Claude Code 接入：官方 Agent SDK 进程内直调（TS 宿主不需要 tutti 那样的 sidecar）。
 // SDK 以子进程拉起 claude CLI；可执行文件可换成公司包装器（BATON_CLAUDE_BIN），
-// 凭证零持有，复用本机登录态。见 docs/design.md §5.1。
+// 凭证零持有，复用本机登录态。见 docs/harness/claude-code.md。
 
 import {
   query,
@@ -500,7 +500,7 @@ export function claudeDurableMessageDrafts(
  */
 interface ClaudeTurn {
   turnId: string;
-  /** 保证任何退出路径（result 消息 / 流异常 / 流结束无 result）只发一次终态（design §4.1） */
+  /** 保证任何退出路径（result 消息 / 流异常 / 流结束无 result）只发一次终态（见 docs/harness.md） */
   finalized: boolean;
   /** 用户主动中断时，SDK 会以 error result 结束消息流；该错误应归一成 cancelled。 */
   cancelRequested: boolean;
@@ -785,7 +785,7 @@ export interface ClaudeAdapterOptions {
 
 export class ClaudeAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
-  // 当前 adapter 最终只发送 text（design.md §3.1）；可选能力接口落地并验证后才声明
+  // 当前 adapter 最终只发送 text；可选能力接口落地并验证后才声明
   // 对应 marker——契约测试钉住"声明支持就必须实现对应接口"。
   readonly capabilities: AdapterCapabilities = {
     prompt: {},
@@ -1194,7 +1194,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   /**
-   * 铸造 observed turn 并以 harness 来源的 running 开界（design §5.10）。
+   * 铸造 observed turn 并以 harness 来源的 running 开界（见 docs/workflow.md）。
    * 刻意不写 rt.activeTurn：observed turn 不占 admission 槽；新 driven turn 到达时
    * sendTurn 会先将它收口，再把用户输入送进同一个 streaming query。
    */

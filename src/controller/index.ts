@@ -59,15 +59,15 @@ export type {
 
 /**
  * Control：与 Input / Interaction resolution 并列的第三种用户信号
- * （见 user-input-lifecycle.md §1）。
+ * （见 docs/workflow.md“用户输入到 Harness”）。
  * 不携带内容、不到达 model——是对 turn **生命周期**的命令，必须 out-of-band 够到正在跑的
  * turn（不进 queue，否则会排在它要打断的 turn 后面而死锁）。当前唯一 kind 是 `interrupt`
- * （Esc）；pause / abort-bash / shutdown 等作为新 kind 加入时按 kernel §5 演进。
+ * （Esc）；pause / abort-bash / shutdown 等作为新 kind 加入时按 kernel 演进规则处理。
  */
 export type Control = { kind: "interrupt" };
 
 /**
- * 用户 sendTurn 的调度结果（design §3.7：requested 与 effective 分开呈现）：
+ * 用户 sendTurn 的调度结果（workflow：requested 与 effective 分开呈现）：
  * - `steer`：已注入当前 turn 的下一个安全边界，不产生新 turn；
  * - `new_turn`：已进入 Controller 的 driven turn 队列；`queued` 说明它是否在等待当前
  *   turn。outcome 在该 turn 完成/被撤回时 resolve。
@@ -104,7 +104,7 @@ export interface ControllerOptions {
   onChange?: () => void;
   /**
    * cancel 后等待 harness 确认终态的宽限期。到期仍无终态则合成 terminal error 并
-   * 推进队列（design §4.1：除 cancel grace 与 transport close 外不设全局 watchdog，
+   * 推进队列（workflow：除 cancel grace 与 transport close 外不设全局 watchdog，
    * 合法的长任务不应被误杀）。
    */
   cancelGraceMs?: number;
@@ -120,12 +120,12 @@ export const INTERRUPTED_NOTICE_TITLE = "Conversation interrupted — tell the a
  * UI 只提交意图和消费事件（经 SessionHandle.subscribe 订阅事件流），不能分别维护
  * 各 harness 的并发状态。
  *
- * turn 分两类生命周期（docs/design.md §5.10）：
+ * turn 分两类生命周期（见 docs/workflow.md）：
  * - driven turn：baton 发起（用户 submit），入队、全局串行、finalize 推进队列；
  * - observed turn：harness 自发（Harness 来源的 `state_update(running)` 开界），
  *   baton 不控制其开始，只划界、记账（turn summary + 同步水位），不进队列。
  *
- * 生命周期由 state event 驱动（design §4.1）：adapter.sendTurn 只确认接收，turn 的
+ * 生命周期由 state event 驱动（workflow）：adapter.sendTurn 只确认接收，turn 的
  * 完成以 `state_update(idle)` 为准，经 finalize 按 baton turn id 幂等收口——
  * 重复/迟到的物理终态（reconnect、transport race）不会二次终结，也不会关闭更新的 turn。
  *
@@ -567,7 +567,7 @@ export class Controller {
   }
 
   /**
-   * driven turn 开界的唯一入口（kernel §3 admit）：入台账、置为当前 driven turn、
+   * driven turn 开界的唯一入口（见 docs/workflow.md“Turn 开界”）：入台账、置为当前 driven turn、
    * 落 user_message + state_update(running)。**control turn**（/compact 这类无用户
    * 输入、占用 turn 形状的控制操作）不传 input，跳过 user_message——两类 driven turn
    * 的开界序列只活在这里，不允许旁路再手搭一份。
@@ -851,7 +851,7 @@ export class Controller {
     if (envelope.kind === "state_update") {
       const p = envelope.payload;
       if (p.state === "running" && envelope.source.type === "harness" && envelope.turnId) {
-        // observed turn 开界：登记入台账，不进队列（design §5.10）
+        // observed turn 开界：登记入台账，不进队列（见 docs/workflow.md）
         this.turns.observe(binding, envelope.turnId);
       } else if (p.state === "idle") {
         // 终态一律按 baton turn id 查表路由（不看 binding）。无 turnId 的终态：
@@ -871,7 +871,7 @@ export class Controller {
   }
 
   /**
-   * 所有 turn 的统一有序 finalize 路径（design §4.1）：终态已持久化 →
+   * 所有 turn 的统一有序 finalize 路径（见 docs/workflow.md“Turn 收口”）：终态已持久化 →
    * （driven 被打断时）interrupted notice → 一次 turn summary → 同步元数据 →
    * （driven）释放等待者推进队列。observed 只记账，不碰队列——summary 让 harness
    * 自发产出进入 @ 引用与跨 harness catch-up 的正典历史，否则后台唤醒的结论对
