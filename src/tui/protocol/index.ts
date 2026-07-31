@@ -645,7 +645,9 @@ export class BatonChatProtocol implements ChatProtocol {
 
     const interaction = this.state.interactions.get(id)?.interaction;
     let resolution: InteractionResolution | undefined;
-    if (response.kind === "approval" && interaction?.kind === "permission") {
+    if (response.kind === "cancelled" && interaction) {
+      resolution = { kind: "cancelled", reason: "user" };
+    } else if (response.kind === "approval" && interaction?.kind === "permission") {
       resolution = { kind: "permission", outcome: "selected", optionId: response.optionId };
     } else if (response.kind === "approval" && interaction?.kind === "hook_trust") {
       resolution = {
@@ -676,6 +678,11 @@ export class BatonChatProtocol implements ChatProtocol {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
       this.toast = { text: "interaction request is no longer pending", tone: "info" };
       this.changed();
+    } else if (
+      response.kind === "cancelled" &&
+      interaction?.requester.type === "harness"
+    ) {
+      await this.controller.control({ kind: "interrupt" });
     }
   }
 

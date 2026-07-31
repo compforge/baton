@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
+import { textOf, type AnyEventDraft } from "../src/event/types.ts";
+import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { codexNativeTurns } from "../src/harness/codex/native-session.ts";
 import {
   materializeNativeSession,
   nativeSessionTurns,
@@ -12,9 +16,14 @@ import {
   type NativeSessionSource,
   type ResolvedNativeSession,
 } from "../src/harness/native-session.ts";
-import { SessionStore } from "../src/store/store.ts";
+import type { InteractionHandler } from "../src/harness/adapter.ts";
+import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 
 const roots: string[] = [];
+const interactionHandler: InteractionHandler = async (interaction) =>
+  interaction.kind === "permission"
+    ? { kind: "permission", outcome: "selected", optionId: "decline" }
+    : { kind: "question", outcome: "answered", answers: {} };
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -52,6 +61,42 @@ function provider(
     async inspect(sessionId) {
       return sessions[sessionId] ?? null;
     },
+  };
+}
+
+function logicalContent(session: SessionHandle) {
+  const state = session.loadState();
+  return {
+    timeline: state.timeline.map((item) => item.type),
+    messages: [...state.messages.values()].map((message) => ({
+      role: message.role,
+      content: textOf(message.content),
+      streamStatus: message.streamStatus,
+      harness: message.harness,
+      harnessTargetId: message.harnessTargetId,
+    })),
+    toolCalls: [...state.toolCalls.values()].map((tool) => ({
+      toolCallId: tool.toolCallId,
+      title: tool.title,
+      kind: tool.kind,
+      status: tool.status,
+      content: tool.content,
+      locations: tool.locations,
+      harness: tool.harness,
+      harnessTargetId: tool.harnessTargetId,
+    })),
+    proposedPlans: [...state.proposedPlans.values()].map((plan) => ({
+      planId: plan.planId,
+      content: plan.content,
+      harness: plan.harness,
+      harnessTargetId: plan.harnessTargetId,
+    })),
+    turnSummaries: state.turnSummaries.map((summary) => ({
+      stopReason: summary.stopReason,
+      userText: summary.userText,
+      agentText: summary.agentText,
+      toolCalls: summary.toolCalls,
+    })),
   };
 }
 
@@ -200,6 +245,159 @@ describe("native session ownership", () => {
         .filter((event) => event.kind === "_baton_turn_summary")
         .every((event) => event.harnessTargetId === "codex"),
     ).toBe(true);
+  });
+
+  test("explicit native resume reconciles a newly written native tail into the existing owner", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-native-reconcile-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const base = {
+      harnessTargetId: "codex",
+      harness: "codex",
+      nativeSessionId: "thread-1",
+      cwd: "/repo",
+      turns: [
+        { userText: "one", agentText: "answer one" },
+        { userText: "two", agentText: "answer two" },
+      ],
+    };
+    const first = store.materializeNativeSession(base);
+    const refreshed = store.materializeNativeSession({
+      ...base,
+      turns: [...base.turns, { userText: "three", agentText: "answer three" }],
+    });
+    const repeated = store.materializeNativeSession({
+      ...base,
+      turns: [...base.turns, { userText: "three", agentText: "answer three" }],
+    });
+
+    expect(refreshed.reused).toBe(true);
+    expect(refreshed.session.id).toBe(first.session.id);
+    expect(repeated.session.loadState().turnSummaries.map((turn) => turn.agentText)).toEqual([
+      "answer one",
+      "answer two",
+      "answer three",
+    ]);
+    expect(store.forkSession(first.session.id).loadState().turnSummaries).toHaveLength(3);
+  });
+
+  test("native tail reconcile fails closed on divergence or another live Baton owner", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-native-reconcile-guard-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const source = {
+      harnessTargetId: "codex",
+      harness: "codex",
+      nativeSessionId: "thread-1",
+      cwd: "/repo",
+      turns: [{ userText: "one", agentText: "answer one" }],
+    };
+    const first = store.materializeNativeSession(source);
+
+    expect(() =>
+      store.materializeNativeSession({
+        ...source,
+        turns: [{ userText: "one", agentText: "different answer" }],
+      }),
+    ).toThrow(/history diverged at turn 1/);
+    expect(first.session.loadState().turnSummaries).toHaveLength(1);
+
+    writeFileSync(join(first.session.dir, "lock"), "1");
+    expect(() =>
+      store.materializeNativeSession({
+        ...source,
+        turns: [...source.turns, { userText: "two", agentText: "answer two" }],
+      }),
+    ).toThrow(/in use by another baton process/);
+    expect(first.session.loadState().turnSummaries).toHaveLength(1);
+  });
+
+  test("Codex live capture and full native import reduce to the same Baton content", () => {
+    const root = mkdtempSync(`${tmpdir()}/baton-native-equivalence-`);
+    roots.push(root);
+    const store = new SessionStore(root);
+    const items = [
+      { type: "userMessage", id: "u1", content: [{ type: "text", text: "inspect the cache" }] },
+      { type: "reasoning", id: "r1", summary: ["Tracing the cache key"] },
+      {
+        type: "commandExecution",
+        id: "cmd1",
+        status: "completed",
+        command: "rg cache_key",
+        aggregatedOutput: "src/cache.ts\n",
+      },
+      { type: "plan", id: "plan1", text: "Add the tenant to the key" },
+      { type: "agentMessage", id: "a1", text: "The tenant is missing from the cache key." },
+    ];
+    const [nativeTurn] = codexNativeTurns([
+      {
+        id: "codex-turn-1",
+        itemsView: "full",
+        status: "completed",
+        items,
+      },
+    ]);
+    const imported = store.materializeNativeSession({
+      harnessTargetId: "codex",
+      harness: "codex",
+      nativeSessionId: "thread-imported",
+      cwd: "/repo",
+      turns: [nativeTurn!],
+    }).session;
+
+    const live = store.createSession({ cwd: "/repo" });
+    const turnId = "t-live";
+    live.append({
+      kind: "user_message",
+      source: { type: "user" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      turnId,
+      payload: {
+        messageId: "u1",
+        content: [{ type: "text", text: "inspect the cache" }],
+      },
+    });
+    live.append({
+      kind: "state_update",
+      source: { type: "baton" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      turnId,
+      payload: { state: "running" },
+    });
+    const adapter = new CodexAdapter({ interactionHandler });
+    const drafts: AnyEventDraft[] = [];
+    const runtime = {
+      threadId: "thread-live",
+      turnId,
+      activeTurn: { turnId, finalized: false, sawOutput: false },
+      sink: (event: AnyEventDraft) => drafts.push(event),
+    };
+    const notify = (
+      adapter as unknown as {
+        handleNotification: (runtime: unknown, method: string, params: unknown) => void;
+      }
+    ).handleNotification.bind(adapter, runtime);
+    for (const item of items.slice(1)) {
+      notify("item/started", { threadId: "thread-live", turnId: "codex-turn-1", item });
+      notify("item/completed", { threadId: "thread-live", turnId: "codex-turn-1", item });
+    }
+    notify("turn/completed", {
+      threadId: "thread-live",
+      turn: { id: "codex-turn-1", status: "completed" },
+    });
+    for (const draft of drafts) {
+      live.append({
+        ...draft,
+        source: { type: "harness", harnessTargetId: "codex" },
+        harness: "codex",
+        harnessTargetId: "codex",
+      });
+    }
+    live.summarizeTurnEvent(turnId);
+
+    expect(logicalContent(imported)).toEqual(logicalContent(live));
   });
 
   test("forking a native id materializes a source, then uses ordinary Baton fork", () => {

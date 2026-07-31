@@ -147,11 +147,12 @@ baton help                         # 查看完整帮助
 
 对裸原生 ID，baton 会只读探测 Codex 与 Claude Code：只有一方命中时自动选择；两边都命中时
 可交互选择，或用 `cx:<id>` / `cc:<id>` 显式消歧。baton 会先物化或复用一个源 BatonSession，
-把原生 user/assistant 历史还原成归属于该 Harness 的普通 Baton turn，等价于这个
-BatonSession 从一开始就存在、此前始终由该 Harness 问答。`resume` 直接打开这个源；
-`fork` 对它执行普通 BatonSession fork，因此 child 会在命令当前 project 中启动全新的
-HarnessSession。物化出的源继续绑定原生会话。接入后 Baton 是逻辑历史的唯一 owner；
-其它客户端继续写入同一个原生 Session 的 turn 不会自动镜像进 Baton。
+把可只读恢复的原生持久历史还原成归属于该 Harness 的普通 Baton turn，等价于这个
+BatonSession 从一开始就存在；Codex 会导入包含 reasoning、工具和计划提案在内的 full Turn。
+`resume` 直接打开这个源；`fork` 对它执行普通 BatonSession fork，因此 child 会在命令当前
+project 中启动全新的 HarnessSession。物化出的源继续绑定原生会话。Baton 不会在后台自动镜像
+其它客户端的写入；再次显式使用原生 ID 时，会先只读校验历史前缀并把新增尾部补入已有
+Baton owner，再 resume / fork。
 
 在输入中引用 `baton sessions` 列出的 ID：
 

@@ -1433,6 +1433,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "approval",
         blocking: true,
         requester: "claude",
+        escapeResponse: { kind: "cancelled" },
         approval: {
           title: "Write file?",
           description: "/repo/output.txt",
@@ -1486,6 +1487,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "question",
         blocking: true,
         requester: "codex",
+        escapeResponse: { kind: "cancelled" },
       });
       let resolution: unknown;
       const internals = protocol as unknown as {
@@ -1497,6 +1499,11 @@ describe("interaction eventization: pending projects from the event stream", () 
         resolution = value;
         return true;
       };
+      await protocol.resolveInteraction("ix_2", { kind: "cancelled" });
+      expect(resolution).toEqual({
+        kind: "cancelled",
+        reason: "user",
+      });
       await protocol.resolveInteraction("ix_2", {
         kind: "question",
         answers: { q1: ["repository"] },
@@ -1569,6 +1576,12 @@ describe("interaction eventization: pending projects from the event stream", () 
                   label: "REQ-1",
                   description: "First requirement",
                 },
+                {
+                  optionId: "reject",
+                  label: "Do not associate",
+                  description: "",
+                  role: "reject",
+                },
               ],
             },
           ],
@@ -1578,6 +1591,10 @@ describe("interaction eventization: pending projects from the event stream", () 
         id: "ix_plugin",
         kind: "question",
         requester: "reqloop_default",
+        escapeResponse: {
+          kind: "question",
+          answers: { decision: ["Do not associate"] },
+        },
         question: {
           questions: [
             {
@@ -1585,6 +1602,10 @@ describe("interaction eventization: pending projects from the event stream", () 
                 {
                   label: "REQ-1",
                   description: "First requirement",
+                },
+                {
+                  label: "Do not associate",
+                  description: "",
                 },
               ],
             },
@@ -1606,6 +1627,15 @@ describe("interaction eventization: pending projects from the event stream", () 
         resolution = value;
         return true;
       };
+      await protocol.resolveInteraction("ix_plugin", {
+        kind: "question",
+        answers: { decision: ["Do not associate"] },
+      });
+      expect(resolution).toEqual({
+        kind: "question",
+        outcome: "answered",
+        answers: { decision: ["reject"] },
+      });
       await protocol.resolveInteraction("ix_plugin", {
         kind: "question",
         answers: { decision: ["REQ-1"] },
@@ -1654,6 +1684,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "approval",
         blocking: true,
         requester: "codex",
+        escapeResponse: { kind: "approval", optionId: "skip" },
         approval: {
           title: "Trust 1 Codex hook?",
           options: [{ optionId: "trust" }, { optionId: "skip" }],
@@ -1723,6 +1754,10 @@ describe("Plugin Proposal projection", () => {
           requester: "reqloop_default",
           title: "Suggested follow-up",
           text: "Review the requirement",
+          escapeResponse: {
+            kind: "suggested_input",
+            outcome: "dismissed",
+          },
         },
       ]);
 
