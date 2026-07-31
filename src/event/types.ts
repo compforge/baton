@@ -1,6 +1,6 @@
 // baton 内部事件模型：词汇对齐 ACP v2（state_update / 按 messageId 的消息 upsert + chunk 追加 /
 // tool_call_update upsert），wire 协议不必是 ACP——adapter 负责把各家原生协议归一到这里。
-// baton 自有扩展事件用 _baton_ 前缀，遵守 ACP 的扩展值约定。见 docs/design.md §5.2。
+// baton 自有扩展事件用 _baton_ 前缀；公共归一契约见 docs/harness.md。
 
 import type { HarnessDeliveryAttemptUpdate } from "../controller/attempt.ts";
 import type {
@@ -70,7 +70,7 @@ export interface DiffBlock {
 export type ContentBlock = TextBlock | ImageBlock | DiffBlock | { type: string; [key: string]: unknown };
 
 // ---- prompt input blocks ----
-// 输入与输出刻意不共用开放的 ContentBlock（见 docs/harness-interaction-design.md §4.2）：
+// 输入与输出刻意不共用开放的 ContentBlock（见 docs/harness.md“sendTurn”）：
 // prompt 是 adapter 的入参契约，必须是可显式 admission 的闭合集合——不支持某 block 时
 // 报带类型的错误，而不是被 textOf() 之类静默降级；输出侧保持开放联合以容纳 harness 差异。
 // 词汇对齐 ACP/MCP content（text/image/audio/resource/resource_link）。
@@ -123,7 +123,7 @@ export interface MessageUpsert {
 /**
  * 用户输入的实际（effective）投递方式：steer = 中途注入了当前 turn 的安全边界。
  * 开放联合 forward-compat；缺省视为 prompt（旧事件兼容）。requested delivery 不落盘——
- * steer 被拒降级成 follow-up 时，落盘的是降级后的事实（design §3.7：不能仍标成 steer）。
+ * steer 被拒降级成 follow-up 时，落盘的是降级后的事实（见 docs/workflow.md）。
  */
 export type SubmitDelivery = "prompt" | "steer" | "follow_up" | (string & {});
 
@@ -233,7 +233,7 @@ export interface HarnessTaskUpdate {
  * auto-review 开启时审批卡不触发，baton 只观测这条回执。归一自 codex
  * `item/autoApprovalReview/*`（**UNSTABLE**）：字段全部按可选容忍，原始形状保留在 envelope.raw。
  *
- * 一等审计对象：按自己的 `reviewId` 归档（kernel.md §6）。`reviewId` 让"无 target 的
+ * 一等审计对象：按自己的 `reviewId` 归档（见 docs/approval-lifecycle.md）。`reviewId` 让"无 target 的
  * review"也能留痕、同一操作上的多次决策各自成条、不再靠被审 `toolCallId` 覆盖。回执只在
  * reviewer 决策**终态**（codex `/completed`）铸造，`toolCallId` 是可选的被审目标。
  */
@@ -302,7 +302,7 @@ export interface ConfigOptionUpdate {
 /**
  * 当前 context 占用/成本快照，对应 ACP v2 的 usage_update。
  * 与 baton 的 `usage_update`（token 增量）刻意分名：已落盘事件的语义不可静默翻转，
- * 旧 session.jsonl 的 delta replay 必须继续得到相同累计结果（design §4.8）。
+ * 旧 session.jsonl 的 delta replay 必须继续得到相同累计结果（见 docs/workflow.md）。
  */
 export interface ContextUsageUpdate {
   /** 产生本快照时使用的 adapter model selection；用于避免切 model 后展示旧窗口。 */
@@ -314,7 +314,7 @@ export interface ContextUsageUpdate {
 
 /**
  * 结构化错误，不能只塞 stopReason。willRetry=true 表示 harness 仍在重试，
- * 此时 session 不得被切 idle（design §4.9）。
+ * 此时 session 不得被切 idle（见 docs/workflow.md“Turn 收口”）。
  */
 export interface ErrorUpdate {
   code?: string;
@@ -331,7 +331,7 @@ export interface Notice {
 }
 
 /**
- * 短寿命运行阶段快照（compacting…），见 docs/design.md §5.2 归一表"运行阶段"行。
+ * 短寿命运行阶段快照（compacting…），见 docs/workflow.md“Adapter 归一”。
  * phase 开放字符串（forward-compat）；null = 阶段结束，投影层回落默认 thinking。
  * 刻意不塞 state_update：那是驱动 busy/idle finalize 的生命周期语义（§5.9）。
  */
@@ -360,7 +360,7 @@ export interface TurnSummaryToolCall {
 
 /**
  * turn 结束时落盘的汇总事件：人可 grep、@ 引用的紧凑投影数据源、reduce 的 checkpoint。
- * 见 docs/design.md §5.3。
+ * 见 docs/workflow.md“append、reduce 与 Projection”。
  */
 export interface TurnSummary {
   turnId: string;

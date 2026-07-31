@@ -1,4 +1,4 @@
-// harness 自发回合（observed turn）与投影单通道的契约测试（design §5.10）。
+// harness 自发回合（observed turn）与投影单通道的契约测试（见 docs/workflow.md）。
 // 回归背景：后台任务唤醒的回复曾"只持久化、不投影"——事件落了 session.jsonl，
 // 但 TUI 的 SessionState 只从 per-turn 回调更新，唤醒发生在两个 driven turn 之间，
 // UI 上什么都没出现（真实事故：bs_01KXA2FP1J… seq 361 idle 之后的 551/556/631）。

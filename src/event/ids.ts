@@ -1,4 +1,4 @@
-// 带前缀的 ULID：ID 从第一天起稳定、可外部引用（@ 与将来委派的共同前提，见 docs/design.md §2）。
+// 带前缀的 ULID：ID 从第一天起稳定、可外部引用（见 docs/kernel.md“身份、owner 与生命周期”）。
 // 自实现以避免依赖；同毫秒内不保证单调，事件定序靠信封里的 seq，不靠 ID。
 
 const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32

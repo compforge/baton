@@ -1,4 +1,4 @@
-// Input 一等抽象（InputRecord）（kernel.md §6 · user-input-lifecycle.md §1/§5）：
+// Input 一等抽象（InputRecord）（见 docs/workflow.md“采集与准入”）：
 // 每条输入身份即其 messageId（m_）+ 显式 status；queued/admitted/accepted_steer 可查，
 // recall→recalled、cancel→interrupted（S3：不静默丢、不自动重发）。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

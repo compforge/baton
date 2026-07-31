@@ -2,7 +2,7 @@
 
 > 本文描述 Baton 当前已经实现的 Resource 准入、所有权、删除与恢复契约。领域对象应在什么
 > 条件下进入系统、保留多久、何时请求删除，仍由各 Plugin 决定。Plugin host 与作者接口见
-> [Plugin 设计](./plugin.md)。
+> [Plugin](./plugin.md)。
 
 ## 1. 理念与概念
 

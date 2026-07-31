@@ -1,4 +1,4 @@
-// Phase 2 生命周期契约（design §4.1 / 验收矩阵 5、10、11、12）：
+// Adapter 生命周期与终态契约（见 docs/harness.md / docs/workflow.md）：
 // turn 完成由 idle 终态事件驱动；finalize 按 baton turn id 幂等——重复/迟到终态
 // 不二次终结、不关闭更新的 turn；cancel 走确认或宽限期合成；transport 失败必须合成终态。
 

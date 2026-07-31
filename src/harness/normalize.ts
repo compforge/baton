@@ -1,7 +1,7 @@
-// Adapter 边界的归一原语。见 docs/kernel.md §2 不变量 #2。
+// Adapter 边界的归一原语。见 docs/kernel.md“终态封闭，未知悲观”。
 
 /**
- * 封闭词表归一（kernel.md §2 不变量 #2 的单一结构保证）：把 harness 的开放 / UNSTABLE
+ * 封闭词表归一（kernel“终态封闭，未知悲观”的单一结构保证）：把 harness 的开放 / UNSTABLE
  * 终态字符串映射到内部**闭合**词汇；名单外的值一律回落到**保守**成员（fail-closed），
  * 绝不乐观放行——乐观兜底曾把 codex 的 declined 渲染成绿勾。
  *

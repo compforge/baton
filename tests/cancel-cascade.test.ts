@@ -1,4 +1,4 @@
-// cancel-cascade（harness-interaction-design §4.7）：turn 被打断时，仍挂起的 Interaction 必须
+// cancel-cascade（见 docs/workflow.md“Interaction 闭环”）：turn 被打断时，仍挂起的 Interaction 必须
 // 随之收口——adapter 的 await 解开、Controller 发 interaction.resolved、requires_action 落下，
 // 不留悬挂 waiter。参考 codex clear_pending_waiters→Abort、opencode interrupt 的 ensuring(delete)。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

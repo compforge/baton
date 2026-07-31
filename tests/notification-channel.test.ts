@@ -1,4 +1,4 @@
-// 单通道视图通知契约（kernel.md §2 不变量 #1：单通道真相——一切经
+// 单通道视图通知契约（见 docs/kernel.md“单通道真相”：一切经
 // event → append → broadcast → reduce → projection，不允许第二条投影通道）。
 //
 // 回归背景（PR #112）：普通流式事件曾同时走两条通知——session.append 的事件流广播

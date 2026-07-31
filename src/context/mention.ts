@@ -1,4 +1,4 @@
-// @ 引用的急切解析（design §5.6）：ContextProvider 统一产生当前 turn 的只读材料；
+// @ 引用的急切解析：ContextProvider 统一产生当前 turn 的只读材料；
 // 本文件保留 Session 摘要与旧 @bs_ token 的兼容展开。
 
 import type { TurnSummary } from "../event/types.ts";
@@ -166,7 +166,7 @@ export function buildTargetCatchUpContext(
 
 /**
  * 展开输入里的所有 @ 引用：返回最终发给 agent 的文本。
- * 注入内容以"用户提供的只读参考材料"身份出现，归属清晰（design §5.4：不伪造对方记忆）。
+ * 注入内容以"用户提供的只读参考材料"身份出现，归属清晰，不伪造对方记忆。
  */
 export function expandMentions(
   store: SessionStore,

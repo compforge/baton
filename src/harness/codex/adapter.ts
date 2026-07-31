@@ -1,6 +1,6 @@
 // Codex 接入：拉起 `codex app-server` 子进程（裸 `codex` 是交互式 TUI，headless 必须走这里），
 // JSON-RPC over stdio，事件译成内部模型。方法集参考 tutti codex_appserver_adapter.go 与
-// `codex app-server generate-json-schema` 的官方 schema（v0.143.0 验证）。见 docs/design.md §5.1。
+// `codex app-server generate-json-schema` 的官方 schema（v0.143.0 验证）。见 docs/harness/codex.md。
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
@@ -796,7 +796,7 @@ export async function openCodexThread(
 
 export class CodexAdapter implements HarnessAdapter {
   readonly harness = "codex";
-  // 当前 adapter 最终只发送 text（design.md §3.1）；可选能力接口落地并验证后才声明
+  // 当前 adapter 最终只发送 text；可选能力接口落地并验证后才声明
   // 对应 marker——契约测试钉住"声明支持就必须实现对应接口"。
   // sync：catch-up 走 turn/start.additionalContext（experimental API，initialize 已声明
   // experimentalApi）。曾用 thread/inject_items 注入独立 user message，但那会污染 codex
@@ -821,7 +821,7 @@ export class CodexAdapter implements HarnessAdapter {
     const [cmd, ...args] = command;
     const child = spawn(cmd as string, args, {
       cwd: opts.cwd,
-      // 继承 HOME 等本机环境：凭证零持有，复用 ~/.codex 登录态（design §5.1）
+      // 继承 HOME 等本机环境：凭证零持有，复用 ~/.codex 登录态（见 docs/harness/codex.md）
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -845,7 +845,7 @@ export class CodexAdapter implements HarnessAdapter {
 
     const rt: ThreadRuntime = { child, peer, threadId: "", approvalRoute: null, sink };
     // transport 终结 = 该 session 所有在途工作的终结点：pending JSON-RPC request 全部 reject，
-    // 活跃 turn 必须在此合成终态，否则 controller 永远等不到 idle（design §4.1 终态保证）。
+    // 活跃 turn 必须在此合成终态，否则 controller 永远等不到 idle（见 docs/harness.md）。
     child.on("close", (code) => {
       if (code !== 0) {
         log({
@@ -1366,7 +1366,7 @@ export class CodexAdapter implements HarnessAdapter {
     );
   }
 
-  /** 错误路径终态：先留结构化 error，再合成 idle（design §4.9） */
+  /** 错误路径终态：先留结构化 error，再合成 idle（见 docs/workflow.md） */
   private failTurn(rt: ThreadRuntime, turn: CodexTurn | undefined, message: string): void {
     if (!turn || turn.finalized) return;
     this.emit(rt, { kind: "_baton_error_update", payload: { message } }, undefined, turn);
@@ -1458,7 +1458,7 @@ export class CodexAdapter implements HarnessAdapter {
         const targetItemId = p.targetItemId == null ? undefined : String(p.targetItemId);
         if (targetItemId) (rt.autoReviewedItemIds ??= new Set()).add(targetItemId);
         // 一等回执只在**终态**铸造：started 只驱动运行相位（见下方 run_status），completed 才落一条
-        // 带独立 reviewId 的审计回执（kernel.md §6）。这样无需关联 started/completed，无 target /
+        // 带独立 reviewId 的审计回执（见 docs/approval-lifecycle.md）。这样无需关联 started/completed，无 target /
         // 同一操作多次决策都各自成条。codex 不给 review 自身 id，reviewId 由 adapter 铸。
         if (method.endsWith("/completed")) {
           const decision = closedTerminal(review.status, CODEX_REVIEW_DECISION, "aborted");

@@ -30,8 +30,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 
 | 目录 | 职责 |
 |---|---|
-| `docs/kernel.md` | 稳定内核：核心概念、不变量、v1 双向流水线与 Harness 扩展契约 |
-| `docs/plugin.md`、`docs/loop-engineering.md` | Plugin host / authoring 契约与分层 loop 控制面 |
+| `docs/kernel.md`、`docs/workflow.md` | 稳定内核、核心概念、不变量与端到端双向工作流 |
+| `docs/harness.md`、`docs/harness/` | Harness 公共抽象，以及 Codex / Claude Code 原生协议适配 |
+| `docs/plugin.md` | Plugin host、authoring 契约与长期领域 loop |
 | `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
 | `src/controller/`、`src/event/`、`src/session/`、`src/store/` | Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
 | `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
@@ -40,8 +41,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | `src/tui/`、`src/cli/` | chat-tui 投影装配、交互入口与 headless 工具 |
 | `tests/` | 内核、Harness 与 Plugin 契约测试 |
 
-改稳定内核、进程模型或接入 Harness 前先读 `docs/kernel.md`；改 Plugin host / API 前先读
-`docs/plugin.md` 和 `docs/loop-engineering.md`。内核之外的产品取舍见 `docs/design.md`。
+改稳定内核或进程模型前先读 `docs/kernel.md` 和 `docs/workflow.md`；接入 Harness 再读
+`docs/harness.md` 与对应 `docs/harness/<provider>.md`；改 Plugin host / API 前读
+`docs/plugin.md`。
 
 运行时使用 Bun；宿主与公共 Plugin 契约同仓分包。验证命令为 `bun run check`
 （typecheck + test）。仓库内试用使用 `bun install && bun link`，普通用户通过 npm 安装，
@@ -83,17 +85,14 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 ## References
 
-- `docs/kernel.md` — 稳定内核与 Harness 扩展契约（权威入口）
-- `docs/design.md` — 内核之外的产品定位、架构与竞品取舍
-- `docs/plugin.md` — Plugin Manager / Supervisor / Runner 与三方 authoring 契约
+- `docs/kernel.md` — 稳定内核、核心模型与关键不变量
+- `docs/workflow.md` — Input、Context、Attempt、Harness Event、Interaction 与用户反馈主流程
+- `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
+- `docs/harness/codex.md`、`docs/harness/claude-code.md` — 首批内置 Harness 的协议适配
+- `docs/plugin.md` — Plugin Manager / Supervisor / Runner、Resource/Controller 与三方 authoring 契约
 - `docs/resource-lifecycle.md` — Plugin Resource 准入、结构 owner、删除与恢复契约
-- `docs/loop-engineering.md` — Baton Plugin、Harness Plugin、Board、Context 与长期 loop 边界
-- `docs/baton-v2.md` — v2 作用域、可靠投递、上下文交付与恢复目标
-- `docs/user-input-lifecycle.md` — Input queue / steer / recall / interrupt 生命周期
-- `docs/harness-output-lifecycle.md` — Harness 输出归一、终态收口与自愈
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
 - `docs/logging.md` — Baton、Harness 与 Plugin 共用的结构化运维日志
-- `docs/harness-interaction-design.md` — Adapter 与交互契约
 - `docs/resume-fork.md`、`docs/session-paths.md` — Session 恢复、fork 与主线 / 草稿语义
 - `docs/backlog.md` — 暂缓能力及其启动条件
 - reqloop 领域设计：

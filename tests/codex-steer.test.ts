@@ -1,4 +1,4 @@
-// codex sendTurn 的 active-turn 映射（design §4.3）：baton turnId → codex turn id、
+// codex sendTurn 的 active-turn 映射（见 docs/harness/codex.md）：baton turnId → codex turn id、
 // 成功发 delivery:"steer" 的 user_message 并绑定原 turn、stale/finalized/wire 失败
 // 一律 rejected 且不发事件（降级由 controller 决定）。
 import type { InteractionHandler } from "../src/harness/adapter.ts";
