@@ -22,6 +22,7 @@ import type { LogSink } from "../../logging.ts";
 import { logError } from "../../logging.ts";
 import { readClaudeSettings } from "./settings.ts";
 import type {
+  AnyEventDraft,
   ConfigValue,
   ContentBlock,
   DiffBlock,
@@ -286,6 +287,193 @@ function claudeToolResultBlocks(result: unknown): ContentBlock[] {
   });
 }
 
+/** Claude SDK live 消息与只读 SessionMessage 共有的 durable 内容形状。 */
+export interface ClaudeDurableMessage {
+  type: "assistant" | "user" | "system";
+  message: unknown;
+  parent_tool_use_id?: string | null;
+  /** live SDK 才提供；只读历史缺失时由文本结果安全降级。 */
+  tool_use_result?: unknown;
+}
+
+/** durable 消息归一所需的 session 级状态；native import 与 live adapter 共用。 */
+export interface ClaudeDurableMappingState {
+  suppressedToolIds: Set<string>;
+  capturedProposedPlanKeys: Set<string>;
+  tasks: Map<string, TaskEntry>;
+  pendingTaskOps: Map<string, TaskToolOp>;
+}
+
+/**
+ * ExitPlanMode → proposed_plan。tool_use id 同时是稳定 plan id，确保 live capture 与
+ * native import 重放同一条 durable 消息时得到同一个逻辑对象。
+ */
+export function claudeProposedPlanDraft(
+  state: Pick<ClaudeDurableMappingState, "capturedProposedPlanKeys">,
+  turnId: string,
+  input: Record<string, unknown>,
+  toolUseId: string | undefined,
+  raw: unknown,
+): AnyEventDraft | undefined {
+  const content = typeof input.plan === "string" ? input.plan.trim() : "";
+  if (!content) return undefined;
+  const keys = [
+    `turn:${turnId}:content:${content}`,
+    ...(toolUseId ? [`turn:${turnId}:tool:${toolUseId}`] : []),
+  ];
+  if (keys.some((key) => state.capturedProposedPlanKeys.has(key))) return undefined;
+  for (const key of keys) state.capturedProposedPlanKeys.add(key);
+  return {
+    kind: "proposed_plan",
+    payload: { planId: toolUseId ? `pl_${toolUseId}` : newId("pl"), content },
+    raw,
+  };
+}
+
+/**
+ * Claude durable user/assistant message → Baton drafts。
+ *
+ * 这里只消费 live 与 getSessionMessages 都会持久化的内容块；stream delta、result
+ * usage 和只存在于 live message.tool_use_result 的私有 structuredPatch 不做猜测。
+ */
+export function claudeDurableMessageDrafts(
+  state: ClaudeDurableMappingState,
+  msg: ClaudeDurableMessage,
+  options: { turnId: string; messageId?: string; raw?: unknown },
+): AnyEventDraft[] {
+  const drafts: AnyEventDraft[] = [];
+  if (msg.type !== "assistant" && msg.type !== "user") return drafts;
+  const content =
+    msg.message && typeof msg.message === "object"
+      ? (msg.message as { content?: unknown }).content
+      : undefined;
+  if (!Array.isArray(content)) return drafts;
+  const blocks = content as Array<Record<string, unknown>>;
+  const raw = options.raw ?? msg;
+
+  if (msg.type === "assistant") {
+    if (!msg.parent_tool_use_id) {
+      const messageId = options.messageId ?? newId("m");
+      const thinking = blocks
+        .filter((block) => block.type === "thinking")
+        .map((block) => String(block.thinking ?? ""))
+        .join("");
+      if (thinking) {
+        drafts.push({
+          kind: "agent_thought",
+          payload: {
+            messageId: `${messageId}_thought`,
+            content: [{ type: "text", text: thinking }],
+          },
+          raw,
+        });
+      }
+      const text = blocks
+        .filter((block) => block.type === "text")
+        .map((block) => String(block.text ?? ""))
+        .join("");
+      if (text) {
+        drafts.push({
+          kind: "agent_message",
+          payload: { messageId, content: [{ type: "text", text }] },
+          raw,
+        });
+      }
+    }
+
+    for (const block of blocks) {
+      if (block.type !== "tool_use") continue;
+      const toolUseId = String(block.id);
+      const toolName = String(block.name);
+      const input = (block.input ?? {}) as Record<string, unknown>;
+      if (toolName === "ExitPlanMode") {
+        state.suppressedToolIds.add(toolUseId);
+        const plan = claudeProposedPlanDraft(
+          state,
+          options.turnId,
+          input,
+          toolUseId,
+          raw,
+        );
+        if (plan) drafts.push(plan);
+        continue;
+      }
+      if (toolName === "TodoWrite") {
+        state.suppressedToolIds.add(toolUseId);
+        drafts.push({
+          kind: "plan_update",
+          // per-turn plan 锚定当前 scrollback 位置，本 turn 内的更新原地 mark。
+          payload: { planId: `pl_${options.turnId}`, entries: todoWritePlan(input) },
+          raw,
+        });
+        continue;
+      }
+      const taskOp = taskToolOp(toolName, input);
+      if (taskOp) {
+        state.suppressedToolIds.add(toolUseId);
+        state.pendingTaskOps.set(toolUseId, taskOp);
+        continue;
+      }
+      const diff = claudeToolDiff(toolName, input);
+      drafts.push({
+        kind: "tool_call_update",
+        payload: {
+          toolCallId: toolUseId,
+          title: claudeToolTitle(toolName, input),
+          kind: claudeToolKind(toolName),
+          status: "in_progress",
+          content: diff ? [diff] : undefined,
+          rawInput: input,
+        },
+        raw,
+      });
+    }
+    return drafts;
+  }
+
+  const toolResultCount = blocks.filter((block) => block.type === "tool_result").length;
+  const resultDiff = toolResultCount === 1 ? claudeResultDiff(msg.tool_use_result) : null;
+  for (const block of blocks) {
+    if (block.type !== "tool_result") continue;
+    const toolUseId = String(block.tool_use_id);
+    const taskOp = state.pendingTaskOps.get(toolUseId);
+    if (taskOp) {
+      state.pendingTaskOps.delete(toolUseId);
+      if (!block.is_error) {
+        const text = claudeToolResultBlocks(block.content)
+          .map((output) => (output.type === "text" ? output.text : ""))
+          .join("");
+        applyTaskOp(state.tasks, taskOp, text, toolUseId);
+        drafts.push({
+          kind: "plan_update",
+          payload: { planId: `pl_${options.turnId}`, entries: taskPlanEntries(state.tasks) },
+          raw,
+        });
+      }
+    }
+    if (state.suppressedToolIds.has(toolUseId)) continue;
+    drafts.push({
+      kind: "tool_call_update",
+      payload: {
+        toolCallId: toolUseId,
+        status: block.is_error ? "failed" : "completed",
+        rawOutput: block.content,
+        content: resultDiff ? [resultDiff] : undefined,
+      },
+      raw,
+    });
+    if (resultDiff) continue;
+    for (const output of claudeToolResultBlocks(block.content)) {
+      drafts.push({
+        kind: "tool_call_content_chunk",
+        payload: { toolCallId: toolUseId, content: output },
+        raw,
+      });
+    }
+  }
+  return drafts;
+}
+
 /**
  * 长生命周期 query 当前消费的 turn 状态。终态标记、cancel 标记与流式 messageId
  * 必须绑定在 turn 对象上而不是散落成 runtime 字段，避免 result 之后的迟到消息
@@ -311,7 +499,7 @@ export function startsObservedTurn(msgType: string, current: { finalized: boolea
   return current.finalized && (msgType === "stream_event" || msgType === "assistant" || msgType === "user");
 }
 
-interface ClaudeRuntime {
+interface ClaudeRuntime extends ClaudeDurableMappingState {
   cwd: string;
   env?: Record<string, string>;
   /** open 时绑定的事件出口；session 生命周期内所有事件（含跨 turn）都走它 */
@@ -1152,19 +1340,8 @@ export class ClaudeAdapter implements HarnessAdapter {
     toolUseId: string | undefined,
     raw: unknown,
   ): void {
-    const content = typeof input.plan === "string" ? input.plan.trim() : "";
-    if (!content) return;
-    const keys = [
-      `turn:${turnId}:content:${content}`,
-      ...(toolUseId ? [`turn:${turnId}:tool:${toolUseId}`] : []),
-    ];
-    if (keys.some((key) => rt.capturedProposedPlanKeys.has(key))) return;
-    for (const key of keys) rt.capturedProposedPlanKeys.add(key);
-    emit({
-      kind: "proposed_plan",
-      payload: { planId: newId("pl"), content },
-      raw,
-    });
+    const draft = claudeProposedPlanDraft(rt, turnId, input, toolUseId, raw);
+    if (draft) emit(draft);
   }
 
   private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: SDKMessage, turn: ClaudeTurn): void {
@@ -1279,115 +1456,29 @@ export class ClaudeAdapter implements HarnessAdapter {
       }
       case "assistant": {
         const blocks = (msg.message.content ?? []) as unknown as Array<Record<string, unknown>>;
-        const texts = blocks
-          .filter((b) => b.type === "text")
-          .map((b) => String(b.text ?? ""))
-          .join("");
-        if (texts && !msg.parent_tool_use_id) {
-          // 全文 upsert 覆盖 chunk 累积（同一 messageId），之后开新消息
-          const messageId = turn.streamMessageId ?? newId("m");
-          turn.streamMessageId = undefined;
-          emit({
-            kind: "agent_message",
-            payload: { messageId, content: [{ type: "text", text: texts }] },
-            raw: msg,
-          });
+        const hasDurableMessage = blocks.some(
+          (block) => block.type === "text" || block.type === "thinking",
+        );
+        const messageId = turn.streamMessageId ?? newId("m");
+        for (const draft of claudeDurableMessageDrafts(rt, msg, {
+          turnId: turn.turnId,
+          messageId,
+          raw: msg,
+        })) {
+          emit(draft);
         }
-        for (const b of blocks) {
-          if (b.type !== "tool_use") continue;
-          const toolName = String(b.name);
-          const input = (b.input ?? {}) as Record<string, unknown>;
-          if (toolName === "ExitPlanMode") {
-            const toolUseId = String(b.id);
-            rt.suppressedToolIds.add(toolUseId);
-            this.captureProposedPlan(rt, emit, turn.turnId, input, toolUseId, msg);
-            continue;
-          }
-          // TodoWrite 归一成 plan_update（计划不是工具调用，是头等中间过程）
-          if (toolName === "TodoWrite") {
-            rt.suppressedToolIds.add(String(b.id));
-            emit({
-              kind: "plan_update",
-              // planId 用 per-turn（对齐 codex 的 pl_<turnId>）：卡片锚定在当前 turn 的位置，本 turn 内
-              // 的 todo 更新原地 mark。per-session 会一直改写 session 首次出现的旧卡，进度在 scrollback 里不可见
-              payload: { planId: `pl_${turn.turnId}`, entries: todoWritePlan(input) },
-              raw: msg,
-            });
-            continue;
-          }
-          // Task 工具族（TodoWrite 的替代品）同样归一成 plan_update；但 TaskCreate 的
-          // taskId 只在结果文本里、TaskUpdate 也可能失败，这里只登记，落账在 tool_result
-          const taskOp = taskToolOp(toolName, input);
-          if (taskOp) {
-            rt.suppressedToolIds.add(String(b.id));
-            rt.pendingTaskOps.set(String(b.id), taskOp);
-            continue;
-          }
-          const diff = claudeToolDiff(toolName, input);
-          emit({
-            kind: "tool_call_update",
-            payload: {
-              toolCallId: String(b.id),
-              title: claudeToolTitle(toolName, input),
-              kind: claudeToolKind(toolName),
-              status: "in_progress",
-              content: diff ? [diff] : undefined,
-              rawInput: input,
-            },
-            raw: msg,
-          });
+        if (hasDurableMessage && !msg.parent_tool_use_id) {
+          // 最终全文 upsert 与 chunk 共用 messageId，完成后下一条 assistant 消息另开 id。
+          turn.streamMessageId = undefined;
         }
         break;
       }
       case "user": {
-        const content = msg.message.content;
-        if (!Array.isArray(content)) break;
-        const blocks = content as unknown as Array<Record<string, unknown>>;
-        // tool_use_result 是消息级字段：仅当消息里恰有一个 tool_result 时归属无歧义
-        const toolResultCount = blocks.filter((b) => b.type === "tool_result").length;
-        const resultDiff = toolResultCount === 1 ? claudeResultDiff(msg.tool_use_result) : null;
-        for (const b of blocks) {
-          if (b.type !== "tool_result") continue;
-          // Task 操作落账：成功结果先应用到任务表，再整表投影成 plan_update（整体替换语义）
-          const taskOp = rt.pendingTaskOps.get(String(b.tool_use_id));
-          if (taskOp) {
-            rt.pendingTaskOps.delete(String(b.tool_use_id));
-            if (!b.is_error) {
-              const text = claudeToolResultBlocks(b.content)
-                .map((block) => (block.type === "text" ? block.text : ""))
-                .join("");
-              applyTaskOp(rt.tasks, taskOp, text, String(b.tool_use_id));
-              emit({
-                kind: "plan_update",
-                // planId per-turn，与 TodoWrite 一致：卡片锚定当前 turn，本 turn 内原地 mark
-                payload: { planId: `pl_${turn.turnId}`, entries: taskPlanEntries(rt.tasks) },
-                raw: msg,
-              });
-            }
-          }
-          // 已归一成 plan_update 的调用不再出工具卡（首见 upsert 会凭空造出一张）
-          if (rt.suppressedToolIds.has(String(b.tool_use_id))) continue;
-          emit({
-            kind: "tool_call_update",
-            payload: {
-              toolCallId: String(b.tool_use_id),
-              status: b.is_error ? "failed" : "completed",
-              rawOutput: b.content,
-              // 真 patch 回填：整体替换入参阶段的意图 diff（changes-only）
-              content: resultDiff ? [resultDiff] : undefined,
-            },
-            raw: msg,
-          });
-          // diff 即输出：编辑类结果的文本（"The file ... has been updated..." + 片段）
-          // 与 patch 完全重复，有 resultDiff 时不再追加文本块
-          if (resultDiff) continue;
-          for (const output of claudeToolResultBlocks(b.content)) {
-            emit({
-              kind: "tool_call_content_chunk",
-              payload: { toolCallId: String(b.tool_use_id), content: output },
-              raw: msg,
-            });
-          }
+        for (const draft of claudeDurableMessageDrafts(rt, msg, {
+          turnId: turn.turnId,
+          raw: msg,
+        })) {
+          emit(draft);
         }
         break;
       }

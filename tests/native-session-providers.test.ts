@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { claudeTranscript } from "../src/harness/claude/native-session.ts";
+import {
+  claudeNativeTurns,
+  claudeTranscript,
+} from "../src/harness/claude/native-session.ts";
 import {
   codexNativeTurns,
   inspectCodexSession,
@@ -149,7 +152,7 @@ describe("Codex native sessions", () => {
 });
 
 describe("Claude Code native sessions", () => {
-  test("normalizes only user/assistant text from SDK history", () => {
+  test("keeps the text-only transcript fallback", () => {
     expect(
       claudeTranscript([
         {
@@ -181,5 +184,105 @@ describe("Claude Code native sessions", () => {
       { role: "user", text: "hello" },
       { role: "assistant", text: "world" },
     ]);
+  });
+
+  test("full turns preserve durable thinking, tools, plan proposals, and terminal state", () => {
+    const [turn] = claudeNativeTurns([
+      {
+        type: "user",
+        uuid: "u1",
+        session_id: "s1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "text",
+            text: "<baton-sync>injected context</baton-sync>\n\ninspect it",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a1",
+        session_id: "s1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [
+            { type: "thinking", thinking: "Checking the call path" },
+            { type: "text", text: "I found the failing command." },
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "Bash",
+              input: { command: "rg cache" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        uuid: "r1",
+        session_id: "s1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "tool-1",
+            content: "src/cache.ts\n",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        session_id: "s1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_use",
+            id: "plan-1",
+            name: "ExitPlanMode",
+            input: { plan: "Fix the cache key" },
+          }],
+        },
+      },
+      {
+        type: "user",
+        uuid: "r2",
+        session_id: "s1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: "plan-1",
+            content: "Plan accepted",
+          }],
+        },
+      },
+    ]);
+
+    expect(turn).toMatchObject({
+      userText: "inspect it",
+      agentText: "I found the failing command.",
+    });
+    expect(turn?.events?.map((entry) => entry.event.kind)).toEqual([
+      "user_message",
+      "state_update",
+      "agent_thought",
+      "agent_message",
+      "tool_call_update",
+      "tool_call_update",
+      "tool_call_content_chunk",
+      "proposed_plan",
+      "state_update",
+    ]);
+    expect(turn?.events?.at(-1)?.event).toMatchObject({
+      kind: "state_update",
+      payload: { state: "idle", stopReason: "end_turn" },
+    });
   });
 });
