@@ -8,7 +8,6 @@ import type {
   NativeSessionInfo,
   NativeSessionProvider,
   NativeSessionTurn,
-  NativeTranscriptEntry,
 } from "../native-session.ts";
 import {
   claudeDurableMessageDrafts,
@@ -17,21 +16,6 @@ import {
 
 function stripBatonInjectedContext(text: string): string {
   return text.replace(/<baton-(context|sync)>[\s\S]*?<\/baton-\1>\s*/g, "").trim();
-}
-
-function textContent(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (!value || typeof value !== "object") return "";
-  const content = (value as { content?: unknown }).content;
-  if (typeof content === "string") return content.trim();
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((block) => {
-      if (!block || typeof block !== "object") return [];
-      const text = (block as { text?: unknown }).text;
-      return typeof text === "string" && text.trim() ? [text.trim()] : [];
-    })
-    .join("\n");
 }
 
 function directTextContent(value: unknown): string {
@@ -53,14 +37,6 @@ function durableBlocks(value: unknown): Array<Record<string, unknown>> {
   if (!value || typeof value !== "object") return [];
   const content = (value as { content?: unknown }).content;
   return Array.isArray(content) ? content as Array<Record<string, unknown>> : [];
-}
-
-export function claudeTranscript(messages: SessionMessage[]): NativeTranscriptEntry[] {
-  return messages.flatMap((message) => {
-    if (message.type !== "user" && message.type !== "assistant") return [];
-    const text = textContent(message.message);
-    return text ? [{ role: message.type, text }] : [];
-  });
 }
 
 interface ClaudeNativeTurnBuilder {

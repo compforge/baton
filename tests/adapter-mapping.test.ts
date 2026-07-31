@@ -316,6 +316,10 @@ describe("claude: Task 工具族 → plan_update", () => {
     feed(toolUse("tu1", "TaskUpdate", { taskId: "9", status: "completed" }));
     feed(toolResult("tu1", "no such task", true));
     expect(events.filter((e) => e.kind === "plan_update")).toHaveLength(0);
+    // 失败不能静默：任务表不动，但要出一张 failed 工具卡让错误可感知
+    const failedCards = events.filter((e) => e.kind === "tool_call_update");
+    expect(failedCards).toHaveLength(1);
+    expect(failedCards.at(0)!.payload).toMatchObject({ toolCallId: "tu1", status: "failed" });
   });
 
   test("applyTaskOp upserts unknown taskId and falls back when result text has no id", () => {
