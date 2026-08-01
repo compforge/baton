@@ -85,7 +85,26 @@ Controller 拥有，Claude `toolUseID` 只用于关联原生请求。
 Agent SDK 的一条 streaming query 可以跨多个 Turn 长期存在，因此终态必须绑定具体
 `ClaudeTurn`；旧消费循环的迟到结束不能终结新 Turn。
 
-## 6. 外部 Session Inspector
+## 6. SDK 演进边界
+
+Claude Agent SDK 与 Claude Code 会快速演进，Baton 持续升级 SDK，但不以功能逐项对齐为目标。
+升级与协议采纳分开判断：进程、hook、streaming 和类型修复可以直接受益；新增 wire 事实只有在
+加强现有 Baton 语义时，才由 Claude Adapter 归一。
+
+- assistant 的 `aborted`、result 的 `terminal_reason` / `api_error_status` 可以细化既有消息与 Turn
+  终态；model usage 的 canonical model / provider、时间戳和 subagent retry 等观测信息可以按需
+  进入现有 usage、task、日志或 `raw`，不为它们新增 core 概念。
+- message UUID、command lifecycle 和 interrupt receipt 等只服务 Claude 投递、关联或中断正确性的
+  事实留在 Adapter 内；`sendTurn` 仍只表达 admission，`cancel` 的权威确认仍是最终
+  `idle/cancelled` Event。
+- 尚未通过稳定公开 SDK 类型暴露、Baton 没有消费路径或只能靠版本探测的字段不接入；未知 wire
+  保守保留在 `raw` 或显式 ignored inventory，不能解析 SDK 私有实现。
+
+只有 Controller 必须依据某个事实改变 Input / Turn 状态，并且该事实能形成跨 Harness 的 owner、
+生命周期和恢复语义时，才把它提升为公共 Event、receipt 或 Capability；单家 Claude 方言不修改
+`HarnessAdapter`。
+
+## 7. 外部 Session Inspector
 
 只读 Inspector 使用 SDK 的 `getSessionInfo()` 和 `getSessionMessages()`：
 
@@ -97,7 +116,7 @@ Agent SDK 的一条 streaming query 可以跨多个 Turn 长期存在，因此�
 `getSessionInfo()` 可能对没有可提取 summary 的有效 Session 返回空，因此消息列表也是存在性
 兜底。durable history 不提供可靠 stop reason，Inspector 使用 `unknown`，不能伪造 `end_turn`。
 
-## 7. 代码与测试锚点
+## 8. 代码与测试锚点
 
 - `src/harness/claude/adapter.ts` — streaming query、Interaction、Capability 与 mapping
 - `src/harness/claude/settings.ts` — Claude settings、Plugin 与 MCP 加载
