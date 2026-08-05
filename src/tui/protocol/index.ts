@@ -41,6 +41,7 @@ import {
   resolveDefaultHarnessTarget,
   probeHarnessTarget,
 } from "../../harness/registry.ts";
+import { bundledTextgenTargets } from "../../session/title.ts";
 import type { InteractionResolution } from "../../interaction/types.ts";
 import { createBatonSnapshot } from "../../plugin/baton-snapshot.ts";
 import { Manager } from "../../plugin/manager.ts";
@@ -806,6 +807,9 @@ export class BatonChatProtocol implements ChatProtocol {
           rootDir: this.store.rootDir,
         }),
       resolveTarget: resolveDefaultHarnessTarget,
+      textgenTargets: bundledTextgenTargets(),
+      ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),
+      ...(this.config.textgenModels ? { textgenModels: this.config.textgenModels } : {}),
       probeTarget: (target, cwd) =>
         probeHarnessTarget(target, {
           cwd,

@@ -33,6 +33,8 @@ import {
 } from "../event/types.ts";
 import { HarnessBinding } from "../harness/binding.ts";
 import type { HarnessTarget, HarnessTargetProbeResult } from "../harness/target.ts";
+import type { TextgenCandidate } from "../harness/textgen.ts";
+import { maybeGenerateSessionTitle } from "../session/title.ts";
 import type {
   InteractionDraft,
   InteractionResolution,
@@ -101,6 +103,16 @@ export interface ControllerOptions {
   resolveTarget(harnessTargetId: string): HarnessTarget | undefined;
   /** 不创建 HarnessSession 的 Target 级只读发现；缺省时兼容回落到 live binding。 */
   probeTarget?: (target: HarnessTarget, cwd: string) => Promise<HarnessTargetProbeResult>;
+  /**
+   * textgen 旁路生成（session 标题）的降级链候选 Target。当前 turn 的 target 自动前置
+   * （优先沿用用户刚才选择的 provider），未声明 textgen capability 的由路由器跳过。
+   * 缺省 = 只用当前 target，不跨 harness 降级。
+   */
+  textgenTargets?: readonly HarnessTarget[];
+  /** 首选 textgen harness（canonical id 或 target id）；缺省 = 当前 turn 的 harness 优先。 */
+  textgenPrefer?: string;
+  /** 按 canonical harness id 覆盖 textgen 模型（ID 方言由各 adapter 收口）。 */
+  textgenModels?: Record<string, string>;
   onChange?: () => void;
   /**
    * cancel 后等待 harness 确认终态的宽限期。到期仍无终态则合成 terminal error 并
@@ -910,7 +922,94 @@ export class Controller {
     if (record.role === "driven") record.binding.freshHarnessSession = false;
 
     this.turns.finish(record, stopReason);
+    if (record.role === "driven") this.maybeGenerateTitle(record.harnessTargetId);
     this.changed();
+  }
+
+  /**
+   * session 标题的 LLM 生成（fire-and-forget 旁路）：首个 driven turn 收口后触发一次，
+   * 失败/降级全部在 textgen 路由器内收口，主流程无感。护栏（用户命名不覆盖）在
+   * maybeGenerateSessionTitle 内，含落盘前复查。
+   */
+  private titleGenAttempted = false;
+
+  private maybeGenerateTitle(currentTargetId: string): void {
+    if (this.titleGenAttempted) return;
+    this.titleGenAttempted = true;
+    const session = this.options.session;
+    const candidates = this.textgenCandidates(currentTargetId);
+    if (candidates.length === 0) return;
+    void maybeGenerateSessionTitle({
+      session,
+      candidates,
+      ...(this.options.textgenModels ? { models: this.options.textgenModels } : {}),
+      log: (entry) => session.log(entry),
+    })
+      .then((updated) => {
+        // Session metadata 不走 Event broadcast；标题落盘后显式刷新当前投影。
+        if (updated) this.changed();
+      })
+      .catch((error) => {
+        session.log({
+          level: "warn",
+          source: "baton",
+          component: "textgen",
+          message: "session title generation failed",
+          attributes: { error: error instanceof Error ? error.message : String(error) },
+        });
+      });
+  }
+
+  /**
+   * 降级链排序：显式 prefer → 当前 turn 的 target → 其余候选。
+   * 已有 live binding 的复用其 adapter（省一次构造），其余经工厂新建——textgen 是
+   * 一次性调用，不需要 open()。
+   */
+  private textgenCandidates(currentTargetId: string): TextgenCandidate[] {
+    const ordered: HarnessTarget[] = [];
+    const seen = new Set<string>();
+    const push = (target: HarnessTarget | undefined) => {
+      if (target && !seen.has(target.id)) {
+        seen.add(target.id);
+        ordered.push(target);
+      }
+    };
+    const prefer = this.options.textgenPrefer;
+    if (prefer) {
+      push((this.options.textgenTargets ?? []).find((t) => t.id === prefer || t.harness === prefer));
+    }
+    push(this.options.resolveTarget(currentTargetId));
+    for (const target of this.options.textgenTargets ?? []) push(target);
+
+    const candidates: TextgenCandidate[] = [];
+    for (const target of ordered) {
+      try {
+        candidates.push({
+          harness: target.harness,
+          adapter:
+            this.bindings.get(target.id)?.adapter ??
+            this.options.createAdapter(target, {
+              interactionHandler: (interaction, context) =>
+                this.openHarnessInteraction(target.id, interaction, context),
+              log: (entry) => this.options.session.log({ ...entry, harnessTargetId: target.id }),
+              // textgen adapter 不开 session、不上报原生事件；sink 就位但不产生流量。
+              nativeEvent: () => {},
+            }),
+        });
+      } catch (error) {
+        // 候选构造也是降级链的一部分；某个 provider 配置损坏不能阻断其他家。
+        this.options.session.log({
+          level: "warn",
+          source: "baton",
+          component: "textgen",
+          harness: target.harness,
+          harnessTargetId: target.id,
+          message: "textgen candidate initialization failed, falling back",
+          attributes: { error: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
+    return candidates;
   }
 
   /**

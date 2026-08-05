@@ -42,8 +42,10 @@ import type {
   ApprovalRoute,
   ReconcileState,
   ReconcileVerdict,
+  TextgenRequest,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
+import { generateCodexStructured } from "./textgen.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
 import {
   sessionIdFromResumeState,
@@ -809,12 +811,20 @@ export class CodexAdapter implements HarnessAdapter {
     config: { supported: true },
     reconcile: { supported: true },
     approvalRouting: { supported: true },
+    textgen: { supported: true },
   };
   private threads = new Map<string, ThreadRuntime>();
   private readonly hookTrustStore: HookTrustStore;
 
   constructor(private options: CodexAdapterOptions) {
     this.hookTrustStore = options.hookTrustStore ?? new FileHookTrustStore("codex");
+  }
+
+  /** TextGeneratable：一次性 `codex exec`，与 thread 生命周期完全无关（见 textgen.ts）。 */
+  async generateStructured(request: TextgenRequest): Promise<unknown> {
+    return generateCodexStructured(request, {
+      command: codexLaunchCommand(this.options.command),
+    });
   }
 
   private launch(command: string[], opts: OpenOptions, sink: EventSink): ThreadRuntime {

@@ -53,6 +53,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 - 在同一个终端界面中使用 Claude Code 和 Codex
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
+- 首个 turn 后自动生成简洁会话标题，支持跨 harness 降级且不会创建原生会话
 - 使用 `baton -c` 继续当前项目最近会话，或用 `baton -s <id>` 打开指定会话
 - 按 ID resume 或 fork 已有 Codex / Claude Code 原生会话，并以只读方式自动识别来源
 - 使用分组可搜索的 `@` 上下文，引用内置 Session 或 Plugin 提供的对象并注入当前 turn

@@ -24,6 +24,15 @@ mentionBudgetChars: 4096
 # Show agent reasoning in the timeline.
 showThoughts: true
 
+# Optional text-generation routing for automatic session titles. By default,
+# baton tries the harness that completed the first turn, then the other bundled
+# harness. Set a preference when one provider is unavailable, or override the
+# provider-specific model used for this small side request.
+# textgenPrefer: claude # codex | claude
+# textgenModels:
+#   claude: haiku
+#   codex: your-codex-model-id
+
 # Minimum level persisted to each session.log. Use debug when diagnosing a
 # Baton component, Harness adapter, or third-party Plugin.
 logLevel: info # debug | info | warn | error
