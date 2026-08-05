@@ -14,6 +14,7 @@ import {
   parseHarness,
   resolveDefaultHarnessTarget,
 } from "../harness/registry.ts";
+import { bundledTextgenTargets } from "../session/title.ts";
 import type {
   Interaction,
   InteractionResolution,
@@ -110,6 +111,9 @@ async function main(): Promise<void> {
         rootDir: store.rootDir,
       }),
     resolveTarget: resolveDefaultHarnessTarget,
+    textgenTargets: bundledTextgenTargets(),
+    ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
+    ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
   });
 
   let sawOutput = false;

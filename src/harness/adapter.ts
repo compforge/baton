@@ -140,6 +140,12 @@ export interface AdapterCapabilities {
   reconcile?: CapabilityMarker;
   /** 声明后必须实现 ApprovalRoutable：能报告审批请求当前路由给谁。 */
   approvalRouting?: CapabilityMarker;
+  /**
+   * 声明后必须实现 TextGeneratable：一次性结构化文本生成（不开 HarnessSession、
+   * 不产生 Turn、不进事件流）——session 标题这类旁路工具调用走这里，
+   * 由 core 的路由器跨 harness 降级（某家 quota/auth 不可用时换一家）。
+   */
+  textgen?: CapabilityMarker;
   interactions?: {
     permission?: CapabilityMarker;
     question?: CapabilityMarker;
@@ -324,6 +330,29 @@ export interface ApprovalRoutable {
 
 export function isApprovalRoutable(adapter: HarnessAdapter): adapter is HarnessAdapter & ApprovalRoutable {
   return typeof (adapter as Partial<ApprovalRoutable>).approvalRoute === "function";
+}
+
+/** 一次性结构化生成请求。`jsonSchema` 约束返回值形状（如 `{title: string}`）。 */
+export interface TextgenRequest {
+  prompt: string;
+  jsonSchema: Record<string, unknown>;
+  /** 未给 → 由该 adapter 选择默认模型；各 harness 的模型 ID 方言由 adapter 自己收口。 */
+  model?: string;
+  cwd: string;
+  timeoutMs?: number;
+}
+
+/**
+ * 可选能力：一次性结构化文本生成。刻意不经过 HarnessSession/Turn——标题生成这类
+ * 工具调用不该创建原生会话、占用会话上下文或在事件流留痕；失败只影响调用方降级，
+ * 对既有会话零副作用。实现应为无状态子进程/独立 query，可被并发调用。
+ */
+export interface TextGeneratable {
+  generateStructured(request: TextgenRequest): Promise<unknown>;
+}
+
+export function isTextGeneratable(adapter: HarnessAdapter): adapter is HarnessAdapter & TextGeneratable {
+  return typeof (adapter as Partial<TextGeneratable>).generateStructured === "function";
 }
 
 /**

@@ -28,6 +28,14 @@ export interface BatonConfig {
   mentionBudgetChars: number;
   /** 是否在时间线里显示 agent 的思考过程（reasoning 流） */
   showThoughts: boolean;
+  /**
+   * textgen 旁路生成（session 标题）的首选 harness（canonical id）。缺省 =
+   * 当前 turn 的 harness 优先，失败再降级其他家。
+   * 某家 quota 不可用时可在此显式换边。
+   */
+  textgenPrefer?: HarnessName;
+  /** 各 harness 的 textgen 模型覆盖（key = canonical harness id）；缺省由 adapter 选择。 */
+  textgenModels?: Record<string, string>;
   /** session.log 的最低记录级别。 */
   logLevel: LogLevel;
 }
@@ -96,6 +104,20 @@ export function loadConfig(rootDir?: string): BatonConfig {
   // 见 CodexAdapter.approvalRoute。
   if (merged.codexApprovalReviewer !== "auto_review" && merged.codexApprovalReviewer !== "user") {
     merged.codexApprovalReviewer = undefined;
+  }
+  // 与 defaultAgent 同规则：只接受已知 harness；未知值视为未配置（跟随默认降级链）。
+  merged.textgenPrefer =
+    typeof merged.textgenPrefer === "string"
+      ? (parseHarness(merged.textgenPrefer) ?? undefined)
+      : undefined;
+  if (
+    merged.textgenModels !== undefined &&
+    (typeof merged.textgenModels !== "object" ||
+      merged.textgenModels === null ||
+      Array.isArray(merged.textgenModels) ||
+      Object.values(merged.textgenModels).some((v) => typeof v !== "string" || !v.trim()))
+  ) {
+    merged.textgenModels = undefined;
   }
   if (process.env.BATON_CLAUDE_BIN) merged.claudeExecutable = process.env.BATON_CLAUDE_BIN;
   return merged;

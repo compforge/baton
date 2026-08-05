@@ -115,6 +115,7 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 | sync | 随 `sendTurn` side-channel 交付 Baton Context |
 | reconcile | 查询 Harness 当前权威运行态，供 stall 恢复 |
 | approval routing | 报告实际审批由用户还是 delegated reviewer 处理 |
+| textgen | 无状态的一次性结构化生成；不创建 HarnessSession/Turn，供会话标题等旁路工具降级调用 |
 | interactions | permission、question、elicitation 等原生交互 |
 | commands | 动态 Harness command 发现与执行 |
 

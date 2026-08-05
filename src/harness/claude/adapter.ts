@@ -50,8 +50,10 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
   InteractionHandler,
+  TextgenRequest,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
+import { generateClaudeStructured } from "./textgen.ts";
 import {
   sessionIdFromResumeState,
   sessionIdResumeState,
@@ -791,10 +793,19 @@ export class ClaudeAdapter implements HarnessAdapter {
     prompt: {},
     compact: { supported: true },
     config: { supported: true },
+    textgen: { supported: true },
   };
   private sessions = new Map<string, ClaudeRuntime>();
 
   constructor(private options: ClaudeAdapterOptions) {}
+
+  /** TextGeneratable：一次性 SDK query，与 HarnessSession 生命周期完全无关（见 textgen.ts）。 */
+  async generateStructured(request: TextgenRequest): Promise<unknown> {
+    return generateClaudeStructured(request, {
+      executablePath: this.options.executablePath,
+      ...(this.options.queryFactory ? { queryFactory: this.options.queryFactory } : {}),
+    });
+  }
 
   /** SDK 无独立"启动"步骤：streaming query 在首个 sendTurn 时创建，这里只登记运行时。 */
   async open(

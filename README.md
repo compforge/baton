@@ -54,6 +54,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
 - Use one Plan mode across Codex and Claude Code, with `/plan` or `Shift+Tab` to toggle back to Default
 - Open a previous BatonSession with `/sessions`, or start a clean one with `/new`
+- Generate a compact session title after the first turn, with cross-harness fallback and no native session side effects
 - Continue the latest session in a project with `baton -c`, or open one by ID with `baton -s <id>`
 - Resume or fork an existing Codex/Claude Code native session by ID, with read-only auto-detection
 - Search grouped `@` context from built-in Session and Plugin ContextProviders, then inject it into the current turn

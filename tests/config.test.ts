@@ -48,8 +48,20 @@ describe("config", () => {
   });
 
   test("harness aliases are normalized to canonical ids", () => {
-    writeFileSync(configPath(root), "defaultAgent: cc\n");
-    expect(loadConfig(root).defaultAgent).toBe("claude");
+    writeFileSync(configPath(root), "defaultAgent: cc\ntextgenPrefer: cx\n");
+    const config = loadConfig(root);
+    expect(config.defaultAgent).toBe("claude");
+    expect(config.textgenPrefer).toBe("codex");
+  });
+
+  test("textgen model overrides require a non-empty string map", () => {
+    writeFileSync(configPath(root), "textgenModels:\n  codex: gpt-small\n  claude: haiku\n");
+    expect(loadConfig(root).textgenModels).toEqual({ codex: "gpt-small", claude: "haiku" });
+
+    writeFileSync(configPath(root), "textgenModels: [haiku]\n");
+    expect(loadConfig(root).textgenModels).toBeUndefined();
+    writeFileSync(configPath(root), 'textgenModels: { claude: "" }\n');
+    expect(loadConfig(root).textgenModels).toBeUndefined();
   });
 
   test("invalid values fall back to defaults", () => {
