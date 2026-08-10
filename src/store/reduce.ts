@@ -39,6 +39,7 @@ export interface MessageState {
   harness?: string;
   /** 产生该消息的具体配置目标；状态归属与查询使用它，不用 Harness 类型代替。 */
   harnessTargetId?: string;
+  laneId?: string;
   /** Who caused this message fact; message role remains a separate axis. */
   source?: EventSource;
   /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
@@ -51,6 +52,7 @@ export interface ToolCallState {
   harness?: string;
   /** 产生该工具活动的具体配置目标。 */
   harnessTargetId?: string;
+  laneId?: string;
   title?: string;
   kind?: string;
   status: ToolCallStatus;
@@ -66,11 +68,13 @@ export interface PlanState extends PlanUpdate {
   harness?: string;
   /** 产生该计划的具体配置目标。 */
   harnessTargetId?: string;
+  laneId?: string;
 }
 
 export interface ProposedPlanState extends ProposedPlan {
   harness?: string;
   harnessTargetId?: string;
+  laneId?: string;
   turnId?: string;
   implementationTurnId?: string;
   implementationStartedAt?: string;
@@ -79,6 +83,7 @@ export interface ProposedPlanState extends ProposedPlan {
 export interface HarnessTaskState extends HarnessTaskUpdate {
   harness?: string;
   harnessTargetId?: string;
+  laneId?: string;
   turnId?: string;
 }
 
@@ -100,10 +105,38 @@ export interface HarnessTargetState {
   configOptions: SessionConfigOption[];
 }
 
+export type LaneTargetState = HarnessTargetState;
+
 /** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
 export interface TimelineItem {
-  type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error";
+  type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error" | "turn_request";
   id: string;
+}
+
+export interface TurnSummaryState extends TurnSummary {
+  harness?: string;
+  harnessTargetId?: string;
+  laneId?: string;
+}
+
+export interface TurnRequestState {
+  requestId: string;
+  title: string;
+  pluginInstanceId?: string;
+  phase:
+    | "pending_approval"
+    | "declined"
+    | "queued"
+    | "running"
+    | "uncertain"
+    | "completed"
+    | "cancelled";
+  harnessTargetId?: string;
+  laneId?: string;
+  messageId?: string;
+  turnId?: string;
+  attemptId?: string;
+  result?: TurnSummaryState;
 }
 
 export interface UsageTotal {
@@ -120,6 +153,7 @@ export interface ActiveTurnState {
   turnId: string;
   harness?: string;
   harnessTargetId?: string;
+  laneId?: string;
   /** driven 由 Baton admit；observed 由 Harness 自发开界（见 docs/workflow.md）。 */
   role: "driven" | "observed";
   /** 本 turn 当前非 idle 态（running / requires_action）：保真透传，不折叠成 running */
@@ -133,6 +167,7 @@ export interface InteractionState {
   interaction: Interaction;
   /** 打开交互的 Event 执行坐标；用于 per-turn requires_action 与 cancel-cascade 投影。 */
   turnId?: string;
+  laneId?: string;
   /** 缺省即 pending；终结结果存在后不再要求用户动作。 */
   resolution?: InteractionResolution;
 }
@@ -154,7 +189,7 @@ export interface SessionState {
   plans: Map<string, PlanState>;
   /** 已完成、尚未表示执行授权的计划提案；按 planId 首写即定。 */
   proposedPlans: Map<string, ProposedPlanState>;
-  /** Harness 已启动的后台任务 / subagent，按 provider task id upsert。 */
+  /** Harness 已启动的异步任务 / subagent，按 provider task id upsert。 */
   tasks: Map<string, HarnessTaskState>;
   /** Interaction 是统一持久对象；是否 pending 由 resolution 是否存在派生。 */
   interactions: Map<string, InteractionState>;
@@ -164,22 +199,26 @@ export interface SessionState {
    * timeline 的一等公民（首见即入 timeline），无 target 也留痕、同一操作多次决策各自成条。
    */
   approvalReviews: Map<string, ApprovalReviewUpdate>;
+  /** Compact cards for non-user Turn initiation; raw events remain available by Lane. */
+  turnRequests: Map<string, TurnRequestState>;
   usage: UsageTotal;
   /** Target-scoped 状态统一入口；Harness 类型不是状态实例的查询键。 */
   perTarget: Map<string, HarnessTargetState>;
+  /** Lane × Target 原生 binding 状态；同一 Lane 可以跨多个 Target 接力。 */
+  perLaneTarget: Map<string, LaneTargetState>;
   /** 最近一次结构化错误；willRetry 时 runState 仍应为 running（由事件源保证） */
-  lastError?: ErrorUpdate & { seq: number };
+  lastError?: ErrorUpdate & { seq: number; laneId?: string };
   /**
    * 错误历史（append-only），同时进 timeline（id 为 `err_<seq>`）：
    * 启动失败、admission 错误、quota 耗尽等属于会话流的一部分，要按发生位置内联展示。
    */
-  errors: Map<string, ErrorUpdate & { seq: number }>;
+  errors: Map<string, ErrorUpdate & { seq: number; laneId?: string }>;
   /**
    * 提示历史（append-only），同时进 timeline（id 为 `n_<seq>`）：打断标记、
    * harness warning 等属于会话流的一部分，要按发生位置内联展示。
    */
-  notices: Array<Notice & { seq: number }>;
-  turnSummaries: TurnSummary[];
+  notices: Array<Notice & { seq: number; laneId?: string }>;
+  turnSummaries: TurnSummaryState[];
   lastSeq: number;
 }
 
@@ -196,6 +235,7 @@ export function emptySessionState(): SessionState {
     tasks: new Map(),
     interactions: new Map(),
     approvalReviews: new Map(),
+    turnRequests: new Map(),
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -205,6 +245,7 @@ export function emptySessionState(): SessionState {
       hasEstimated: false,
     },
     perTarget: new Map(),
+    perLaneTarget: new Map(),
     errors: new Map(),
     notices: [],
     turnSummaries: [],
@@ -225,6 +266,7 @@ function getOrCreateMessage(
   turnId?: string,
   harness?: string,
   harnessTargetId?: string,
+  laneId?: string,
   source?: EventSource,
 ): MessageState {
   let msg = state.messages.get(id);
@@ -236,6 +278,7 @@ function getOrCreateMessage(
       turnId,
       harness,
       harnessTargetId,
+      laneId,
       ...(source === undefined ? {} : { source: { ...source } }),
     };
     state.messages.set(id, msg);
@@ -243,6 +286,7 @@ function getOrCreateMessage(
   } else {
     if (!msg.harness) msg.harness = harness;
     if (!msg.harnessTargetId) msg.harnessTargetId = harnessTargetId;
+    if (!msg.laneId) msg.laneId = laneId;
     if (!msg.source && source) msg.source = { ...source };
   }
   return msg;
@@ -254,6 +298,7 @@ function getOrCreateToolCall(
   turnId?: string,
   harness?: string,
   harnessTargetId?: string,
+  laneId?: string,
 ): ToolCallState {
   let tc = state.toolCalls.get(id);
   if (!tc) {
@@ -261,6 +306,7 @@ function getOrCreateToolCall(
       toolCallId: id,
       harness,
       harnessTargetId,
+      laneId,
       status: "pending",
       content: [],
       locations: [],
@@ -272,6 +318,7 @@ function getOrCreateToolCall(
     tc.harness = harness;
   }
   if (!tc.harnessTargetId) tc.harnessTargetId = harnessTargetId;
+  if (!tc.laneId) tc.laneId = laneId;
   return tc;
 }
 
@@ -288,6 +335,7 @@ function applyMessageUpsert(
     ev.turnId,
     ev.harness,
     eventTargetId(ev),
+    ev.laneId,
     ev.source,
   );
   // 三态：省略=不变；null/[]=清空；数组=整体替换
@@ -315,6 +363,7 @@ function applyMessageChunk(
     ev.turnId,
     ev.harness,
     eventTargetId(ev),
+    ev.laneId,
     ev.source,
   );
   msg.content.push(p.content);
@@ -329,6 +378,7 @@ function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_u
     ev.turnId,
     ev.harness,
     eventTargetId(ev),
+    ev.laneId,
   );
   if (p.title !== undefined) tc.title = p.title === null ? undefined : p.title;
   if (p.kind !== undefined) tc.kind = p.kind === null ? undefined : p.kind;
@@ -387,6 +437,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
           turnId: ev.turnId,
           harness: ev.harness ?? existing?.harness,
           harnessTargetId: eventTargetId(ev) ?? existing?.harnessTargetId,
+          laneId: ev.laneId ?? existing?.laneId,
           role: existing?.role ?? (ev.source.type === "harness" ? "observed" : "driven"),
           state: hasPendingBlocking(state, ev.turnId) ? "requires_action" : p.state,
           startedAt: existing?.startedAt ?? (ev.ts ? Date.parse(ev.ts) || undefined : undefined),
@@ -397,9 +448,16 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     }
     case "user_message":
     case "agent_message":
-    case "agent_thought":
+    case "agent_thought": {
       applyMessageUpsert(state, ev, roleOfKind(ev.kind));
+      if (ev.kind === "user_message") {
+        const request = [...state.turnRequests.values()].find(
+          (candidate) => candidate.messageId === ev.payload.messageId,
+        );
+        if (request) request.phase = "running";
+      }
       break;
+    }
     case "user_message_chunk":
     case "agent_message_chunk":
     case "agent_thought_chunk":
@@ -416,6 +474,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         ev.turnId,
         ev.harness,
         eventTargetId(ev),
+        ev.laneId,
       );
       tc.content.push(p.content);
       break;
@@ -430,9 +489,9 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         entries: [...p.entries],
         harness,
         harnessTargetId: eventTargetId(ev) ?? existing?.harnessTargetId,
+        laneId: ev.laneId ?? existing?.laneId,
       });
-      const target = targetScoped(state, ev);
-      if (target) target.lastPlanId = p.planId;
+      for (const scope of executionScopes(state, ev)) scope.lastPlanId = p.planId;
       break;
     }
     case "proposed_plan": {
@@ -444,6 +503,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         ...p,
         harness: ev.harness,
         harnessTargetId: eventTargetId(ev),
+        laneId: ev.laneId,
         turnId: ev.turnId,
       });
       break;
@@ -471,6 +531,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       }
       next.harness = ev.harness ?? existing?.harness;
       next.harnessTargetId = eventTargetId(ev) ?? existing?.harnessTargetId;
+      next.laneId = ev.laneId ?? existing?.laneId;
       next.turnId = ev.turnId ?? existing?.turnId;
       state.tasks.set(p.taskId, next);
       break;
@@ -487,6 +548,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       state.interactions.set(interaction.interactionId, {
         interaction,
         turnId: ev.turnId,
+        laneId: ev.laneId,
       });
       flagRequiresAction(state, ev.turnId);
       break;
@@ -513,23 +575,83 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       accumulateUsage(state.usage, ev.payload);
       break;
     case "available_commands_update": {
-      const target = targetScoped(state, ev);
-      if (target) target.availableCommands = [...ev.payload.commands];
+      for (const scope of executionScopes(state, ev)) {
+        scope.availableCommands = [...ev.payload.commands];
+      }
       break;
     }
     case "config_option_update": {
-      const target = targetScoped(state, ev);
-      if (target) target.configOptions = [...ev.payload.options];
+      for (const scope of executionScopes(state, ev)) {
+        scope.configOptions = [...ev.payload.options];
+      }
       break;
     }
     case "context_usage_update": {
       // 快照替换语义（与 usage 的增量累加不同）；每个 Target 各有自己的原生上下文
-      const target = targetScoped(state, ev);
-      if (target) target.contextUsage = { ...ev.payload };
+      for (const scope of executionScopes(state, ev)) {
+        scope.contextUsage = { ...ev.payload };
+      }
+      break;
+    }
+    case "_baton_delivery_attempt_update": {
+      const update = ev.payload;
+      const request =
+        update.phase === "prepared"
+          ? [...state.turnRequests.values()].find(
+              (candidate) => candidate.messageId === update.inputId,
+            )
+          : [...state.turnRequests.values()].find(
+              (candidate) => candidate.attemptId === update.attemptId,
+            );
+      if (!request) break;
+      request.attemptId = update.attemptId;
+      if (update.phase === "uncertain") request.phase = "uncertain";
+      else if (request.phase === "uncertain" && update.phase !== "finalized") {
+        request.phase = "running";
+      }
+      break;
+    }
+    case "_baton_turn_request_recorded": {
+      if (state.turnRequests.has(ev.payload.requestId)) break;
+      state.turnRequests.set(ev.payload.requestId, {
+        requestId: ev.payload.requestId,
+        title: ev.payload.title,
+        pluginInstanceId:
+          ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
+        phase: "pending_approval",
+        harnessTargetId: ev.payload.requestedHarnessTargetId,
+      });
+      state.timeline.push({ type: "turn_request", id: ev.payload.requestId });
+      break;
+    }
+    case "_baton_turn_request_authorization_resolved": {
+      const request = state.turnRequests.get(ev.payload.requestId);
+      if (!request) break;
+      request.phase = ev.payload.outcome === "allowed" ? "queued" : "declined";
+      request.harnessTargetId = ev.payload.harnessTargetId ?? request.harnessTargetId;
+      break;
+    }
+    case "_baton_turn_request_scheduled": {
+      const request = state.turnRequests.get(ev.payload.requestId);
+      if (!request) break;
+      request.phase = "queued";
+      request.harnessTargetId = ev.payload.harnessTargetId;
+      request.laneId = ev.payload.laneId;
+      request.messageId = ev.payload.messageId;
+      request.turnId = ev.payload.turnId;
+      break;
+    }
+    case "_baton_turn_request_cancelled": {
+      const request = state.turnRequests.get(ev.payload.requestId);
+      if (request && request.phase !== "completed") request.phase = "cancelled";
       break;
     }
     case "_baton_error_update": {
-      const errorEntry = { ...ev.payload, seq: ev.seq };
+      const errorEntry = {
+        ...ev.payload,
+        seq: ev.seq,
+        ...(ev.laneId ? { laneId: ev.laneId } : {}),
+      };
       state.lastError = errorEntry;
       // 将错误加入 timeline 和 errors map
       const errorId = `err_${ev.seq}`;
@@ -546,12 +668,30 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       break;
     }
     case "_baton_notice":
-      state.notices.push({ ...ev.payload, seq: ev.seq });
+      state.notices.push({
+        ...ev.payload,
+        seq: ev.seq,
+        ...(ev.laneId ? { laneId: ev.laneId } : {}),
+      });
       state.timeline.push({ type: "notice", id: `n_${ev.seq}` });
       break;
-    case "_baton_turn_summary":
-      state.turnSummaries.push(ev.payload);
+    case "_baton_turn_summary": {
+      const summary: TurnSummaryState = {
+        ...ev.payload,
+        harness: ev.harness,
+        harnessTargetId: ev.harnessTargetId,
+        laneId: ev.laneId,
+      };
+      state.turnSummaries.push(summary);
+      const request = [...state.turnRequests.values()].find(
+        (candidate) => candidate.turnId === ev.payload.turnId,
+      );
+      if (request) {
+        request.phase = "completed";
+        request.result = summary;
+      }
       break;
+    }
     default: {
       // 未知事件保留在 jsonl 里但不参与 reduce（forward-compat：不因未知 kind 崩溃）
       break;
@@ -587,6 +727,41 @@ function targetScoped(
     scoped.harness = ev.harness;
   }
   return scoped;
+}
+
+export function laneTargetStateKey(laneId: string, harnessTargetId: string): string {
+  return `${laneId}\0${harnessTargetId}`;
+}
+
+function laneTargetScoped(
+  state: SessionState,
+  ev: Pick<AnyEventEnvelope, "harnessTargetId" | "laneId" | "harness">,
+): LaneTargetState | undefined {
+  const laneId = ev.laneId;
+  const targetId = ev.harnessTargetId;
+  if (!laneId || !targetId) return undefined;
+  const key = laneTargetStateKey(laneId, targetId);
+  let scoped = state.perLaneTarget.get(key);
+  if (!scoped) {
+    scoped = {
+      harness: ev.harness,
+      availableCommands: [],
+      configOptions: [],
+    };
+    state.perLaneTarget.set(key, scoped);
+  } else if (!scoped.harness && ev.harness) {
+    scoped.harness = ev.harness;
+  }
+  return scoped;
+}
+
+function executionScopes(
+  state: SessionState,
+  ev: Pick<AnyEventEnvelope, "harnessTargetId" | "laneId" | "harness">,
+): Array<HarnessTargetState | LaneTargetState> {
+  return [targetScoped(state, ev), laneTargetScoped(state, ev)].filter(
+    (scope): scope is HarnessTargetState | LaneTargetState => scope !== undefined,
+  );
 }
 
 /** request 到场：所属 turn 派生为 requires_action（blocking request 挂起该 turn） */

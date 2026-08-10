@@ -21,7 +21,11 @@ export type InputSource =
     };
 
 export type InteractionRequester =
-  | { readonly type: "harness"; readonly harnessTargetId: string }
+  | {
+      readonly type: "harness";
+      readonly harnessTargetId: string;
+      readonly laneId?: string;
+    }
   | { readonly type: "plugin"; readonly pluginInstanceId: string }
   | { readonly type: "baton" };
 
@@ -63,6 +67,7 @@ export interface BatonActiveTurnSnapshot {
   readonly state: "running" | "requires_action";
   readonly harness?: string;
   readonly harnessTargetId?: string;
+  readonly laneId?: string;
   readonly startedAt?: number;
 }
 
@@ -70,6 +75,7 @@ export interface BatonInputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
+  readonly laneId: string;
   readonly harness: string;
   readonly status: InputStatus;
   readonly delivery: "prompt" | "steer";
@@ -92,6 +98,7 @@ export interface TurnRequestSnapshot {
   readonly resource: ResourceRef;
   readonly phase: TurnRequestPhase;
   readonly harnessTargetId?: string;
+  readonly laneId?: string;
   readonly turnId?: string;
   /** Present after admission has produced and closed the driven Turn. */
   readonly result?: TurnSummary;

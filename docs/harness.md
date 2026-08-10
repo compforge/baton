@@ -34,27 +34,41 @@ interface HarnessTarget {
 }
 ```
 
-同一 Harness 可以有多个 Target。Binding、原生 Session、Context 水位、模型/effort 偏好、
-审批路由和 Target-scoped Projection 都必须按 `harnessTargetId` 隔离，不能按 Harness 名共享。
+同一 Harness 可以有多个 Target。模型、effort 和 mode 偏好按 `harnessTargetId`
+共享；Binding、原生 Session、Context 水位和执行投影则按 `Lane × HarnessTarget` 隔离。
+不能按 Harness 名共享或反推任何一层 identity。
 未知 Target fail closed，不从名称形状猜实现。
 
 Target probe 只发现 model、effort、command 等静态目录，不创建 HarnessSession，也不借
 `Adapter.open()` 制造隐形执行状态。
 
-### 2.2 Session、Binding 与 Handle
+### 2.2 Lane
+
+`Lane` 是 BatonSession 原生的逻辑任务线，ID 使用 `hl_` 前缀。它拥有创建来源，以及按
+HarnessTarget 保存的 HarnessSession binding；原生 Session 因恢复失败而重建时，Lane identity
+不变。Lane 不绑定某一个 Target，可以在相邻 Turn 之间切换 Harness 接力。
+
+BatonSession 的 `mainLaneId` 指向默认主线；其它 Lane 表达异步支线。Lane 可以由人或 Plugin
+发起，`createdFor` 只记录创建事实，不决定它是不是主线。当前每个获批 TurnRequest 会创建一个
+`createdFor:turn_request` 支线；未来人发起的异步任务复用同一对象。
+
+每个 Lane 同时最多一个 driven Turn。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
+Handle 和原生 Session；Binding 索引必须使用 `(laneId, harnessTargetId)`，不能只用其中一个。
+
+### 2.3 Session、Binding 与 Handle
 
 三个相似对象承担不同生命周期：
 
 | 对象 | 生命周期 | 能否持久化 |
 |---|---|---|
-| `HarnessSessionIdentity` | Harness 在 Target 内拥有的稳定原生会话身份 | 是 |
-| `HarnessSessionBinding` | 当前 BatonSession 到原生 Session 的可重建连接和 resume state | 是 |
+| `HarnessSessionIdentity` | Harness 在 `Lane × HarnessTarget` 内拥有的稳定原生会话身份 | 是 |
+| `HarnessSessionBinding` | 当前 `Lane × HarnessTarget` 到原生 Session 的可重建连接和 resume state | 是 |
 | `HarnessSessionHandle` | 当前 Adapter 实例内的调用路由 | 否 |
 
 Adapter 在 identity 首次可知或 checkpoint 更新时，通过 `HarnessSessionBindingSink` 主动发布
 Binding。Controller 不从 handle、事件或 `hs_` 等 ID 形状猜 identity。
 
-`HarnessLaunchSnapshot` 冻结一次 open 实际使用的 Target、cwd、model 与 effort，用于解释已发生
+`HarnessLaunchSnapshot` 冻结一次 open 实际使用的 Target、Session cwd、model 与 effort，用于解释已发生
 的 Delivery Attempt；之后配置变化不能回写历史。`HarnessResumeState` 是 Adapter-owned 的
 版本化 opaque 数据，Baton 只保存并在下次 open 原样回传。
 
@@ -75,7 +89,7 @@ interface HarnessAdapter {
 
 ### 3.1 open
 
-`open` 建立或恢复 HarnessSession，并长期绑定 Event sink。Adapter 可以在启动期完成 initialize、
+`open` 在 BatonSession cwd 中建立或恢复 HarnessSession，并长期绑定 Event sink。Adapter 可以在启动期完成 initialize、
 hook trust、配置读取或原生 resume；这些 I/O 必须有显式 timeout 和失败清理。身份如果只能从
 首个原生事件获得，则在获得时立即发布 Binding。
 
@@ -127,7 +141,7 @@ owner、生命周期和恢复语义一致时，才考虑提升公共 Capability�
 
 ### 5.1 事件归一
 
-Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、HarnessTarget、
+Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、Lane、HarnessTarget、
 HarnessSession 与 Session scope。原生 wire 存入 `raw`，不能让 Adapter 自报执行归属。
 
 稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID

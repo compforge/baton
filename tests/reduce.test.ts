@@ -9,7 +9,12 @@ import {
   type EventPayloadMap,
   type EventSource,
 } from "../src/event/types.ts";
-import { applyEvent, emptySessionState, reduceEvents } from "../src/store/reduce.ts";
+import {
+  applyEvent,
+  emptySessionState,
+  laneTargetStateKey,
+  reduceEvents,
+} from "../src/store/reduce.ts";
 
 let seq = 0;
 function ev<K extends EventKind>(
@@ -398,6 +403,29 @@ describe("snapshot vs delta semantics", () => {
     ]);
     expect(state.perTarget.get("codex")?.contextUsage?.contextSize).toBe(200_000);
     expect(state.perTarget.get("claude")?.contextUsage?.contextSize).toBe(1_000_000);
+  });
+
+  test("same Target keeps each Lane binding projection isolated", () => {
+    const state = reduceEvents([
+      {
+        ...ev("context_usage_update", { contextUsed: 10, contextSize: 100 }),
+        harness: "codex",
+        harnessTargetId: "codex",
+        laneId: "hl_main",
+      },
+      {
+        ...ev("context_usage_update", { contextUsed: 70, contextSize: 100 }),
+        harness: "codex",
+        harnessTargetId: "codex",
+        laneId: "hl_side",
+      },
+    ]);
+    expect(
+      state.perLaneTarget.get(laneTargetStateKey("hl_main", "codex"))?.contextUsage,
+    ).toMatchObject({ contextUsed: 10 });
+    expect(
+      state.perLaneTarget.get(laneTargetStateKey("hl_side", "codex"))?.contextUsage,
+    ).toMatchObject({ contextUsed: 70 });
   });
 
   test("plan_update records the Target's latest plan id in its Target-scoped slot", () => {

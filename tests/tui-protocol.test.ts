@@ -1110,6 +1110,103 @@ describe("BatonChatProtocol transcript projection", () => {
     }
   });
 
+  test("projects a side Lane as one TurnRequest card and hides its raw transcript", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-worker-lane-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.setHarnessTarget("codex", {
+        harnessTargetId: "codex",
+        harness: "codex",
+      });
+      session.ensureTurnRequestLane("hl_worker", "trq_worker");
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "_baton_turn_request_recorded",
+        payload: {
+          requestId: "trq_worker",
+          requestKey: "implement",
+          resourceOwner: "plugin",
+          resource: {
+            apiVersion: "reqloop.baton.dev/v1alpha1",
+            kind: "Requirement",
+            namespace: "reqloop_default",
+            name: "REQ-1",
+            uid: "req_uid_1",
+          },
+          title: "Implement requirement",
+          prompt: "Implement REQ-1",
+        },
+      });
+      session.append({
+        source: { type: "baton" },
+        kind: "_baton_turn_request_scheduled",
+        payload: {
+          requestId: "trq_worker",
+          messageId: "m_worker",
+          turnId: "t_worker",
+          harnessTargetId: "codex",
+          laneId: "hl_worker",
+        },
+      });
+      const coordinate = {
+        harness: "codex",
+        harnessTargetId: "codex",
+        laneId: "hl_worker",
+        turnId: "t_worker",
+      } as const;
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "user_message",
+        ...coordinate,
+        payload: {
+          messageId: "m_worker",
+          content: [{ type: "text", text: "Implement REQ-1" }],
+        },
+      });
+      session.append({
+        source: { type: "harness", harnessTargetId: "codex" },
+        kind: "agent_message",
+        ...coordinate,
+        payload: {
+          messageId: "m_worker_answer",
+          content: [{ type: "text", text: "Implemented and tested." }],
+        },
+      });
+      session.append({
+        source: { type: "harness", harnessTargetId: "codex" },
+        kind: "state_update",
+        ...coordinate,
+        payload: { state: "idle", stopReason: "end_turn" },
+      });
+      session.summarizeTurn("t_worker");
+
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const items = protocol.stateStore.getState("timeline").items;
+      expect(items.find((item) => item.id === "m_worker")).toBeUndefined();
+      expect(items.find((item) => item.id === "m_worker_answer")).toBeUndefined();
+      expect(items.find((item) => item.id === "turn-request:trq_worker")).toMatchObject({
+        kind: "task",
+        status: "completed",
+        title: "Implement requirement · completed",
+        content: {
+          lines: expect.arrayContaining([
+            "Lane: hl_worker",
+            "Implemented and tested.",
+          ]),
+        },
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // 委托状态是否可见改由 adapter 报告的生效路由驱动（见 session-controller.test.ts）：
   // 投影不再读 config——config 是意图，且投影层不得按 harness 分支（不变量 #3）。
   test("renders auto-review receipts beside the target tool", async () => {

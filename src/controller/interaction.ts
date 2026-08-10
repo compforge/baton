@@ -9,6 +9,7 @@ import type {
 
 interface InteractionBinding {
   target: { id: string };
+  laneId: string;
 }
 
 type AppendEvent<TBinding> = (
@@ -47,7 +48,11 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
     const interaction: Interaction = {
       ...draft,
       interactionId: newId("ix"),
-      requester: { type: "harness", harnessTargetId },
+      requester: {
+        type: "harness",
+        harnessTargetId,
+        laneId: binding.laneId,
+      },
     };
 
     return new Promise((resolve, reject) => {

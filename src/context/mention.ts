@@ -19,6 +19,7 @@ export interface ParsedMention {
 interface TurnSummaryRecord {
   harness: string;
   harnessTargetId?: string;
+  laneId?: string;
   seq: number;
   summary: TurnSummary;
 }
@@ -63,8 +64,8 @@ export function buildSessionContext(
   const session = store.openSession(batonSessionId);
   const summaries = session.loadState().turnSummaries;
   const title = sessionDisplayTitle(session.meta);
-  const harnesses = session.meta.harnessSessions
-    ? Object.keys(session.meta.harnessSessions).join(", ")
+  const harnesses = session.meta.harnessTargets
+    ? Object.keys(session.meta.harnessTargets).join(", ")
     : "unknown";
   const header = `# Session summary: ${title} (id: ${batonSessionId}, agent: ${harnesses})`;
 
@@ -103,18 +104,20 @@ function turnSummaries(handle: SessionHandle): TurnSummaryRecord[] {
     .map((e) => ({
       harness: e.harness ?? "baton",
       harnessTargetId: e.harnessTargetId,
+      laneId: e.laneId,
       seq: e.seq,
       summary: e.payload as TurnSummary,
     }));
 }
 
 /**
- * 生成 Target 尚未同步的 BatonSession 历史，并返回本批覆盖到的事件水位。
- * 新建原生会话时 includeTargetTurns=true，从零恢复完整逻辑历史；resume 时只补其它 Target 的增量。
+ * 生成 Lane 尚未同步的 BatonSession 历史，并返回本批覆盖到的事件水位。
+ * 新建原生会话时 includeTargetTurns=true，从零恢复完整逻辑历史；resume 时只补当前
+ * Lane × HarnessTarget binding 未亲历的增量。
  *
  * 同步语义（与 controller 的注入时点水位配套，三条规则都有测试钉住）：
- * - **自身产出不注入**：Target 自己的 driven/observed turn（summary 的
- *   envelope.harnessTargetId 等于目标 id）是其亲历内容，注入即复读；
+ * - **同一 binding 的产出不注入**：同 Lane 换到其它 Target 是接力，必须把上一棒注入；
+ *   其它 Lane 的进展也必须注入；
  * - **throughSeq = 全量 summary 尾 seq（含自己的）**：亲历即已同步，水位越过它是正确的。
  *   注意 summary 事件本身不进注入文本，其 userText 已由 summarize 时的
  *   stripBatonInjectedContext 剥掉 <baton-sync> 标签——sync 块不经 summary 递归放大；
@@ -125,6 +128,7 @@ export function buildTargetCatchUpContext(
   handle: SessionHandle,
   opts: {
     target: HarnessTarget;
+    laneId?: string;
     sinceSeq: number;
     includeTargetTurns: boolean;
     budgetChars?: number;
@@ -134,7 +138,18 @@ export function buildTargetCatchUpContext(
   const missed = summaries.filter((item) => {
     if (item.seq <= opts.sinceSeq) return false;
     if (opts.includeTargetTurns) return true;
-    return item.harnessTargetId !== opts.target.id;
+    if (item.laneId) {
+      return !(
+        item.laneId === opts.laneId &&
+        item.harnessTargetId === opts.target.id
+      );
+    }
+    // 0.2.21 and earlier had only one native session per Target and no Lane coordinate;
+    // migration assigns that history to the BatonSession main Lane.
+    return !(
+      item.harnessTargetId === opts.target.id &&
+      (opts.laneId === undefined || handle.meta.mainLaneId === opts.laneId)
+    );
   });
   if (missed.length === 0) return null;
 
@@ -147,7 +162,11 @@ export function buildTargetCatchUpContext(
   let dropped = 0;
   for (let i = missed.length - 1; i >= 0; i--) {
     const m = missed[i] as (typeof missed)[number];
-    const block = `[${m.harness}]\n${turnBlock(m.summary, i)}`;
+    const coordinates = [
+      m.harness,
+      m.laneId ? `lane ${m.laneId}` : undefined,
+    ].filter((value): value is string => Boolean(value));
+    const block = `[${coordinates.join(" · ")}]\n${turnBlock(m.summary, i)}`;
     if (used + block.length + 2 > budgetChars && picked.length > 0) {
       dropped = i + 1;
       break;

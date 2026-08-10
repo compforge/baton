@@ -48,6 +48,7 @@ export type DeepReadonly<T> =
 export type BatonTurnResourceData = DeepReadonly<TurnSummary> & {
   readonly harness?: string;
   readonly harnessTargetId?: string;
+  readonly laneId?: string;
   readonly harnessSessionId?: string;
 };
 
@@ -110,6 +111,9 @@ function turnResource(
       ...(event.harnessTargetId === undefined
         ? {}
         : { harnessTargetId: event.harnessTargetId }),
+      ...(event.laneId === undefined
+        ? {}
+        : { laneId: event.laneId }),
       ...(event.harnessSessionId === undefined
         ? {}
         : { harnessSessionId: event.harnessSessionId }),

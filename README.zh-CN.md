@@ -28,15 +28,15 @@ Plugin host 又增加了一条原则：
 
 - **Loop 分层**：baton core 保持领域无关，统一拥有 Input、Context、Permission 与 Harness routing 路径。Baton Plugin 拥有长期领域 loop，当前默认建议下一条 Harness 输入，交给用户确认、编辑或丢弃；Harness 仍是智能执行能力提供方，devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
 
-在此之上仍有三个产品演进方向。Plugin host 已经提供长期 loop 所需的 Resource / Controller 基础，但这些端到端体验尚未完整落地：
+在此之上仍有三个产品演进方向。Plugin TurnRequest 已能在隔离的支线 Lane 中运行且不阻塞会话主线；协同 fan-out 与结果策展尚未完整落地：
 
-- **多 harness 协作**：从同一会话内接力，走向把同一任务并行分派给多个 harness，结果汇回同一份统一历史。近路径是草稿会话——任务进行中有新想法时，拉一个草稿会话（可换 harness）并行探索，主线不被打断。
+- **多 harness 协作**：一个 BatonSession 已可并发运行多个由人或 Plugin 发起的 Lane，并保持单一持久 ledger；每条 Lane 内可串行切换 Harness 接力。下一步是把同一任务作为协同 fan-out 分派给多家 Harness，再把结果策展进主线。
 - **上下文收录**：主线不是全量流水账，而是用户认可的正典历史。草稿会话出了成果后，由用户决定将结论合入主线还是丢弃；丢弃不等于删除，草稿仍持久、可再引用。
 - **事件驱动的长期 loop**：监听代码提交、PR 合并等外部事件，重新唤醒对应会话继续后续工作，让 agent 不止活在交互式终端里。
 
 ## 架构速览
 
-先从稳定内核理解 baton：它是一条双向流水线。chat-tui 只承载 `intent`/`render`，controller 拥有 `Input` 生命周期与 driven-turn 队列，adapter 把各 harness 的 wire 归一成同一条事件流，`session.jsonl` 落盘持久化。事件流是唯一真相源，UI 是它的投影。
+先从稳定内核理解 baton：它是一条双向流水线。chat-tui 只承载 `intent`/`render`，controller 拥有 `Input`、Lane 调度与 Turn 生命周期，adapter 把各 harness 的 wire 归一成事件流，一个 `session.jsonl` 持久化所有 Lane 的事件。事件流是唯一真相源，UI 是它的投影。
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
@@ -51,6 +51,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 ## 功能
 
 - 在同一个终端界面中使用 Claude Code 和 Codex
+- 让获批的 Plugin TurnRequest 在隔离的支线 Lane 中执行，不阻塞会话主 Lane
 - 使用 `Ctrl+V` 粘贴剪贴板图片，并作为原生图片输入发送给 Codex 或 Claude Code
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话

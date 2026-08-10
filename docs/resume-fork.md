@@ -33,11 +33,12 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
 分叉则 fail closed，不猜测合并。直接按 `bs_` 打开不触发 Inspector；需要持续双向同步仍须
 引入后台 reconcile，不能让两个 writer 共享一个未对账的会话。
 
-需要严格区分三种执行侧对象：
+需要严格区分四种执行侧对象：
 
-- `HarnessSession`：Harness 持久拥有、可跨 Baton 进程恢复的会话 identity；
+- `Lane`：BatonSession 持久拥有的串行任务线，可跨 HarnessTarget 接力；原生会话重建时 identity 不变；
+- `HarnessSession`：Harness 在 `Lane × HarnessTarget` 下持久拥有、可跨 Baton 进程恢复的会话 identity；
 - `HarnessSessionHandle`：Adapter 当前进程内的 opaque 调用句柄，不持久化；
-- `HarnessSessionBinding`：当前 BatonSession 到 HarnessSession 的可重建连接，含稳定 identity
+- `HarnessSessionBinding`：当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接，含稳定 identity
   与 adapter-owned resume state。Adapter 在这些信息可知时主动发布，Controller 不轮询，
   更不能把 Handle 当 identity。
 
@@ -61,8 +62,8 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
    先校验完整语义前缀并补齐新增尾部，再复用该 owner。adoption 完成后，
    resume / fork 仍走 BatonSession 主路径。
 3. 一切打开路径（CLI 启动、TUI `/sessions` 切换、`/new`）收敛到 `session/open.ts` 的 `openBatonSession()`：解析目标 → `acquireLock()` → `recoverInterruptedState()`。
-4. 所有 fork child 首次发消息时，`Controller.ensureHarness()` 发现无
-   `harnessSessionId` → 开 fresh 原生会话并签发新的 ContextEpoch → 从 revision 0 触发全量
+4. fork child 保留逻辑 Lane 拓扑和 `mainLaneId`，但清空所有 `Lane × HarnessTarget` 原生 binding；
+   `Controller.ensureHarness()` 发现当前 binding 无 `harnessSessionId` → 开 fresh 原生会话并签发新的 ContextEpoch → 从 revision 0 触发全量
    补课（`buildTargetCatchUpContext`）。输入来自 `bs_` 还是原生 ID 都走这一条路径。
 
 session picker 的可读名称对齐 Codex resume 的思路：`meta.title` 只表示用户显式命名；未命名会话以第一条有意义的用户文本预览作为名称，最后才回退到 cwd。chat-tui 粘贴图片产生的前导本地路径按附件处理，不占用名称。preview 在首次提交时只写一次；旧会话只在发现阶段有界读取日志回填展示，不改写历史数据。旧版本自动生成的 `chat/codex/claude @ cwd` 标题视为兼容占位，不遮住更有辨识度的 preview。
@@ -75,22 +76,24 @@ session picker 的可读名称对齐 Codex resume 的思路：`meta.title` 只�
 
 ### 为什么领域对象不做 ID remap，而 Event 重新签发
 
-事件里的 `toolCallId`、部分 `messageId` 本就是 harness 原生 ID（Claude 的 `tool_use_id`、Codex 的 `item.id`），不是 baton 签发的全局 ID；remap 它们没有唯一性收益，反而破坏 payload 与 `raw` 的审计对照。复制前缀既然是同一段逻辑历史，保留原 ID 恰是正确的身份表达；将来跨会话引用 turn 时用 `bs_ + t_` 限定即可消歧。`seq` 同理原样保留——边界永远是前缀（全局串行队列保证），天然连续。
+事件里的 `toolCallId`、部分 `messageId` 本就是 harness 原生 ID（Claude 的 `tool_use_id`、Codex 的 `item.id`），不是 baton 签发的全局 ID；remap 它们没有唯一性收益，反而破坏 payload 与 `raw` 的审计对照。复制前缀既然是同一段逻辑历史，保留原 ID 恰是正确的身份表达；将来跨会话引用 turn 时用 `bs_ + t_` 限定即可消歧。`seq` 同理原样保留——边界永远是 ledger append 前缀，天然连续；多 Lane 并发只会让 append 交错，不改变“任意 throughSeq 都定义唯一前缀”。用户侧运行中 fork 仍应选择完整 Turn 水位，不把某个活跃 Lane 的半截 Turn 当成稳定上下文。
 
 Event envelope 是例外：`eventId` 标识某个 ledger 中的一次 append，`scope` 是该 Event 的唯一
 权威归属。fork 写入 child ledger 时必须重新签发 `eventId` 并改成 child session scope；否则
 同一个 event id 会同时声称属于两个 ledger。payload 中的 turn / interaction / message /
 toolCall 等领域对象 ID 仍原样保留。
 
-### 为什么 harnessSessions 只保留 target 配置，不保留原生 session 绑定
+### 为什么 fork 保留 Lane identity，但不复制原生 session binding
 
-`harnessSessionId` / `resumeState` / `contextEpochId` / `syncedSeq` / `resumeCursor`
-描述的是源会话与其原生 HarnessSession 的绑定（`resumeState` 是 adapter-owned 的版本化
-checkpoint，`syncedSeq` 只是 Receipt 基线的缓存），child 若继承会 resume 源的原生会话，
-导致两个 BatonSession 写进同一份 harness 历史，fork 即失效。`model` / `effort` 是用户偏好，
-丢掉会让 child 静默回落 harness 默认值，故单独保留。
-`harnessTargetId` / `harness` 也要保留，使 child 仍知道后续应使用哪个配置目标和执行协议；
-`HarnessLaunchSnapshot` 与源原生 session 的那次启动绑定，child 会 fresh launch，因此不复制。
+Lane identity 属于被 fork 的逻辑历史：`mainLaneId`、事件上的 `laneId` 与领域对象 ID 一样保留，
+否则 child 中已经发生的并行事实会失去坐标。
+
+`harnessSessionId` / `resumeState` / `contextEpochId` / `syncedSeq` / `resumeCursor` 则描述源会话某个
+`Lane × HarnessTarget` 的具体原生 binding（`resumeState` 是 adapter-owned 的版本化 checkpoint，
+`syncedSeq` 只是 Receipt 基线缓存）。child 若继承会 resume 源原生会话，导致两个 BatonSession
+写进同一份 Harness 历史，fork 即失效，因此所有 binding 都清空。`model` / `effort` 仍是 Target
+级用户偏好，丢掉会让 child 静默回落默认值，故保留。`HarnessLaunchSnapshot` 与源 binding 的那次
+启动绑定，child 会 fresh launch，因此不复制。
 
 ### 为什么 recovery 挂在打开入口，且以锁为前提
 

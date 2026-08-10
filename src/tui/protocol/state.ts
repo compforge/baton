@@ -24,7 +24,10 @@ import type {
 import type { BoardItem } from "../../plugin/board.ts";
 import type { Manager } from "../../plugin/manager.ts";
 import type { ToastMessage } from "../../plugin/package.ts";
-import type { SessionState } from "../../store/reduce.ts";
+import {
+  laneTargetStateKey,
+  type SessionState,
+} from "../../store/reduce.ts";
 import type { SessionHandle } from "../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
 import {
@@ -367,7 +370,13 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     })),
   ];
   const observedRuns = [...state.activeTurns.values()].filter(
-    (turn) => turn.role === "observed",
+    (turn) =>
+      turn.role === "observed" &&
+      (!turn.laneId || turn.laneId === session.meta.mainLaneId),
+  );
+  const sideRuns = [...state.activeTurns.values()].filter(
+    (turn) =>
+      turn.laneId !== undefined && turn.laneId !== session.meta.mainLaneId,
   );
   const observedRun = observedRuns.at(-1);
   const activeTurnId = controller.activeTurnId;
@@ -376,7 +385,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     : undefined;
   const statusTargetId =
     activeTargetId ?? observedRun?.harnessTargetId ?? harnessTargetId;
-  const targetState = state.perTarget.get(statusTargetId);
+  const statusLaneId = session.meta.mainLaneId;
+  const targetState =
+    state.perLaneTarget.get(laneTargetStateKey(statusLaneId, statusTargetId)) ??
+    state.perTarget.get(statusTargetId);
   const statusHarness =
     activeTurn?.harness ??
     observedRun?.harness ??
@@ -390,7 +402,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const statusEffort =
     statusTargetId === activeTargetId || statusTargetId === harnessTargetId
       ? controller.currentEffort(statusTargetId)
-      : session.meta.harnessSessions[statusTargetId]?.effort;
+      : session.meta.harnessTargets[statusTargetId]?.effort;
   const statusMode = controller.currentMode(statusTargetId);
   const modelAndEffort = statusEffort
     ? `${statusModel} · ${statusEffort}`
@@ -422,7 +434,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       ? {
           id: `run:observed:${observedRun.turnId}`,
           author: harnessAuthor(statusHarness),
-          label: `${modelAndEffort} · ${runStatusLabel(state, observedRun.turnId)} · background`,
+          label: `${modelAndEffort} · ${runStatusLabel(state, observedRun.turnId)} · observed`,
           startedAt: observedRun.startedAt,
         }
       : {
@@ -434,17 +446,40 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
           ),
           label: `${modelAndEffort} · idle`,
         };
-  const runStatus = [withStatusDetails(runStatusItem)];
+  const sideStartedAt = sideRuns
+    .flatMap((turn) => (turn.startedAt === undefined ? [] : [turn.startedAt]))
+    .sort((left, right) => left - right)[0];
+  const runStatus = [
+    withStatusDetails(runStatusItem),
+    ...(sideRuns.length > 0
+      ? [
+          {
+            id: "run:side-lanes",
+            author: "baton",
+            label: `${sideRuns.length} side lane${sideRuns.length === 1 ? "" : "s"}`,
+            ...(sideStartedAt === undefined
+              ? {}
+              : { startedAt: sideStartedAt }),
+          } satisfies RunStatusItem,
+        ]
+      : []),
+  ];
   const busy = activeTargetId !== undefined || observedRuns.length > 0;
 
-  const lastPlanId = state.perTarget.get(harnessTargetId)?.lastPlanId;
+  const selectedLaneId = session.meta.mainLaneId;
+  const selectedState =
+    state.perLaneTarget.get(laneTargetStateKey(selectedLaneId, harnessTargetId)) ??
+    state.perTarget.get(harnessTargetId);
+  const lastPlanId = selectedState?.lastPlanId;
   const lastPlan = lastPlanId ? state.plans.get(lastPlanId) : undefined;
   const planEntries = (lastPlan?.entries ?? []).map((entry) => ({
     content: entry.content,
     status: normalizePlanStatus(entry.status),
   }));
   const targetRunning = [...state.activeTurns.values()].some(
-    (turn) => turn.harnessTargetId === harnessTargetId,
+    (turn) =>
+      turn.harnessTargetId === harnessTargetId &&
+      (!turn.laneId || turn.laneId === selectedLaneId),
   );
   const planActive =
     targetRunning &&
@@ -454,7 +489,9 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   return {
     timeline: {
       items: [
-        ...buildTranscript(state, pinnedPlanId),
+        ...buildTranscript(state, pinnedPlanId, {
+          isSideLane: (laneId) => laneId !== session.meta.mainLaneId,
+        }),
         ...(input.commandOutput ? [input.commandOutput] : []),
       ],
       plan: planActive ? planEntries : undefined,

@@ -293,13 +293,19 @@ function approvalReviewTranscriptItem(review: ApprovalReviewUpdate): TranscriptI
 export function buildTranscript(
   state: SessionState,
   pinnedPlanId?: string,
+  options: {
+    isSideLane?: (laneId: string) => boolean;
+  } = {},
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
+  const hidden = (laneId: string | undefined) =>
+    laneId !== undefined && options.isSideLane?.(laneId) === true;
   const noticesById = new Map(state.notices.map((notice) => [`n_${notice.seq}`, notice]));
   for (const entry of state.timeline) {
     if (entry.type === "notice") {
       const notice = noticesById.get(entry.id);
       if (!notice) continue;
+      if (hidden(notice.laneId)) continue;
       items.push({
         type: "block",
         id: entry.id,
@@ -312,6 +318,7 @@ export function buildTranscript(
     if (entry.type === "error") {
       const error = state.errors.get(entry.id);
       if (!error) continue;
+      if (hidden(error.laneId)) continue;
       items.push({
         type: "block",
         id: entry.id,
@@ -325,6 +332,7 @@ export function buildTranscript(
     if (entry.type === "message") {
       const msg = state.messages.get(entry.id);
       if (!msg) continue;
+      if (hidden(msg.laneId)) continue;
       if (msg.role === "thought") {
         const turnCompleted = state.turnSummaries.some(
           (summary) => summary.turnId === msg.turnId,
@@ -376,7 +384,40 @@ export function buildTranscript(
     }
     if (entry.type === "tool_call") {
       const tc = state.toolCalls.get(entry.id);
-      if (tc) items.push(toolTranscriptItem(tc));
+      if (tc && !hidden(tc.laneId)) items.push(toolTranscriptItem(tc));
+      continue;
+    }
+    if (entry.type === "turn_request") {
+      const request = state.turnRequests.get(entry.id);
+      if (!request) continue;
+      const status: TranscriptBlockStatus =
+        request.phase === "completed"
+          ? request.result?.stopReason === "error" || request.result?.stopReason === "failed"
+            ? "failed"
+            : "completed"
+          : request.phase === "declined" || request.phase === "cancelled"
+            ? "declined"
+            : request.phase === "running" || request.phase === "uncertain"
+              ? "in_progress"
+              : "pending";
+      const details = [
+        request.pluginInstanceId ? `Requested by ${request.pluginInstanceId}` : undefined,
+        request.harnessTargetId ? `Target: ${request.harnessTargetId}` : undefined,
+        request.laneId ? `Lane: ${request.laneId}` : undefined,
+        request.result?.agentText,
+        request.phase === "uncertain" ? "Delivery outcome is uncertain" : undefined,
+      ].filter((value): value is string => Boolean(value));
+      items.push({
+        type: "block",
+        id: `turn-request:${request.requestId}`,
+        kind: "task",
+        status,
+        author: request.pluginInstanceId,
+        title: `${request.title} · ${request.phase}`,
+        ...(details.length > 0
+          ? { content: { type: "lines", lines: details } }
+          : {}),
+      });
       continue;
     }
     if (entry.type === "approval_review") {
@@ -387,6 +428,7 @@ export function buildTranscript(
     if (entry.type === "proposed_plan") {
       const proposal = state.proposedPlans.get(entry.id);
       if (!proposal) continue;
+      if (hidden(proposal.laneId)) continue;
       items.push({
         type: "block",
         id: entry.id,
@@ -403,6 +445,7 @@ export function buildTranscript(
     if (entry.type === "task") {
       const task = state.tasks.get(entry.id);
       if (!task) continue;
+      if (hidden(task.laneId)) continue;
       const status = task.status === "stopped" ? "failed" : task.status;
       const details = [
         task.summary,
@@ -424,6 +467,7 @@ export function buildTranscript(
     if (entry.type !== "plan") continue;
     const plan = state.plans.get(entry.id);
     if (!plan || plan.planId === pinnedPlanId) continue;
+    if (hidden(plan.laneId)) continue;
     const entries = plan.entries.map((entry) => ({
       content: entry.content,
       status: normalizePlanStatus(entry.status),

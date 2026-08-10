@@ -47,6 +47,7 @@ describe("BatonSnapshot", () => {
         messageId: "m_1",
         turnId: "t_queued",
         harnessTargetId: "claude",
+        laneId: "hl_input",
         harness: "claude",
         status: "queued",
         delivery: "prompt",

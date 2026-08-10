@@ -8,7 +8,7 @@
 import type { ResourceRef } from "@compforge/baton-plugin";
 
 export type InteractionRequester =
-  | { type: "harness"; harnessTargetId: string }
+  | { type: "harness"; harnessTargetId: string; laneId?: string }
   | { type: "plugin"; pluginInstanceId: string }
   | { type: "baton" };
 

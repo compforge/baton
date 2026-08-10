@@ -6,6 +6,7 @@ type TurnRole = "driven" | "observed";
 interface TurnBinding {
   adapter: { harness: string };
   target: { id: string };
+  laneId: string;
 }
 
 /**
@@ -18,6 +19,7 @@ export interface TurnRecord<TBinding extends TurnBinding> {
   binding: TBinding;
   harness: string;
   harnessTargetId: string;
+  laneId: string;
   status: "active" | "finalized";
   startedAt: number;
   stopReason?: StopReason;
@@ -38,7 +40,7 @@ export interface TurnRecord<TBinding extends TurnBinding> {
  */
 export class TurnLedger<TBinding extends TurnBinding> {
   private readonly records = new Map<string, TurnRecord<TBinding>>();
-  private activeDrivenTurnId?: string;
+  private readonly activeDrivenByLane = new Map<string, string>();
 
   values(): IterableIterator<TurnRecord<TBinding>> {
     return this.records.values();
@@ -48,9 +50,10 @@ export class TurnLedger<TBinding extends TurnBinding> {
     return this.records.get(turnId);
   }
 
-  activeDriven(): TurnRecord<TBinding> | undefined {
-    if (!this.activeDrivenTurnId) return undefined;
-    const record = this.records.get(this.activeDrivenTurnId);
+  activeDriven(laneId: string): TurnRecord<TBinding> | undefined {
+    const turnId = this.activeDrivenByLane.get(laneId);
+    if (!turnId) return undefined;
+    const record = this.records.get(turnId);
     return record?.status === "active" ? record : undefined;
   }
 
@@ -59,6 +62,9 @@ export class TurnLedger<TBinding extends TurnBinding> {
     turnId: string,
     input?: InputRecord,
   ): { record: TurnRecord<TBinding>; released: Promise<void> } {
+    if (this.activeDriven(binding.laneId)) {
+      throw new Error(`Lane ${binding.laneId} already has an active driven Turn`);
+    }
     let release!: () => void;
     const released = new Promise<void>((resolve) => {
       release = resolve;
@@ -69,6 +75,7 @@ export class TurnLedger<TBinding extends TurnBinding> {
       binding,
       harness: binding.adapter.harness,
       harnessTargetId: binding.target.id,
+      laneId: binding.laneId,
       status: "active",
       startedAt: Date.now(),
       turn: input,
@@ -76,7 +83,7 @@ export class TurnLedger<TBinding extends TurnBinding> {
       release,
     };
     this.records.set(turnId, record);
-    this.activeDrivenTurnId = turnId;
+    this.activeDrivenByLane.set(binding.laneId, turnId);
     return { record, released };
   }
 
@@ -88,6 +95,7 @@ export class TurnLedger<TBinding extends TurnBinding> {
       binding,
       harness: binding.adapter.harness,
       harnessTargetId: binding.target.id,
+      laneId: binding.laneId,
       status: "active",
       startedAt: Date.now(),
     });
@@ -111,7 +119,9 @@ export class TurnLedger<TBinding extends TurnBinding> {
     for (const steer of record.steers ?? []) steer.status = inputTerminal;
 
     if (record.role === "driven") {
-      if (this.activeDrivenTurnId === record.turnId) this.activeDrivenTurnId = undefined;
+      if (this.activeDrivenByLane.get(record.laneId) === record.turnId) {
+        this.activeDrivenByLane.delete(record.laneId);
+      }
       record.release?.();
     }
     this.retire(record);

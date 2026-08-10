@@ -107,6 +107,7 @@ export type BatonTurnResourceKind = "Turn";
 export type BatonTurnResourceData = TurnSummary & {
   readonly harness?: string;
   readonly harnessTargetId?: string;
+  readonly laneId?: string;
   readonly harnessSessionId?: string;
 };
 

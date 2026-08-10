@@ -35,6 +35,8 @@ export interface InputRecord {
   /** baton turn id：入队时即分配，steer 的 expectedTurnId 引用它。 */
   turnId: string;
   target: HarnessTarget;
+  /** Baton-owned logical execution channel selected before admission. */
+  laneId: string;
   blocks: PromptBlock[];
   source: InputSource;
   status: InputStatus;
@@ -50,6 +52,7 @@ export interface QueuedTurnSnapshot {
   id: number;
   turnId: string;
   harnessTargetId: string;
+  laneId: string;
   harness: string;
   blocks: PromptBlock[];
   source: InputSource;
@@ -60,6 +63,7 @@ export interface InputSnapshot {
   messageId: string;
   turnId: string;
   harnessTargetId: string;
+  laneId: string;
   harness: string;
   status: InputStatus;
   delivery: "prompt" | "steer";
@@ -91,6 +95,7 @@ export class InputQueue {
 
   enqueue(
     target: HarnessTarget,
+    laneId: string,
     blocks: PromptBlock[],
     options?: {
       source?: InputSource;
@@ -104,6 +109,7 @@ export class InputQueue {
         turnId: options?.identity?.turnId ?? newId("t"),
         messageId: options?.identity?.messageId ?? newId("m"),
         target,
+        laneId,
         blocks,
         source: options?.source ?? { type: "user" },
         status: "queued",
@@ -125,6 +131,7 @@ export class InputQueue {
 
   acceptSteer(
     target: HarnessTarget,
+    laneId: string,
     turnId: string,
     messageId: string,
     blocks: PromptBlock[],
@@ -134,6 +141,7 @@ export class InputQueue {
       turnId,
       messageId,
       target,
+      laneId,
       blocks,
       source: { type: "user" },
       status: "accepted_steer",
@@ -173,6 +181,7 @@ export function inputSnapshot(input: InputRecord): InputSnapshot {
     messageId: input.messageId,
     turnId: input.turnId,
     harnessTargetId: input.target.id,
+    laneId: input.laneId,
     harness: input.target.harness,
     status: input.status,
     delivery: input.delivery,
@@ -188,6 +197,7 @@ function queuedTurnSnapshot(input: InputRecord): QueuedTurnSnapshot {
     id: input.id,
     turnId: input.turnId,
     harnessTargetId: input.target.id,
+    laneId: input.laneId,
     harness: input.target.harness,
     blocks: [...input.blocks],
     source: { ...input.source },

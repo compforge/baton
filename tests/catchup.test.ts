@@ -21,9 +21,19 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function turn(target: HarnessTarget, i: number, agentText: string): void {
+function turn(
+  target: HarnessTarget,
+  i: number,
+  agentText: string,
+  laneId?: string,
+): void {
   const turnId = `t_${target.id}_${i}`;
-  const coordinate = { harness: target.harness, harnessTargetId: target.id, turnId };
+  const coordinate = {
+    harness: target.harness,
+    harnessTargetId: target.id,
+    ...(laneId ? { laneId } : {}),
+    turnId,
+  };
   h.append({
     source: { type: "baton" },
     kind: "user_message",
@@ -74,5 +84,27 @@ describe("buildTargetCatchUpContext", () => {
     expect(result?.text).toContain("other harness context");
     expect(result?.text).not.toContain("already native");
     expect(result?.text).not.toContain("also native");
+  });
+
+  test("resumed binding excludes itself but receives sibling Lanes and same-Lane handoffs", () => {
+    const target = { id: "codex", harness: "codex" };
+    const mainLaneId = h.ensureMainLane().laneId;
+    const sideLaneId = "hl_side";
+    h.ensureTurnRequestLane(sideLaneId, "trq_1");
+    turn(target, 1, "already native", mainLaneId);
+    const watermark = h.readEvents().at(-1)!.seq;
+    turn(target, 2, "same binding output", mainLaneId);
+    turn({ id: "claude", harness: "claude-code" }, 3, "previous harness handoff", mainLaneId);
+    turn(target, 4, "side lane result", sideLaneId);
+
+    const result = buildTargetCatchUpContext(h, {
+      target,
+      laneId: mainLaneId,
+      sinceSeq: watermark,
+      includeTargetTurns: false,
+    });
+    expect(result?.text).toContain("side lane result");
+    expect(result?.text).toContain("previous harness handoff");
+    expect(result?.text).not.toContain("same binding output");
   });
 });

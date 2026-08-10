@@ -942,6 +942,7 @@ export class BatonChatProtocol implements ChatProtocol {
           turnRequestId: request.requestId,
           pluginInstanceId: request.pluginInstanceId,
           harnessTargetId: request.harnessTargetId,
+          laneId: request.laneId,
           messageId: request.messageId,
           turnId: request.turnId,
           blocks: [{ type: "text", text: request.prompt }],
@@ -1118,8 +1119,8 @@ export class BatonChatProtocol implements ChatProtocol {
     const selectedMode = this.controller.currentMode(this.harnessTargetId);
     const context = this.state.perTarget.get(this.harnessTargetId)?.contextUsage;
     const contextText = contextUsageText(context, selectedModel);
-    const targets = meta.harnessSessions
-      ? Object.keys(meta.harnessSessions).join(", ")
+    const targets = meta.harnessTargets
+      ? Object.keys(meta.harnessTargets).join(", ")
       : "-";
     const text = [
       `Session: ${meta.batonSessionId}`,

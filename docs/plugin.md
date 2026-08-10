@@ -162,6 +162,10 @@ HarnessAdapter、Harness 进程或 SDK 句柄，也不能直接调用 Harness；
 Input/Attempt，负责路由、权限、并发、取消、Context 和结果持久化。完整契约见
 [TurnRequest](./turn-request.md)。
 
+每个获批请求会获得独立支线 `Lane`；多个支线可受限并发，但不占用会话主 Lane。
+Plugin 只从 Snapshot 读取 `laneId` 和结果，不能选择或复用别的 Lane。Lane 是 BatonSession 原生
+任务线而非 Plugin 私有对象，后续可以跨 HarnessTarget 接力。
+
 ### 5.2 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、
