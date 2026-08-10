@@ -19,7 +19,9 @@ import { sessionIdResumeState, type HarnessResumeState } from "./resume.ts";
 import { createHarnessLaunchSnapshot, type HarnessTarget } from "./target.ts";
 
 export interface HarnessBindingOptions {
+  laneId: string;
   target: HarnessTarget;
+  cwd: string;
   adapter: HarnessAdapter;
   session: SessionHandle;
   eventSink: EventSink;
@@ -29,14 +31,16 @@ export interface HarnessBindingOptions {
 }
 
 /**
- * 一个 HarnessTarget 在当前 BatonSession 中的 live 绑定：
- * HarnessTarget ↔ Adapter ↔ HarnessSession。
+ * 一个 Lane × HarnessTarget 在当前 BatonSession 中的 live 绑定：
+ * Lane 可跨 Target 接力；每个 Target 在该 Lane 内拥有自己的 Adapter 与 HarnessSession。
  *
  * 绑定拥有启动、resume、配置恢复与关闭；Turn 调度、上下文注入和 Event 持久化仍由
  * Controller 负责。
  */
 export class HarnessBinding {
+  readonly laneId: string;
   readonly target: HarnessTarget;
+  readonly cwd: string;
   readonly adapter: HarnessAdapter;
   ref?: HarnessSessionHandle;
   /**
@@ -56,7 +60,9 @@ export class HarnessBinding {
   private publishedBinding?: HarnessSessionBinding;
 
   constructor(options: HarnessBindingOptions) {
+    this.laneId = options.laneId;
     this.target = options.target;
+    this.cwd = options.cwd;
     this.adapter = options.adapter;
     this.session = options.session;
     this.eventSink = options.eventSink;
@@ -119,15 +125,14 @@ export class HarnessBinding {
     } else {
       throw new Error(`${this.target.id} does not support /model`);
     }
-    const existing = this.session.meta.harnessSessions[this.target.id] ?? {
+    const targetMeta = this.session.meta.harnessTargets[this.target.id] ?? {
       harnessTargetId: this.target.id,
-      harness: this.adapter.harness,
+      harness: this.target.harness,
     };
-    this.session.setHarnessSession(this.target.id, {
-      ...existing,
+    this.session.setHarnessTarget(this.target.id, {
+      ...targetMeta,
       harnessTargetId: this.target.id,
-      harness: this.adapter.harness,
-      harnessSessionId: existing.harnessSessionId ?? this.sessionIdentity()?.id,
+      harness: this.target.harness,
       model: !modelId || modelId === "default" ? undefined : modelId,
     });
   }
@@ -169,15 +174,14 @@ export class HarnessBinding {
     } else {
       throw new Error(`${this.target.id} does not support /effort`);
     }
-    const existing = this.session.meta.harnessSessions[this.target.id] ?? {
+    const targetMeta = this.session.meta.harnessTargets[this.target.id] ?? {
       harnessTargetId: this.target.id,
-      harness: this.adapter.harness,
+      harness: this.target.harness,
     };
-    this.session.setHarnessSession(this.target.id, {
-      ...existing,
+    this.session.setHarnessTarget(this.target.id, {
+      ...targetMeta,
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
-      harnessSessionId: existing.harnessSessionId ?? this.sessionIdentity()?.id,
       effort: !effortId || effortId === "default" ? undefined : effortId,
     });
   }
@@ -206,7 +210,7 @@ export class HarnessBinding {
       throw new Error(`${this.target.id} does not support session config`);
     }
     const snapshot = await this.adapter.setConfig(this.ref, configId, value);
-    const existing = this.session.meta.harnessSessions[this.target.id] ?? {
+    const targetMeta = this.session.meta.harnessTargets[this.target.id] ?? {
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
     };
@@ -217,8 +221,8 @@ export class HarnessBinding {
       if (!option || option.type !== "select" || option.value === "default") return undefined;
       return option.value;
     };
-    this.session.setHarnessSession(this.target.id, {
-      ...existing,
+    this.session.setHarnessTarget(this.target.id, {
+      ...targetMeta,
       harnessTargetId: this.target.id,
       harness: this.adapter.harness,
       model: selected("model"),
@@ -241,46 +245,49 @@ export class HarnessBinding {
   }
 
   private preferredModel(): string | undefined {
-    return this.session.meta.harnessSessions[this.target.id]?.model ?? this.modelPreference;
+    return this.session.meta.harnessTargets[this.target.id]?.model ?? this.modelPreference;
   }
 
   private preferredEffort(): string | undefined {
-    return this.session.meta.harnessSessions[this.target.id]?.effort ?? this.effortPreference;
+    return this.session.meta.harnessTargets[this.target.id]?.effort ?? this.effortPreference;
   }
 
   private preferredMode(): string | undefined {
-    return this.session.meta.harnessSessions[this.target.id]?.mode;
+    return this.session.meta.harnessTargets[this.target.id]?.mode;
   }
 
   private async open(): Promise<void> {
     try {
-      const existing = this.session.meta.harnessSessions[this.target.id];
+      const existing = this.session.meta.lanes[this.laneId]?.harnessSessions[this.target.id];
       const configAdapter = isSessionConfigurable(this.adapter) ? this.adapter : undefined;
       const modelAdapter = isModelConfigurable(this.adapter) ? this.adapter : undefined;
       const effortAdapter = isEffortConfigurable(this.adapter) ? this.adapter : undefined;
       const model = configAdapter || modelAdapter ? this.preferredModel() : undefined;
       const effort = configAdapter || effortAdapter ? this.preferredEffort() : undefined;
       const mode = configAdapter ? this.preferredMode() : undefined;
+      this.session.setHarnessTarget(this.target.id, {
+        harnessTargetId: this.target.id,
+        harness: this.target.harness,
+        ...(model === undefined ? {} : { model }),
+        ...(effort === undefined ? {} : { effort }),
+        ...(mode === undefined ? {} : { mode }),
+      });
       const launchSnapshot = createHarnessLaunchSnapshot({
         target: this.target,
         harnessSessionKey: this.adapter.harness,
-        cwd: this.session.meta.cwd,
+        cwd: this.cwd,
         model,
         effort,
       });
       // open 前落下实际配置：即使进程在 spawn/initialize 期间崩溃，也能解释这次启动。
-      this.session.setHarnessSession(this.target.id, {
+      this.session.setLaneHarnessSession(this.laneId, this.target.id, {
         ...existing,
-        harnessTargetId: this.target.id,
         harness: this.adapter.harness,
         launchSnapshot,
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
-        ...(mode ? { mode } : {}),
       });
       this.ref = await this.adapter.open(
         {
-          cwd: this.session.meta.cwd,
+          cwd: this.cwd,
           resumeState:
             existing?.resumeState ??
             (existing?.harnessSessionId
@@ -306,18 +313,14 @@ export class HarnessBinding {
         else await effortAdapter?.setEffort(this.ref, effort);
       }
       if (mode) await configAdapter?.setConfig(this.ref, "mode", mode);
-      this.session.setHarnessSession(this.target.id, {
-        ...this.session.meta.harnessSessions[this.target.id],
-        harnessTargetId: this.target.id,
+      this.session.setLaneHarnessSession(this.laneId, this.target.id, {
+        ...this.session.meta.lanes[this.laneId]?.harnessSessions[this.target.id],
         harness: this.adapter.harness,
         launchSnapshot,
         harnessSessionId: this.sessionIdentity()?.id,
         resumeState: this.resumeState(),
         contextEpochId: this.contextEpochId,
         syncedSeq: this.ref.resumed ? existing?.syncedSeq : 0,
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
-        ...(mode ? { mode } : {}),
       });
     } finally {
       this.setupTurnId = undefined;
@@ -335,10 +338,9 @@ export class HarnessBinding {
       );
     }
     this.publishedBinding = binding;
-    const existing = this.session.meta.harnessSessions[this.target.id];
-    this.session.setHarnessSession(this.target.id, {
+    const existing = this.session.meta.lanes[this.laneId]?.harnessSessions[this.target.id];
+    this.session.setLaneHarnessSession(this.laneId, this.target.id, {
       ...existing,
-      harnessTargetId: this.target.id,
       harness: this.adapter.harness,
       harnessSessionId: binding.identity.id,
       resumeState: binding.resumeState,

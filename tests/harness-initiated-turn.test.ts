@@ -78,7 +78,7 @@ describe("State invariant: every appended event reaches the timeline", () => {
 });
 
 describe("observed turn presentation", () => {
-  test("busy + background run-status line while an observed turn runs; cleared on idle", async () => {
+  test("busy + observed run-status line while an observed turn runs; cleared on idle", async () => {
     const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
     session.append({
       source: { type: "harness", harnessTargetId: "claude" },
@@ -95,7 +95,7 @@ describe("observed turn presentation", () => {
     expect(line).toBeDefined();
     expect(line?.id).toBe("run:observed:t_obs");
     expect(line?.author).toBe("claude");
-    expect(line?.label).toContain("background");
+    expect(line?.label).toContain("observed");
     // Esc 中断的是 driven turn，observed turn v1 不可打断：不给误导性 hint
     expect(line?.hint).toBeUndefined();
 

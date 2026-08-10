@@ -46,8 +46,9 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **Project** | 按 cwd 组织和发现 BatonSession，并承载同 workspace 跨 Session 的 Plugin 私有数据；不拥有 Session 历史 |
 | **BatonSession** | 用户拥有的正典逻辑历史和 session-scoped Plugin 数据；跨 Harness 的唯一时间线 |
 | **HarnessTarget** | Baton 配置、调度和状态查询侧的一份具体执行目标；同一 Harness 可有多个 Target，状态必须按 Target 隔离 |
-| **HarnessSession** | Harness 在某个 Target 内持有的持久原生执行会话；缺失只影响恢复优化，不阻止 BatonSession 继续 |
-| **HarnessSessionBinding** | 当前 BatonSession 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
+| **Lane** | BatonSession 原生的持久串行任务线；拥有 `hl_` identity，可由人或 Plugin 发起，并可跨多个 HarnessTarget 接力 |
+| **HarnessSession** | Harness 在某个 `Lane × HarnessTarget` 下持有的持久原生执行会话；缺失只影响恢复优化，不阻止 Lane 继续 |
+| **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
 | **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
 | **TurnRequest** | 直接 user Input 之外，由控制面主体请求创建一个新 driven Turn 的持久意图；获批后物化为 Input，不抽象或直接执行 Harness Work |
@@ -58,7 +59,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 
-`Event.scope` 回答事实属于哪条 ledger，`Event.source` 回答谁报告事实，HarnessTarget、
+`Event.scope` 回答事实属于哪条 ledger，`Event.source` 回答谁报告事实，Lane、HarnessTarget、
 HarnessSession 和 Turn 则是执行坐标。这些维度正交，不能从 Harness 名、alias 或 wire key
 猜测彼此。
 
@@ -148,9 +149,22 @@ DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发�
 Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
 Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 建议的
 `proposed-input` 经用户确认后成为 user-source Input；`turn-request` 则开辟了直接 user Input
-之外发起新 Turn 的受控路径，当前由 Plugin 产生并在获批后成为 plugin-source Input。它表达创建
-Turn 的意图，而非 Harness Work；两类 Input 此后走同一 Context、Permission、Attempt 和 Harness
-routing 主路径。
+之外发起新 Turn 的受控路径，当前由 Plugin 产生并在获批后成为 plugin-source Input。它目前也是
+创建支线 Lane 的第一个入口，但 Lane 不从属于 TurnRequest：未来人可以显式要求“异步开一条支线，
+主线继续”。TurnRequest 表达创建 Turn 的意图，而非 Harness Work；两类 Input 此后走同一
+Context、Permission、Attempt 和 Harness routing 主路径。
+
+### 4.6 单 Ledger、多 Lane
+
+一个 BatonSession 仍只有一份 `session.jsonl`。`seq` 只表示 append 的全局观测顺序，
+不表示跨 Lane 因果；因果由 `turnId`、`parentEventId` 和领域 identity 表达。新的
+Harness 执行事实必须带 `laneId`；旧事件缺失时归入迁移生成的主 Lane。
+
+BatonSession 用 `mainLaneId` 指向默认主线（概念上的 lane0，但 ID 仍是不透明值），其它 Lane 是
+可异步推进的支线任务。Lane 的发起者可以是人或 Plugin，`createdFor` 只记录创建来源，不定义
+主/支角色；角色只由 `mainLaneId` 判断。每个 Lane 同时最多一个 driven Turn，Lane 内即使切换
+HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住主线 admission。
+TurnRequest 支线的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与 TurnSummary。
 
 ## 5. 演进规则
 
@@ -163,7 +177,7 @@ routing 主路径。
 5. 提升内核后，能否保持新增 Harness 不修改 Session/store/projection/chat-tui？
 
 signal 只提示重新读取权威状态，不能冒充 Event；Board 更新、Context 已交付和 Harness 已被唤醒
-是三个独立事实。尚未满足真实场景的多 Harness 并行汇总和主线/草稿收录留在
+是三个独立事实。同一输入的批量 fan-out / 结果策展和跨 Session 主线/草稿收录留在
 [Backlog](./backlog.md)，不提前向 Plugin 暴露 Harness 句柄。
 
 ## 6. References

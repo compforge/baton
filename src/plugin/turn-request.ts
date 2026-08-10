@@ -37,6 +37,7 @@ export interface ScheduledTurnRequest {
   readonly requestId: string;
   readonly pluginInstanceId: string;
   readonly harnessTargetId: string;
+  readonly laneId: string;
   readonly messageId: string;
   readonly turnId: string;
   readonly prompt: string;
@@ -175,6 +176,9 @@ function snapshotOf(state: RequestState): TurnRequestSnapshot {
     ...(harnessTargetId === undefined ? {} : { harnessTargetId }),
     ...(state.scheduled === undefined
       ? {}
+      : { laneId: state.scheduled.payload.laneId }),
+    ...(state.scheduled === undefined
+      ? {}
       : { turnId: state.scheduled.payload.turnId }),
     ...(state.result === undefined
       ? {}
@@ -201,6 +205,7 @@ function scheduledOf(state: RequestState): ScheduledTurnRequest | undefined {
     requestId: scheduled.requestId,
     pluginInstanceId: pluginInstanceIdOf(state),
     harnessTargetId: scheduled.harnessTargetId,
+    laneId: scheduled.laneId,
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
     prompt: state.recorded.payload.prompt,
@@ -525,6 +530,7 @@ export class TurnRequestStore {
       messageId: newId("m"),
       turnId: newId("t"),
       harnessTargetId: authorization.harnessTargetId,
+      laneId: newId("hl"),
     };
     this.session.append({
       kind: "_baton_turn_request_scheduled",

@@ -146,6 +146,15 @@ describe("session lifecycle", () => {
       batonSessionId: "bs_LEGACY1",
       cwd: "/tmp/proj",
       createdAt: "2026-01-01T00:00:00.000Z",
+      harnessTargets: {},
+      lanes: {
+        hl_main: {
+          laneId: "hl_main",
+          createdFor: { type: "session" },
+          harnessSessions: {},
+        },
+      },
+      mainLaneId: "hl_main",
       harnessSessions: {},
     };
     writeFileSync(join(legacy, "meta.json"), JSON.stringify(meta));
@@ -175,6 +184,15 @@ describe("session lifecycle", () => {
       batonSessionId: "bs_GROUPED",
       cwd: "/tmp/proj",
       createdAt: "2026-01-01T00:00:00.000Z",
+      harnessTargets: {},
+      lanes: {
+        hl_main: {
+          laneId: "hl_main",
+          createdFor: { type: "session" },
+          harnessSessions: {},
+        },
+      },
+      mainLaneId: "hl_main",
       harnessSessions: {},
     };
     writeFileSync(join(legacy, "meta.json"), JSON.stringify(meta));
@@ -211,6 +229,45 @@ describe("session lifecycle", () => {
     expect(reopened.meta.harnessSessions["codex"]!.mode).toBe("plan");
   });
 
+  test("migrates legacy one-session-per-Target meta into the main Lane", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    writeFileSync(join(h.dir, "meta.json"), JSON.stringify({
+      batonSessionId: h.id,
+      cwd: "/tmp/proj",
+      createdAt: h.meta.createdAt,
+      harnessSessions: {
+        codex: {
+          harnessTargetId: "codex",
+          harness: "codex",
+          harnessSessionId: "thread_legacy",
+          model: "gpt-5",
+        },
+      },
+    }));
+
+    const reopened = store.openSession(h.id);
+    const laneId = reopened.meta.mainLaneId;
+    expect(laneId).toMatch(/^hl_/);
+    expect(reopened.meta.harnessTargets.codex).toEqual({
+      harnessTargetId: "codex",
+      harness: "codex",
+      model: "gpt-5",
+    });
+    expect(reopened.meta.lanes[laneId]).toMatchObject({
+      laneId,
+      createdFor: { type: "session" },
+      harnessSessions: {
+        codex: { harnessSessionId: "thread_legacy" },
+      },
+    });
+    const persisted = JSON.parse(
+      readFileSync(join(h.dir, "meta.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(persisted.harnessSessions).toBeUndefined();
+    expect(persisted.lanes).toBeDefined();
+    expect(persisted.mainLaneId).toBe(laneId);
+  });
+
   test("harness session metadata cannot be stored under another target", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     expect(() =>
@@ -237,7 +294,7 @@ describe("event append / read", () => {
     expect(e1.eventId).toMatch(/^ev_/);
     expect(e2.eventId).not.toBe(e1.eventId);
     expect(e1.scope).toEqual({ type: "session", batonSessionId: h.id });
-    expect(e1.v).toBe(3);
+    expect(e1.v).toBe(4);
     expect(e1.source).toEqual({ type: "baton" });
 
     // 重开进程（新 handle），seq 从文件续上

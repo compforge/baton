@@ -119,7 +119,7 @@ transcript 模式留给"细节本身就是产出"的场景（path 里产出了�
 
 fork 后旧主线可能又跑了 turn、写了文件；checkout 到新 path 时 cwd 里躺着旧主线的改动，新 path 的会话历史对此一无所知。所以 elect 不只是移指针：先把旧主线自 fork 点后的增量 context-import 进新主线，再转移写令牌。
 
-### 为什么写令牌先于 worktree
+### 为什么 Path 写令牌仍先于 worktree
 
 多 path 并行写代码的正确解是每 path 一个独立文件视图（worktree），但那是另一期的复杂度。写令牌以最小机制守住"同 cwd 不并发写"，且让约束靠机制生效而不靠文档自觉；将来引入 worktree 时，写令牌语义自然放宽为"每个文件视图一个写者"。
 

@@ -13,11 +13,15 @@
 **触发条件**：有明确产品场景要求 TUI 关闭后仍满足可量化的实时性或准时性，并且一次启动补扫
 不足以满足要求。
 
-## 多 Harness 并行与结果收录
+## 多 Harness 批量 fan-out 与结果收录
 
-当前同一 BatonSession 的 driven Turn 串行，Harness 切换表达上下文接力。并行探索应先建立
-显式 draft Session、写令牌和 Context import，再考虑同时 dispatch 多个 Harness；不能把多路
-Event stream 直接 merge 成一条正典历史。
+当前同一 BatonSession 已能用独立支线 Lane 并发执行多个 Plugin TurnRequest，且支线不阻塞
+用户主 Lane。尚未提供的是“把同一输入一次性派给多个 Harness、比较后收录一个或多个
+结果”的 Baton-owned 批量算子；Plugin 也不能靠私持 Adapter 句柄绕过授权与 ledger 来实现它。
+
+该能力需要先定义 fan-out 的幂等 identity、预算/并发策略、结果策展以及代码改动如何进入用户
+主工作区。原始多路 Event 不做 merge；同 Session 的支线以 TurnSummary 共享知识，跨 Session
+探索则沿用 `session-paths.md` 的 Context import / elect 语义。
 
 **触发条件**：`session-paths.md` 的 draft/elect/import 主线语义稳定，并且真实任务持续需要同一
 输入并行交给多个 Harness 后再由用户或 reviewer 收录结果。

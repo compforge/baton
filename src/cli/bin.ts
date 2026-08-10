@@ -260,8 +260,8 @@ async function run(command: string): Promise<void> {
         ? sessionTreeRows(sessions)
         : sessions.map((meta) => ({ meta, depth: 0 }));
       for (const { meta, depth } of rows) {
-        const harnesses = meta.harnessSessions
-          ? Object.keys(meta.harnessSessions).join(",")
+        const harnesses = meta.harnessTargets
+          ? Object.keys(meta.harnessTargets).join(",")
           : "-";
         console.log(
           `${treeRowPrefix(depth)}@${meta.batonSessionId}  [${harnesses}]  ${sessionDisplayTitle(meta)}  (${meta.createdAt})`,

@@ -131,6 +131,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       source: { type: "baton" },
       harness: opened?.harness ?? "baton",
       ...(opened?.harnessTargetId ? { harnessTargetId: opened.harnessTargetId } : {}),
+      ...(opened?.laneId ? { laneId: opened.laneId } : {}),
       ...(interaction.turnId ? { turnId: interaction.turnId } : {}),
       payload: {
         interactionId,
@@ -144,11 +145,13 @@ function recoverInterruptedState(session: SessionHandle): boolean {
     const latest = events.findLast((ev) => ev.turnId === turnId);
     const harness = latest?.harness || "baton";
     const harnessTargetId = latest?.harnessTargetId;
+    const laneId = latest?.laneId;
     session.append({
       kind: "state_update",
       source: { type: "baton" },
       harness,
       ...(harnessTargetId ? { harnessTargetId } : {}),
+      ...(laneId ? { laneId } : {}),
       turnId,
       payload: { state: "idle", stopReason: "cancelled" },
     });
@@ -157,6 +160,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       source: { type: "baton" },
       harness,
       ...(harnessTargetId ? { harnessTargetId } : {}),
+      ...(laneId ? { laneId } : {}),
       turnId,
       payload: { level: "warning", title: CRASH_RECOVERY_NOTICE_TITLE },
     });

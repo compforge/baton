@@ -36,6 +36,7 @@ export interface BatonActiveTurnSnapshot {
   readonly state: "running" | "requires_action";
   readonly harness?: string;
   readonly harnessTargetId?: string;
+  readonly laneId?: string;
   readonly startedAt?: number;
 }
 
@@ -43,6 +44,7 @@ export interface BatonInputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
+  readonly laneId: string;
   readonly harness: string;
   readonly status: InputSnapshot["status"];
   readonly delivery: InputSnapshot["delivery"];
@@ -118,6 +120,9 @@ export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonS
       ...(turn.harnessTargetId === undefined
         ? {}
         : { harnessTargetId: turn.harnessTargetId }),
+      ...(turn.laneId === undefined
+        ? {}
+        : { laneId: turn.laneId }),
       ...(turn.startedAt === undefined ? {} : { startedAt: turn.startedAt }),
     })),
     inputs: (options.inputs ?? []).map((input) => ({ ...input })),

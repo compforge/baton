@@ -17,11 +17,12 @@ baton 按三层协作：
 3. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
    Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
 
-稳定内核已经支持同一 BatonSession 内的 Harness 接力；Plugin host 已支持 Marketplace、
+稳定内核已经支持同一 BatonSession 内的 Harness 接力，以及主 Lane 与
+TurnRequest 支线 Lane 并发；Plugin host 已支持 Marketplace、
 Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board presentation、Proposal /
 Interaction、TurnRequest 和 ContextProvider；三方 Package 按 Binding 在独立 Runner 进程执行。
-多 Harness 并行汇总以及主线 / 草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness 进程或
-SDK 句柄来提前实现。
+同一输入向多 Harness 批量 fan-out 后策展结果，以及跨 BatonSession 的主线 /
+草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness 进程或 SDK 句柄来提前实现。
 
 reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场景；其 Requirement Loop
 领域模型与 Connector 始终留在 reqloop，不进入 Baton core。
@@ -56,9 +57,10 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 
 1. **作用域决定 owner**：Project 组织同 cwd 的 Session，并拥有 workspace 级 Plugin 私有数据；
    BatonSession 拥有正典历史和 session 级 Plugin 数据；HarnessTarget 是配置、调度与状态坐标；
-   HarnessSession 是 Target 内由 Harness 持有的持久执行会话；进程内 Handle 只负责调用路由，
+   Lane 是 BatonSession 原生的串行任务线，可跨 HarnessTarget 接力；
+   HarnessSession 是 `Lane × HarnessTarget` 下由 Harness 持有的持久执行会话；进程内 Handle 只负责调用路由，
    mutable Binding 只描述当前连接，二者都不能代替 HarnessSession identity。
-   Binding、授权、偏好、上下文水位与投影状态按明确的 Session / Target 身份隔离，未知 ID
+   Binding、上下文水位和执行投影按 `Lane × HarnessTarget` 隔离，偏好按 Target 共享；未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
 2. **事实与投影分层**：Event Ledger 是 Session 执行与感知历史的真相源，Plugin Resource
    `spec/status` 是领域期望与观测的真相源，外部系统继续拥有自己的事实；TUI 与 Board 都是

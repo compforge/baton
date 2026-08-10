@@ -97,6 +97,7 @@ describe("TurnRequest Store", () => {
       harnessTargetId: "claude",
       prompt: request.request.prompt,
     });
+    expect(resolved?.scheduled?.laneId).toMatch(/^hl_/);
     expect(store.list()[0]).toMatchObject({
       phase: "queued",
       harnessTargetId: "claude",

@@ -267,7 +267,9 @@ A Controller can use `TurnRequest` to originate exactly one new driven Turn
 without pretending the request is direct user input. This is a control-plane
 path for creating a Turn, not a Harness-work abstraction: after authorization,
 Baton materializes it as plugin-source Input and owns target selection,
-admission, execution, cancellation, and recovery. The prompt is read-only
+admission, an isolated side Lane, execution, cancellation, and recovery.
+The side Lane does not block the BatonSession main Lane. Lane is a Baton-native
+task line rather than a Plugin-private execution type. The prompt is read-only
 during authorization:
 
 ```ts

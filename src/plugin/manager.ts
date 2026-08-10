@@ -176,7 +176,7 @@ export interface ManagerOptions {
   pluginSupervisor?: PluginSupervisor;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
-  /** Host-owned bridge into the ordinary Input queue; never steers. */
+  /** Host-owned bridge into a dedicated side Lane; never steers. */
   enqueueTurnRequest?(
     request: ScheduledTurnRequest,
   ): Promise<unknown> | void;

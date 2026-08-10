@@ -55,19 +55,12 @@ import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume
 import { reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
-  harnessTargetId: string;
   harness: string;
   /** 当前原生 session 最近一次 create/resume 实际采用的配置快照。 */
   launchSnapshot?: HarnessLaunchSnapshot;
   harnessSessionId?: string;
   /** Adapter 拥有的版本化 checkpoint；Baton 只保存并在下次 open 时原样回传。 */
   resumeState?: HarnessResumeState;
-  /** 该 harness session 后续 turn 使用的模型；缺省表示 harness 默认值。 */
-  model?: string;
-  /** 该 harness session 后续 turn 使用的推理强度；缺省表示 harness 默认值。 */
-  effort?: string;
-  /** 该 harness session 后续 turn 使用的协作模式；缺省表示 default。 */
-  mode?: string;
   /** harness 侧恢复所需的游标（如 Claude SDK resume cursor），语义归 adapter */
   resumeCursor?: string;
   /**
@@ -78,6 +71,40 @@ export interface HarnessSessionMeta {
   /** 该 ContextEpoch 已同步到的 BatonSession 事件序号（Receipt 的缓存，不是真相源）。 */
   syncedSeq?: number;
   parentSessionId?: string;
+}
+
+/** HarnessTarget-scoped preferences are shared across Lanes, not by native sessions. */
+export interface HarnessTargetMeta {
+  harnessTargetId: string;
+  harness: string;
+  model?: string;
+  effort?: string;
+  mode?: string;
+}
+
+export type LaneCreatedFor =
+  | { type: "session" }
+  | { type: "turn_request"; requestId: string }
+  /** Reserved for the direct human “start this asynchronously” intake path. */
+  | { type: "user_request"; requestId: string };
+
+/**
+ * Baton-owned task line. A Lane is independent from Harness selection and can
+ * hand work between Targets while remaining serial within the Lane.
+ */
+export interface LaneMeta {
+  laneId: string;
+  createdFor: LaneCreatedFor;
+  /** harnessTargetId → native binding used by that Target within this Lane. */
+  harnessSessions: Record<string, HarnessSessionMeta>;
+}
+
+/** 0.2.21 and earlier stored Target preferences and one native binding together. */
+export interface LegacyHarnessSessionMeta extends HarnessSessionMeta {
+  harnessTargetId: string;
+  model?: string;
+  effort?: string;
+  mode?: string;
 }
 
 /** fork 谱系：child 复制了哪个会话、复制到哪个事件水位（将来从消息 fork 时即边界）。 */
@@ -129,8 +156,14 @@ export interface SessionMeta {
   cwd: string;
   createdAt: string;
   updatedAt?: string;
-  /** harnessTargetId → 当前原生 HarnessSession 绑定与 target 级偏好。 */
-  harnessSessions: Record<string, HarnessSessionMeta>;
+  /** harnessTargetId → shared Target preferences. */
+  harnessTargets: Record<string, HarnessTargetMeta>;
+  /** Baton-native task lines. A Lane may traverse multiple HarnessTargets. */
+  lanes: Record<string, LaneMeta>;
+  /** The default session path (conceptually lane0); the ID remains opaque. */
+  mainLaneId: string;
+  /** @deprecated in-memory compatibility projection; omitted from new meta.json writes. */
+  harnessSessions: Record<string, LegacyHarnessSessionMeta>;
   forkedFrom?: SessionForkOrigin;
   /** 首次 adoption 的 HarnessSession 永不随当前执行 binding 改写。 */
   adoptedFrom?: HarnessSessionAdoption;
@@ -190,6 +223,87 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
     return explicitTitle ?? meta.description?.trim() ?? `fork: chat @ ${meta.cwd}`;
   }
   return explicitTitle ?? meta.preview?.trim() ?? meta.description?.trim() ?? `chat @ ${meta.cwd}`;
+}
+
+function migratedLaneId(batonSessionId: string): string {
+  return `hl_${createHash("sha256")
+    .update(`${batonSessionId}\0main-lane`)
+    .digest("hex")
+    .slice(0, 26)
+    .toUpperCase()}`;
+}
+
+function normalizeSessionMeta(meta: SessionMeta): SessionMeta {
+  const harnessTargets = { ...(meta.harnessTargets ?? {}) };
+  const lanes = { ...(meta.lanes ?? {}) };
+  const mainLaneId = meta.mainLaneId ?? migratedLaneId(meta.batonSessionId);
+  const mainLane = lanes[mainLaneId] ?? {
+    laneId: mainLaneId,
+    createdFor: { type: "session" as const },
+    harnessSessions: {},
+  };
+  lanes[mainLaneId] = mainLane;
+
+  for (const [harnessTargetId, legacy] of Object.entries(meta.harnessSessions ?? {})) {
+    harnessTargets[harnessTargetId] ??= {
+      harnessTargetId,
+      harness: legacy.harness,
+      ...(legacy.model === undefined ? {} : { model: legacy.model }),
+      ...(legacy.effort === undefined ? {} : { effort: legacy.effort }),
+      ...(legacy.mode === undefined ? {} : { mode: legacy.mode }),
+    };
+    mainLane.harnessSessions[harnessTargetId] ??= {
+        harness: legacy.harness,
+        ...(legacy.launchSnapshot === undefined
+          ? {}
+          : { launchSnapshot: legacy.launchSnapshot }),
+        ...(legacy.harnessSessionId === undefined
+          ? {}
+          : { harnessSessionId: legacy.harnessSessionId }),
+        ...(legacy.resumeState === undefined ? {} : { resumeState: legacy.resumeState }),
+        ...(legacy.resumeCursor === undefined ? {} : { resumeCursor: legacy.resumeCursor }),
+        ...(legacy.contextEpochId === undefined
+          ? {}
+          : { contextEpochId: legacy.contextEpochId }),
+        ...(legacy.syncedSeq === undefined ? {} : { syncedSeq: legacy.syncedSeq }),
+        ...(legacy.parentSessionId === undefined
+          ? {}
+          : { parentSessionId: legacy.parentSessionId }),
+    };
+  }
+
+  const {
+    harnessSessions: _legacy,
+    harnessLanes: _obsoleteHarnessLanes,
+    interactiveLaneByTarget: _obsoleteInteractiveLanes,
+    ...current
+  } = meta as SessionMeta & {
+    harnessLanes?: unknown;
+    interactiveLaneByTarget?: unknown;
+  };
+  const harnessSessions = Object.fromEntries(
+    Object.entries(harnessTargets).map(([harnessTargetId, target]) => {
+      const session = mainLane.harnessSessions[harnessTargetId];
+      return [
+        harnessTargetId,
+        {
+          ...session,
+          harnessTargetId,
+          harness: session?.harness ?? target.harness,
+          ...(target.model === undefined ? {} : { model: target.model }),
+          ...(target.effort === undefined ? {} : { effort: target.effort }),
+          ...(target.mode === undefined ? {} : { mode: target.mode }),
+        } satisfies LegacyHarnessSessionMeta,
+      ];
+    }),
+  );
+  return {
+    ...current,
+    harnessTargets,
+    lanes,
+    mainLaneId,
+    harnessSessions,
+  };
 }
 
 export interface NativeSessionMaterialization {
@@ -305,12 +419,22 @@ export class SessionStore {
     const dir = this.sessionDir(cwd, id);
     this.ensureProject(cwd);
     mkdirSync(dir, { recursive: true });
+    const mainLaneId = newId("hl");
     const meta: SessionMeta = {
       batonSessionId: id,
       title: opts.title,
       cwd,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      harnessTargets: {},
+      lanes: {
+        [mainLaneId]: {
+          laneId: mainLaneId,
+          createdFor: { type: "session" },
+          harnessSessions: {},
+        },
+      },
+      mainLaneId,
       harnessSessions: {},
     };
     writeMetaAtomic(dir, meta);
@@ -361,6 +485,7 @@ export class SessionStore {
   private createFromHarnessSession(source: HarnessSessionAdoptionSource): SessionHandle {
     const session = this.createSession({ cwd: source.cwd, title: source.title });
     const { harnessTargetId, harness, identity } = source.session;
+    const laneId = session.ensureMainLane().laneId;
     const label = source.title?.trim() || identity.id;
     let syncedSeq = 0;
     for (const turn of source.turns) {
@@ -373,15 +498,22 @@ export class SessionStore {
         session: source.session,
         importedThrough: source.observedThrough,
       },
-      harnessSessions: {
-        [harnessTargetId]: {
-          harnessTargetId,
-          harness,
-          harnessSessionId: identity.id,
-          resumeState: sessionIdResumeState(identity.id),
-          contextEpochId: newId("ctxe"),
-          // HarnessSession 已亲历这些历史 turn；同 Target resume 时不能再注入一遍。
-          syncedSeq,
+      harnessTargets: {
+        [harnessTargetId]: { harnessTargetId, harness },
+      },
+      lanes: {
+        [laneId]: {
+          ...session.meta.lanes[laneId]!,
+          harnessSessions: {
+            [harnessTargetId]: {
+            harness,
+            harnessSessionId: identity.id,
+            resumeState: sessionIdResumeState(identity.id),
+            contextEpochId: newId("ctxe"),
+            // HarnessSession 已亲历这些历史 turn；同 Lane resume 时不能再注入一遍。
+            syncedSeq,
+            },
+          },
         },
       },
     });
@@ -448,22 +580,37 @@ export class SessionStore {
       syncedSeq = this.appendMaterializedTurn(session, source, turn);
     }
 
-    const existing = session.meta.harnessSessions[harnessTargetId];
+    const laneId = session.ensureMainLane().laneId;
+    const lane = session.meta.lanes[laneId]!;
+    const existing = lane.harnessSessions[harnessTargetId];
     session.updateMeta({
       adoptedFrom: {
         session: source.session,
         importedThrough: source.observedThrough,
       },
-      harnessSessions: {
-        ...session.meta.harnessSessions,
+      harnessTargets: {
+        ...session.meta.harnessTargets,
         [harnessTargetId]: {
-          ...existing,
+          ...session.meta.harnessTargets[harnessTargetId],
           harnessTargetId,
           harness,
-          harnessSessionId: identity.id,
-          resumeState: sessionIdResumeState(identity.id),
-          contextEpochId: existing?.contextEpochId ?? newId("ctxe"),
-          syncedSeq,
+        },
+      },
+      lanes: {
+        ...session.meta.lanes,
+        [laneId]: {
+          ...lane,
+          harnessSessions: {
+            ...lane.harnessSessions,
+            [harnessTargetId]: {
+              ...existing,
+              harness,
+              harnessSessionId: identity.id,
+              resumeState: sessionIdResumeState(identity.id),
+              contextEpochId: existing?.contextEpochId ?? newId("ctxe"),
+              syncedSeq,
+            },
+          },
         },
       },
     });
@@ -475,6 +622,7 @@ export class SessionStore {
     turn: HarnessHistoryTurn,
   ): number {
     const { harnessTargetId, harness } = source.session;
+    const laneId = session.ensureMainLane().laneId;
     const turnId = newId("t");
     if (turn.userText) session.setPreviewIfEmpty(turn.userText);
 
@@ -485,6 +633,7 @@ export class SessionStore {
           source: materializedEventSource(imported.source, harnessTargetId),
           harness,
           harnessTargetId,
+          laneId,
           turnId,
         } as AnyNewEvent);
       }
@@ -495,6 +644,7 @@ export class SessionStore {
           source: { type: "user" },
           harness,
           harnessTargetId,
+          laneId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -508,6 +658,7 @@ export class SessionStore {
           source: { type: "harness", harnessTargetId },
           harness,
           harnessTargetId,
+          laneId,
           turnId,
           payload: {
             messageId: newId("m"),
@@ -520,6 +671,7 @@ export class SessionStore {
         source: { type: "harness", harnessTargetId },
         harness,
         harnessTargetId,
+        laneId,
         turnId,
         payload: { state: "idle", stopReason: "end_turn" },
       });
@@ -534,7 +686,11 @@ export class SessionStore {
       const dir = join(projectDir, "sessions", id);
       const metaPath = join(dir, "meta.json");
       if (!existsSync(metaPath)) continue;
-      const meta = withSessionPreview(dir, JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta);
+      const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta;
+      const meta = withSessionPreview(dir, normalizeSessionMeta(parsed));
+      if (parsed.harnessSessions || !parsed.harnessTargets || !parsed.lanes || !parsed.mainLaneId) {
+        writeMetaAtomic(dir, meta);
+      }
       return new SessionHandle(id, dir, meta, this.loggerOptions);
     }
     throw new Error(`baton session not found: ${id}`);
@@ -558,7 +714,7 @@ export class SessionStore {
         try {
           const meta = withSessionPreview(
             sessionDir,
-            JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta,
+            normalizeSessionMeta(JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta),
           );
           if (cwd !== undefined && meta.cwd !== cwd) continue;
           out.push(meta);
@@ -583,7 +739,12 @@ export class SessionStore {
           adoption.session.identity.id === identity.id
         );
       }
-      return meta.harnessSessions[harnessTargetId]?.harnessSessionId === identity.id;
+      return Object.values(meta.lanes).some(
+        (lane) => {
+          const session = lane.harnessSessions[harnessTargetId];
+          return session?.harness === harness && session.harnessSessionId === identity.id;
+        },
+      );
     });
     if (matches.length > 1) {
       const owners = matches.map((meta) => meta.batonSessionId).join(", ");
@@ -597,7 +758,7 @@ export class SessionStore {
   /** @deprecated 使用 findByHarnessSession。 */
   findByNativeSession(harnessTargetId: string, nativeSessionId: string): SessionMeta | undefined {
     const harness = this.listSessions()
-      .map((meta) => meta.harnessSessions[harnessTargetId]?.harness)
+      .map((meta) => meta.harnessTargets[harnessTargetId]?.harness)
       .find(Boolean);
     if (!harness) return undefined;
     return this.findByHarnessSession({
@@ -613,9 +774,9 @@ export class SessionStore {
    * interaction 等领域对象 ID 原样保留，只换 session scope。Event 是 ledger append 的身份，
    * 换 scope 时重新签发 eventId，保证一个 eventId 只属于一个权威 ledger。
    * 谱系由 meta.forkedFrom 表达。
-   * harnessSessions 只保留 target identity、Harness 与 model / effort / mode 偏好：child 不得
-   * 继承原生 session 绑定或 launch snapshot（否则两个 BatonSession 会写进同一份 harness
-   * 历史）；child 首 turn 由 controller 走 fresh native + 新 ContextEpoch + 全量补课重建上下文。
+   * child 继承 HarnessTarget 偏好和逻辑 Lane 拓扑，但清空所有原生 session binding
+   * （否则两个 BatonSession 会写进同一份 Harness 历史）；child 首次使用某个
+   * Lane × Target 时创建 fresh native session + 新 ContextEpoch，并从复制历史补课。
    * opts.cwd 支持跨 project fork：历史跟源走，project 归属跟 fork 发起位置走；
    * 缺省沿用源 cwd。
    */
@@ -643,18 +804,24 @@ export class SessionStore {
       );
       writeFileSync(join(dir, "session.jsonl"), `${lines.join("\n")}\n`);
     }
-    const harnessSessions: Record<string, HarnessSessionMeta> = {};
-    for (const [key, hs] of Object.entries(source.meta.harnessSessions ?? {})) {
-      harnessSessions[key] = {
-        harnessTargetId: hs.harnessTargetId,
-        harness: hs.harness,
-        ...(hs.model !== undefined ? { model: hs.model } : {}),
-        ...(hs.effort !== undefined ? { effort: hs.effort } : {}),
-        ...(hs.mode !== undefined ? { mode: hs.mode } : {}),
-      };
-    }
+    const harnessTargets = Object.fromEntries(
+      Object.entries(source.meta.harnessTargets).map(([key, target]) => [
+        key,
+        { ...target },
+      ]),
+    );
     const now = new Date().toISOString();
     const sourceQuestion = source.meta.preview?.trim() ?? sessionDisplayTitle(source.meta);
+    const lanes = Object.fromEntries(
+      Object.entries(source.meta.lanes).map(([laneId, lane]) => [
+        laneId,
+        {
+          laneId,
+          createdFor: lane.createdFor,
+          harnessSessions: {},
+        } satisfies LaneMeta,
+      ]),
+    );
     const meta: SessionMeta = {
       batonSessionId: id,
       title: opts.title,
@@ -662,7 +829,10 @@ export class SessionStore {
       cwd,
       createdAt: now,
       updatedAt: now,
-      harnessSessions,
+      harnessTargets,
+      lanes,
+      mainLaneId: source.meta.mainLaneId,
+      harnessSessions: {},
       forkedFrom: { batonSessionId: sourceSessionId, throughSeq: events.at(-1)?.seq ?? 0 },
     };
     writeMetaAtomic(dir, meta);
@@ -769,7 +939,8 @@ export class SessionStore {
 
 function writeMetaAtomic(dir: string, meta: SessionMeta): void {
   const tmp = join(dir, "meta.json.tmp");
-  writeFileSync(tmp, JSON.stringify(meta, null, 2));
+  const { harnessSessions: _compatibilityProjection, ...persisted } = meta;
+  writeFileSync(tmp, JSON.stringify(persisted, null, 2));
   renameSync(tmp, join(dir, "meta.json"));
 }
 
@@ -789,7 +960,7 @@ export class SessionHandle {
   ) {
     this.id = id;
     this.dir = dir;
-    this.meta = meta;
+    this.meta = normalizeSessionMeta(meta);
     this.logger = new SessionLogger(
       join(this.dir, "session.log"),
       this.id,
@@ -835,10 +1006,15 @@ export class SessionHandle {
     harnessTargetId: string,
     harness: string,
     event: { direction: "in"; name?: string; payload: unknown },
+    laneId?: string,
   ): void {
     try {
       const safeTarget = harnessTargetId.replace(/[^a-zA-Z0-9._-]/g, "-");
-      const path = join(this.dir, `native-${safeTarget}.jsonl`);
+      const safeLane = laneId?.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const path = join(
+        this.dir,
+        `native-${safeTarget}${safeLane ? `-${safeLane}` : ""}.jsonl`,
+      );
       if (existsSync(path) && statSync(path).size >= 10 * 1024 * 1024) {
         renameSync(path, `${path}.1`);
         chmodSync(`${path}.1`, 0o600);
@@ -849,6 +1025,7 @@ export class SessionHandle {
           ts: new Date().toISOString(),
           batonSessionId: this.id,
           harnessTargetId,
+          ...(laneId ? { laneId } : {}),
           harness,
           ...event,
         })}\n`,
@@ -1007,7 +1184,7 @@ export class SessionHandle {
   }
 
   updateMeta(patch: Partial<Omit<SessionMeta, "batonSessionId">>): void {
-    this.meta = { ...this.meta, ...patch };
+    this.meta = normalizeSessionMeta({ ...this.meta, ...patch });
     writeMetaAtomic(this.dir, this.meta);
   }
 
@@ -1023,14 +1200,116 @@ export class SessionHandle {
     if (title) this.updateMeta({ title });
   }
 
-  setHarnessSession(harnessTargetId: string, hs: HarnessSessionMeta): void {
-    if (hs.harnessTargetId !== harnessTargetId) {
+  setHarnessTarget(harnessTargetId: string, target: HarnessTargetMeta): void {
+    if (target.harnessTargetId !== harnessTargetId) {
       throw new Error(
-        `harness target key mismatch: key=${harnessTargetId}, meta=${hs.harnessTargetId}`,
+        `harness target key mismatch: key=${harnessTargetId}, meta=${target.harnessTargetId}`,
       );
     }
-    this.meta.harnessSessions = { ...this.meta.harnessSessions, [harnessTargetId]: hs };
+    this.meta.harnessTargets = {
+      ...this.meta.harnessTargets,
+      [harnessTargetId]: target,
+    };
+    this.meta = normalizeSessionMeta(this.meta);
     writeMetaAtomic(this.dir, this.meta);
+  }
+
+  setLane(laneId: string, lane: LaneMeta): void {
+    if (lane.laneId !== laneId) {
+      throw new Error(
+        `lane key mismatch: key=${laneId}, meta=${lane.laneId}`,
+      );
+    }
+    this.meta.lanes = { ...this.meta.lanes, [laneId]: lane };
+    this.meta = normalizeSessionMeta(this.meta);
+    writeMetaAtomic(this.dir, this.meta);
+  }
+
+  setLaneHarnessSession(
+    laneId: string,
+    harnessTargetId: string,
+    harnessSession: HarnessSessionMeta,
+  ): void {
+    const lane = this.meta.lanes[laneId];
+    if (!lane) throw new Error(`Lane not found: ${laneId}`);
+    this.setLane(laneId, {
+      ...lane,
+      harnessSessions: {
+        ...lane.harnessSessions,
+        [harnessTargetId]: harnessSession,
+      },
+    });
+  }
+
+  harnessSessionForTarget(harnessTargetId: string): HarnessSessionMeta | undefined {
+    return this.meta.lanes[this.meta.mainLaneId]?.harnessSessions[harnessTargetId];
+  }
+
+  /** @deprecated Use Lane APIs; retained for embedders migrating old SessionMeta setup. */
+  setHarnessSession(harnessTargetId: string, legacy: LegacyHarnessSessionMeta): void {
+    if (legacy.harnessTargetId !== harnessTargetId) {
+      throw new Error(
+        `harness target key mismatch: key=${harnessTargetId}, meta=${legacy.harnessTargetId}`,
+      );
+    }
+    const laneId = this.ensureMainLane().laneId;
+    this.meta.harnessTargets = {
+      ...this.meta.harnessTargets,
+      [harnessTargetId]: {
+        harnessTargetId,
+        harness: legacy.harness,
+        ...(legacy.model === undefined ? {} : { model: legacy.model }),
+        ...(legacy.effort === undefined ? {} : { effort: legacy.effort }),
+        ...(legacy.mode === undefined ? {} : { mode: legacy.mode }),
+      },
+    };
+    this.setLaneHarnessSession(laneId, harnessTargetId, {
+      harness: legacy.harness,
+      ...(legacy.launchSnapshot === undefined
+        ? {}
+        : { launchSnapshot: legacy.launchSnapshot }),
+      ...(legacy.harnessSessionId === undefined
+        ? {}
+        : { harnessSessionId: legacy.harnessSessionId }),
+      ...(legacy.resumeState === undefined ? {} : { resumeState: legacy.resumeState }),
+      ...(legacy.resumeCursor === undefined ? {} : { resumeCursor: legacy.resumeCursor }),
+      ...(legacy.contextEpochId === undefined
+        ? {}
+        : { contextEpochId: legacy.contextEpochId }),
+      ...(legacy.syncedSeq === undefined ? {} : { syncedSeq: legacy.syncedSeq }),
+      ...(legacy.parentSessionId === undefined
+        ? {}
+        : { parentSessionId: legacy.parentSessionId }),
+    });
+  }
+
+  ensureMainLane(): LaneMeta {
+    const lane = this.meta.lanes[this.meta.mainLaneId];
+    if (!lane) throw new Error(`main Lane not found: ${this.meta.mainLaneId}`);
+    return lane;
+  }
+
+  ensureTurnRequestLane(
+    laneId: string,
+    requestId: string,
+  ): LaneMeta {
+    const existing = this.meta.lanes[laneId];
+    if (existing) {
+      if (
+        existing.createdFor.type !== "turn_request" ||
+        existing.createdFor.requestId !== requestId
+      ) {
+        throw new Error(`Lane identity conflict: ${laneId}`);
+      }
+      return existing;
+    }
+    const lane: LaneMeta = {
+      laneId,
+      createdFor: { type: "turn_request", requestId },
+      harnessSessions: {},
+    };
+    this.setLane(laneId, lane);
+    return lane;
   }
 
   /**
@@ -1091,12 +1370,14 @@ export class SessionHandle {
     };
     const harness = turnEvents[0]?.harness ?? "baton";
     const harnessTargetId = turnEvents.find((event) => event.harnessTargetId)?.harnessTargetId;
+    const laneId = turnEvents.find((event) => event.laneId)?.laneId;
     const event = this.append({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       payload: summary,
       harness,
       ...(harnessTargetId ? { harnessTargetId } : {}),
+      ...(laneId ? { laneId } : {}),
       turnId,
     }) as EventEnvelope<"_baton_turn_summary">;
     this.updateMeta({ updatedAt: summary.endedAt ?? new Date().toISOString() });

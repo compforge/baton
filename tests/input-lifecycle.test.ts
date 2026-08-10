@@ -167,35 +167,36 @@ describe("Input lifecycle (InputRecord)", () => {
   });
 
   test("keeps Plugin Inputs out of user recall and persists Plugin provenance", async () => {
-    const adapter = new HoldingAdapter("codex");
-    const controller = controllerWith(adapter);
+    const mainAdapter = new HoldingAdapter("codex");
+    const sideAdapter = new HoldingAdapter("codex");
+    let adapterCount = 0;
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => adapterCount++ === 0 ? mainAdapter : sideAdapter,
+    });
     const active = controller.submit("codex", text("first"));
-    await until(() => adapter.prompts.length === 1);
+    await until(() => mainAdapter.prompts.length === 1);
     const plugin = controller.enqueueTurnRequest({
       turnRequestId: "trq_1",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
+      laneId: "hl_request",
       messageId: "m_plugin",
       turnId: "t_plugin",
       blocks: text("plugin work"),
     });
+    await until(() => sideAdapter.prompts.length === 1);
     const user = controller.submit("codex", text("user follow-up"));
-    await until(() => controller.queueLength === 2);
+    await until(() => controller.queueLength === 1);
 
     expect(controller.recallLatestQueued()?.source).toEqual({ type: "user" });
     expect(await user).toBe("recalled");
-    expect(controller.queuedTurns).toMatchObject([{
-      turnId: "t_plugin",
-      source: {
-        type: "plugin",
-        pluginInstanceId: "reqloop_default",
-        turnRequestId: "trq_1",
-      },
-    }]);
+    expect(controller.queuedTurns).toEqual([]);
 
-    adapter.finish("end_turn");
+    mainAdapter.finish("end_turn");
     await active;
-    await until(() => adapter.prompts.includes("plugin work"));
     const pluginMessage = session.readEvents().find((event) =>
       event.kind === "user_message" && event.payload.messageId === "m_plugin"
     );
@@ -203,7 +204,8 @@ describe("Input lifecycle (InputRecord)", () => {
       type: "plugin",
       pluginInstanceId: "reqloop_default",
     });
-    adapter.finish("end_turn");
+    expect(pluginMessage?.laneId).toBe("hl_request");
+    sideAdapter.finish("end_turn");
     expect(await plugin).toBe("completed");
   });
 });

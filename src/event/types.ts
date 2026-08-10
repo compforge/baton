@@ -10,7 +10,7 @@ import type {
 import type { Interaction, InteractionResolved } from "../interaction/types.ts";
 import type { ResourceRef } from "@compforge/baton-plugin";
 
-export const ENVELOPE_VERSION = 3 as const;
+export const ENVELOPE_VERSION = 4 as const;
 
 /**
  * 事实来源：回答“谁对这条 Event 负责”，不是 payload 中行为主体的角色，也不承载执行坐标。
@@ -398,6 +398,8 @@ export interface TurnRequestScheduled {
   messageId: string;
   turnId: string;
   harnessTargetId: string;
+  /** Baton-owned task line reserved for this Request. */
+  laneId: string;
 }
 
 export interface TurnRequestCancelled {
@@ -461,6 +463,8 @@ export interface EventEnvelope<K extends EventKind = EventKind> {
   harness?: string;
   /** 实际投递/产出事件的配置目标；Baton 自身事件或未进入 controller 的外部事实可缺省。 */
   harnessTargetId?: string;
+  /** Baton-native task line; new Harness execution facts must carry it. */
+  laneId?: string;
   harnessSessionId?: string;
   turnId?: string;
   kind: K;
@@ -490,7 +494,7 @@ export type NewEvent<K extends EventKind = EventKind> = Omit<
  */
 export type EventDraft<K extends EventKind = EventKind> = Omit<
   NewEvent<K>,
-  "source" | "harness" | "harnessTargetId"
+  "source" | "harness" | "harnessTargetId" | "laneId"
 >;
 
 /** EventDraft 的判别联合版本，供 adapter sink 按 kind 正确收窄 payload。 */

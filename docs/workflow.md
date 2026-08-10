@@ -29,7 +29,7 @@ Harness wire
 ```
 
 Plugin 不另开执行通道。`proposed-input` 先展示给用户；只有用户确认或编辑并提交后，它才成为
-user-source Input。`turn-request` 经授权后成为 plugin-source Input，并强制排队开启新 Turn。
+user-source Input。`turn-request` 经授权后成为 plugin-source Input，并在独立支线 Lane 开启新 Turn。
 Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
 ## 2. Input 到 Harness
@@ -57,8 +57,14 @@ accepted_steer → finalized | interrupted
 ```
 
 `queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
-不能再伪装成“从未提交”；此后 Esc 表达 cancel/interrupt。队列只串行调度 driven Turn，Harness
-自发产生的 observed Turn 不占 admission 槽。
+不能再伪装成“从未提交”；此后只能 cancel/interrupt。当前 Controller 分开调度两类队列：
+
+- 直接 user-source Input 进入 BatonSession 的主 Lane，跨 Target 保持串行；
+- plugin-source Input 进入 TurnRequest 预留的支线 Lane，受支线并发上限约束，
+  不占用主 Lane admission 槽。
+
+这只是当前两个 Input 入口的映射，不是 Lane 类型定义：未来人发起的异步任务也会创建支线 Lane。
+每个 Lane 同时最多一个 driven Turn，不同 Lane 可并行。Harness 自发产生的 observed Turn 不进 Input 队列。
 
 prompt Input 另有一条与状态正交的 source 轴：composer、确认后的 Proposal 和 ProposedPlan 实施
 是 `user`；当前 Plugin 发起的 TurnRequest 物化后是
@@ -68,7 +74,8 @@ prompt Input 另有一条与状态正交的 source 轴：composer、确认后的
 
 ### 2.2 Turn 开界
 
-Controller 出队时先 append：
+Input 在 admission 前已经绑定 `laneId`。直接用户输入使用 `mainLaneId`；TurnRequest 在 scheduled
+fact 中预签独立支线 Lane。Controller 出队时先 append：
 
 1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。
@@ -79,8 +86,9 @@ Event kind 仍表示 Harness 看到的 user-role message，Event source 表示�
 
 ### 2.3 Context 组装与交付
 
-当前 `ContextSource` 首先承载 BatonSession 的缺失历史。Controller 按目标 HarnessSession 的
-已确认水位组装 `(afterSeq, throughSeq]`，先持久化 `ContextSnapshot`，再选择 transport：
+当前 `ContextSource` 首先承载 BatonSession 的缺失历史。Controller 按目标
+`Lane × HarnessTarget` binding 的 HarnessSession 已确认水位组装 `(afterSeq, throughSeq]`，先持久化
+`ContextSnapshot`，再选择 transport：
 
 1. `sync_context`：Harness 提供独立同步能力；
 2. `submit_side_channel`：随本次 `sendTurn` 的 side channel 送达；
@@ -88,7 +96,9 @@ Event kind 仍表示 Harness 看到的 user-role message，Event source 表示�
 
 Snapshot 只说明准备送什么。transport 接受后才 append `ContextDeliveryReceipt` 并推进该
 HarnessSession 的 `ContextEpoch`；只有 Snapshot 没有 Receipt 时，下次必须重投。Context 注入
-不修改 Codex、Claude Code 等原生 Session 文件，也不进入用户原始消息。
+不修改 Codex、Claude Code 等原生 Session 文件，也不进入用户原始消息。增量追平只排除同一
+`Lane × HarnessTarget` binding 已经亲历的 Turn；同 Lane 的其它 Target 是上一棒，同 Target 的其它
+Lane 是并行进展，两者都必须以已完成 TurnSummary 注入。
 
 ### 2.4 Attempt 与 Adapter admission
 
@@ -115,8 +125,8 @@ Receipt 只确认 Adapter 接受了投递责任，不代表 Harness 已完成。
 ### 3.1 Adapter 归一
 
 Adapter 消费原生 wire，把 message、thought、tool、diff、plan、task、usage、Interaction 和状态
-翻译为 Baton Event 草稿。宿主在可信入口补齐 `source:harness`、HarnessTarget、HarnessSession
-和 Turn 坐标，Store 再补 `eventId`、scope、时间与序号。
+翻译为 Baton Event 草稿。宿主在可信入口补齐 `source:harness`、Lane、HarnessTarget、
+HarnessSession 和 Turn 坐标，Store 再补 `eventId`、scope、时间与序号。
 
 归一原则是“稳定语义 + raw 保真”：
 
@@ -138,6 +148,10 @@ live 和重开 Session 使用相同 reducer。自愈也必须合成新的事实 
 修改页面状态。chat-tui 只消费 transcript、activity、Interaction、status 等 view，不解析
 Harness DTO。
 
+多 Lane 仍 append 到同一 `session.jsonl`。全局 `seq` 只是 ledger 观察到的写入顺序，
+不用来推断跨 Lane 因果。TurnRequest 支线的原始 transcript 保留在 Lane 事实中；默认主时间线
+把它投影为一张包含状态、Lane 和结果的 TurnRequest 卡片。
+
 ### 3.3 Turn 收口
 
 正常完成、Harness error、子进程退出、transport close 和 cancel 最终都必须产生
@@ -148,13 +162,13 @@ Harness DTO。
 2. 生成一次 Turn summary；
 3. finalize Delivery Attempt；
 4. 取消仍挂在该 Turn 上的 Interaction；
-5. 释放 driven Turn 并推进队列。
+5. 释放 driven Turn 并推进它所属的 Lane 队列。
 
 completed 但没有可见产出的空回合必须显式告警，不能表现成成功但无回复。
 
 ### 3.4 observed Turn
 
-Harness 在没有用户 Input 时也可能产生后台结果。Adapter 以 Harness 来源的 `running` 开界，
+Harness 在没有用户 Input 时也可能自行产生结果。Adapter 以 Harness 来源的 `running` 开界，
 以 `idle` 收界；Controller 只记账、持久化和投影，不把它放回输入队列。observed Turn 与 driven
 Turn 共享 Event/Projection 主路径，因此 live 与 resume 都能看到相同结果。
 
@@ -168,10 +182,12 @@ Turn 共享 Event/Projection 主路径，因此 live 与 resume 都能看到相�
 3. Adapter 拒绝、原生 race 或无法安全定向时，原输入只入队一次，当前 Turn 结束后作为新 Turn
    执行。
 
-Esc 只打断当前 driven Turn。已经接受的 steer 与该 Turn 共命运：cancel 后标记 interrupted，
+Esc 只打断主 Lane 当前的 driven Turn，不影响支线 Lane。已经接受的 steer
+与该 Turn 共命运：cancel 后标记 interrupted，
 不静默重发；仍在 queue 的 follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
 最终以 Harness 的 `idle/cancelled` 为准；超过 cancel 宽限且 transport 状态足够明确时，Controller
 可以合成终态兜底。
+TurnRequest 只用 request identity 定向取消自己的 queued Input 或支线 Turn。
 
 ## 5. Interaction 闭环
 
@@ -215,8 +231,9 @@ Harness 和 Event Ledger，再决定 finalize；不能为了让队列前进而�
 
 ### 6.3 Session 恢复与 Harness 接力
 
-BatonSession 从 Event Ledger 重放 Projection、Attempt、Interaction 和 Context 水位。若原生
-HarnessSession identity 仍可恢复，Adapter 使用它加速继续；否则新建原生 Session，并通过
+BatonSession 从 Event Ledger 重放 Projection、Attempt、Interaction 和 Context 水位。Lane registry
+从 Session meta 恢复；若其原生 HarnessSession identity 仍可恢复，Adapter 使用它加速继续；
+否则在同一 Lane 里新建原生 Session，并通过
 Context delivery 补齐 BatonSession 历史。切换 Harness 也是同一机制，不需要复制粘贴上下文。
 
 外部 HarnessSession 必须先由只读 Inspector 生成完整历史 Snapshot，再 adoption 为

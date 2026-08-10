@@ -28,15 +28,15 @@ The Plugin host adds a third principle:
 
 - **Layered loops**: baton core stays domain-neutral and owns the shared input, context, permission, and harness-routing path. Baton Plugins own long-running domain loops and currently propose the next Harness input for the user to confirm, edit, or discard. Harnesses remain intelligent execution providers; Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
 
-On top of these, three product directions remain on the roadmap. The Plugin host now provides the Resource/Controller foundation for long-running loops, but these end-to-end experiences are not complete yet:
+On top of these, three product directions continue to evolve. Plugin TurnRequests can already run in isolated side lanes without blocking the session mainline; coordinated fan-out and result curation remain incomplete:
 
-- **Multi-harness collaboration**: from relaying within one session toward dispatching the same task to multiple harnesses in parallel, with results merged back into one unified history. The near-term path is draft sessions — when a new idea strikes mid-task, fork a draft session (optionally on a different harness) to explore in parallel without interrupting the mainline.
+- **Multi-harness collaboration**: a BatonSession can run multiple human- or Plugin-initiated lanes concurrently while keeping one durable ledger, and each lane can hand work between Harnesses serially. The next step is dispatching one task to several harnesses as a coordinated fan-out and curating results into the mainline.
 - **Context intake**: the mainline is not a raw transcript of everything but the canonical history the user endorses. After a draft session produces results, the user decides whether to merge its conclusions into the mainline or discard them; discarding is not deletion — drafts stay durable and referenceable.
 - **Event-driven long-running loops**: listen to external events such as pushed commits or merged PRs and wake the corresponding session to continue its work, so agents are no longer confined to an interactive terminal.
 
 ## Architecture at a glance
 
-Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carries `intent`/`render` only, the controller owns the `Input` lifecycle + the driven-turn queue, adapters translate each harness's wire to a single normalized event stream, and `session.jsonl` persists it. The event stream is the sole source of truth; the UI is a projection.
+Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carries `intent`/`render` only, the controller owns `Input`, Lane scheduling, and Turn lifecycle, adapters translate each harness's wire to a normalized event stream, and one `session.jsonl` persists events from every lane. The event stream is the sole source of truth; the UI is a projection.
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
@@ -51,6 +51,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 ## Features
 
 - Use Claude Code and Codex from the same terminal interface
+- Run approved Plugin TurnRequests in isolated side lanes without blocking the session's main lane
 - Paste a clipboard image with `Ctrl+V` and send it as native image input to Codex or Claude Code
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
 - Use one Plan mode across Codex and Claude Code, with `/plan` or `Shift+Tab` to toggle back to Default

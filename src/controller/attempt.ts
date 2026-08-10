@@ -46,6 +46,7 @@ export interface HarnessDeliveryAttemptState {
   turnId: string;
   harness?: string;
   harnessTargetId: string;
+  laneId?: string;
   harnessSessionId?: string;
   phase: DeliveryAttemptPhase;
   /** 曾收到 admission Receipt；进入 uncertain 不抹掉这条已经发生的事实。 */
@@ -110,6 +111,7 @@ export class DeliveryAttemptLedger {
         turnId: event.turnId,
         harness: event.harness,
         harnessTargetId: event.harnessTargetId,
+        laneId: event.laneId,
         harnessSessionId: event.harnessSessionId,
         phase: "prepared",
         accepted: false,
@@ -173,6 +175,7 @@ type AttemptDraft = EventDraft<"_baton_delivery_attempt_update"> & {
   /** recovery 没有 live HarnessBinding，需沿用 prepared 时已持久化的执行归属。 */
   harness?: string;
   harnessTargetId?: string;
+  laneId?: string;
 };
 type AttemptEnvelope = EventEnvelope<"_baton_delivery_attempt_update">;
 
@@ -354,6 +357,7 @@ export class DeliveryAttempts<TContext> {
       parentEventId,
       harness: attempt.harness,
       harnessTargetId: attempt.harnessTargetId,
+      laneId: attempt.laneId,
       harnessSessionId,
       turnId: attempt.turnId,
       payload: update,
