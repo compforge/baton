@@ -826,7 +826,8 @@ describe("BatonChatProtocol harness commands", () => {
       await protocol.command("plan", "");
       expect(mode).toBe("plan");
       expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex mode: Plan");
-      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("plan mode");
+      expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · plan mode");
 
       await protocol.cycleMode();
       expect(mode).toBe("default");
@@ -933,14 +934,12 @@ describe("BatonChatProtocol State projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
-      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 6%");
+      expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 6%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
       await protocol.command("claude", "");
-      expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
-      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 40%");
+      expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 40%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
 
       await protocol.exit();

@@ -392,34 +392,25 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const statusDetails = [modeStatus, contextStatus, approvalStatus].filter(
     (detail): detail is string => detail !== undefined,
   );
-  const splitStatus = (item: RunStatusItem): RunStatusItem[] => {
-    if (statusDetails.length === 0) return [item];
-    const { startedAt, hint, ...primary } = item;
-    return [
-      primary,
-      {
-        id: `${item.id}:details`,
-        label: statusDetails.join(" · "),
-        ...(startedAt !== undefined ? { startedAt } : {}),
-        ...(hint ? { hint } : {}),
-      },
-    ];
-  };
-  const runStatus: RunStatusItem[] = activeTargetId
-    ? splitStatus({
+  const withStatusDetails = (item: RunStatusItem): RunStatusItem => ({
+    ...item,
+    label: [item.label, ...statusDetails].join(" · "),
+  });
+  const runStatusItem: RunStatusItem = activeTargetId
+    ? {
         id: `run:${activeTargetId}`,
         author: harnessAuthor(statusHarness),
         label: `${modelAndEffort} · ${runStatusLabel(state, activeTurnId)}`,
         startedAt: controller.activeStartedAt,
-      })
+      }
     : observedRun
-      ? splitStatus({
+      ? {
           id: `run:observed:${observedRun.turnId}`,
           author: harnessAuthor(statusHarness),
           label: `${modelAndEffort} · ${runStatusLabel(state, observedRun.turnId)} · background`,
           startedAt: observedRun.startedAt,
-        })
-      : splitStatus({
+        }
+      : {
           id: `agent:${harnessTargetId}`,
           author: harnessAuthor(
             state.perTarget.get(harnessTargetId)?.harness ??
@@ -427,7 +418,8 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
               harnessTargetId,
           ),
           label: `${modelAndEffort} · idle`,
-        });
+        };
+  const runStatus = [withStatusDetails(runStatusItem)];
   const busy = activeTargetId !== undefined || observedRuns.length > 0;
 
   const lastPlanId = state.perTarget.get(harnessTargetId)?.lastPlanId;
