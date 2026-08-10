@@ -100,10 +100,18 @@ export interface PluginResourceInteractionContext {
   basedOnRevision?: number;
 }
 
+/** Durable routing metadata for a TurnRequest authorization card. */
+export interface TurnRequestInteractionContext {
+  turnRequestId: string;
+  /** Missing means the host selection remains live until the user approves. */
+  requestedHarnessTargetId?: string;
+}
+
 export type Interaction = InteractionDraft & {
   interactionId: string;
   requester: InteractionRequester;
   pluginContext?: PluginResourceInteractionContext;
+  turnRequestContext?: TurnRequestInteractionContext;
 };
 
 /**

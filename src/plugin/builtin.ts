@@ -14,6 +14,7 @@ import {
   type ReconcileKey,
   type ReconcileResult,
   type ReconcileScope,
+  type ReconcileTurnRequest,
   type ScheduledReconcile,
 } from "./controller.ts";
 import { ReconcileQueue } from "./queue.ts";
@@ -213,7 +214,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: (key: ReconcileKey) => BatonSnapshot;
+  snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   onProposal(
     proposal: BuiltinResourceReconcileProposal,
@@ -221,6 +222,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   onInteraction?(
     interaction: BuiltinResourceReconcileInteraction,
   ): Promise<void> | void;
+  onTurnRequest?(request: ReconcileTurnRequest): Promise<void> | void;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
 }
@@ -251,10 +253,13 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly resourceKind: K;
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
-  private readonly snapshot: (key: ReconcileKey) => BatonSnapshot;
+  private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
   private readonly onProposal: BuiltinControllerOptions<K>["onProposal"];
   private readonly onInteraction: NonNullable<
     BuiltinControllerOptions<K>["onInteraction"]
+  >;
+  private readonly onTurnRequest: NonNullable<
+    BuiltinControllerOptions<K>["onTurnRequest"]
   >;
   private readonly executeWithCapacity: NonNullable<
     BuiltinControllerOptions<K>["executeWithCapacity"]
@@ -288,6 +293,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       (() => {
         throw new Error("plugin BuiltinController has no Interaction publisher");
       });
+    this.onTurnRequest =
+      options.onTurnRequest ??
+      (() => {
+        throw new Error("plugin BuiltinController has no TurnRequest publisher");
+      });
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
@@ -302,7 +312,8 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         this.executeWithCapacity(async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
-          const baton = deepFreeze(this.snapshot(key));
+          const resourceRef = builtinResourceRef(resource);
+          const baton = deepFreeze(this.snapshot(key, resourceRef));
           if (baton.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
               `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
@@ -329,7 +340,15 @@ export class BuiltinController<K extends BuiltinResourceKind> {
           if (result.output?.kind === "interaction") {
             await this.onInteraction(Object.freeze({
               key,
-              resource: builtinResourceRef(resource),
+              resource: resourceRef,
+              basedOnRevision: resource.metadata.revision,
+              request: result.output,
+            }));
+          }
+          if (result.output?.kind === "turn-request") {
+            await this.onTurnRequest(Object.freeze({
+              key,
+              resource: resourceRef,
               basedOnRevision: resource.metadata.revision,
               request: result.output,
             }));
@@ -377,6 +396,24 @@ export class BuiltinController<K extends BuiltinResourceKind> {
 
   scheduledReconciles(): ScheduledReconcile[] {
     return [];
+  }
+
+  /** Exact incarnation guard for Event-driven wakeups such as TurnRequest results. */
+  ownsResource(resource: ResourceRef): boolean {
+    if (
+      resource.apiVersion !== BATON_TURN_RESOURCE_TYPE.apiVersion ||
+      resource.kind !== this.resourceKind ||
+      resource.namespace !== BATON_SYSTEM_NAMESPACE
+    ) {
+      return false;
+    }
+    try {
+      return builtinResourceRef(
+        this.resources.get(this.resourceKind, resource.name),
+      ).uid === resource.uid;
+    } catch {
+      return false;
+    }
   }
 
   private assertOwns(key: ReconcileKey): void {

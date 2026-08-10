@@ -46,6 +46,7 @@ import {
   InputQueue,
   inputSnapshot,
   type InputRecord,
+  type InputSource,
   type InputSnapshot,
   type QueuedTurnSnapshot,
   type SubmitOutcome,
@@ -54,15 +55,36 @@ import { InteractionWaiters } from "./interaction.ts";
 import { TurnLedger, type TurnRecord } from "./turn.ts";
 
 export type {
+  InputSource,
   InputSnapshot,
   InputStatus,
   QueuedTurnSnapshot,
   SubmitOutcome,
 } from "./input.ts";
 
+export interface TurnRequestInput {
+  readonly turnRequestId: string;
+  readonly pluginInstanceId: string;
+  readonly harnessTargetId: string;
+  readonly messageId: string;
+  readonly turnId: string;
+  readonly blocks: PromptBlock[];
+}
+
+export type TurnRequestCancellation = "queued" | "running";
+
+function eventSourceOf(source: InputSource): EventSource {
+  return source.type === "user"
+    ? { type: "user" }
+    : {
+        type: "plugin",
+        pluginInstanceId: source.pluginInstanceId,
+      };
+}
+
 /**
  * Control：与 Input / Interaction resolution 并列的第三种用户信号
- * （见 docs/workflow.md“用户输入到 Harness”）。
+ * （见 docs/workflow.md“Input 到 Harness”）。
  * 不携带内容、不到达 model——是对 turn **生命周期**的命令，必须 out-of-band 够到正在跑的
  * turn（不进 queue，否则会排在它要打断的 turn 后面而死锁）。当前唯一 kind 是 `interrupt`
  * （Esc）；pause / abort-bash / shutdown 等作为新 kind 加入时按 kernel 演进规则处理。
@@ -281,6 +303,58 @@ export class Controller {
   }
 
   /**
+   * Materializes an approved TurnRequest as plugin-source Input. Its identities
+   * are already durable, and its request for a new driven Turn deliberately
+   * bypasses same-turn send and waits in the ordinary Input queue.
+   */
+  enqueueTurnRequest(input: TurnRequestInput): Promise<SubmitOutcome> {
+    if (
+      this.inputs.some(
+        (candidate) =>
+          candidate.source.type === "plugin" &&
+          candidate.source.turnRequestId === input.turnRequestId,
+      )
+    ) {
+      return Promise.reject(
+        new Error(`TurnRequest already has a live Input: ${input.turnRequestId}`),
+      );
+    }
+    const target = this.targetFor(input.harnessTargetId);
+    const outcome = this.inputQueue.enqueue(target, input.blocks, {
+      source: {
+        type: "plugin",
+        pluginInstanceId: input.pluginInstanceId,
+        turnRequestId: input.turnRequestId,
+      },
+      identity: {
+        messageId: input.messageId,
+        turnId: input.turnId,
+      },
+    });
+    this.changed();
+    void this.drain();
+    return outcome;
+  }
+
+  /** Cancels a queued Request, or interrupts its already-admitted Turn. */
+  cancelTurnRequest(turnRequestId: string): TurnRequestCancellation | undefined {
+    const queued = this.inputQueue.cancelTurnRequest(turnRequestId);
+    if (queued) {
+      this.changed();
+      return "queued";
+    }
+    const active = this.activeDriven();
+    if (
+      active?.turn?.source.type === "plugin" &&
+      active.turn.source.turnRequestId === turnRequestId
+    ) {
+      void this.interrupt();
+      return "running";
+    }
+    return undefined;
+  }
+
+  /**
    * 用户输入的统一入口。没有更早 follow-up、目标与当前 driven turn 一致且 HarnessSession
    * 已就绪时，直接交给 Adapter 依据原生运行态决定 same-turn send；其余情况进入全局队列。
    * observed turn（harness 自发）不接受输入——Baton 不拥有其生命周期。
@@ -346,7 +420,7 @@ export class Controller {
 
   /** 只允许撤回尚未开始执行的最新 turn；已被 drain 取走的 active turn 不在此列。 */
   recallLatestQueued(): QueuedTurnSnapshot | undefined {
-    const turn = this.inputQueue.recallLatest();
+    const turn = this.inputQueue.recallLatestUser();
     if (!turn) return undefined;
     this.changed();
     return turn;
@@ -604,7 +678,7 @@ export class Controller {
           turnId: opts.turnId,
           payload: { messageId: opts.input.messageId, content: opts.input.blocks },
         },
-        { type: "user" },
+        eventSourceOf(opts.input.source),
       );
       admitted.record.inputEventId = inputEvent.eventId;
     }

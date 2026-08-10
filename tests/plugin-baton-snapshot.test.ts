@@ -50,6 +50,7 @@ describe("BatonSnapshot", () => {
         harness: "claude",
         status: "queued",
         delivery: "prompt",
+        source: { type: "user" },
       }],
       harnessTargets: [
         { id: "codex", harness: "codex", label: "Codex" },

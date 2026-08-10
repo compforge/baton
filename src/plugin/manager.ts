@@ -4,6 +4,7 @@ import {
   type ReconcileInteraction,
   type ReconcileProposal,
   type ReconcileScope,
+  type ReconcileTurnRequest,
   type ScheduledReconcile,
 } from "./controller.ts";
 import {
@@ -32,6 +33,7 @@ import {
   type PluginCommandResult,
   type PluginPackage,
   type Resource,
+  type ResourceRef,
   type ResourceType,
   type SourceContext,
   BATON_SYSTEM_NAMESPACE,
@@ -99,6 +101,10 @@ import {
 } from "../logging.ts";
 import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
+import {
+  type ScheduledTurnRequest,
+  TurnRequestStore,
+} from "./turn-request.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -170,6 +176,14 @@ export interface ManagerOptions {
   pluginSupervisor?: PluginSupervisor;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
+  /** Host-owned bridge into the ordinary Input queue; never steers. */
+  enqueueTurnRequest?(
+    request: ScheduledTurnRequest,
+  ): Promise<unknown> | void;
+  /** Cancels a queued Request or interrupts its admitted Turn. */
+  cancelTurnRequest?(
+    turnRequestId: string,
+  ): "queued" | "running" | undefined;
   /** Board 展示内容变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
   /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
@@ -227,6 +241,7 @@ export interface PluginReloadResult {
 interface ManagedController {
   scope: ReconcileScope;
   watches: readonly Watch[];
+  ownsResource(resource: ResourceRef): boolean;
   cronSources?(): readonly CronSource[];
   startSources?(
     onError: (sourceId: string, error: unknown) => void,
@@ -307,6 +322,10 @@ export class Manager {
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => BatonSnapshot;
   private readonly interactions?: InteractionStore;
+  private readonly turnRequests?: TurnRequestStore;
+  private readonly enqueueTurnRequest?: ManagerOptions["enqueueTurnRequest"];
+  private readonly cancelHostTurnRequest?: ManagerOptions["cancelTurnRequest"];
+  private readonly dispatchedTurnRequests = new Set<string>();
   private readonly bindings = new Map<string, PluginBinding>();
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
@@ -378,7 +397,13 @@ export class Manager {
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
     if (options.session) {
       this.interactions = new InteractionStore(options.session);
+      this.turnRequests = new TurnRequestStore(options.session, {
+        onChanged: (request, key) =>
+          this.enqueueTurnRequestOwner(key, request.resource),
+      });
     }
+    this.enqueueTurnRequest = options.enqueueTurnRequest;
+    this.cancelHostTurnRequest = options.cancelTurnRequest;
     this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
@@ -445,10 +470,11 @@ export class Manager {
     validateSources(definition.sources, this.now());
     const controller = new Controller({
       ...definition,
-      snapshot: (key) => this.snapshotFor(key),
+      snapshot: (key, resource) => this.snapshotFor(key, resource),
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
       onInteraction: (interaction) => this.publishInteraction(interaction),
+      onTurnRequest: (request) => this.publishTurnRequest(request),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -488,10 +514,11 @@ export class Manager {
     const controller = new BuiltinController({
       ...definition,
       resources: this.batonResources,
-      snapshot: (key) => this.snapshotFor(key),
+      snapshot: (key, resource) => this.snapshotFor(key, resource),
       executeWithCapacity: (execute) => this.capacity.run(execute),
       onProposal: (proposal) => this.publishProposal(proposal),
       onInteraction: (interaction) => this.publishInteraction(interaction),
+      onTurnRequest: (request) => this.publishTurnRequest(request),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -877,6 +904,10 @@ export class Manager {
     return this.proposals.listPending();
   }
 
+  listTurnRequests() {
+    return this.turnRequests?.list() ?? [];
+  }
+
   listBoardItems(): readonly BoardItem[] {
     return this.boardItemsCache ?? [];
   }
@@ -903,7 +934,23 @@ export class Manager {
   async resolveInteraction(
     interactionId: string,
     resolution: InteractionResolution,
+    options?: { harnessTargetId?: string },
   ): Promise<boolean> {
+    if (this.turnRequests) {
+      const targetIds = new Set(
+        this.snapshot().harnessTargets.map((target) => target.id),
+      );
+      const resolved = this.turnRequests.resolve(
+        interactionId,
+        resolution,
+        options?.harnessTargetId ?? "",
+        targetIds,
+      );
+      if (resolved) {
+        if (resolved.scheduled) this.dispatchTurnRequest(resolved.scheduled);
+        return true;
+      }
+    }
     const key = this.interactions?.resolve(interactionId, resolution);
     if (!key) return false;
     try {
@@ -912,6 +959,24 @@ export class Manager {
       // Resolution 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
     }
     return true;
+  }
+
+  async cancelTurnRequest(identifier?: string): Promise<boolean> {
+    const request = this.turnRequests?.latestCancellable(
+      identifier?.trim() || undefined,
+    );
+    if (!request || !this.turnRequests) return false;
+
+    if (this.turnRequests.isAdmitted(request.requestId)) {
+      return this.cancelHostTurnRequest?.(request.requestId) === "running";
+    }
+
+    const key = this.turnRequests.cancelBeforeAdmission(
+      request.requestId,
+      "user",
+    );
+    this.cancelHostTurnRequest?.(request.requestId);
+    return key !== undefined;
   }
 
   getBatonResource<K extends BuiltinResourceKind>(
@@ -938,10 +1003,31 @@ export class Manager {
     this.interactions.open(draft);
   }
 
-  private snapshotFor(key: ReconcileKey): BatonSnapshot {
+  private publishTurnRequest(draft: ReconcileTurnRequest): void {
+    if (!this.turnRequests || !this.enqueueTurnRequest) {
+      throw new Error(
+        "plugin Manager host does not support TurnRequest execution",
+      );
+    }
+    const requestedTarget = draft.request.harnessTargetId;
+    if (
+      requestedTarget &&
+      !this.snapshot().harnessTargets.some(
+        (target) => target.id === requestedTarget,
+      )
+    ) {
+      throw new Error(
+        `TurnRequest ${draft.request.requestKey} references unknown HarnessTarget: ${requestedTarget}`,
+      );
+    }
+    this.turnRequests.record(draft);
+  }
+
+  private snapshotFor(key: ReconcileKey, resource: ResourceRef): BatonSnapshot {
     return {
       ...this.snapshot(),
       pluginInteractions: this.interactions?.snapshots(key) ?? [],
+      turnRequests: this.turnRequests?.snapshots(key, resource) ?? [],
     };
   }
 
@@ -949,6 +1035,60 @@ export class Manager {
     for (const proposal of this.proposals.listPending()) {
       await this.onProposal(proposal);
     }
+  }
+
+  private restoreTurnRequests(): void {
+    for (const request of this.turnRequests?.restore() ?? []) {
+      this.dispatchTurnRequest(request);
+    }
+  }
+
+  private dispatchTurnRequest(request: ScheduledTurnRequest): void {
+    if (
+      !this.enqueueTurnRequest ||
+      this.dispatchedTurnRequests.has(request.requestId)
+    ) {
+      return;
+    }
+    this.dispatchedTurnRequests.add(request.requestId);
+    void Promise.resolve()
+      .then(() => this.enqueueTurnRequest!(request))
+      .catch((error) => {
+        this.turnRequests?.cancelBeforeAdmission(
+          request.requestId,
+          "recovery",
+          error instanceof Error ? error.message : String(error),
+        );
+        this.log?.({
+          level: "error",
+          source: "baton",
+          component: "plugin.turn-request",
+          message: "TurnRequest dispatch failed",
+          pluginInstanceId: request.pluginInstanceId,
+          turnId: request.turnId,
+          harnessTargetId: request.harnessTargetId,
+          error: logError(error),
+          attributes: { turnRequestId: request.requestId },
+        });
+      });
+  }
+
+  private enqueueTurnRequestOwner(
+    key: ReconcileKey,
+    resource: ResourceRef,
+  ): void {
+    if (this.closed) return;
+    const controller = this.controllers.get(reconcileScopeId(key));
+    if (
+      !controller ||
+      !controller.ownsResource(resource) ||
+      this.suspendedControllers.has(reconcileScopeId(key))
+    ) {
+      return;
+    }
+    void controller.enqueue(key).catch(() => {
+      // Reconcile failures use the ordinary retry path.
+    });
   }
 
   private async startManager(): Promise<void> {
@@ -966,6 +1106,7 @@ export class Manager {
     for (const failure of failures) {
       if (failure) this.reportActivationFailure(failure);
     }
+    this.restoreTurnRequests();
     await this.restoreProposals();
     const controllers = [...this.controllers.values()];
     const scheduled = controllers.map((controller) => ({
@@ -1492,6 +1633,7 @@ export class Manager {
     this.unsubscribeBatonResources?.();
     this.batonResources?.close();
     this.interactions?.close();
+    this.turnRequests?.close();
     try {
       await this.pluginSupervisor?.close();
     } catch (error) {
@@ -1560,6 +1702,19 @@ export class Manager {
   }
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
+    if (change.kind === "deleted" && this.turnRequests) {
+      const resource = change.resource;
+      const ref: ResourceRef = {
+        apiVersion: resource.apiVersion,
+        kind: resource.kind,
+        namespace: resource.metadata.namespace,
+        name: resource.metadata.name,
+        uid: resource.metadata.uid,
+      };
+      for (const requestId of this.turnRequests.cancelForResource(ref)) {
+        this.cancelHostTurnRequest?.(requestId);
+      }
+    }
     this.notifyBoardChanged();
     void this.routePluginResourceChange(change);
   }

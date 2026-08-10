@@ -17,6 +17,24 @@ export function validatePluginOutput(value: unknown): asserts value is PluginOut
     nonEmpty("reconcile proposed-input text", output.text);
     return;
   }
+  if (output.kind === "turn-request") {
+    nonEmpty("reconcile turn-request requestKey", output.requestKey);
+    nonEmpty("reconcile turn-request title", output.title);
+    nonEmpty("reconcile turn-request prompt", output.prompt);
+    if (
+      output.description !== undefined &&
+      typeof output.description !== "string"
+    ) {
+      throw new Error("reconcile turn-request description must be a string");
+    }
+    if (output.harnessTargetId !== undefined) {
+      nonEmpty(
+        "reconcile turn-request harnessTargetId",
+        output.harnessTargetId,
+      );
+    }
+    return;
+  }
   if (output.kind !== "interaction") {
     throw new Error(`unsupported PluginOutput kind: ${String(output.kind)}`);
   }

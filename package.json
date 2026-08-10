@@ -42,7 +42,7 @@
     "@opentui/core": "^0.5.1",
     "@opentui/keymap": "^0.5.1",
     "@opentui/react": "^0.5.1",
-    "@compforge/baton-plugin": "0.2.4",
+    "@compforge/baton-plugin": "0.2.5",
     "bun": "^1.3.14",
     "chat-tui": "github:compforge/chat-tui#beee01e2527f9ed636030705b95b35eea6632326",
     "cron-parser": "^5.6.2",

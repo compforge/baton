@@ -57,6 +57,15 @@ describe("session lifecycle", () => {
   test("old generated titles yield to a preview recovered from session history", () => {
     const h = store.createSession({ cwd: "/tmp/proj", title: "chat @ /tmp/proj" });
     h.append({
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      kind: "user_message",
+      harness: "codex",
+      payload: {
+        messageId: "m_plugin",
+        content: [{ type: "text", text: "Plugin-scheduled work" }],
+      },
+    });
+    h.append({
       source: { type: "baton" },
       kind: "user_message",
       harness: "codex",

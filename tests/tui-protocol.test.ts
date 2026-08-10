@@ -1073,6 +1073,43 @@ describe("BatonChatProtocol State projection", () => {
 });
 
 describe("BatonChatProtocol transcript projection", () => {
+  test("labels a Plugin-source user-role message with its Plugin identity", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-input-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "user_message",
+        harness: "codex",
+        harnessTargetId: "codex",
+        turnId: "t_plugin",
+        payload: {
+          messageId: "m_plugin",
+          content: [{ type: "text", text: "Implement requirement." }],
+        },
+      });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      expect(
+        protocol.stateStore.getState("timeline").items.find(
+          (item) => item.id === "m_plugin",
+        ),
+      ).toMatchObject({
+        role: "user",
+        author: "reqloop_default",
+        text: "Implement requirement.",
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // 委托状态是否可见改由 adapter 报告的生效路由驱动（见 session-controller.test.ts）：
   // 投影不再读 config——config 是意图，且投影层不得按 harness 分支（不变量 #3）。
   test("renders auto-review receipts beside the target tool", async () => {
@@ -1716,6 +1753,68 @@ describe("interaction eventization: pending projects from the event stream", () 
       rmSync(root, { recursive: true, force: true });
     }
   });
+  test("shows the live Target for an implicit TurnRequest and fixes an explicit one", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-turn-request-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "interaction.opened",
+        payload: {
+          kind: "permission",
+          interactionId: "ix_turn_implicit",
+          requester: { type: "plugin", pluginInstanceId: "reqloop_default" },
+          turnRequestContext: { turnRequestId: "trq_implicit" },
+          title: "Implement requirement",
+          description: "Prompt (read-only):\n\nImplement it.",
+          options: APPROVAL_OPTIONS,
+        },
+      });
+      expect(
+        protocol.stateStore.getState("composer").interactions?.[0],
+      ).toMatchObject({
+        requester: "reqloop_default",
+        approval: { description: expect.stringContaining("Target: codex") },
+      });
+
+      await protocol.command("claude", "");
+      expect(
+        protocol.stateStore.getState("composer").interactions?.[0],
+      ).toMatchObject({
+        approval: { description: expect.stringContaining("Target: claude") },
+      });
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "interaction.opened",
+        payload: {
+          kind: "permission",
+          interactionId: "ix_turn_explicit",
+          requester: { type: "plugin", pluginInstanceId: "reqloop_default" },
+          turnRequestContext: {
+            turnRequestId: "trq_explicit",
+            requestedHarnessTargetId: "codex",
+          },
+          title: "Review requirement",
+          options: APPROVAL_OPTIONS,
+        },
+      });
+      expect(
+        protocol.stateStore.getState("composer").interactions?.[1],
+      ).toMatchObject({
+        approval: { description: expect.stringContaining("Target: codex") },
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Plugin Proposal projection", () => {
@@ -2041,6 +2140,16 @@ describe("BatonChatProtocol input history", () => {
         harness: "claude-code",
         turnId: "t_2",
         payload: { messageId: "m_2", content: [{ type: "text", text: "seeded two" }] },
+      });
+      session.append({
+        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+        kind: "user_message",
+        harness: "claude-code",
+        turnId: "t_plugin",
+        payload: {
+          messageId: "m_plugin",
+          content: [{ type: "text", text: "plugin prompt" }],
+        },
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       expect(protocol.historyPrev("")).toEqual({ text: "seeded two" });

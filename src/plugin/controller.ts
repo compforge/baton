@@ -5,6 +5,7 @@ import type {
   Output as PluginInteractionOutput,
   ResourceRef,
   ResourceType,
+  TurnRequestOutput,
   Watch,
 } from "@compforge/baton-plugin";
 
@@ -94,6 +95,28 @@ export type ReconcileInteraction =
   | PluginResourceReconcileInteraction
   | BuiltinResourceReconcileInteraction;
 
+export interface PluginResourceReconcileTurnRequest {
+  readonly key: ReconcileKey;
+  readonly resource: ResourceRef;
+  readonly basedOnGeneration: number;
+  readonly basedOnResourceVersion?: string;
+  readonly basedOnRevision?: never;
+  readonly request: TurnRequestOutput;
+}
+
+export interface BuiltinResourceReconcileTurnRequest {
+  readonly key: ReconcileKey;
+  readonly resource: ResourceRef;
+  readonly basedOnGeneration?: never;
+  readonly basedOnResourceVersion?: never;
+  readonly basedOnRevision: number;
+  readonly request: TurnRequestOutput;
+}
+
+export type ReconcileTurnRequest =
+  | PluginResourceReconcileTurnRequest
+  | BuiltinResourceReconcileTurnRequest;
+
 export interface ScheduledReconcile {
   readonly key: ReconcileKey;
   readonly nextReconcileAt: Date;
@@ -109,11 +132,12 @@ export interface ControllerOptions<TSpec, TStatus> {
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: (key: ReconcileKey) => BatonSnapshot;
+  snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   onProposal(proposal: ReconcileProposal): Promise<void> | void;
   onInteraction?(interaction: ReconcileInteraction): Promise<void> | void;
+  onTurnRequest?(request: ReconcileTurnRequest): Promise<void> | void;
   /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
@@ -180,6 +204,7 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 interface ReconcileExecution {
   proposal?: ReconcileProposal;
   interaction?: ReconcileInteraction;
+  turnRequest?: ReconcileTurnRequest;
   deletedResource?: Readonly<PluginResource<unknown, unknown>>;
   nextReconcileAt: Date | null;
 }
@@ -197,13 +222,18 @@ export class Controller<TSpec, TStatus> {
   private readonly resourceType: ResourceType;
   private readonly reconcileResource: PluginController<TSpec, TStatus>["reconcile"];
   private readonly now: () => Date;
-  private readonly snapshot: (key: ReconcileKey) => BatonSnapshot;
+  private readonly snapshot: NonNullable<
+    ControllerOptions<TSpec, TStatus>["snapshot"]
+  >;
   private readonly executeWithCapacity: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
   private readonly onProposal: ControllerOptions<TSpec, TStatus>["onProposal"];
   private readonly onInteraction: NonNullable<
     ControllerOptions<TSpec, TStatus>["onInteraction"]
+  >;
+  private readonly onTurnRequest: NonNullable<
+    ControllerOptions<TSpec, TStatus>["onTurnRequest"]
   >;
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
@@ -228,6 +258,11 @@ export class Controller<TSpec, TStatus> {
       (() => {
         throw new Error("plugin Controller has no Interaction publisher");
       });
+    this.onTurnRequest =
+      options.onTurnRequest ??
+      (() => {
+        throw new Error("plugin Controller has no TurnRequest publisher");
+      });
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -242,6 +277,9 @@ export class Controller<TSpec, TStatus> {
           if (execution.proposal) await this.onProposal(execution.proposal);
           if (execution.interaction) {
             await this.onInteraction(execution.interaction);
+          }
+          if (execution.turnRequest) {
+            await this.onTurnRequest(execution.turnRequest);
           }
           if (execution.deletedResource) {
             options.onResourceDeleted?.(execution.deletedResource);
@@ -308,6 +346,23 @@ export class Controller<TSpec, TStatus> {
     );
   }
 
+  /** Exact incarnation guard for Event-driven wakeups such as TurnRequest results. */
+  ownsResource(resource: ResourceRef): boolean {
+    if (
+      resource.apiVersion !== this.resourceType.apiVersion ||
+      resource.kind !== this.resourceType.kind ||
+      resource.namespace !== this.scope.pluginInstanceId
+    ) {
+      return false;
+    }
+    try {
+      return this.store.get(this.resourceType, resource.name).metadata.uid ===
+        resource.uid;
+    } catch {
+      return false;
+    }
+  }
+
   resourceKeys(): ReconcileKey[] {
     return this.store.list(this.resourceType).map((resource) =>
       ownedKey({
@@ -339,7 +394,14 @@ export class Controller<TSpec, TStatus> {
         const resource = deepFreeze(
           this.store.get<TSpec, TStatus>(this.resourceType, key.resourceId),
         );
-        const baton = deepFreeze(this.snapshot(key));
+        const resourceRef = Object.freeze({
+          apiVersion: resource.apiVersion,
+          kind: resource.kind,
+          namespace: resource.metadata.namespace,
+          name: resource.metadata.name,
+          uid: resource.metadata.uid,
+        });
+        const baton = deepFreeze(this.snapshot(key, resourceRef));
         if (baton.session.batonSessionId !== this.scope.batonSessionId) {
           throw new Error(
             `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
@@ -399,13 +461,18 @@ export class Controller<TSpec, TStatus> {
             ? {
                 interaction: Object.freeze({
                   key,
-                  resource: Object.freeze({
-                    apiVersion: resource.apiVersion,
-                    kind: resource.kind,
-                    namespace: resource.metadata.namespace,
-                    name: resource.metadata.name,
-                    uid: resource.metadata.uid,
-                  }),
+                  resource: resourceRef,
+                  basedOnGeneration: resource.metadata.generation,
+                  basedOnResourceVersion: latest.metadata.resourceVersion,
+                  request: output,
+                }),
+              }
+            : {}),
+          ...(output?.kind === "turn-request"
+            ? {
+                turnRequest: Object.freeze({
+                  key,
+                  resource: resourceRef,
                   basedOnGeneration: resource.metadata.generation,
                   basedOnResourceVersion: latest.metadata.resourceVersion,
                   request: output,

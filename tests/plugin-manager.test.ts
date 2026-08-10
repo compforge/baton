@@ -7,6 +7,7 @@ import type {
   ReconcileKey,
   ReconcileScope,
 } from "../src/plugin/controller.ts";
+import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
@@ -182,6 +183,194 @@ describe("plugin Manager", () => {
       outcome: "answered",
       answers: { decision: ["req_1"] },
     });
+    await manager.close();
+  });
+
+  test("authorizes, schedules, and reconciles a TurnRequest result", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const phases: Array<string | undefined> = [];
+    const scheduled: Array<{
+      requestId: string;
+      harnessTargetId: string;
+      messageId: string;
+      turnId: string;
+      prompt: string;
+    }> = [];
+    const manager = new Manager({
+      proposals: new ProposalStore({ session }),
+      session,
+      snapshot() {
+        return {
+          ...emptyBatonSnapshot(session.id),
+          harnessTargets: [
+            { id: "codex", harness: "codex" },
+            { id: "claude", harness: "claude" },
+          ],
+        };
+      },
+      enqueueTurnRequest(request) {
+        scheduled.push(request);
+      },
+      onProposal() {},
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(baton) {
+        const request = baton.turnRequests.find(
+          (candidate) => candidate.requestKey === "implement",
+        );
+        phases.push(request?.phase);
+        if (request) return;
+        return {
+          output: {
+            kind: "turn-request",
+            requestKey: "implement",
+            title: "Implement requirement",
+            prompt: "Implement run_1.",
+          },
+        };
+      },
+    });
+    const reconcileKey = {
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    };
+
+    await manager.enqueue(reconcileKey);
+    const interaction = [...session.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(interaction?.turnRequestContext).toBeDefined();
+    expect(
+      await manager.resolveInteraction(
+        interaction!.interactionId,
+        { kind: "permission", outcome: "selected", optionId: "allow_once" },
+        { harnessTargetId: "claude" },
+      ),
+    ).toBe(true);
+    await waitFor(() => scheduled.length === 1);
+    expect(scheduled[0]).toMatchObject({
+      harnessTargetId: "claude",
+      prompt: "Implement run_1.",
+    });
+    await waitFor(() => phases.includes("queued"));
+    await manager.start();
+    expect(scheduled).toHaveLength(1);
+
+    const input = scheduled[0]!;
+    session.append({
+      kind: "user_message",
+      source: {
+        type: "plugin",
+        pluginInstanceId: "reqloop_default",
+      },
+      harness: "claude",
+      harnessTargetId: input.harnessTargetId,
+      turnId: input.turnId,
+      payload: {
+        messageId: input.messageId,
+        content: [{ type: "text", text: input.prompt }],
+      },
+    });
+    await waitFor(() => phases.includes("running"));
+    session.append({
+      kind: "_baton_turn_summary",
+      source: { type: "baton" },
+      harness: "claude",
+      harnessTargetId: input.harnessTargetId,
+      turnId: input.turnId,
+      payload: {
+        turnId: input.turnId,
+        stopReason: "end_turn",
+        agentText: "Implemented.",
+        toolCalls: [],
+      },
+    });
+    await waitFor(() => phases.includes("completed"));
+    expect(manager.listTurnRequests()[0]).toMatchObject({
+      phase: "completed",
+      result: { agentText: "Implemented." },
+    });
+    expect(scheduled).toHaveLength(1);
+    await manager.close();
+  });
+
+  test("cancels a pre-admission TurnRequest when its Resource incarnation is deleted", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const cancelled: string[] = [];
+    const failures: unknown[] = [];
+    const manager = new Manager({
+      proposals: new ProposalStore({ session }),
+      session,
+      enqueueTurnRequest() {},
+      cancelTurnRequest(requestId) {
+        cancelled.push(requestId);
+        return "queued";
+      },
+      onProposal() {},
+      onReconcileError(failure) {
+        failures.push(failure.error);
+      },
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(_baton, resource) {
+        if (resource.metadata.deletionTimestamp) return;
+        return {
+          output: {
+            kind: "turn-request",
+            requestKey: "implement",
+            title: "Implement requirement",
+            prompt: "Implement run_1.",
+          },
+        };
+      },
+    });
+    const reconcileKey = {
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    };
+
+    await manager.enqueue(reconcileKey);
+    const requestId = manager.listTurnRequests()[0]!.requestId;
+    resources.requestDeletion(
+      resourceType("Requirement"),
+      "run_1",
+      new Date("2026-08-10T00:00:00.000Z"),
+    );
+    await manager.enqueue(reconcileKey);
+    await Bun.sleep(20);
+
+    expect(manager.listTurnRequests()[0]?.phase).toBe("cancelled");
+    expect(cancelled).toEqual([requestId]);
+    expect(failures).toEqual([]);
     await manager.close();
   });
 

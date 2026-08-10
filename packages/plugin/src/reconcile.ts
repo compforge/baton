@@ -4,6 +4,7 @@ import type { BoardPresentation } from "./board.ts";
 import type { Output as InteractionOutput } from "./interaction.ts";
 import type { ControllerSource } from "./source.ts";
 import type { Watch } from "./watch.ts";
+import type { TurnRequestOutput } from "./turn-request.ts";
 
 /** Identifies one primary Resource in the registering Controller's scope. */
 export interface ReconcileRequest {
@@ -15,6 +16,7 @@ export type PluginOutput =
       readonly kind: "proposed-input";
       readonly text: string;
     }
+  | TurnRequestOutput
   | InteractionOutput;
 
 export interface ReconcileResult {

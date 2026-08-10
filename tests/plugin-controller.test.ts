@@ -8,6 +8,7 @@ import {
   type ControllerOptions,
   type ReconcileKey,
   type ReconcileProposal,
+  type ReconcileTurnRequest,
 } from "../src/plugin/controller.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
@@ -151,6 +152,54 @@ describe("plugin Controller", () => {
 
     await controller.enqueue(key());
     expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
+  });
+
+  test("publishes a TurnRequest with its exact Resource incarnation", async () => {
+    const resources = store(testRoot());
+    const resource = resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    const requests: ReconcileTurnRequest[] = [];
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile() {
+        return {
+          output: {
+            kind: "turn-request",
+            requestKey: "implement",
+            title: "Implement requirement",
+            prompt: "Implement run_1.",
+          },
+        };
+      },
+      onProposal() {},
+      onTurnRequest(request) {
+        requests.push(request);
+      },
+    });
+
+    await controller.enqueue(key());
+    expect(requests).toEqual([{
+      key: key(),
+      resource: {
+        apiVersion: REQ_LOOP_RUN.apiVersion,
+        kind: REQ_LOOP_RUN.kind,
+        namespace: "reqloop_default",
+        name: "run_1",
+        uid: resource.metadata.uid,
+      },
+      basedOnGeneration: 1,
+      basedOnResourceVersion: "1",
+      request: {
+        kind: "turn-request",
+        requestKey: "implement",
+        title: "Implement requirement",
+        prompt: "Implement run_1.",
+      },
+    }]);
   });
 
   test("finalizes a terminating Resource only after reconcile succeeds", async () => {

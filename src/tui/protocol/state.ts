@@ -100,9 +100,21 @@ function interactionRequester(interaction: Interaction): string {
   return "baton";
 }
 
-function interactionView(interaction: Interaction): InteractionView {
+function interactionView(
+  interaction: Interaction,
+  selectedHarnessTargetId: string,
+): InteractionView {
   const requester = interactionRequester(interaction);
   if (interaction.kind === "permission") {
+    const turnRequestTarget = interaction.turnRequestContext
+      ? interaction.turnRequestContext.requestedHarnessTargetId ??
+        selectedHarnessTargetId
+      : undefined;
+    const description = turnRequestTarget
+      ? [`Target: ${turnRequestTarget}`, interaction.description]
+          .filter((part): part is string => Boolean(part))
+          .join("\n\n")
+      : interaction.description;
     return {
       id: interaction.interactionId,
       kind: "approval",
@@ -111,7 +123,7 @@ function interactionView(interaction: Interaction): InteractionView {
       cancelResponse: { kind: "cancelled" },
       approval: {
         title: interaction.title,
-        description: interaction.description,
+        description,
         options: interaction.options.map((option) => ({
           optionId: option.optionId,
           name: option.name,
@@ -334,10 +346,13 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
+  const hasRecallableQueuedInput = controller.queuedTurns.some(
+    (turn) => turn.source.type === "user",
+  );
   const interactions: InteractionView[] = [
     ...[...state.interactions.values()]
       .filter((item) => !item.resolution)
-      .map((item) => interactionView(item.interaction)),
+      .map((item) => interactionView(item.interaction, harnessTargetId)),
     ...pendingProposals.map((proposal) => ({
       id: proposal.proposalId,
       kind: "suggested_input" as const,
@@ -451,7 +466,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       queued: controller.queuedTurns.map((turn) => ({
         id: String(turn.id),
         text: userVisibleText(composerTextOf(turn.blocks)),
-        tag: turn.harnessTargetId,
+        tag:
+          turn.source.type === "plugin"
+            ? `${turn.source.pluginInstanceId} · request`
+            : turn.harnessTargetId,
       })),
       picker: input.picker
         ? {
@@ -463,7 +481,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         : null,
       interactions,
       placeholder: `Message ${harnessTargetId} (/ commands, @ mentions, Shift+Tab mode, ${
-        controller.queueLength > 0
+        hasRecallableQueuedInput
           ? "↑ recall queued"
           : controller.isBusy
             ? "Enter sends or queues, Esc to interrupt"

@@ -5,7 +5,10 @@ import type {
   Interaction,
   InteractionRequester,
 } from "../interaction/types.ts";
-import type { Snapshot as PluginInteractionSnapshot } from "@compforge/baton-plugin";
+import type {
+  Snapshot as PluginInteractionSnapshot,
+  TurnRequestSnapshot,
+} from "@compforge/baton-plugin";
 import type { SessionState } from "../store/reduce.ts";
 
 type SnapshotReadonly<T> =
@@ -43,6 +46,7 @@ export interface BatonInputSnapshot {
   readonly harness: string;
   readonly status: InputSnapshot["status"];
   readonly delivery: InputSnapshot["delivery"];
+  readonly source: SnapshotReadonly<InputSnapshot["source"]>;
 }
 
 export interface BatonHarnessTargetSnapshot {
@@ -72,6 +76,8 @@ export interface BatonSnapshot {
   readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
   /** 当前 reconcile Resource 曾请求的持久决策；Manager 在调用前按 Resource 过滤。 */
   readonly pluginInteractions: readonly PluginInteractionSnapshot[];
+  /** 当前 reconcile Resource 曾请求的新 Turn；Manager 在调用前按 Resource 过滤。 */
+  readonly turnRequests: readonly TurnRequestSnapshot[];
   readonly latestTurn?: SnapshotReadonly<TurnSummary>;
   readonly turns: readonly SnapshotReadonly<TurnSummary>[];
 }
@@ -129,6 +135,7 @@ export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonS
         ...(entry.turnId === undefined ? {} : { turnId: entry.turnId }),
       })),
     pluginInteractions: [],
+    turnRequests: [],
     turns: options.state.turnSummaries.map((turn) => ({
       ...turn,
       toolCalls: turn.toolCalls.map((toolCall) => ({ ...toolCall })),
@@ -158,6 +165,7 @@ export function emptyBatonSnapshot(batonSessionId: string): BatonSnapshot {
     harnessTargets: [],
     pendingInteractions: [],
     pluginInteractions: [],
+    turnRequests: [],
     turns: [],
   });
 }

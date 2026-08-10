@@ -401,8 +401,17 @@ describe("maybeGenerateSessionTitle", () => {
     expect(stub.requests).toHaveLength(0);
   });
 
-  test("无用户输入（control-only session）不生成", async () => {
+  test("无真实用户输入（只有 Plugin prompt）不生成", async () => {
     const session = store.createSession({ cwd: "/repo" });
+    session.append({
+      kind: "user_message",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      turnId: "t_plugin",
+      payload: {
+        messageId: "m_plugin",
+        content: [{ type: "text", text: "Plugin-scheduled work" }],
+      },
+    });
     const stub = new StubAdapter("claude", async () => ({ title: "x" }));
     expect(
       await maybeGenerateSessionTitle({
