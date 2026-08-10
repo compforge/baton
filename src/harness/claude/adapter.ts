@@ -2,6 +2,7 @@
 // SDK 以子进程拉起 claude CLI；可执行文件可换成公司包装器（BATON_CLAUDE_BIN），
 // 凭证零持有，复用本机登录态。见 docs/harness/claude-code.md。
 
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
@@ -558,6 +559,14 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   pendingTaskOps: Map<string, TaskToolOp>;
   /** 未映射 wire 形状按 key 限流，只在每个 session 首次出现时报警。 */
   unmappedMessageKeys?: Set<string>;
+  /**
+   * steer offer 出去、尚未在 SDK 流中确认归属的消息：uuid → 来源 turn/message。
+   * CLI 可能把运行中推送的消息排队而非折进当前 turn（fold 时机是 CLI 内部时序，
+   * 无回执）；凭此映射做归属对账（turn 收口时 warn）与 interrupt 回执匹配。
+   * 条目在流中回显该 uuid 时移除；容量有界，满时淘汰最旧条目。
+   * 懒初始化：部分调用方（测试夹具、native import）只构造最小 runtime。
+   */
+  pendingOfferUuids?: Map<string, { turnId: string; messageId: string }>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
   lastContextSample?: ClaudeContextSample;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
@@ -657,6 +666,9 @@ export async function claudeUserMessage(blocks: PromptBlock[]): Promise<SDKUserM
     type: "user",
     session_id: "",
     parent_tool_use_id: null,
+    // 调用方打 uuid：CLI 的队列跟踪（interrupt 回执 still_queued、cancel_async_message）
+    // 只认 uuid-stamped 消息；无 uuid 的消息入队后不可见、不可撤回。
+    uuid: randomUUID(),
     message: {
       role: "user",
       content,
@@ -1106,6 +1118,17 @@ export class ClaudeAdapter implements HarnessAdapter {
           reason: "Claude streaming input is unavailable",
         };
       }
+      // offer 成功不代表进入当前 turn（CLI 可能排队）；登记 uuid 供收口时对账。
+      // 容量有界：淘汰最旧条目，避免回显不带 uuid 时 Map 无界增长。
+      const pendingOffers = (rt.pendingOfferUuids ??= new Map());
+      if (pendingOffers.size >= 64) {
+        const oldest = pendingOffers.keys().next().value;
+        if (oldest !== undefined) pendingOffers.delete(oldest);
+      }
+      pendingOffers.set(message.uuid as string, {
+        turnId: active.turnId,
+        messageId: input.messageId,
+      });
       this.emit(
         rt,
         {
@@ -1295,6 +1318,24 @@ export class ClaudeAdapter implements HarnessAdapter {
   private finishTurn(rt: ClaudeRuntime, emit: EventSink, turn: ClaudeTurn, stopReason: string, raw?: unknown): void {
     if (turn.finalized) return;
     turn.finalized = true;
+    // steer 归属对账（观测）：offer 时乐观记了 delivery:"steer"，若 turn 收口前
+    // 该 uuid 未在本 turn 流中回显，说明它被 CLI 排队（或回显不带 uuid——此时
+    // 每条 steer 都会报警，本身就是机制失效的信号）。保留条目：消息可能在后续
+    // turn 物化，届时 case "user" 会留痕并清理。
+    let orphaned = 0;
+    for (const offer of rt.pendingOfferUuids?.values() ?? []) {
+      if (offer.turnId === turn.turnId) orphaned++;
+    }
+    if (orphaned > 0) {
+      this.options.log?.({
+        level: "warn",
+        source: "harness",
+        component: "claude.steer",
+        harness: this.harness,
+        turnId: turn.turnId,
+        message: `${orphaned} steered message(s) not observed in turn stream before finalize; attribution may be optimistic (queued CLI-side or echo lacks uuid)`,
+      });
+    }
     emit({
       kind: "state_update",
       payload: { state: "idle", stopReason },
@@ -1318,7 +1359,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (!rt?.activeQuery || !turn) return;
     turn.cancelRequested = true;
     // streaming query 本身保持存活；SDK result 仍从 consumeQuery 收口当前 turn。
-    await rt.activeQuery.interrupt().catch((error) => {
+    const receipt = await rt.activeQuery.interrupt().catch((error) => {
       this.options.log?.({
         level: "warn",
         source: "harness",
@@ -1328,7 +1369,23 @@ export class ClaudeAdapter implements HarnessAdapter {
         message: "Claude SDK interrupt failed",
         error: logError(error),
       });
+      return undefined;
     });
+    // interrupt 不动 CLI 侧已排队的消息：steer offer 若实际被排队而非折进当前 turn，
+    // 它会在 interrupt 之后自行开新 turn 跑起来。这里只做观测（匹配自己 offer 过的
+    // uuid；回执里其余内部 uuid 按 SDK 契约忽略），量化后再决定是否撤回。
+    for (const uuid of receipt?.still_queued ?? []) {
+      const offer = rt.pendingOfferUuids?.get(uuid);
+      if (!offer) continue;
+      this.options.log?.({
+        level: "warn",
+        source: "harness",
+        component: "claude.cancel",
+        harness: this.harness,
+        turnId: turn.turnId,
+        message: `interrupt left steered message ${offer.messageId} (offered to turn ${offer.turnId}) queued CLI-side; it may still run as a new turn`,
+      });
+    }
   }
 
   async close(ref: HarnessSessionHandle): Promise<void> {
@@ -1610,6 +1667,24 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       case "user": {
+        // steer offer 的 uuid 在流中回显 = 归属确认。若回显落在别的 turn，
+        // 说明该消息当时被 CLI 排队、后来才自成回合——之前记的 delivery:"steer"
+        // 是乐观归属，此处如实留痕。
+        const echoedUuid = "uuid" in msg && typeof msg.uuid === "string" ? msg.uuid : undefined;
+        const offer = echoedUuid ? rt.pendingOfferUuids?.get(echoedUuid) : undefined;
+        if (offer && echoedUuid) {
+          rt.pendingOfferUuids?.delete(echoedUuid);
+          if (offer.turnId !== turn.turnId) {
+            this.options.log?.({
+              level: "info",
+              source: "harness",
+              component: "claude.steer",
+              harness: this.harness,
+              turnId: turn.turnId,
+              message: `steered message ${offer.messageId} offered to turn ${offer.turnId} materialized in turn ${turn.turnId}`,
+            });
+          }
+        }
         for (const draft of claudeDurableMessageDrafts(rt, msg, {
           turnId: turn.turnId,
           raw: msg,
