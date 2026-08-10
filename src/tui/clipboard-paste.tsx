@@ -12,7 +12,7 @@ import type { ClipboardContent } from "./clipboard.ts";
 export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): null {
   const renderer = useRenderer();
 
-  const paste = async (provided?: ClipboardContent): Promise<boolean> => {
+  const insertClipboardContent = async (provided?: ClipboardContent): Promise<boolean> => {
     const editor = renderer.currentFocusedEditor;
     if (!editor || !props.protocol.composerAcceptsPaste()) return false;
     const content = await props.protocol.prepareClipboardPaste(provided, editor.plainText);
@@ -21,9 +21,14 @@ export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): nul
     return true;
   };
 
+  // Keymap commands receive a CommandContext argument. Keep this zero-argument
+  // wrapper so that context can never be mistaken for provided clipboard bytes.
+  const pasteFromSystemClipboard = async (): Promise<boolean> =>
+    insertClipboardContent();
+
   useInputBindings(() => ({
     priority: INPUT_LAYER_PRIORITY.surface + 1,
-    commands: [{ name: "baton.composer.paste", run: paste }],
+    commands: [{ name: "baton.composer.paste", run: pasteFromSystemClipboard }],
     bindings: [{ key: "ctrl+v", cmd: "baton.composer.paste" }],
   }));
 
@@ -33,7 +38,7 @@ export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): nul
     if (!props.protocol.composerAcceptsPaste()) return;
     if (event.metadata?.mimeType === "image/png") {
       event.preventDefault();
-      void paste({
+      void insertClipboardContent({
         type: "image",
         mimeType: "image/png",
         data: event.bytes,
@@ -42,7 +47,7 @@ export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): nul
     }
     if (decodePasteBytes(event.bytes).length > 0) return;
     event.preventDefault();
-    void paste();
+    void pasteFromSystemClipboard();
   });
 
   return null;

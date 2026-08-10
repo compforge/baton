@@ -263,7 +263,7 @@ function contextUsageStatusText(
     return undefined;
   }
   const percent = Math.round((context.contextUsed / context.contextSize) * 100);
-  return `context ${context.contextUsed.toLocaleString("en-US")}/${context.contextSize.toLocaleString("en-US")} (${percent}%)`;
+  return `context ${percent}%`;
 }
 
 export function projectBoardView(
@@ -411,7 +411,6 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         author: harnessAuthor(statusHarness),
         label: `${modelAndEffort} · ${runStatusLabel(state, activeTurnId)}`,
         startedAt: controller.activeStartedAt,
-        hint: "Esc to interrupt",
       })
     : observedRun
       ? splitStatus({
@@ -475,7 +474,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         controller.queueLength > 0
           ? "↑ recall queued"
           : controller.isBusy
-            ? "Enter sends or queues"
+            ? "Enter sends or queues, Esc to interrupt"
             : "Ctrl+J newline"
       })`,
     },

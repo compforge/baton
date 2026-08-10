@@ -935,12 +935,12 @@ describe("BatonChatProtocol State projection", () => {
 
       expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
       expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
-      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 12,500/200,000 (6%)");
+      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 6%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
       await protocol.command("claude", "");
       expect(protocol.stateStore.getState("activity").items).toHaveLength(2);
       expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle");
-      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 80,000/200,000 (40%)");
+      expect(protocol.stateStore.getState("activity").items?.[1]?.label).toBe("context 40%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
 
       await protocol.exit();
