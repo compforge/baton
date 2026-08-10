@@ -917,4 +917,73 @@ describe("context usage → context_usage_update", () => {
       cost: { amount: 0.12, currency: "USD" },
     });
   });
+
+  test("claude prefers the latest message_start usage over cumulative modelUsage", () => {
+    const { events, feed } = claudeHarness();
+    // modelUsage 跨 turn 累计会虚高；message_start 的当次调用 usage 才是当前 context 占用。
+    feed({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      event: {
+        type: "message_start",
+        message: {
+          model: "claude-sonnet-4",
+          usage: { input_tokens: 1_000, cache_read_input_tokens: 4_000, cache_creation_input_tokens: 0 },
+        },
+      },
+    });
+    feed({
+      type: "result",
+      subtype: "success",
+      usage: {},
+      modelUsage: {
+        "claude-sonnet-4": {
+          inputTokens: 60_000,
+          outputTokens: 3_000,
+          cacheReadInputTokens: 90_000,
+          cacheCreationInputTokens: 10_000,
+          webSearchRequests: 0,
+          costUSD: 0.5,
+          contextWindow: 200_000,
+          maxOutputTokens: 32_000,
+        },
+      },
+    });
+    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
+      model: "default",
+      contextUsed: 5_000,
+      contextSize: 200_000,
+      cost: { amount: 0.5, currency: "USD" },
+    });
+  });
+});
+
+describe("claude: api_error_status result", () => {
+  test("529 overload result surfaces a retryable error update instead of a silent end_turn", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "result",
+      subtype: "success",
+      api_error_status: 529,
+      usage: {},
+      modelUsage: {},
+    });
+    const error = events.find((event) => event.kind === "_baton_error_update");
+    expect(error?.payload).toEqual({
+      code: "api_error_529",
+      message: "Claude API overloaded (529): retries exhausted, turn ended early",
+      retryable: true,
+      willRetry: false,
+    });
+    expect(events.find((event) => event.kind === "state_update")?.payload).toEqual({
+      state: "idle",
+      stopReason: "end_turn",
+    });
+  });
+
+  test("result without api_error_status emits no error update", () => {
+    const { events, feed } = claudeHarness();
+    feed({ type: "result", subtype: "success", usage: {}, modelUsage: {} });
+    expect(events.filter((event) => event.kind === "_baton_error_update")).toHaveLength(0);
+  });
 });

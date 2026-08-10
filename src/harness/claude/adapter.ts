@@ -558,6 +558,8 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   pendingTaskOps: Map<string, TaskToolOp>;
   /** 未映射 wire 形状按 key 限流，只在每个 session 首次出现时报警。 */
   unmappedMessageKeys?: Set<string>;
+  /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
+  lastContextSample?: ClaudeContextSample;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
   settings?: import("./settings.ts").ClaudeSettings;
 }
@@ -798,21 +800,38 @@ function claudeEfforts(rt: ClaudeRuntime): EffortOption[] {
   return claudeEffortsForModel(rt, rt.model);
 }
 
-/** result.modelUsage 可含子 agent/辅助模型；优先当前选择，否则取占用最大的主模型。 */
+/** 主 agent 最近一次 message_start 上报的当次模型调用 usage；反映真实当前 context 占用。 */
+interface ClaudeContextSample {
+  model?: string;
+  inputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
+/**
+ * result.modelUsage 是整个 streaming query 跨 turn 的累计值（含子 agent/辅助模型），
+ * 直接当"当前 context 占用"会随轮数虚高、compact 后也不回落。当前占用改用主 agent
+ * 最近一次 message_start 的当次调用 usage（contextSample）；modelUsage 只提供
+ * contextWindow 与累计 cost，并在没有 sample 时兜底（如 resume 后首个 result）。
+ */
 function claudeContextUsage(
   modelUsage: Record<string, ModelUsage>,
   selectedModel?: string,
+  contextSample?: ClaudeContextSample,
 ): { contextUsed: number; contextSize: number; cost?: { amount: number; currency: string } } | undefined {
   const entries = Object.entries(modelUsage);
   if (entries.length === 0) return undefined;
   const used = (usage: ModelUsage): number =>
     usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens;
   const selected =
+    entries.find(([model]) => contextSample?.model && model.includes(contextSample.model)) ??
     entries.find(([model]) => selectedModel && (model === selectedModel || model.includes(selectedModel))) ??
     entries.toSorted((a, b) => used(b[1]) - used(a[1]))[0];
   if (!selected || !Number.isFinite(selected[1].contextWindow)) return undefined;
   return {
-    contextUsed: used(selected[1]),
+    contextUsed: contextSample
+      ? contextSample.inputTokens + contextSample.cacheReadInputTokens + contextSample.cacheCreationInputTokens
+      : used(selected[1]),
     contextSize: selected[1].contextWindow,
     ...(Number.isFinite(selected[1].costUSD)
       ? { cost: { amount: selected[1].costUSD, currency: "USD" } }
@@ -1528,9 +1547,31 @@ export class ClaudeAdapter implements HarnessAdapter {
       case "stream_event": {
         // 子 agent（parent_tool_use_id 非空）的流式输出不进主时间线，内容随 tool result 汇总
         if (msg.parent_tool_use_id) break;
-        const event = msg.event as { type: string; delta?: { type: string; text?: string; thinking?: string } };
+        const event = msg.event as {
+          type: string;
+          delta?: { type: string; text?: string; thinking?: string };
+          message?: {
+            model?: string;
+            usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
+          };
+        };
         if (event.type === "message_start") {
           turn.streamMessageId = newId("m");
+          // 每次模型调用开端的 usage 即当时的真实 context 占用；turn 内多次调用取最后一次，
+          // compact 后新 sample 自然回落。子 agent 已在上面被 parent_tool_use_id 过滤。
+          const usage = event.message?.usage;
+          if (usage) {
+            rt.lastContextSample = {
+              ...(event.message?.model ? { model: event.message.model } : {}),
+              inputTokens: usage.input_tokens ?? 0,
+              cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+              cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+            };
+          }
         } else if (event.type === "content_block_delta" && event.delta) {
           const messageId = turn.streamMessageId ?? (turn.streamMessageId = newId("m"));
           if (event.delta.type === "text_delta" && event.delta.text) {
@@ -1591,11 +1632,29 @@ export class ClaudeAdapter implements HarnessAdapter {
             raw: msg,
           });
         }
-        const context = claudeContextUsage(msg.modelUsage, rt.model);
+        const context = claudeContextUsage(msg.modelUsage, rt.model, rt.lastContextSample);
         if (context) {
           emit({
             kind: "context_usage_update",
             payload: { model: rt.model ?? "default", ...context },
+            raw: msg,
+          });
+        }
+        // SDK 内部重试耗尽后以 success result + api_error_status 收口（v0.3.223 起，
+        // 典型为 529 过载）；结构化为错误事件，避免被当普通 end_turn 静默吞掉。
+        if (msg.subtype === "success" && typeof msg.api_error_status === "number") {
+          const status = msg.api_error_status;
+          emit({
+            kind: "_baton_error_update",
+            payload: {
+              code: `api_error_${status}`,
+              message:
+                status === 529
+                  ? "Claude API overloaded (529): retries exhausted, turn ended early"
+                  : `Claude API error (HTTP ${status}): turn ended early`,
+              retryable: status >= 500,
+              willRetry: false,
+            },
             raw: msg,
           });
         }
