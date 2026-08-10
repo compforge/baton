@@ -25,9 +25,14 @@ export function bundledTextgenTargets(): HarnessTarget[] {
   });
 }
 
-/** 从事件流取第一条非空用户输入；只读正典 user_message，不从 Harness 历史反推。 */
+/**
+ * 取当前 Session 自己的第一条非空用户输入。fork 复制了源事件，必须越过分叉边界，
+ * 否则会拿源问题与 fork 的机械标题比较，并把后者误判成用户命名。
+ */
 function firstUserText(session: SessionHandle): string | undefined {
+  const forkBoundary = session.meta.forkedFrom?.throughSeq;
   for (const event of session.readEvents()) {
+    if (forkBoundary !== undefined && event.seq <= forkBoundary) continue;
     if (event.kind !== "user_message" || event.source.type === "plugin") {
       continue;
     }
