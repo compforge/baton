@@ -64,7 +64,11 @@ async function collectStructuredOutput(queryHandle: ReturnType<typeof query>): P
     if (message.type !== "result") continue;
     if (message.subtype === "success") {
       if (message.structured_output === undefined) {
-        throw new Error("claude textgen returned no structured output");
+        const terminalReason = message.terminal_reason
+          ? ` (${message.terminal_reason})`
+          : "";
+        const result = message.result.trim() ? `: ${message.result.trim()}` : "";
+        throw new Error(`claude textgen returned no structured output${terminalReason}${result}`);
       }
       return message.structured_output;
     }

@@ -296,10 +296,16 @@ describe("claude textgen", () => {
     await expect(
       generateClaudeStructured(REQUEST, {
         queryFactory: fakeQueryFactory([
-          { type: "result", subtype: "success", errors: [] },
+          {
+            type: "result",
+            subtype: "success",
+            terminal_reason: "api_error",
+            result: "Failed to authenticate",
+            errors: [],
+          },
         ]),
       }),
-    ).rejects.toThrow("no structured output");
+    ).rejects.toThrow("no structured output (api_error): Failed to authenticate");
   });
 
   test("超时会 abort 并关闭独立 query", async () => {
@@ -356,6 +362,30 @@ describe("maybeGenerateSessionTitle", () => {
     ];
     expect(await maybeGenerateSessionTitle({ session, candidates })).toBe(true);
     expect(session.meta.title).toBe("Fix Flaky Login Test");
+  });
+
+  test("fork 只用分叉后的首个用户输入生成标题", async () => {
+    const source = sessionWithUserMessage("investigate the original issue");
+    const session = store.forkSession(source.id);
+    const forkPrompt = "try the cache approach instead";
+    session.setTitleIfEmpty(forkPrompt);
+    session.append({
+      kind: "user_message",
+      source: { type: "user" },
+      turnId: "t_fork",
+      payload: { messageId: "m_fork", content: [{ type: "text", text: forkPrompt }] },
+    });
+    const stub = new StubAdapter("claude", async () => ({ title: "Try Cache Approach" }));
+
+    expect(
+      await maybeGenerateSessionTitle({
+        session,
+        candidates: [{ harness: "claude", adapter: stub }],
+      }),
+    ).toBe(true);
+    expect(session.meta.title).toBe("Try Cache Approach");
+    expect(stub.requests[0]?.prompt).toContain(forkPrompt);
+    expect(stub.requests[0]?.prompt).not.toContain("investigate the original issue");
   });
 
   test("首选失败降级 codex；全部失败保留空 title（展示层回落 preview）", async () => {
