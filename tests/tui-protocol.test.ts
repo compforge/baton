@@ -1894,6 +1894,66 @@ describe("BatonChatProtocol steer submit", () => {
   });
 });
 
+describe("BatonChatProtocol clipboard image", () => {
+  test("archives the image and submits an image prompt block to the active Harness", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-clipboard-image-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
+      let submitted: unknown;
+      const internals = protocol as unknown as {
+        controller: {
+          promptCapabilities: () => { image: { supported: true } };
+          sendTurn: (target: string, blocks: unknown) => Promise<{
+            effective: "new_turn";
+            queued: false;
+            outcome: Promise<"completed">;
+          }>;
+        };
+      };
+      internals.controller.promptCapabilities = () => ({ image: { supported: true } });
+      internals.controller.sendTurn = async (_target, blocks) => {
+        submitted = blocks;
+        return { effective: "new_turn", queued: false, outcome: Promise.resolve("completed") };
+      };
+
+      const token = await protocol.prepareClipboardPaste({
+        type: "image",
+        mimeType: "image/png",
+        data: Uint8Array.from([137, 80, 78, 71]),
+      });
+      expect(token).toBe("[Image #1] ");
+      await protocol.submit(`inspect ${token}`);
+
+      expect(submitted).toEqual([
+        { type: "text", text: "inspect " },
+        {
+          type: "image",
+          mimeType: "image/png",
+          path: expect.stringMatching(/\/attachments\/clipboard-[a-f0-9]{24}\.png$/),
+        },
+        { type: "text", text: " " },
+      ]);
+
+      const recalled = protocol.historyPrev("");
+      expect(recalled).toEqual({ text: "inspect [Image #1]" });
+      await protocol.submit(recalled!.text);
+      expect(submitted).toEqual([
+        { type: "text", text: "inspect " },
+        {
+          type: "image",
+          mimeType: "image/png",
+          path: expect.stringMatching(/\/attachments\/clipboard-[a-f0-9]{24}\.png$/),
+        },
+      ]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("BatonChatProtocol input history", () => {
   function makeProtocol(prefix: string) {
     const root = mkdtempSync(join(tmpdir(), prefix));

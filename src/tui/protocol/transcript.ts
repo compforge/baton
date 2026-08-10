@@ -18,6 +18,7 @@ import {
   type SessionState,
   type ToolCallState,
 } from "../../store/reduce.ts";
+import { composerTextOf } from "../prompt-images.ts";
 
 // Baton 的状态类型是开放联合（容忍未知 wire 值），chat-tui 是闭集；
 // 未知值回落到与旧 TUI 相同的展示形态（工具 ⋯ / 计划 ☐）。
@@ -229,7 +230,7 @@ export function buildTranscript(
         author,
         text:
           msg.role === "user"
-            ? userVisibleText(textOf(msg.content))
+            ? userVisibleText(composerTextOf(msg.content))
             : textOf(msg.content),
         ...(msg.role === "agent"
           ? {

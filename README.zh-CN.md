@@ -51,6 +51,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 ## 功能
 
 - 在同一个终端界面中使用 Claude Code 和 Codex
+- 使用 `Ctrl+V` 粘贴剪贴板图片，并作为原生图片输入发送给 Codex 或 Claude Code
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
 - 首个 turn 后自动生成简洁会话标题，支持跨 harness 降级且不会创建原生会话
@@ -119,6 +120,7 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 @                      分组搜索 Session 和 Plugin 上下文
 Tab                   补全命令或引用
 Shift+Tab             在 Default 与 Plan 模式间切换
+Ctrl+V                向输入框粘贴文本或剪贴板图片
 Esc                   中断当前 turn
 /exit                 退出
 ```
@@ -171,6 +173,7 @@ baton 的数据默认保存在 `~/.baton/`：
 ```text
 ~/.baton/
 ├── config.yaml
+├── attachments/                              # 按内容寻址的剪贴板图片
 ├── plugins/
 │   ├── marketplaces.json
 │   ├── marketplaces/<marketplace-name>/
@@ -186,7 +189,7 @@ baton 的数据默认保存在 `~/.baton/`：
             └── proposals/
 ```
 
-Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
+Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；剪贴板图片作为不可变、按内容寻址的附件由会话历史与 fork 共享，`session.jsonl` 只保存其路径。Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
 
 ## License
 
