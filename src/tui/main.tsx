@@ -9,7 +9,7 @@
 // 用法：baton [--root <batonRoot>] [--cwd <dir>] [-c|--continue] [-s|--session <id>]
 //       [--pick-session resume|fork]（bin.ts 内部 flag：先展示前置会话选择屏，选中才打开）
 
-import { createCliRenderer } from "@opentui/core";
+import { createCliRenderer, RGBA } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { createRef } from "react";
 
@@ -19,7 +19,7 @@ import { SessionStore } from "../store/store.ts";
 import { BatonTui, type BatonTuiHandle } from "./app.tsx";
 import { BatonChatProtocol } from "./protocol/index.ts";
 import { SessionPickerScreen } from "./session-picker.tsx";
-import { batonTheme } from "./theme.ts";
+import { batonThemeFor, themeModeForBackground } from "./theme.ts";
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -72,8 +72,15 @@ const openedAtStartup: OpenBatonSessionResult | undefined = pickIntent
 // autoFocus=false：禁止鼠标点击把焦点从输入框抢走——点击 scrollbox 夺焦不触发 React
 // 重渲染，focused prop 拉不回来，这是"操作久了输入框失焦"的主因。
 const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30, autoFocus: false });
-// OpenTUI 默认透明背景不会擦除变空的 cell，滚动/重排后会残留上一帧字符。
-renderer.setBackgroundColor(batonTheme.overlayBackground ?? "#24283b");
+const terminalPalette = await renderer.getPalette({ timeout: 250, size: 16 }).catch(() => null);
+const detectedMode =
+  themeModeForBackground(terminalPalette?.defaultBackground) ??
+  (await renderer.waitForThemeMode(300)) ??
+  "dark";
+const batonTheme = batonThemeFor(detectedMode, terminalPalette?.defaultBackground);
+// 使用终端默认背景的语义色（并携带探测快照）擦除变空 cell，既避免 OpenTUI 重排残影，
+// 也不再把整个 viewport 强制染成 Tokyo Night 的 #24283b。
+renderer.setBackgroundColor(RGBA.defaultBackground(terminalPalette?.defaultBackground ?? undefined));
 const root = createRoot(renderer);
 const quit = (sessionId?: string) => {
   // OpenTUI owns raw mode and mouse tracking; restore both before process.exit,

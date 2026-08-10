@@ -1271,7 +1271,7 @@ describe("toolTranscriptItem", () => {
       id: "tc_cmd",
       kind: "tool",
       author: "codex",
-      title: "Ran",
+      title: "Ran · git status --short · 1 line",
       status: "completed",
       content: [
         { type: "command", command: "git status --short" },
@@ -1295,7 +1295,7 @@ describe("toolTranscriptItem", () => {
       type: "block",
       id: "tc_edit",
       kind: "tool",
-      title: "edit src/index.ts",
+      title: "Edit · src/index.ts · 1 file · +1 -1",
       status: "completed",
       content: [{ type: "diff", op: "modify", path: "src/index.ts", oldPath: undefined, patch }],
     });
@@ -1319,6 +1319,22 @@ describe("toolTranscriptItem", () => {
       { type: "diff", op: "modify", path: "b.ts", oldPath: undefined, patch: undefined },
       { type: "diff", op: "move", path: "d.ts", oldPath: "c.ts", patch: undefined },
     ]);
+  });
+
+  test("keeps the filename when compacting a long tool path", () => {
+    const path = `/workspace/${"deep/".repeat(20)}important-file.ts`;
+    const item = toolTranscriptItem({
+      toolCallId: "tc_read",
+      title: `Read: ${path}`,
+      kind: "read",
+      status: "completed",
+      content: [{ type: "text", text: "one\ntwo" }],
+      locations: [],
+      rawInput: { file_path: path },
+    });
+    expect(item.title).toStartWith("Read · …");
+    expect(item.title).toContain("important-file.ts");
+    expect(item.title).toEndWith("· 2 lines");
   });
 });
 
