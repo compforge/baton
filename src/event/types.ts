@@ -8,6 +8,7 @@ import type {
   ContextSnapshot,
 } from "../context/delivery.ts";
 import type { Interaction, InteractionResolved } from "../interaction/types.ts";
+import type { ResourceRef } from "@compforge/baton-plugin";
 
 export const ENVELOPE_VERSION = 3 as const;
 
@@ -373,6 +374,38 @@ export interface TurnSummary {
   endedAt?: string;
 }
 
+export interface TurnRequestRecorded {
+  requestId: string;
+  requestKey: string;
+  resourceOwner: "plugin" | "baton";
+  resource: ResourceRef;
+  title: string;
+  description?: string;
+  prompt: string;
+  requestedHarnessTargetId?: string;
+}
+
+export interface TurnRequestAuthorizationResolved {
+  requestId: string;
+  interactionId?: string;
+  outcome: "allowed" | "declined";
+  /** Present for allowed requests and fixed before scheduling. */
+  harnessTargetId?: string;
+}
+
+export interface TurnRequestScheduled {
+  requestId: string;
+  messageId: string;
+  turnId: string;
+  harnessTargetId: string;
+}
+
+export interface TurnRequestCancelled {
+  requestId: string;
+  reason: "user" | "resource" | "recovery";
+  detail?: string;
+}
+
 export type EventPayloadMap = {
   state_update: StateUpdate;
   user_message: UserMessageUpsert;
@@ -401,6 +434,10 @@ export type EventPayloadMap = {
   _baton_context_delivery_receipt: ContextDeliveryReceipt;
   _baton_delivery_attempt_update: HarnessDeliveryAttemptUpdate;
   _baton_turn_summary: TurnSummary;
+  _baton_turn_request_recorded: TurnRequestRecorded;
+  _baton_turn_request_authorization_resolved: TurnRequestAuthorizationResolved;
+  _baton_turn_request_scheduled: TurnRequestScheduled;
+  _baton_turn_request_cancelled: TurnRequestCancelled;
 };
 
 export type EventKind = keyof EventPayloadMap;

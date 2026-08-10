@@ -241,7 +241,9 @@ function previewFromSessionLog(dir: string): string | undefined {
       if (!line) continue;
       try {
         const event = JSON.parse(line) as AnyEventEnvelope;
-        if (event.kind !== "user_message") continue;
+        if (event.kind !== "user_message" || event.source.type === "plugin") {
+          continue;
+        }
         const payload = event.payload as { content?: ContentBlock[] };
         const preview = sessionPreview(textOf(payload.content ?? []));
         if (preview) return preview;

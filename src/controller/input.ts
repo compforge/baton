@@ -2,8 +2,17 @@ import { newId } from "../event/ids.ts";
 import type { PromptBlock } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 
+/** The actor that caused a prompt Input to enter Baton. */
+export type InputSource =
+  | { type: "user" }
+  | {
+      type: "plugin";
+      pluginInstanceId: string;
+      turnRequestId: string;
+    };
+
 /**
- * 一条用户输入的生命周期状态（见 docs/workflow.md“采集与准入”）。让 recall /
+ * 一条 prompt Input 的生命周期状态（见 docs/workflow.md“采集与准入”）。让 recall /
  * interrupt / steer / race 的迁移成为对同一 Input 的状态查询，而不是散落在 submit /
  * steer / Esc 里的时序特判。
  */
@@ -27,6 +36,7 @@ export interface InputRecord {
   turnId: string;
   target: HarnessTarget;
   blocks: PromptBlock[];
+  source: InputSource;
   status: InputStatus;
   delivery: "prompt" | "steer";
   /** 本 turn 是用户对某个已完成计划提案的明确执行请求。 */
@@ -42,6 +52,7 @@ export interface QueuedTurnSnapshot {
   harnessTargetId: string;
   harness: string;
   blocks: PromptBlock[];
+  source: InputSource;
 }
 
 /** Input 只读快照：投影 / 诊断消费 status，不触碰内部 resolve/reject。 */
@@ -52,6 +63,7 @@ export interface InputSnapshot {
   harness: string;
   status: InputStatus;
   delivery: "prompt" | "steer";
+  source: InputSource;
   sourceProposedPlanId?: string;
 }
 
@@ -80,15 +92,20 @@ export class InputQueue {
   enqueue(
     target: HarnessTarget,
     blocks: PromptBlock[],
-    options?: { sourceProposedPlanId?: string },
+    options?: {
+      source?: InputSource;
+      sourceProposedPlanId?: string;
+      identity?: { messageId: string; turnId: string };
+    },
   ): Promise<SubmitOutcome> {
     return new Promise((resolve, reject) => {
       this.queue.push({
         id: this.nextId++,
-        turnId: newId("t"),
-        messageId: newId("m"),
+        turnId: options?.identity?.turnId ?? newId("t"),
+        messageId: options?.identity?.messageId ?? newId("m"),
         target,
         blocks,
+        source: options?.source ?? { type: "user" },
         status: "queued",
         delivery: "prompt",
         ...(options?.sourceProposedPlanId
@@ -118,13 +135,32 @@ export class InputQueue {
       messageId,
       target,
       blocks,
+      source: { type: "user" },
       status: "accepted_steer",
       delivery: "steer",
     };
   }
 
-  recallLatest(): QueuedTurnSnapshot | undefined {
-    const input = this.queue.pop();
+  recallLatestUser(): QueuedTurnSnapshot | undefined {
+    const index = this.queue.findLastIndex(
+      (input) => input.source.type === "user",
+    );
+    if (index < 0) return undefined;
+    const [input] = this.queue.splice(index, 1);
+    if (!input) return undefined;
+    input.status = "recalled";
+    input.resolve?.("recalled");
+    return queuedTurnSnapshot(input);
+  }
+
+  cancelTurnRequest(turnRequestId: string): QueuedTurnSnapshot | undefined {
+    const index = this.queue.findIndex(
+      (input) =>
+        input.source.type === "plugin" &&
+        input.source.turnRequestId === turnRequestId,
+    );
+    if (index < 0) return undefined;
+    const [input] = this.queue.splice(index, 1);
     if (!input) return undefined;
     input.status = "recalled";
     input.resolve?.("recalled");
@@ -140,6 +176,7 @@ export function inputSnapshot(input: InputRecord): InputSnapshot {
     harness: input.target.harness,
     status: input.status,
     delivery: input.delivery,
+    source: { ...input.source },
     ...(input.sourceProposedPlanId
       ? { sourceProposedPlanId: input.sourceProposedPlanId }
       : {}),
@@ -153,5 +190,6 @@ function queuedTurnSnapshot(input: InputRecord): QueuedTurnSnapshot {
     harnessTargetId: input.target.id,
     harness: input.target.harness,
     blocks: [...input.blocks],
+    source: { ...input.source },
   };
 }

@@ -222,7 +222,11 @@ export function buildTranscript(
         continue;
       }
       const author =
-        msg.role === "user" ? "you" : (harnessAuthor(msg.harness) ?? "agent");
+        msg.role === "user"
+          ? msg.source?.type === "plugin"
+            ? msg.source.pluginInstanceId
+            : "you"
+          : (harnessAuthor(msg.harness) ?? "agent");
       items.push({
         type: "message",
         id: entry.id,

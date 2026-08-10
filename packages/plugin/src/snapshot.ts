@@ -1,4 +1,5 @@
 import type { Snapshot as InteractionSnapshot } from "./interaction.ts";
+import type { ResourceRef } from "./resource.ts";
 
 export type SessionRunState = "running" | "idle" | "requires_action";
 
@@ -9,6 +10,15 @@ export type InputStatus =
   | "finalized"
   | "recalled"
   | "interrupted";
+
+/** Identifies who caused a prompt Input to enter Baton. */
+export type InputSource =
+  | { readonly type: "user" }
+  | {
+      readonly type: "plugin";
+      readonly pluginInstanceId: string;
+      readonly turnRequestId: string;
+    };
 
 export type InteractionRequester =
   | { readonly type: "harness"; readonly harnessTargetId: string }
@@ -63,6 +73,28 @@ export interface BatonInputSnapshot {
   readonly harness: string;
   readonly status: InputStatus;
   readonly delivery: "prompt" | "steer";
+  readonly source: InputSource;
+}
+
+export type TurnRequestPhase =
+  | "pending_approval"
+  | "declined"
+  | "queued"
+  | "running"
+  | "uncertain"
+  | "completed"
+  | "cancelled";
+
+/** A Resource-scoped view of a request to create one new driven Turn. */
+export interface TurnRequestSnapshot {
+  readonly requestId: string;
+  readonly requestKey: string;
+  readonly resource: ResourceRef;
+  readonly phase: TurnRequestPhase;
+  readonly harnessTargetId?: string;
+  readonly turnId?: string;
+  /** Present after admission has produced and closed the driven Turn. */
+  readonly result?: TurnSummary;
 }
 
 export interface BatonHarnessTargetSnapshot {
@@ -89,6 +121,8 @@ export interface BatonSnapshot {
    * Baton scopes this list to that PluginInstance and Resource before invocation.
    */
   readonly pluginInteractions: readonly InteractionSnapshot[];
+  /** Durable Turns requested by the Resource currently being reconciled. */
+  readonly turnRequests: readonly TurnRequestSnapshot[];
   readonly latestTurn?: TurnSummary;
   readonly turns: readonly TurnSummary[];
 }

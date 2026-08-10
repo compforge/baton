@@ -19,6 +19,8 @@ export type {
 
 export type { ContextProvider } from "./context.ts";
 
+export type { TurnRequestOutput } from "./turn-request.ts";
+
 export type {
   PluginActivationContext,
   PluginConfig,
@@ -95,9 +97,12 @@ export type {
   BatonPendingInteractionSnapshot,
   BatonSessionSnapshot,
   BatonSnapshot,
+  InputSource,
   InputStatus,
   InteractionRequester,
   SessionRunState,
+  TurnRequestPhase,
+  TurnRequestSnapshot,
   TurnSummary,
   TurnSummaryToolCall,
 } from "./snapshot.ts";

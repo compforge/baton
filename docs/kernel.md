@@ -1,7 +1,7 @@
 # Baton Kernel
 
 本文定义 Baton 的稳定内核：它解决什么问题、核心对象由谁拥有、依赖如何流动，以及所有
-Harness 和 Plugin 都不能绕过的约束。一次用户输入如何到达 Harness、Harness 结果如何返回
+Harness 和 Plugin 都不能绕过的约束。一次 Input 如何到达 Harness、Harness 结果如何返回
 用户，统一见 [工作流](./workflow.md)；适配协议见 [Harness](./harness.md)，长期领域 loop 见
 [Plugin](./plugin.md)。
 
@@ -16,7 +16,7 @@ Baton 按三层协作：
 1. **Baton core** 负责 Input、Interaction、Event、Context、权限、Harness routing、调度和
    Projection，不理解 Requirement、Deployment、Review 等领域语义。
 2. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
-   当前只能通过受控 Output 建议下一条 Input 或请求用户决议，不能直接调用 Harness。
+   只能通过受控 Output 建议 Input、请求用户决议或发起 TurnRequest，不能直接调用 Harness。
 3. **Harness** 提供智能执行能力，Adapter 把各家协议归一成稳定契约。devloop 等 Harness
    Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
 
@@ -49,7 +49,8 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **HarnessSession** | Harness 在某个 Target 内持有的持久原生执行会话；缺失只影响恢复优化，不阻止 BatonSession 继续 |
 | **HarnessSessionBinding** | 当前 BatonSession 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
-| **Input** | Controller 拥有的待处理刺激；用户 prompt 具有稳定 message/turn identity 和可查询消费状态 |
+| **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
+| **TurnRequest** | 直接 user Input 之外，由控制面主体请求创建一个新 driven Turn 的持久意图；获批后物化为 Input，不抽象或直接执行 Harness Work |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
@@ -137,7 +138,7 @@ src/harness/ids.ts
 
 ### 4.4 事实先于副作用和投影
 
-用户输入先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
+获准执行的 prompt Input 先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
 再调用 Adapter。Plugin Output 先持久化，再通知 UI。Context Snapshot 只说明准备送什么，只有
 DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发生时保留 `uncertain`，不盲目
 重投。
@@ -146,8 +147,10 @@ DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发�
 
 Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
 Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 建议的
-`proposed-input` 经用户确认后成为普通 Input，继续走同一 Context、Permission、Attempt 和
-Harness routing 主路径。
+`proposed-input` 经用户确认后成为 user-source Input；`turn-request` 则开辟了直接 user Input
+之外发起新 Turn 的受控路径，当前由 Plugin 产生并在获批后成为 plugin-source Input。它表达创建
+Turn 的意图，而非 Harness Work；两类 Input 此后走同一 Context、Permission、Attempt 和 Harness
+routing 主路径。
 
 ## 5. 演进规则
 
@@ -160,12 +163,12 @@ Harness routing 主路径。
 5. 提升内核后，能否保持新增 Harness 不修改 Session/store/projection/chat-tui？
 
 signal 只提示重新读取权威状态，不能冒充 Event；Board 更新、Context 已交付和 Harness 已被唤醒
-是三个独立事实。尚未满足真实场景的自动 Harness Work、多 Harness 并行汇总和主线/草稿收录
-留在 [Backlog](./backlog.md)，不提前向 Plugin 暴露 Harness 句柄。
+是三个独立事实。尚未满足真实场景的多 Harness 并行汇总和主线/草稿收录留在
+[Backlog](./backlog.md)，不提前向 Plugin 暴露 Harness 句柄。
 
 ## 6. References
 
-- [工作流](./workflow.md) — 用户输入、Harness 执行、事件投影与 Interaction 闭环
+- [工作流](./workflow.md) — Input 发起、Harness 执行、事件投影与 Interaction 闭环
 - [Harness](./harness.md) — Target、Session、Adapter、Capability 与扩展契约
 - [Plugin](./plugin.md) — Resource/Controller、Runner、Board、Context 与长期 loop
 - [审批生命周期](./approval-lifecycle.md) — permission、授权方与 auto-review 回执

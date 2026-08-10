@@ -28,7 +28,9 @@ export function bundledTextgenTargets(): HarnessTarget[] {
 /** 从事件流取第一条非空用户输入；只读正典 user_message，不从 Harness 历史反推。 */
 function firstUserText(session: SessionHandle): string | undefined {
   for (const event of session.readEvents()) {
-    if (event.kind !== "user_message") continue;
+    if (event.kind !== "user_message" || event.source.type === "plugin") {
+      continue;
+    }
     const payload = event.payload as { content?: Parameters<typeof textOf>[0] };
     const text = textOf(payload.content ?? []).trim();
     if (text) return text;

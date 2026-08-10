@@ -262,3 +262,35 @@ On the next reconcile, read the result from
 `baton.pluginInteractions` by `decisionKey`. Baton persists the answer before
 re-enqueuing the same Resource, so plugins do not register option callbacks or
 hold an in-memory promise while waiting. Omit `options` for free text.
+
+A Controller can use `TurnRequest` to originate exactly one new driven Turn
+without pretending the request is direct user input. This is a control-plane
+path for creating a Turn, not a Harness-work abstraction: after authorization,
+Baton materializes it as plugin-source Input and owns target selection,
+admission, execution, cancellation, and recovery. The prompt is read-only
+during authorization:
+
+```ts
+const request = baton.turnRequests.find(
+  (candidate) => candidate.requestKey === "implement-v1",
+);
+if (!request) {
+  return {
+    output: {
+      kind: "turn-request",
+      requestKey: "implement-v1",
+      title: "Implement this example",
+      description: "The Resource is ready for implementation.",
+      prompt: "Implement the example and run its focused tests.",
+    },
+  };
+}
+if (request.phase === "completed") {
+  // Inspect request.result?.stopReason and update Resource status.
+}
+```
+
+`requestKey` is immutable for one logical request. Returning the same key with
+a changed prompt, title, description, or target is an identity conflict; use a
+new key to request another Turn. A completed phase means the Turn closed, not
+that domain acceptance succeeded.

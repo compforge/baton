@@ -12,6 +12,7 @@ export type CommandName =
   | "plan"
   | "compact"
   | "implement-plan"
+  | "cancel-request"
   | "board"
   | "plugins"
   | "reload-plugins"
@@ -62,6 +63,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "implement-plan",
     description: "Start a new turn that implements a proposed plan (latest by default)",
+    scope: "baton",
+    runPolicy: "always",
+  },
+  {
+    name: "cancel-request",
+    description: "Cancel a pending TurnRequest (latest by default)",
     scope: "baton",
     runPolicy: "always",
   },

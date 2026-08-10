@@ -1,17 +1,18 @@
 # Baton 工作流
 
-本文是 Baton 双向工作流的唯一入口：用户输入如何经过 Controller 到达 Harness，Harness 的输出
-如何成为可恢复事实并返回用户，以及 steer、Interaction、cancel、失败和恢复如何复用同一条
-主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见 [Harness](./harness.md)。
+本文是 Baton 双向工作流的唯一入口：用户 Input 或获批的非用户 TurnRequest 如何经过 Controller
+到达 Harness，Harness 的输出如何成为可恢复事实并返回用户，以及 steer、Interaction、cancel、
+失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
+[Harness](./harness.md)。
 
 ## 1. 一条双向流水线
 
 ```text
-控制（用户 → Harness）
+控制（发起方 → Turn → Harness）
 
-User
-  → chat-tui intent
-  → Input admission / queue
+User ───────────────────────────────→ user-source Input ┐
+Plugin → TurnRequest → authorization → plugin-source Input ┘
+  → admission / queue
   → Context Snapshot + Delivery
   → Delivery Attempt
   → Harness Adapter
@@ -28,14 +29,16 @@ Harness wire
 ```
 
 Plugin 不另开执行通道。`proposed-input` 先展示给用户；只有用户确认或编辑并提交后，它才成为
-普通 Input。Interaction 也不进入 prompt queue，而是按稳定 identity 就地解开等待方。
+user-source Input。`turn-request` 经授权后成为 plugin-source Input，并强制排队开启新 Turn。
+Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
-## 2. 用户输入到 Harness
+## 2. Input 到 Harness
 
 ### 2.1 采集与准入
 
-chat-tui 只把 composer 内容和用户意图交给 Baton。mention、Session 引用和 Plugin Context 在
-Context 层解析；chat-tui 不理解 HarnessSession 或 Harness wire。
+chat-tui 把 composer 内容和用户意图交给 Baton；获批 TurnRequest 则由控制面物化为 Input。
+mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
+Harness wire。
 
 剪贴板图片由 Baton 壳层在显式 paste 时读取，按内容寻址归档到 Baton attachment store，并在
 composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `image` block。Event Ledger 只保存
@@ -57,14 +60,21 @@ accepted_steer → finalized | interrupted
 不能再伪装成“从未提交”；此后 Esc 表达 cancel/interrupt。队列只串行调度 driven Turn，Harness
 自发产生的 observed Turn 不占 admission 槽。
 
+prompt Input 另有一条与状态正交的 source 轴：composer、确认后的 Proposal 和 ProposedPlan 实施
+是 `user`；当前 Plugin 发起的 TurnRequest 物化后是
+`{ type: "plugin", pluginInstanceId, turnRequestId }`。TurnRequest 是 Input 之前的创建 Turn 意图，
+不是 Harness 调用；cron、Watch 和 Source 只负责唤醒 reconcile，不是 Input source。用户 recall
+只撤回 queued user Input。
+
 ### 2.2 Turn 开界
 
 Controller 出队时先 append：
 
-1. `user_message(source:user)`：保存用户原始输入；
+1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。
 
-这两个事实不等待 Harness 冷启动。否则用户消息会被进程启动时间绑住，Context prepend 也可能
+Event kind 仍表示 Harness 看到的 user-role message，Event source 表示实际发起者，两者正交。
+这两个事实不等待 Harness 冷启动。否则 prompt 会被进程启动时间绑住，Context prepend 也可能
 被误写进正典历史。
 
 ### 2.3 Context 组装与交付

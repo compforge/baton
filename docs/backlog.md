@@ -4,16 +4,6 @@
 遗忘。条目成熟后进入对应权威文档和实施计划；尚未形成稳定模型的问题也留在这里，不再另建
 按版本命名的设计草案。
 
-## 受控的自动 Harness Work
-
-当前 Plugin Controller 只能返回 `proposed-input`，经用户确认后进入普通 Input/Attempt 主路径。
-未来可以允许 Controller 请求 Baton 自动启动或继续 Harness，但 Plugin 仍不能持有 Adapter、
-Harness 进程或 SDK 句柄；路由、权限、成本、并发、取消、Context 和结果持久化继续由 Baton
-负责，并复用已有 Delivery Attempt 与 `uncertain` 对账语义。
-
-**触发条件**：真实长期 loop 证明 Resource 必须在没有用户 submit 时继续 Harness，且该需求
-无法由 Source、Watch、cron、requeueAfter、Connector 或用户确认的 Proposal 表达。
-
 ## Daemon 与关闭 TUI 后的推进
 
 当前 Plugin Runner、Source 和 reconcile queue 跟随 Baton host 生命周期。若关闭 TUI 后仍要

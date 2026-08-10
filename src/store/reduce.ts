@@ -9,6 +9,7 @@ import type {
   ContextUsageUpdate,
   ErrorUpdate,
   EventEnvelope,
+  EventSource,
   HarnessTaskUpdate,
   MessageRole,
   Notice,
@@ -38,6 +39,8 @@ export interface MessageState {
   harness?: string;
   /** 产生该消息的具体配置目标；状态归属与查询使用它，不用 Harness 类型代替。 */
   harnessTargetId?: string;
+  /** Who caused this message fact; message role remains a separate axis. */
+  source?: EventSource;
   /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
   delivery?: SubmitDelivery;
 }
@@ -222,15 +225,25 @@ function getOrCreateMessage(
   turnId?: string,
   harness?: string,
   harnessTargetId?: string,
+  source?: EventSource,
 ): MessageState {
   let msg = state.messages.get(id);
   if (!msg) {
-    msg = { messageId: id, role, content: [], turnId, harness, harnessTargetId };
+    msg = {
+      messageId: id,
+      role,
+      content: [],
+      turnId,
+      harness,
+      harnessTargetId,
+      ...(source === undefined ? {} : { source: { ...source } }),
+    };
     state.messages.set(id, msg);
     state.timeline.push({ type: "message", id });
   } else {
     if (!msg.harness) msg.harness = harness;
     if (!msg.harnessTargetId) msg.harnessTargetId = harnessTargetId;
+    if (!msg.source && source) msg.source = { ...source };
   }
   return msg;
 }
@@ -275,6 +288,7 @@ function applyMessageUpsert(
     ev.turnId,
     ev.harness,
     eventTargetId(ev),
+    ev.source,
   );
   // 三态：省略=不变；null/[]=清空；数组=整体替换
   if (p.content !== undefined) {
@@ -301,6 +315,7 @@ function applyMessageChunk(
     ev.turnId,
     ev.harness,
     eventTargetId(ev),
+    ev.source,
   );
   msg.content.push(p.content);
   if (role !== "user") msg.streamStatus = "in_progress";

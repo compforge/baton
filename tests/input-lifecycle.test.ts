@@ -165,4 +165,45 @@ describe("Input lifecycle (InputRecord)", () => {
     expect(userTexts).toContain("also do B");
     expect(userTexts.filter((t) => t === "also do B")).toHaveLength(1);
   });
+
+  test("keeps Plugin Inputs out of user recall and persists Plugin provenance", async () => {
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+    const active = controller.submit("codex", text("first"));
+    await until(() => adapter.prompts.length === 1);
+    const plugin = controller.enqueueTurnRequest({
+      turnRequestId: "trq_1",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      messageId: "m_plugin",
+      turnId: "t_plugin",
+      blocks: text("plugin work"),
+    });
+    const user = controller.submit("codex", text("user follow-up"));
+    await until(() => controller.queueLength === 2);
+
+    expect(controller.recallLatestQueued()?.source).toEqual({ type: "user" });
+    expect(await user).toBe("recalled");
+    expect(controller.queuedTurns).toMatchObject([{
+      turnId: "t_plugin",
+      source: {
+        type: "plugin",
+        pluginInstanceId: "reqloop_default",
+        turnRequestId: "trq_1",
+      },
+    }]);
+
+    adapter.finish("end_turn");
+    await active;
+    await until(() => adapter.prompts.includes("plugin work"));
+    const pluginMessage = session.readEvents().find((event) =>
+      event.kind === "user_message" && event.payload.messageId === "m_plugin"
+    );
+    expect(pluginMessage?.source).toEqual({
+      type: "plugin",
+      pluginInstanceId: "reqloop_default",
+    });
+    adapter.finish("end_turn");
+    expect(await plugin).toBe("completed");
+  });
 });

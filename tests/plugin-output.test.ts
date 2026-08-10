@@ -21,6 +21,26 @@ describe("PluginOutput", () => {
     ).toThrow("proposed-input text must not be empty");
   });
 
+  test("accepts a complete TurnRequest and rejects an empty identity", () => {
+    expect(() =>
+      validatePluginOutput({
+        kind: "turn-request",
+        requestKey: "implement",
+        title: "Implement requirement",
+        prompt: "Implement REQ-1.",
+        harnessTargetId: "codex",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validatePluginOutput({
+        kind: "turn-request",
+        requestKey: " ",
+        title: "Implement requirement",
+        prompt: "Implement REQ-1.",
+      }),
+    ).toThrow("turn-request requestKey must not be empty");
+  });
+
   test("accepts a durable single-choice Interaction", () => {
     expect(() =>
       validatePluginOutput({

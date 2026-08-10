@@ -444,6 +444,25 @@ export class BatonChatProtocol implements ChatProtocol {
           { sourceProposedPlanId: resolved.planId },
         );
       }
+      case "cancel-request": {
+        const identifier = argument.trim() || undefined;
+        const cancelled = await this.plugins.cancelTurnRequest(identifier);
+        if (!cancelled) {
+          throw new Error(
+            identifier
+              ? `Cancellable TurnRequest not found: ${identifier}`
+              : "No cancellable TurnRequest found",
+          );
+        }
+        this.toast = {
+          text: identifier
+            ? `Cancelled TurnRequest ${identifier}`
+            : "Cancelled latest TurnRequest",
+          tone: "info",
+        };
+        this.changed();
+        return;
+      }
       case "board": {
         const mode = argument.trim().toLowerCase() ||
           (this.boardMode === "open" ? "hide" : "open");
@@ -722,7 +741,9 @@ export class BatonChatProtocol implements ChatProtocol {
     const resolved =
       resolution &&
       (interaction?.requester.type === "plugin"
-        ? await this.plugins.resolveInteraction(id, resolution)
+        ? await this.plugins.resolveInteraction(id, resolution, {
+            harnessTargetId: this.harnessTargetId,
+          })
         : this.controller.resolveInteraction(id, resolution));
     if (!resolved) {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
@@ -806,13 +827,13 @@ export class BatonChatProtocol implements ChatProtocol {
     this.lastHistoryText = null;
   }
 
-  /** 从当前 state 的 user 消息重建输入历史（resume / 切换会话后重新种入 ↑ 回溯来源）。 */
+  /** 从当前 state 的非 Plugin user-role 消息重建用户输入历史。 */
   private seedHistoryFromState(): void {
     this.history = [];
     for (const entry of this.state.timeline) {
       if (entry.type !== "message") continue;
       const msg = this.state.messages.get(entry.id);
-      if (!msg || msg.role !== "user") continue;
+      if (!msg || msg.role !== "user" || msg.source?.type === "plugin") continue;
       this.recordHistory(msg.content);
     }
     this.resetHistoryNav();
@@ -916,6 +937,17 @@ export class BatonChatProtocol implements ChatProtocol {
         );
       },
       pluginSupervisor: new PluginSupervisor(),
+      enqueueTurnRequest: (request) =>
+        this.controller.enqueueTurnRequest({
+          turnRequestId: request.requestId,
+          pluginInstanceId: request.pluginInstanceId,
+          harnessTargetId: request.harnessTargetId,
+          messageId: request.messageId,
+          turnId: request.turnId,
+          blocks: [{ type: "text", text: request.prompt }],
+        }),
+      cancelTurnRequest: (requestId) =>
+        this.controller.cancelTurnRequest(requestId),
       onProposal: () => {
         this.changed();
       },
