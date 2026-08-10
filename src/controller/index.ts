@@ -1,6 +1,7 @@
 import {
   isContextSynchronizable,
   isContextCompactable,
+  type AdapterCapabilities,
   type HarnessAdapter,
   type ApprovalRoute,
   type EffortOption,
@@ -214,6 +215,11 @@ export class Controller {
   /** 当前 turn 的起跑时刻（epoch ms）；elapsed 跳秒由 TUI 组件自理，这里只给起点 */
   get activeStartedAt(): number | undefined {
     return this.processing?.startedAt ?? this.activeDriven()?.startedAt;
+  }
+
+  /** 给 UI 做提交前提示；最终准入仍以 Adapter.sendTurn 为准。 */
+  promptCapabilities(harnessTargetId: string): AdapterCapabilities["prompt"] {
+    return this.bindingFor(harnessTargetId).adapter.capabilities.prompt;
   }
 
   get queueLength(): number {

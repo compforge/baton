@@ -37,6 +37,11 @@ Plugin 不另开执行通道。`proposed-input` 先展示给用户；只有用�
 chat-tui 只把 composer 内容和用户意图交给 Baton。mention、Session 引用和 Plugin Context 在
 Context 层解析；chat-tui 不理解 HarnessSession 或 Harness wire。
 
+剪贴板图片由 Baton 壳层在显式 paste 时读取，按内容寻址归档到 Baton attachment store，并在
+composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `image` block。Event Ledger 只保存
+稳定路径而不内联大段 base64，Adapter 再按 Harness 原生协议 lowering。文本 paste 仍由普通
+composer 输入路径处理。
+
 Controller 为 prompt Input 分配稳定 `messageId` 和 `turnId`，并用一等状态记录它的消费位置：
 
 ```text

@@ -4,7 +4,7 @@
 import type { InteractionHandler } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
 
-import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { CodexAdapter, codexPromptInput } from "../src/harness/codex/adapter.ts";
 import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 
@@ -121,8 +121,20 @@ test("codex steer: unsupported prompt blocks fail admission before the wire", as
   expect(
     adapter.sendTurn(
       ref,
-      { ...input, blocks: [{ type: "image", mimeType: "image/png", data: "aGk=" }] },
+      { ...input, blocks: [{ type: "audio", mimeType: "audio/wav", data: "aGk=" }] },
     ),
-  ).rejects.toThrow(/image/);
+  ).rejects.toThrow(/audio/);
   expect(requests).toHaveLength(0);
+});
+
+test("codex prompt images use native localImage or data URL inputs", () => {
+  expect(codexPromptInput([
+    { type: "text", text: "inspect" },
+    { type: "image", mimeType: "image/png", path: "/tmp/screenshot.png" },
+    { type: "image", mimeType: "image/webp", data: "aGk=" },
+  ])).toEqual([
+    { type: "text", text: "inspect" },
+    { type: "localImage", path: "/tmp/screenshot.png" },
+    { type: "image", url: "data:image/webp;base64,aGk=" },
+  ]);
 });

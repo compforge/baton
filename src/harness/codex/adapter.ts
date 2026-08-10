@@ -14,6 +14,7 @@ import type {
   ContentBlock,
   DiffBlock,
   AnyEventDraft,
+  PromptBlock,
   SessionConfigOption,
   StopReason,
   ToolCallStatus,
@@ -796,16 +797,39 @@ export async function openCodexThread(
   return { threadId: threadIdFrom(response, "thread/start"), resumed: false, route: routeFrom(response) };
 }
 
+type CodexPromptItem =
+  | { type: "text"; text: string }
+  | { type: "image"; url: string }
+  | { type: "localImage"; path: string };
+
+/** Baton prompt blocks → app-server v2 UserInput. */
+export function codexPromptInput(blocks: PromptBlock[]): CodexPromptItem[] {
+  return blocks.map((block) => {
+    if (block.type === "text") return { type: "text", text: block.text };
+    if (block.type !== "image") {
+      throw new Error(`codex prompt block was not admitted: ${block.type}`);
+    }
+    if (block.path) return { type: "localImage", path: block.path };
+    if (block.data) {
+      return {
+        type: "image",
+        url: `data:${block.mimeType};base64,${block.data}`,
+      };
+    }
+    throw new Error("codex image prompt block requires path or base64 data");
+  });
+}
+
 export class CodexAdapter implements HarnessAdapter {
   readonly harness = "codex";
-  // 当前 adapter 最终只发送 text；可选能力接口落地并验证后才声明
-  // 对应 marker——契约测试钉住"声明支持就必须实现对应接口"。
+  // 可选能力接口落地并验证后才声明对应 marker——契约测试钉住
+  // "声明支持就必须实现对应接口"。
   // sync：catch-up 走 turn/start.additionalContext（experimental API，initialize 已声明
   // experimentalApi）。曾用 thread/inject_items 注入独立 user message，但那会污染 codex
   // 原生历史（rollout 里出现无对应回合的悬空 user message）；additionalContext 由 codex
   // 以 contextual fragment 形态随本 turn 入史，且不过 UserPromptSubmit hook。
   readonly capabilities: AdapterCapabilities = {
-    prompt: {},
+    prompt: { image: { supported: true } },
     compact: { supported: true },
     sync: { supported: true },
     config: { supported: true },
@@ -1183,7 +1207,7 @@ export class CodexAdapter implements HarnessAdapter {
         await rt.peer.request("turn/steer", {
           threadId: rt.threadId,
           expectedTurnId: rt.codexTurnId,
-          input: [{ type: "text", text: textOf(input.blocks) }],
+          input: codexPromptInput(input.blocks),
         });
       } catch (error) {
         return {
@@ -1222,7 +1246,7 @@ export class CodexAdapter implements HarnessAdapter {
     void rt.peer
       .request("turn/start", {
         threadId: rt.threadId,
-        input: [{ type: "text", text: textOf(input.blocks) }],
+        input: codexPromptInput(input.blocks),
         ...(syncText ? { additionalContext: { "baton-sync": { value: syncText, kind: "untrusted" } } } : {}),
         ...(collaborationMode
           ? { collaborationMode }

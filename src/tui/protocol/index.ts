@@ -32,6 +32,7 @@ import { ContextProviderRegistry } from "../../context/registry.ts";
 import { logError } from "../../logging.ts";
 import {
   textOf,
+  type ContentBlock,
   type EventKind,
   type PromptBlock,
 } from "../../event/types.ts";
@@ -64,6 +65,14 @@ import { applyEvent, type SessionState } from "../../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
+import { readClipboard, type ClipboardContent } from "../clipboard.ts";
+import {
+  archiveClipboardImage,
+  composerImagePathsOf,
+  composerImageToken,
+  composerPromptBlocks,
+  composerTextOf,
+} from "../prompt-images.ts";
 import { userVisibleText } from "./transcript.ts";
 import {
   contextUsageText,
@@ -168,10 +177,11 @@ export class BatonChatProtocol implements ChatProtocol {
   private streamStateTimer: ReturnType<typeof setTimeout> | undefined;
   // 输入历史（shell 式 ↑/↓ 回溯）：会话级，从事件流的 user 消息种入、提交时追加。
   // 事件流是真相源——不另存磁盘文件；resume/切换会话后 loadState 重建 state 即可重新种入。
-  private history: string[] = [];
+  private history: Array<{ text: string; imagePaths: string[] }> = [];
   private historyCursor: number | null = null; // null = 未浏览（正在编辑草稿）
-  private historyStash: string | null = null; // 进入浏览前暂存的草稿，越过最新时恢复
+  private historyStash: { text: string; imagePaths: string[] } | null = null; // 进入浏览前暂存的草稿，越过最新时恢复
   private lastHistoryText: string | null = null; // 上次召回的条目，判定用户是否改动过
+  private composerImagePaths: string[] = [];
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
 
@@ -231,6 +241,41 @@ export class BatonChatProtocol implements ChatProtocol {
 
   // ===== 输入：TUI → baton =====
 
+  composerAcceptsPaste(): boolean {
+    const composer = this.stateStore.getState("composer");
+    const interaction = composer.interactions?.[0];
+    return !composer.picker && interaction?.kind !== "approval" && interaction?.kind !== "question";
+  }
+
+  async prepareClipboardPaste(
+    provided?: ClipboardContent,
+    composerText?: string,
+  ): Promise<string | null> {
+    if (composerText !== undefined && !/\[Image #\d+\]/.test(composerText)) {
+      this.composerImagePaths = [];
+    }
+    const content = provided ?? await readClipboard();
+    if (!content) return null;
+    if (content.type === "text") return content.text;
+    if (!this.controller.promptCapabilities(this.harnessTargetId).image?.supported) {
+      this.toast = { text: `${this.harnessTargetId} does not support image input`, tone: "error" };
+      this.changed();
+      return null;
+    }
+    try {
+      const archived = await archiveClipboardImage(this.store.rootDir, content.data);
+      this.composerImagePaths.push(archived.path);
+      return `${composerImageToken(this.composerImagePaths.length)} `;
+    } catch (error) {
+      this.toast = {
+        text: `Failed to archive clipboard image: ${error instanceof Error ? error.message : String(error)}`,
+        tone: "error",
+      };
+      this.changed();
+      return null;
+    }
+  }
+
   async submit(text: string): Promise<void> {
     const route = parseHarnessRoute(text);
     if (route?.kind === "ambiguous") {
@@ -258,7 +303,7 @@ export class BatonChatProtocol implements ChatProtocol {
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
     // 用户实际提交的内容进历史；一次新提交结束当前的 ↑ 浏览会话。
-    this.recordHistory(text);
+    this.recordHistory(composerPromptBlocks(text, this.composerImagePaths));
     this.resetHistoryNav();
     const target = this.harnessTargetId;
     this.toast = null;
@@ -291,7 +336,8 @@ export class BatonChatProtocol implements ChatProtocol {
         "",
         legacy.prompt,
       ].join("\n\n");
-    const blocks: PromptBlock[] = [{ type: "text", text: prompt }];
+    const blocks = composerPromptBlocks(prompt, this.composerImagePaths);
+    this.composerImagePaths = [];
 
     // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
     // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
@@ -696,9 +742,10 @@ export class BatonChatProtocol implements ChatProtocol {
     // 召回队列是另一种取回动作，结束进行中的历史浏览，避免游标错位。
     this.resetHistoryNav();
     this.harnessTargetId = recalled.harnessTargetId;
+    this.composerImagePaths = composerImagePathsOf(recalled.blocks);
     this.toast = { text: `Recalled queued message for ${recalled.harnessTargetId}; edit and resend`, tone: "info" };
     this.changed();
-    return { text: userVisibleText(textOf(recalled.blocks)) };
+    return { text: userVisibleText(composerTextOf(recalled.blocks)) };
   }
 
   /**
@@ -709,16 +756,17 @@ export class BatonChatProtocol implements ChatProtocol {
   historyPrev(current: string): { text: string } | null {
     if (this.history.length === 0) return null;
     if (this.historyCursor === null) {
-      this.historyStash = current;
+      this.historyStash = { text: current, imagePaths: [...this.composerImagePaths] };
       this.historyCursor = this.history.length - 1;
     } else {
       if (this.lastHistoryText !== null && current !== this.lastHistoryText) return null;
       if (this.historyCursor === 0) return null;
       this.historyCursor -= 1;
     }
-    const text = this.history[this.historyCursor]!;
-    this.lastHistoryText = text;
-    return { text };
+    const entry = this.history[this.historyCursor]!;
+    this.composerImagePaths = [...entry.imagePaths];
+    this.lastHistoryText = entry.text;
+    return { text: entry.text };
   }
 
   /** ↓ 历史前进，与 historyPrev 对称；越过最新条目时恢复进入浏览前暂存的草稿并退出浏览。 */
@@ -726,22 +774,30 @@ export class BatonChatProtocol implements ChatProtocol {
     if (this.historyCursor === null) return null;
     if (this.lastHistoryText !== null && current !== this.lastHistoryText) return null;
     if (this.historyCursor + 1 >= this.history.length) {
-      const stash = this.historyStash ?? "";
+      const stash = this.historyStash ?? { text: "", imagePaths: [] };
+      this.composerImagePaths = [...stash.imagePaths];
       this.resetHistoryNav();
-      return { text: stash };
+      return { text: stash.text };
     }
     this.historyCursor += 1;
-    const text = this.history[this.historyCursor]!;
-    this.lastHistoryText = text;
-    return { text };
+    const entry = this.history[this.historyCursor]!;
+    this.composerImagePaths = [...entry.imagePaths];
+    this.lastHistoryText = entry.text;
+    return { text: entry.text };
   }
 
   /** 追加一条输入历史（相邻去重、跳过空白）；提交与从事件流种入共用。 */
-  private recordHistory(text: string): void {
-    const trimmed = text.trim();
+  private recordHistory(blocks: ReadonlyArray<ContentBlock | PromptBlock>): void {
+    const trimmed = userVisibleText(composerTextOf(blocks));
     if (!trimmed) return;
-    if (this.history[this.history.length - 1] === trimmed) return;
-    this.history.push(trimmed);
+    const imagePaths = composerImagePathsOf(blocks);
+    const previous = this.history[this.history.length - 1];
+    if (
+      previous?.text === trimmed &&
+      previous.imagePaths.length === imagePaths.length &&
+      previous.imagePaths.every((path, index) => path === imagePaths[index])
+    ) return;
+    this.history.push({ text: trimmed, imagePaths });
   }
 
   private resetHistoryNav(): void {
@@ -757,7 +813,7 @@ export class BatonChatProtocol implements ChatProtocol {
       if (entry.type !== "message") continue;
       const msg = this.state.messages.get(entry.id);
       if (!msg || msg.role !== "user") continue;
-      this.recordHistory(userVisibleText(textOf(msg.content)));
+      this.recordHistory(msg.content);
     }
     this.resetHistoryNav();
   }
@@ -966,6 +1022,7 @@ export class BatonChatProtocol implements ChatProtocol {
     await this.session.closeLogs();
     this.session.releaseLock();
     this.session = next.session;
+    this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;
     this.controller = this.createController();

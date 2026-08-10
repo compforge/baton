@@ -26,6 +26,7 @@ import type { Manager } from "../../plugin/manager.ts";
 import type { ToastMessage } from "../../plugin/package.ts";
 import type { SessionState } from "../../store/reduce.ts";
 import type { SessionHandle } from "../../store/store.ts";
+import { composerTextOf } from "../prompt-images.ts";
 import {
   buildTranscript,
   normalizePlanStatus,
@@ -458,7 +459,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       busy,
       queued: controller.queuedTurns.map((turn) => ({
         id: String(turn.id),
-        text: userVisibleText(textOf(turn.blocks)),
+        text: userVisibleText(composerTextOf(turn.blocks)),
         tag: turn.harnessTargetId,
       })),
       picker: input.picker

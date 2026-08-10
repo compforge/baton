@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { PluginScreen } from "./plugins/screen.tsx";
+import { ClipboardPasteInput } from "./clipboard-paste.tsx";
 import { BatonChatProtocol } from "./protocol/index.ts";
 
 export interface BatonTuiHandle {
@@ -55,12 +56,15 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
     }
 
     return (
-      <ChatShell
-        protocol={props.protocol}
-        commands={props.protocol.commands}
-        mentions={props.protocol.mentionCandidates}
-        theme={props.theme}
-      />
+      <>
+        <ClipboardPasteInput protocol={props.protocol} />
+        <ChatShell
+          protocol={props.protocol}
+          commands={props.protocol.commands}
+          mentions={props.protocol.mentionCandidates}
+          theme={props.theme}
+        />
+      </>
     );
   },
 );

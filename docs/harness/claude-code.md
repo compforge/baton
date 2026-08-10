@@ -35,10 +35,11 @@ Claude `session_id` 是稳定 HarnessSession identity。resume state 已知时�
 | Capability | Claude Code 映射 |
 |---|---|
 | text prompt | streaming prompt channel 中的 `SDKUserMessage` |
+| image prompt | Adapter 读取 path-backed block，并转成 SDK base64 image block |
 | compact | 在空闲 Session 中发送原生 `/compact` control Turn |
 | Session config | model、effort、permission mode |
 
-当前不声明独立 Context sync、submit side-channel、reconcile、approval routing、image、audio、
+当前不声明独立 Context sync、submit side-channel、reconcile、approval routing、audio、
 embedded resource 或 resource link。跨 Harness catch-up 因此回落到预算受控的 prompt prepend；
 unsupported prompt block 在 admission 前明确报错。
 

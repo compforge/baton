@@ -37,13 +37,14 @@ Codex `thread.id` 是稳定 HarnessSession identity，也是 v1 resume state 的
 | Capability | Codex 映射 |
 |---|---|
 | text prompt | `turn/start.input` / `turn/steer.input` |
+| image prompt | path-backed block → `localImage`；base64 block → data URL `image` |
 | compact | `thread/compact/start` |
 | Context side-channel | `turn/start.additionalContext["baton-sync"]` |
 | Session config | model、effort、collaboration mode 的原生目录与更新 |
 | reconcile | `thread/read.status` |
 | approval routing | `approvalsReviewer` 的实际生效值 |
 
-当前不声明 image、audio、embedded resource 或 resource link；unsupported block 在 admission 前
+当前不声明 audio、embedded resource 或 resource link；unsupported block 在 admission 前
 明确报错，不能静默转成 text。
 
 Context catch-up 使用 `turn/start.additionalContext`，使其作为 contextual fragment 与本 Turn

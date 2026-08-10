@@ -2,6 +2,8 @@
 // SDK 以子进程拉起 claude CLI；可执行文件可换成公司包装器（BATON_CLAUDE_BIN），
 // 凭证零持有，复用本机登录态。见 docs/harness/claude-code.md。
 
+import { readFile } from "node:fs/promises";
+
 import {
   query,
   type EffortLevel,
@@ -605,14 +607,57 @@ function claudePromptChannel(): ClaudePromptChannel {
   };
 }
 
-function claudeUserMessage(blocks: PromptBlock[]): SDKUserMessage {
+function claudeImageMime(
+  mimeType: string,
+): "image/jpeg" | "image/png" | "image/gif" | "image/webp" {
+  if (
+    mimeType === "image/jpeg" ||
+    mimeType === "image/png" ||
+    mimeType === "image/gif" ||
+    mimeType === "image/webp"
+  ) {
+    return mimeType;
+  }
+  throw new Error(`claude-code adapter does not support image mime type: ${mimeType}`);
+}
+
+export async function claudeUserMessage(blocks: PromptBlock[]): Promise<SDKUserMessage> {
+  const content: Exclude<SDKUserMessage["message"]["content"], string> = [];
+  for (const block of blocks) {
+    if (block.type === "text") {
+      content.push({ type: "text", text: block.text });
+      continue;
+    }
+    if (block.type !== "image") {
+      throw new Error(`claude-code prompt block was not admitted: ${block.type}`);
+    }
+    let data = block.data;
+    if (!data && block.path) {
+      try {
+        data = (await readFile(block.path)).toString("base64");
+      } catch (error) {
+        throw new Error(
+          `failed to read Claude image prompt ${block.path}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (!data) throw new Error("claude-code image prompt block requires path or base64 data");
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: claudeImageMime(block.mimeType),
+        data,
+      },
+    });
+  }
   return {
     type: "user",
     session_id: "",
     parent_tool_use_id: null,
     message: {
       role: "user",
-      content: [{ type: "text", text: textOf(blocks) }],
+      content,
     },
   };
 }
@@ -787,10 +832,10 @@ export interface ClaudeAdapterOptions {
 
 export class ClaudeAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
-  // 当前 adapter 最终只发送 text；可选能力接口落地并验证后才声明
-  // 对应 marker——契约测试钉住"声明支持就必须实现对应接口"。
+  // 可选能力接口落地并验证后才声明对应 marker——契约测试钉住
+  // "声明支持就必须实现对应接口"。
   readonly capabilities: AdapterCapabilities = {
-    prompt: {},
+    prompt: { image: { supported: true } },
     compact: { supported: true },
     config: { supported: true },
     textgen: { supported: true },
@@ -1031,7 +1076,11 @@ export class ClaudeAdapter implements HarnessAdapter {
           reason: `active Claude turn is ${active.turnId}, not ${input.turnId}`,
         };
       }
-      if (!rt.promptChannel?.offer(claudeUserMessage(input.blocks))) {
+      const message = await claudeUserMessage(input.blocks);
+      if (rt.activeTurn !== active || active.finalized) {
+        return { accepted: false, effective: "rejected", reason: "active Claude turn completed while reading input" };
+      }
+      if (!rt.promptChannel?.offer(message)) {
         return {
           accepted: false,
           effective: "rejected",
@@ -1064,8 +1113,9 @@ export class ClaudeAdapter implements HarnessAdapter {
     // 的事实，不等 harness 就绪）；adapter 只报告 harness 执行过程与终态。
 
     try {
+      const message = await claudeUserMessage(input.blocks);
       this.ensureStreamingQuery(rt);
-      if (!rt.promptChannel?.offer(claudeUserMessage(input.blocks))) {
+      if (!rt.promptChannel?.offer(message)) {
         throw new Error("Claude streaming input closed before prompt was accepted");
       }
     } catch (error) {
