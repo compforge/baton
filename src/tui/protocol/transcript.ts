@@ -80,6 +80,133 @@ function commandOf(tc: ToolCallState, fallback: string): string {
   return typeof input?.command === "string" ? input.command : fallback;
 }
 
+const TOOL_KIND_LABELS: Record<string, string> = {
+  read: "Read",
+  edit: "Edit",
+  delete: "Delete",
+  move: "Move",
+  search: "Search",
+  fetch: "Fetch",
+  think: "Think",
+};
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function firstString(
+  value: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return undefined;
+}
+
+function compactText(value: string, maxLength = 64): string {
+  const [first = ""] = value.trim().split(/\r?\n/, 1);
+  const suffix = value.includes("\n") ? " …" : "";
+  if (first.length + suffix.length <= maxLength) return first + suffix;
+  return `${first.slice(0, Math.max(1, maxLength - 1))}…`;
+}
+
+/** 路径只裁头不裁尾，让卡片在窄终端上仍保留最有辨识度的文件名。 */
+function compactPath(value: string, maxLength = 64): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `…${normalized.slice(-(maxLength - 1))}`;
+}
+
+function firstDiffPath(tc: ToolCallState): string | undefined {
+  for (const block of tc.content) {
+    if (block.type !== "diff") continue;
+    const path = (block as DiffBlock).changes.find((change) => change.path)?.path;
+    if (path) return path;
+  }
+  return undefined;
+}
+
+/** 已归一 tool kind + 白名单入参 → 标题里的关键参数；不递归 dump 任意 raw payload。 */
+function toolKeyArg(tc: ToolCallState, fallback: string): string | undefined {
+  const input = recordOf(tc.rawInput);
+  const nested = recordOf(input?.arguments ?? input?.input);
+  if (tc.kind === "execute") return compactText(commandOf(tc, fallback));
+  if (tc.kind === "read" || tc.kind === "edit" || tc.kind === "delete" || tc.kind === "move") {
+    const direct = firstString(input, ["file_path", "filePath", "path", "old_path", "oldPath"]);
+    const nestedPath = firstString(nested, ["file_path", "filePath", "path"]);
+    const changes = Array.isArray(input?.changes) ? input.changes : [];
+    const changedPath = changes
+      .map((change) => firstString(recordOf(change), ["path", "file_path"]))
+      .find(Boolean);
+    const path = direct ?? nestedPath ?? changedPath ?? tc.locations[0] ?? firstDiffPath(tc);
+    return path ? compactPath(path) : undefined;
+  }
+  if (tc.kind === "search") {
+    const query = firstString(input, ["pattern", "query", "glob"]) ??
+      firstString(nested, ["pattern", "query", "glob"]);
+    return query ? compactText(query) : undefined;
+  }
+  if (tc.kind === "fetch") {
+    const target = firstString(input, ["url", "query"]) ?? firstString(nested, ["url", "query"]);
+    return target ? compactText(target) : undefined;
+  }
+  const detail = firstString(input, ["description", "prompt", "skill", "query", "path"]) ??
+    firstString(nested, ["description", "prompt", "skill", "query", "path"]);
+  return detail ? compactText(detail) : undefined;
+}
+
+function countLabel(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function patchStats(patch: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
+  }
+  return { added, removed };
+}
+
+function toolResultStats(tc: ToolCallState, outputLines: string[]): string[] {
+  const diffs = tc.content.filter((block): block is DiffBlock => block.type === "diff");
+  const files = diffs.reduce((count, diff) => count + diff.changes.length, 0);
+  const changes = diffs.reduce(
+    (total, diff) => {
+      const next = diff.patch ? patchStats(diff.patch) : { added: 0, removed: 0 };
+      return { added: total.added + next.added, removed: total.removed + next.removed };
+    },
+    { added: 0, removed: 0 },
+  );
+  const stats: string[] = [];
+  if (files > 0) stats.push(countLabel(files, "file"));
+  if (changes.added > 0 || changes.removed > 0) stats.push(`+${changes.added} -${changes.removed}`);
+  if (outputLines.length > 0) stats.push(countLabel(outputLines.length, "line"));
+  return stats;
+}
+
+function toolDisplayTitle(
+  tc: ToolCallState,
+  status: ReturnType<typeof normalizeToolStatus>,
+  rawTitle: string,
+  outputLines: string[],
+): string {
+  const keyArg = toolKeyArg(tc, rawTitle);
+  let action = rawTitle;
+  if (tc.kind === "execute") {
+    action = executeTitleOf(status);
+  } else if (keyArg) {
+    const colon = rawTitle.indexOf(":");
+    action = colon > 0 ? rawTitle.slice(0, colon).trim() : (TOOL_KIND_LABELS[tc.kind ?? ""] ?? rawTitle);
+  }
+  return [action, keyArg, ...toolResultStats(tc, outputLines)].filter(Boolean).join(" · ");
+}
+
 /** 事件模型的开放 operation → chat-tui 的闭合 DiffOp；未知操作按 modify 处理。 */
 function diffOpOf(operation: string): DiffOp {
   if (operation === "update") return "modify";
@@ -128,7 +255,7 @@ export function toolTranscriptItem(
     id: tc.toolCallId,
     kind: "tool",
     author: harnessAuthor(tc.harness),
-    title: tc.kind === "execute" ? executeTitleOf(status) : rawTitle,
+    title: toolDisplayTitle(tc, status, rawTitle, outputLines),
     status,
     content: content.length > 0 ? content : undefined,
   };

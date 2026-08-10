@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { defaultTheme } from "chat-tui";
 
-import { agentColorFor, batonTheme } from "../src/tui/theme.ts";
+import {
+  agentColorFor,
+  batonTheme,
+  batonThemeFor,
+  themeModeForBackground,
+} from "../src/tui/theme.ts";
 
 describe("agentColorFor", () => {
   test("known harnesses get fixed, distinct colors", () => {
@@ -20,8 +25,25 @@ describe("agentColorFor", () => {
     expect(first).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
+  test("light mode preserves author identity with higher-contrast variants", () => {
+    expect(agentColorFor("claude", "light")).not.toBe(agentColorFor("codex", "light"));
+    expect(agentColorFor("claude", "light")).not.toBe(agentColorFor("claude", "dark"));
+    expect(agentColorFor("gemini", "light")).toBe(agentColorFor("gemini", "light"));
+  });
+
   test("batonTheme wires the hook on top of defaultTheme", () => {
     expect(batonTheme.agentColorFor?.("claude")).toBe(agentColorFor("claude"));
     expect(batonTheme.user).toBe(defaultTheme.user);
+  });
+
+  test("terminal background selects a matching palette and is reused by overlays", () => {
+    expect(themeModeForBackground("#fefefe")).toBe("light");
+    expect(themeModeForBackground("#10131a")).toBe("dark");
+    expect(themeModeForBackground("transparent")).toBeNull();
+
+    const light = batonThemeFor("light", "#fefefe");
+    expect(light.overlayBackground).toBe("#fefefe");
+    expect(light.tool).toBe("#1a1a1a");
+    expect(light.agentColorFor?.("codex")).toBe(agentColorFor("codex", "light"));
   });
 });
