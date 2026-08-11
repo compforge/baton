@@ -386,6 +386,16 @@ export class PluginResourceStore {
     return this.readStored<TSpec, TStatus>(type, name).object;
   }
 
+  find<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
+    type: ResourceType,
+    name: string,
+  ): PluginResource<TSpec, TStatus> | undefined {
+    validateResourceType(type);
+    assertPathSegment("resource name", name);
+    if (!existsSync(this.resourcePath(type, name))) return;
+    return this.readCurrentStored<TSpec, TStatus>(type, name).object;
+  }
+
   list<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
     type: ResourceType,
     options: ResourceListOptions = {},

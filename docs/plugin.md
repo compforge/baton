@@ -150,6 +150,11 @@ Interaction 后按 Esc 或关闭卡片返回 `dismissed`；总 deadline 到期�
 中断、dispatch error 等返回 `failure`，可选 `error` 只用于诊断。draft/harness 的 deadline 覆盖
 Interaction gate 与后续整个 HarnessInvocation，不在 gate 通过后重置。
 
+verb 等待期间 Resource 或关联事实仍可能变化。continuation 恢复后，Plugin 应使用带 uid 的
+`ResourceClient.get(ref)` 重新取得同一 incarnation 的最新版本并重新验证领域前提；返回
+`undefined` 表示该对象已经删除或被同名新 incarnation 取代。等待前的 `resourceVersion` 不能
+用于后续 patch，也不能把旧回答应用到 replacement。
+
 Plugin 可以自由组合这些 primitives：有的 gate 由策略自动批准，有的等待用户，再按结果进入
 draft、主 Lane 或新 Lane。这个策略属于领域逻辑和宿主 policy，不由 Baton 从 Plugin 类型推断；
 Interaction、Harness routing、权限、并发、取消和恢复仍由 Baton 承接。完整契约见

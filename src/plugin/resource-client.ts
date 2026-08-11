@@ -3,6 +3,7 @@ import type {
   ResourceClient as PublicResourceClient,
   ResourceListOptions,
   ResourceOwnerReference,
+  ResourceRef,
   ResourceType,
 } from "@compforge/baton-plugin";
 
@@ -77,10 +78,26 @@ export function createResourceClient(
     }
   };
 
+  async function get<TSpec, TStatus>(
+    ref: ResourceRef,
+  ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
+    if (ref.namespace !== store.pluginInstanceId) {
+      throw new Error(
+        `plugin ResourceClient cannot access ${ref.kind}/${ref.name} outside ${store.pluginInstanceId}`,
+      );
+    }
+    const current = store.find<TSpec, TStatus>(ref, ref.name);
+    if (
+      !current ||
+      (ref.uid !== undefined && current.metadata.uid !== ref.uid)
+    ) {
+      return undefined;
+    }
+    return deepFreeze(current);
+  }
+
   return Object.freeze({
-    async get<TSpec, TStatus>(type: ResourceType, name: string) {
-      return deepFreeze(store.get<TSpec, TStatus>(type, name));
-    },
+    get,
     async list<TSpec, TStatus>(
       type: ResourceType,
       options?: ResourceListOptions,

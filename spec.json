@@ -36,6 +36,17 @@
       }
     ]
   },
+  "packages/plugin/src/resource.ts::ResourceClient.get": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource."
+        ],
+        "spec": "A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined."
+      }
+    ]
+  },
   "src/interaction/reconcile.ts::ReconcileInteractionStore": {
     "specs": [
       {

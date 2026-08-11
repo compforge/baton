@@ -83,6 +83,10 @@ Resource 创建后由所属 Controller 进行 level-based reconcile。Source、W
 只负责唤醒；Controller 每次都重新读取 Resource 和必要的外部事实，再更新 status 或输出下一步
 动作。
 
+`ResourceClient.get(ref)` 在省略 uid 时按名称读取当前对象，带 uid 时重新读取同一 incarnation。
+带 uid 的对象已删除或被同名重建时返回 `undefined`，避免 continuation 把旧决定写到
+replacement；namespace 越界仍会失败。
+
 Source 只证明“这次观察到了候选”，不维护完整集合真相。一次 list 可能分页、超时、权限变化或
 只覆盖滑动窗口，所以 Source omission 不会触发删除。Plugin 若要自动回收，必须基于可恢复的
 领域证据，例如显式使用关系、连续观测的 `lastSeenAt`、terminal TTL 或用户删除决定，再调用

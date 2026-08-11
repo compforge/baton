@@ -62,10 +62,13 @@ export interface ResourceListOptions {
 }
 
 export interface ResourceClient {
+  /**
+   * @spec A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined.
+   * @rule After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource.
+   */
   get<TSpec, TStatus>(
-    type: ResourceType,
-    name: string,
-  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
+    ref: ResourceRef,
+  ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined>;
   list<TSpec, TStatus>(
     type: ResourceType,
     options?: ResourceListOptions,

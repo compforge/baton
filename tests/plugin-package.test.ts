@@ -454,7 +454,12 @@ describe("Plugin Package lifecycle", () => {
     const resource = await context!.resources.get<
       { requirement: string },
       { phase: string }
-    >(REQ_LOOP_RUN, "run_1");
+    >({
+      ...REQ_LOOP_RUN,
+      namespace: "reqloop_default",
+      name: "run_1",
+    });
+    if (!resource) throw new Error("expected Requirement/run_1");
     await context!.resources.patchStatus(resource, { phase: "ready" });
     await waitFor(() => manager.listBoardItems() !== pendingItems);
     const readyItems = manager.listBoardItems();
@@ -570,8 +575,38 @@ describe("Plugin Package lifecycle", () => {
     const resource = await context!.resources.get<
       { requirement: string },
       { phase: string }
-    >(REQ_LOOP_RUN, "run_1");
+    >({
+      ...REQ_LOOP_RUN,
+      namespace: "reqloop_default",
+      name: "run_1",
+    });
+    if (!resource) throw new Error("expected Requirement/run_1");
     expect(Object.isFrozen(resource)).toBe(true);
+    const ref = {
+      ...REQ_LOOP_RUN,
+      namespace: resource.metadata.namespace,
+      name: resource.metadata.name,
+      uid: resource.metadata.uid,
+    };
+    expect(await context!.resources.get(ref)).toEqual(resource);
+    expect(await context!.resources.get({
+      ...REQ_LOOP_RUN,
+      namespace: ref.namespace,
+      name: ref.name,
+    })).toEqual(resource);
+    expect(await context!.resources.get({
+      ...REQ_LOOP_RUN,
+      namespace: ref.namespace,
+      name: "missing",
+    })).toBeUndefined();
+    expect(await context!.resources.get({
+      ...ref,
+      uid: "replacement_uid",
+    })).toBeUndefined();
+    await expect(context!.resources.get({
+      ...ref,
+      namespace: "another_instance",
+    })).rejects.toThrow("outside reqloop_default");
     const updated = await context!.resources.patchStatus(resource, {
       phase: "running",
     });

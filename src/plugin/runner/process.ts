@@ -14,6 +14,7 @@ import type {
   ResourceClient,
   ResourceListOptions,
   ResourceOwnerReference,
+  ResourceRef,
   ResourceType,
   Source,
   SourceContext,
@@ -90,14 +91,17 @@ function callHost<T>(request: HostRequest): Promise<T> {
   }) as Promise<T>;
 }
 
+async function getResource<TSpec, TStatus>(
+  ref: ResourceRef,
+): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
+  return await callHost<Readonly<Resource<TSpec, TStatus>> | undefined>({
+    method: "resource.get",
+    ref,
+  });
+}
+
 const resources: ResourceClient = Object.freeze({
-  async get<TSpec, TStatus>(type: ResourceType, name: string) {
-    return await callHost<Readonly<Resource<TSpec, TStatus>>>({
-      method: "resource.get",
-      type,
-      name,
-    });
-  },
+  get: getResource,
   async list<TSpec, TStatus>(
     type: ResourceType,
     options?: ResourceListOptions,

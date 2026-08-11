@@ -384,7 +384,7 @@ export class PluginRunnerClient {
           request.request,
         );
       case "resource.get":
-        return await this.callbacks.resources.get(request.type, request.name);
+        return await this.callbacks.resources.get(request.ref);
       case "resource.list":
         return await this.callbacks.resources.list(
           request.type,
