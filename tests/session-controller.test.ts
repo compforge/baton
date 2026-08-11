@@ -19,7 +19,7 @@ import type {
 import { sessionIdResumeState } from "../src/harness/resume.ts";
 import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/types.ts";
 import { textOf } from "../src/event/types.ts";
-import { Controller, type InteractionHandlers } from "../src/controller/index.ts";
+import { Controller, type HarnessAdapterPorts } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
@@ -796,7 +796,7 @@ describe("interaction completion registry", () => {
     readonly capabilities: AdapterCapabilities = { prompt: {} };
     sink?: EventSink;
 
-    constructor(private readonly handlers: InteractionHandlers) {}
+    constructor(private readonly handlers: HarnessAdapterPorts) {}
 
     async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
       this.sink = sink;
@@ -807,7 +807,7 @@ describe("interaction completion registry", () => {
       const emit = (ev: Parameters<EventSink>[0]) => this.sink?.({ ...ev, turnId: input.turnId });
       emit({ kind: "state_update", payload: { state: "running" } });
       void (async () => {
-        const decision = await this.handlers.interactionHandler({
+        const decision = await this.handlers.openInteraction({
           kind: "permission",
           title: "Run command?",
           options: [
@@ -816,7 +816,7 @@ describe("interaction completion registry", () => {
         }, { turnId: input.turnId });
         expect(decision).toMatchObject({ kind: "permission", optionId: "allow" });
 
-        const answers = await this.handlers.interactionHandler({
+        const answers = await this.handlers.openInteraction({
           kind: "question",
           questions: [{ questionId: "q1", header: "Scope", question: "Which scope?" }],
         }, { turnId: input.turnId });
@@ -897,11 +897,11 @@ describe("interaction completion registry", () => {
       readonly capabilities: AdapterCapabilities = { prompt: {} };
       private sink?: EventSink;
 
-      constructor(private readonly handlers: InteractionHandlers) {}
+      constructor(private readonly handlers: HarnessAdapterPorts) {}
 
       async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
-        const response = await this.handlers.interactionHandler({
+        const response = await this.handlers.openInteraction({
           kind: "hook_trust" as const,
           harnessName: "Codex",
           hooks: [
@@ -963,11 +963,11 @@ describe("interaction completion registry", () => {
       readonly capabilities: AdapterCapabilities = { prompt: {} };
       private sink?: EventSink;
 
-      constructor(private readonly handlers: InteractionHandlers) {}
+      constructor(private readonly handlers: HarnessAdapterPorts) {}
 
       async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
-        const response = await this.handlers.interactionHandler({
+        const response = await this.handlers.openInteraction({
           kind: "permission" as const,
           title: "Allow launch profile?",
           options: [

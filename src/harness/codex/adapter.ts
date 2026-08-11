@@ -39,7 +39,7 @@ import type {
   PromptReceipt,
   SendTurnReceipt,
   HarnessSessionHandle,
-  InteractionHandler,
+  OpenInteraction,
   ApprovalRoute,
   ReconcileState,
   ReconcileVerdict,
@@ -723,7 +723,7 @@ function stopReasonOf(turnStatus: string): StopReason {
 }
 
 export interface CodexAdapterOptions {
-  interactionHandler: InteractionHandler;
+  openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
   /** 缺省由 auto-review 审批；显式 user 时请求进入 Baton TUI。 */
@@ -1030,7 +1030,7 @@ export class CodexAdapter implements HarnessAdapter {
             harnessName: "Codex",
             hooks: hooksNeedingUserTrust,
           };
-          const result = await this.options.interactionHandler(interaction, { raw: hooksResult });
+          const result = await this.options.openInteraction(interaction, { raw: hooksResult });
           if (result.kind === "cancelled") {
             throw new Error("Codex hook trust request was cancelled");
           }
@@ -1818,7 +1818,7 @@ export class CodexAdapter implements HarnessAdapter {
           options: choices.map((choice) => choice.option),
         };
         if (rt.activeTurn) rt.activeTurn.sawOutput = true;
-        const result = await this.options.interactionHandler(interaction, {
+        const result = await this.options.openInteraction(interaction, {
           ...(rt.activeTurn?.turnId ? { turnId: rt.activeTurn.turnId } : {}),
           raw: params,
         });
@@ -1862,7 +1862,7 @@ export class CodexAdapter implements HarnessAdapter {
           questions,
         };
         if (rt.activeTurn) rt.activeTurn.sawOutput = true;
-        const result = await this.options.interactionHandler(interaction, {
+        const result = await this.options.openInteraction(interaction, {
           ...(rt.activeTurn?.turnId ? { turnId: rt.activeTurn.turnId } : {}),
           raw: params,
         });

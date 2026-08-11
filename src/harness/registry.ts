@@ -2,7 +2,7 @@
 // wire/持久化 key、展示名、认色和 adapter 工厂在这里组装成 HarnessDefinition。
 // 任何按名字分发、贴标签、着色的代码都必须经本模块归一。
 
-import type { HarnessAdapter, InteractionHandler, NativeEventSink } from "./adapter.ts";
+import type { HarnessAdapter, OpenInteraction, NativeEventSink } from "./adapter.ts";
 import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
 import { claudeSessionInspector } from "./claude/native-session.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
@@ -19,7 +19,7 @@ export { HARNESSES, parseHarness, type HarnessName };
 export interface HarnessAdapterOptions {
   /** Adapter 工厂的实例坐标；工厂负责把 Target 配置 lowering 成具体 Adapter 依赖。 */
   target: HarnessTarget;
-  interactionHandler: InteractionHandler;
+  openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
   config: BatonConfig;
@@ -66,9 +66,9 @@ export const HARNESS_REGISTRY = [
     shortName: "codex",
     color: "#73daca", // 青
     sessionInspector: codexSessionInspector,
-    create: ({ target, interactionHandler, log, nativeEvent, config, rootDir }) =>
+    create: ({ target, openInteraction, log, nativeEvent, config, rootDir }) =>
       new CodexAdapter({
-        interactionHandler,
+        openInteraction,
         log,
         nativeEvent,
         command: config.codexCommand,
@@ -83,9 +83,9 @@ export const HARNESS_REGISTRY = [
     shortName: "claude",
     color: "#ff9e64", // 橙
     sessionInspector: claudeSessionInspector,
-    create: ({ interactionHandler, log, nativeEvent, config }) =>
+    create: ({ openInteraction, log, nativeEvent, config }) =>
       new ClaudeAdapter({
-        interactionHandler,
+        openInteraction,
         log,
         nativeEvent,
         executablePath: config.claudeExecutable,

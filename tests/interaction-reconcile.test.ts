@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Store as PluginInteractionStore } from "../src/plugin/interaction.ts";
+import { ReconcileInteractionStore } from "../src/interaction/reconcile.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
@@ -52,10 +52,10 @@ afterEach(() => {
   }
 });
 
-describe("plugin Interaction Store", () => {
+describe("ReconcileInteractionStore", () => {
   test("returns level-based ask and confirm results", () => {
     const handle = session();
-    const store = new PluginInteractionStore(handle);
+    const store = new ReconcileInteractionStore(handle);
     const context = scope(handle.id);
     const input = {
       key: "associate-pr",
@@ -110,7 +110,7 @@ describe("plugin Interaction Store", () => {
     const handle = session();
     const context = scope(handle.id);
     let now = new Date("2026-08-11T12:00:00.000Z");
-    let store = new PluginInteractionStore(handle, { now: () => now });
+    let store = new ReconcileInteractionStore(handle, { now: () => now });
     const input = {
       key: "associate-pr",
       title: "Associate pull request",
@@ -128,7 +128,7 @@ describe("plugin Interaction Store", () => {
 
     now = new Date("2026-08-11T12:02:00.000Z");
     const timedOut: unknown[] = [];
-    store = new PluginInteractionStore(handle, {
+    store = new ReconcileInteractionStore(handle, {
       now: () => now,
       onTimeout: (key) => timedOut.push(key),
     });
@@ -160,7 +160,7 @@ describe("plugin Interaction Store", () => {
 
   test("lets the requester withdraw while preserving first-terminal-wins", () => {
     const handle = session();
-    const store = new PluginInteractionStore(handle);
+    const store = new ReconcileInteractionStore(handle);
     const context = scope(handle.id);
     const input = {
       key: "associate-pr",
@@ -222,7 +222,7 @@ describe("plugin Interaction Store", () => {
 
   test("cancels pending Interactions when their Resource incarnation is deleted", () => {
     const handle = session();
-    const store = new PluginInteractionStore(handle);
+    const store = new ReconcileInteractionStore(handle);
     const context = scope(handle.id);
     const other = scope(handle.id, "run_2");
     const input = {

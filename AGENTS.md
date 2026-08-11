@@ -2,20 +2,23 @@
 
 ## 项目定位与边界
 
-baton 是一个 terminal-native 的 Loop Engineering 控制面，也是跨 coding agent 的统一工作区。
+baton 是一个 terminal-native 的 Loop Engineering 协作内核与控制面，也是跨 coding agent 的统一工作区。
 用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
 Session 的 Plugin 数据与执行；Project 按 cwd 组织和发现 Session，也承载同一 workspace
 跨 Session 的 Plugin 私有数据。Claude Code 和 Codex 是首批内置 Harness，不是封闭支持列表。
 
-baton 按三层协作：
+baton core 位于人、Harness 和 Baton Plugin 三类参与者之间：
 
-1. **Baton core** 提供 Input、Interaction、Event、Context、权限、Harness routing、调度和
-   Projection 等通用控制能力，不理解 Requirement、Deployment、Review 等领域语义。
-2. **Baton Plugin** 拥有长期领域 loop，以 Resource 的 `spec/status` 表达期望与观测，由
+1. **人** 提交目标、编辑工作并给出决议，拥有 BatonSession 的正典协作历史。
+2. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
+   Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
+3. **Baton Plugin** 拥有长期领域 loop，以 Resource 的 `spec/status` 表达期望与观测，由
    Controller reconcile。Plugin 通过 `ReconcileContext` 请求人的决定、准备 draft 或发起
    Harness Turn；Harness 只是后续执行端，Plugin 不能绕过 Baton 直接调用。
-3. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
-   Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
+
+Core 只接受 typed intent/verb，并将其物化为 Input、Interaction、HarnessInvocation、Event 等
+有身份和状态机的持久对象；它拥有路由、权限、调度、取消、恢复与 Projection，但不提供任意
+payload 的 publish/subscribe，也不理解 Requirement、Deployment、Review 等领域语义。
 
 稳定内核已经支持同一 BatonSession 内的 Harness 接力，以及主 Lane 与
 异步支线 Lane 并发；Plugin host 已支持 Marketplace、
@@ -69,7 +72,8 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    已交付与 Harness 已被唤醒是三个独立事实。Resource 以 `apiVersion/kind` 标识类型，以
    `namespace/name/uid` 标识对象；`labels` 是受约束、可检索的分组 metadata，`annotations`
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。
-3. **长期 loop 与执行小闭环分层**：Baton core 保持领域无关，Baton Plugin 通过 Resource /
+3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关，人、Harness 和 Baton Plugin
+   通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
    `draft` 交给用户修改，`harness` 直接执行并选择主 Lane 或新 Lane。Core 把调用持久化为
    Interaction 或 HarnessInvocation，最终 Input 统一走 Context、Permission、Attempt 与 routing。
@@ -83,8 +87,9 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    生成 HarnessHistorySnapshot，再 adoption 为 BatonSession；此后 resume / fork 只走
    BatonSession 主路径。adoptedFrom 是不可变 owner 来源，当前 Binding 可重建；显式再次接入
    只允许按 HarnessHistoryBoundary 对账完整语义前缀后补尾，分叉即失败。Baton 不托管 Harness 凭证。
-5. **可信交付必须有显式事实**：Controller 拥有 Input、Attempt、Turn 与 Interaction 生命周期，
-   Adapter 拥有 Harness 执行；投递先持久化再 dispatch，无法证明结果时保留 `uncertain`；
+5. **可信交付必须有显式事实**：Controller 拥有 Input、Attempt 与 Turn 生命周期，Interaction
+   域统一拥有 Harness/Plugin requester 的待决生命周期，Adapter 拥有 Harness 执行；投递先持久化
+   再 dispatch，无法证明结果时保留 `uncertain`；
    Context 只有 DeliveryReceipt 才推进目标 HarnessSession 的 Epoch。审批、用户决议和自动 reviewer
    必须有可见、可恢复的权威回执，未知终态或策略一律悲观处理。
 

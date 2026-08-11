@@ -251,7 +251,7 @@ describe("claude adapter observed-turn minting", () => {
   });
 
   test("mintObservedTurn opens with running under a fresh turn id", async () => {
-    const adapter = new ClaudeAdapter({ interactionHandler: async (req) => ({ kind: "permission", outcome: "selected", optionId: "deny" }) });
+    const adapter = new ClaudeAdapter({ openInteraction: async (req) => ({ kind: "permission", outcome: "selected", optionId: "deny" }) });
     const events: Array<{ kind: string; turnId?: string; payload: Record<string, unknown> }> = [];
     const ref = await adapter.open({ cwd: "/tmp" }, (ev) => events.push(ev as never));
     const seams = adapter as unknown as {

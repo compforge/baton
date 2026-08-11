@@ -20,17 +20,17 @@ import type {
 import type {
   Interaction,
   InteractionResult,
-  PluginResourceInteractionContext,
+  ReconcileInteractionContext,
   QuestionChoice,
-} from "../interaction/types.ts";
+} from "./types.ts";
 import type { SessionHandle } from "../store/store.ts";
-import type { ReconcileKey } from "./controller.ts";
+import type { ReconcileKey } from "../plugin/controller.ts";
 import {
   reconcileOperationIdentity,
   reconcileOperationLabel,
-} from "./reconcile-operation.ts";
-import { reconcileResourceOwner } from "./reconcile-scope.ts";
-import type { ReconcileVerbScope } from "./verbs.ts";
+} from "../plugin/reconcile-operation.ts";
+import { reconcileResourceOwner } from "../plugin/reconcile-scope.ts";
+import type { ReconcileVerbScope } from "../plugin/verbs.ts";
 
 const QUESTION_ID = "decision";
 
@@ -68,7 +68,7 @@ interface ReconcileQuestion {
   };
 }
 
-export interface StoreOptions {
+export interface ReconcileInteractionStoreOptions {
   now?: () => Date;
   onTimeout?(key: ReconcileKey): void;
 }
@@ -78,7 +78,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 function interactionIdentity(
   batonSessionId: string,
   pluginInstanceId: string,
-  context: PluginResourceInteractionContext,
+  context: ReconcileInteractionContext,
 ): string {
   return reconcileOperationIdentity({
     batonSessionId,
@@ -91,7 +91,7 @@ function interactionIdentity(
 function interactionContext(
   draft: ReconcileVerbScope,
   operation: ReconcileOperationRef<"ask" | "confirm">,
-): PluginResourceInteractionContext {
+): ReconcileInteractionContext {
   return Object.freeze({
     operation: Object.freeze({ ...operation }),
     resource: draft.resource,
@@ -230,21 +230,21 @@ function validResult(
 }
 
 /**
- * Event-backed Plugin Interaction index. It stores no callbacks: the result is
- * persisted first, then routed back to the original Resource reconcile key.
+ * Reconcile continuation for Core-owned Interactions. It stores no Plugin
+ * callbacks: the result is persisted first, then routed by Resource identity.
  */
-export class Store {
+export class ReconcileInteractionStore {
   private readonly entries = new Map<string, Entry>();
   private readonly interactionIdByIdentity = new Map<string, string>();
   private readonly unsubscribe: () => void;
   private readonly now: () => Date;
-  private readonly onTimeout: StoreOptions["onTimeout"];
+  private readonly onTimeout: ReconcileInteractionStoreOptions["onTimeout"];
   private timer?: ReturnType<typeof setTimeout>;
   private replaying = true;
 
   constructor(
     private readonly session: InteractionSession,
-    options: StoreOptions = {},
+    options: ReconcileInteractionStoreOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
     this.onTimeout = options.onTimeout;

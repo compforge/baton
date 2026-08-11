@@ -52,7 +52,7 @@ import type {
   PromptReceipt,
   SendTurnReceipt,
   HarnessSessionHandle,
-  InteractionHandler,
+  OpenInteraction,
   TextgenRequest,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
@@ -852,7 +852,7 @@ function claudeContextUsage(
 }
 
 export interface ClaudeAdapterOptions {
-  interactionHandler: InteractionHandler;
+  openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
   /** claude 可执行文件路径；默认 BATON_CLAUDE_BIN 环境变量，再默认交给 SDK 自己找 */
@@ -1439,7 +1439,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(meta.toolUseID ? { toolCallId: meta.toolUseID } : {}),
       options: claudeApprovalOptions(suggestions.length > 0),
     };
-    const result = await this.options.interactionHandler(interaction, {
+    const result = await this.options.openInteraction(interaction, {
       turnId: turnId(),
       raw: { toolName, input, meta },
     });
@@ -1491,7 +1491,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(toolCallId ? { toolCallId } : {}),
       questions,
     };
-    const result = await this.options.interactionHandler(interaction, {
+    const result = await this.options.openInteraction(interaction, {
       turnId: turnId(),
       raw: input,
     });

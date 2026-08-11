@@ -7,9 +7,10 @@ Plugin 让长期领域 loop 在不进入 Baton core 的前提下拥有自己的 
 
 ## 1. 理念与边界
 
-Baton core 不理解 Requirement、Deployment、Review 等领域语义，只提供生命周期、调度、
-持久化、权限、Board、Context 和 reconcile 作用域能力。Plugin 可以封装完整 loop，也可以提供能独立
-演进的领域能力或本地自动化。
+Baton core 不理解 Requirement、Deployment、Review 等领域语义，但它不是透明消息总线：Core
+拥有 Interaction、HarnessInvocation、Input 与 Event 的 identity、状态机、权限、调度和恢复。
+Plugin 作为三类参与者之一，通过 typed reconcile verbs 使用这些能力，可以封装完整 loop，也可以
+提供能独立演进的领域能力或本地自动化。
 
 ```text
 领域 loop = Resource(spec + status) + level-based reconcile
@@ -66,16 +67,18 @@ PluginPackage（不可变交付物）
 
 ```text
 Baton host process
-  └── Manager
-        ├── Instance / Resource / Interaction / HarnessInvocation stores
+  ├── Interaction / Input / HarnessInvocation core
+  └── Plugin Manager
+        ├── Instance / Resource stores
+        ├── reconcile continuation / invocation correlation
         ├── keyed reconcile queues / Sources / Watches / Board cache
         └── Supervisor
               └── Runner process × active Binding
                     └── third-party Package + Connector
 ```
 
-**Manager** 是唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource 与 reconcile 操作事实、
-控制 reconcile 容量和维护 Board cache。
+**Manager** 是 Plugin 侧唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource、
+把 reconcile verbs lowering 到 Core-owned Interaction/HarnessInvocation、控制 reconcile 容量和维护 Board cache。
 
 **Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
 
@@ -149,13 +152,17 @@ Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/
 ### 5.1 Reconcile 作用域能力
 
 Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
-Core-owned 控制能力：
+Plugin-facing typed Core verbs：
 
 - `ask`：请求一个选项或自由文本答案，可声明持久的绝对 deadline；
 - `confirm`：请求 accept / decline 决定，可声明持久的绝对 deadline；
 - `withdraw`：领域流程不再需要答案时，以稳定 `verb + key` operation ref 撤回未决 Interaction；
 - `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
 - `harness`：直接形成 plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
+
+这些方法不是通用 `send(type, payload)`：`ask/confirm` 只能物化为 Interaction，`draft/harness`
+只能物化为 HarnessInvocation，identity、准入和终态由 Core 决定。Plugin 不能提供 topic、路由 callback
+或 Harness 原生 DTO。
 
 能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction 的
 回答、超时或 requester 撤回、

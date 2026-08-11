@@ -1,5 +1,5 @@
 // 审批/终态诚实性契约（对所有 adapter 参数化）：
-// 1. 审批闭环——adapter 把 Harness 请求提交给 InteractionHandler、等待宿主决策，
+// 1. 审批闭环——adapter 把 Harness 请求提交给 OpenInteraction、等待宿主决策，
 //    并把决定回传 Harness；requested / answered / cancelled 的持久化由 Controller 统一负责；
 // 2. 终态白名单——只有明确的成功值可以映射 completed，declined 是一等终态，
 //    未知终态悲观归 failed（乐观兜底曾把 codex declined 渲染成绿勾）；
@@ -16,7 +16,7 @@ function codexServerRequestHarness(optionId: string) {
   const events: AnyEventDraft[] = [];
   const interactions: InteractionDraft[] = [];
   const adapter = new CodexAdapter({
-    interactionHandler: async (interaction) => {
+    openInteraction: async (interaction) => {
       interactions.push(interaction);
       return { kind: "permission", outcome: "selected", optionId };
     },
@@ -67,7 +67,7 @@ describe("approval loop closes through the host (all adapters)", () => {
       const events: AnyEventDraft[] = [];
       const interactions: InteractionDraft[] = [];
       const adapter = new ClaudeAdapter({
-        interactionHandler: async (interaction) => {
+        openInteraction: async (interaction) => {
           interactions.push(interaction);
           return { kind: "permission", outcome: "selected", optionId };
         },

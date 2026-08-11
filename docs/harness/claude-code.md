@@ -70,7 +70,7 @@ Claude SDK 的 `canUseTool` 是用户协作入口：
 - 普通工具权限 → permission Interaction；
 - `ExitPlanMode` → Baton 捕获 proposed plan，并拒绝继续自动实施，等待用户后续确认。
 
-Adapter 等待 Baton result，再返回 SDK `PermissionResult`。Interaction ID 和生命周期由
+Adapter 通过 `OpenInteraction` 等待 Baton result，再返回 SDK `PermissionResult`。Interaction ID 和生命周期由
 Controller 拥有，Claude `toolUseID` 只用于关联原生请求。
 
 主要输出映射包括：

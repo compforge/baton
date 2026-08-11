@@ -212,7 +212,7 @@ describe("codex transport failure", () => {
       });
     `;
     const adapter = new CodexAdapter({
-      interactionHandler: async (req) => ({ kind: "permission", outcome: "selected", optionId: "decline" }),
+      openInteraction: async (req) => ({ kind: "permission", outcome: "selected", optionId: "decline" }),
       command: ["bun", "-e", script],
     });
     const events: AnyEventDraft[] = [];

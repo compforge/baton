@@ -47,7 +47,8 @@ payload 和 answer。ApprovalReview 则是**未打开 Interaction 时**观察到
 
 ### 2.1 交互审批
 
-Adapter 向 `InteractionHandler` 提交 permission draft → Controller 签发 `interactionId`、登记
+Adapter 把 Harness 原生审批 verb lowering 成 permission draft，并通过 `OpenInteraction` Core port
+提交 → Core 签发 `interactionId`、登记
 waiter 并 append `interaction.requested` → reducer 派生 `requires_action`，chat-tui 在
 InteractionDock 渲染审批卡 → 用户经 `resolveInteraction` 调用
 `Controller.completeInteraction` → Controller append
@@ -118,8 +119,9 @@ codex 报告生效 reviewer 为委托时，Target Status 常驻 `approvals:auto-
 
 - `src/harness/codex/adapter.ts`：reviewer 下发与生效值回吐（`approvalRoute`）、`autoApprovalReview/*` 消费、归一与 §2.3 启发式 notice 收敛。
 - `src/interaction/types.ts`：permission draft / answer / cancellation 与统一 Interaction identity/requester。
-- `src/harness/adapter.ts`：`InteractionHandler` 宿主交互契约。
-- `src/controller/interaction.ts`：Interaction identity、requested/answered/cancelled 与 waiter 生命周期。
+- `src/harness/adapter.ts`：`OpenInteraction` typed Core port。
+- `src/interaction/harness.ts`：Harness verb lowering 后的 Interaction continuation。
+- `src/interaction/types.ts`：Interaction identity、requester 与 requested/answered/cancelled 公共契约。
 - `src/event/types.ts`：`interaction.requested` / `interaction.answered` / `interaction.cancelled` / `approval_review_update`。
 - `src/tui/protocol/`：审批卡、review 回执与 Target Status 委托提示投影。
 - chat-tui 公开的 `TranscriptBlockStatus`、block `tone` 与 Timeline 展示规则。

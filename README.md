@@ -26,7 +26,7 @@ Two fundamentals are in place today:
 
 The Plugin host adds a third principle:
 
-- **Layered loops**: baton core stays domain-neutral and owns interaction, input, context, permission, and harness routing. Baton Plugins own long-running domain loops and use `ReconcileContext` to ask the user, prepare a draft, or run a Harness Turn. Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
+- **Typed coordination**: baton core connects humans, Harnesses, and Baton Plugins through Core-owned Input, Interaction, HarnessInvocation, and Event lifecycles—not opaque messages. Harness-native verbs are lowered by Adapters; Plugin reconcile verbs are lowered by the host. Baton Plugins own long-running domain loops, while Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
 
 On top of these, three product directions continue to evolve. A BatonSession already supports mainline and asynchronous side-lane tasks initiated by users or Plugins; coordinated fan-out and result curation remain incomplete:
 
@@ -40,7 +40,7 @@ Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carr
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-v2 keeps that pipeline and layers long-running domain loops around it. baton core remains domain-neutral and owns shared control; Baton Plugins reconcile domain Resources through `ReconcileContext`; Harnesses provide intelligent execution, while Harness Plugins constrain the smaller loop inside a Harness. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
+v2 keeps that pipeline and makes baton a durable coordination kernel among humans, Harnesses, and Baton Plugins. Each participant keeps its own semantics and enters Core through typed ports: human intent becomes Input or an Interaction result, Harness-native verbs become Interaction drafts through Adapters, and Plugin reconcile verbs become Interaction or HarnessInvocation records through the host. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
 
 ![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
 

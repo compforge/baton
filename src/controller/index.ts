@@ -6,7 +6,7 @@ import {
   type ApprovalRoute,
   type EffortOption,
   type InteractionContext,
-  type InteractionHandler,
+  type OpenInteraction,
   type ModelOption,
   type NativeEventSink,
   type SendTurnReceipt,
@@ -51,7 +51,7 @@ import {
   type QueuedTurnSnapshot,
   type SubmitOutcome,
 } from "./input.ts";
-import { InteractionWaiters } from "./interaction.ts";
+import { HarnessInteractionContinuations } from "../interaction/harness.ts";
 import { TurnLedger, type TurnRecord } from "./turn.ts";
 
 export type {
@@ -110,9 +110,9 @@ export type SendTurnOutcome =
       reason?: string;
     };
 
-/** Controller 注入给 Adapter 的宿主能力；Interaction 必须经可信边界打开。 */
-export interface InteractionHandlers {
-  interactionHandler: InteractionHandler;
+/** Controller 注入给 Adapter 的 Core ports；原生 Harness verb 只能经这些边界 lowering。 */
+export interface HarnessAdapterPorts {
+  openInteraction: OpenInteraction;
   log: LogSink;
   nativeEvent: NativeEventSink;
 }
@@ -125,7 +125,7 @@ export interface ControllerOptions {
   /** 新 session 未选过 effort 时使用的 HarnessTarget 级持久偏好。 */
   effortPreferences?: Readonly<Record<string, string>>;
   /** 工厂按 target.harness 选择 Adapter，并可使用 target.id lowering 实例级配置。 */
-  createAdapter(target: HarnessTarget, handlers: InteractionHandlers): HarnessAdapter;
+  createAdapter(target: HarnessTarget, handlers: HarnessAdapterPorts): HarnessAdapter;
   /** HarnessTarget identity 的唯一 owner；未知 id 必须返回 undefined，不能反推 Harness。 */
   resolveTarget(harnessTargetId: string): HarnessTarget | undefined;
   /** 不创建 HarnessSession 的 Target 级只读发现；缺省时兼容回落到 live binding。 */
@@ -183,7 +183,7 @@ export class Controller {
   private readonly turns = new TurnLedger<HarnessBinding>();
   private readonly deliveryAttempts: DeliveryAttempts<HarnessBinding>;
   private readonly contextDeliveries: ContextDeliveries<HarnessBinding>;
-  private readonly interactions: InteractionWaiters<HarnessBinding>;
+  private readonly harnessInteractions: HarnessInteractionContinuations<HarnessBinding>;
   private drainingMain = false;
   private activeSideRuns = 0;
   /** driven 工作从 Harness setup 开始即对 UI 可见。 */
@@ -208,7 +208,7 @@ export class Controller {
       (binding, event) => this.appendEvent(binding, event, { type: "baton" }),
       options.session.readEvents(),
     );
-    this.interactions = new InteractionWaiters(
+    this.harnessInteractions = new HarnessInteractionContinuations(
       (binding, event, source) => this.appendEvent(binding, event, source),
       () => this.changed(),
     );
@@ -219,7 +219,7 @@ export class Controller {
    * 时返回 false，UI 据此提示 stale，而不是把响应写进一个无人消费的内存通道。
    */
   completeInteraction(interactionId: string, result: InteractionResult): boolean {
-    return this.interactions.complete(interactionId, result);
+    return this.harnessInteractions.complete(interactionId, result);
   }
 
   private openHarnessInteraction(
@@ -233,7 +233,7 @@ export class Controller {
     const active = this.turns.activeDriven(laneId);
     const turnId =
       context?.turnId ?? active?.turnId ?? binding.setupTurnId;
-    return this.interactions.open(binding, draft, turnId, context);
+    return this.harnessInteractions.open(binding, draft, turnId, context);
   }
 
   private mainLaneId(): string {
@@ -1091,7 +1091,7 @@ export class Controller {
     // clear_pending_waiters→Abort、opencode interrupt 的 ensuring(pending.delete)。
     // 顺序天然对：finalize 发生在 adapter.cancel 之后（先中断 turn，再收 pending），不会让取消以
     // model 可见的 tool rejection 抢在 turn 中断之前冒出来。
-    this.interactions.cancelForTurn(turnId);
+    this.harnessInteractions.cancelForTurn(turnId);
 
     const session = this.options.session;
 
@@ -1186,7 +1186,7 @@ export class Controller {
               this.bindingKey(this.mainLaneId(), target.id),
             )?.adapter ??
             this.options.createAdapter(target, {
-              interactionHandler: () =>
+              openInteraction: () =>
                 Promise.reject(new Error("textgen cannot open Harness interactions")),
               log: (entry) => this.options.session.log({ ...entry, harnessTargetId: target.id }),
               // textgen adapter 不开 session、不上报原生事件；sink 就位但不产生流量。
@@ -1261,7 +1261,7 @@ export class Controller {
       if (!lane) throw new Error(`Lane not found: ${laneId}`);
       const target = this.targetFor(harnessTargetId);
       const adapter = this.options.createAdapter(target, {
-        interactionHandler: (interaction, context) =>
+        openInteraction: (interaction, context) =>
           this.openHarnessInteraction(laneId, target.id, interaction, context),
         log: (entry) =>
           this.options.session.log({ ...entry, harnessTargetId: target.id }),

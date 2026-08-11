@@ -266,6 +266,11 @@ persists it with the Interaction, records `cancelled` with reason `timeout` when
 it expires, and re-enqueues the Resource. The Plugin decides whether that means
 decline, skip, escalation, or another domain outcome.
 
+`ReconcileContext` methods are typed Core verbs rather than generic messages:
+`ask` and `confirm` can only materialize Core-owned Interactions, while `draft`
+and `harness` can only materialize HarnessInvocations. Plugins cannot select a
+topic, provide a routing callback, or pass a Harness-native DTO through Core.
+
 Each choice `value` is the stable answer value persisted by Baton and returned
 as `decision.value`; `label` and `description` are presentation only. Operation
 keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and

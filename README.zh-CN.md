@@ -26,7 +26,7 @@ baton 是一个以持久、harness-independent 会话为内核的 terminal-nativ
 
 Plugin host 又增加了一条原则：
 
-- **Loop 分层**：baton core 保持领域无关，统一拥有 Interaction、Input、Context、Permission 与 Harness routing。Baton Plugin 拥有长期领域 loop，并通过 `ReconcileContext` 询问用户、准备 draft 或发起 Harness Turn；devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
+- **Typed coordination**：baton core 通过 Core-owned Input、Interaction、HarnessInvocation 和 Event 生命周期串联人、Harness 与 Baton Plugin，而不是转发 opaque message。Harness 原生 verb 由 Adapter lowering，Plugin reconcile verb 由 host lowering；Baton Plugin 拥有长期领域 loop，devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
 
 在此之上仍有三个产品演进方向。BatonSession 已支持由人或 Plugin 发起主线与异步支线任务；协同 fan-out 与结果策展尚未完整落地：
 
@@ -40,7 +40,7 @@ Plugin host 又增加了一条原则：
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
-v2 保留这条流水线，并在其外分层组织长期领域 loop：baton core 保持领域无关并统一控制，Baton Plugin 通过 `ReconcileContext` reconcile 领域 Resource，Harness 提供智能执行能力，Harness Plugin 约束 Harness 内部的小闭环。所有 Plugin 发起的 Turn 都回到同一条 Input、Context、Permission 与 routing 路径。
+v2 保留这条流水线，并让 baton 成为人、Harness 与 Baton Plugin 之间的持久协作内核。三方保留各自语义，通过 typed port 进入 Core：人的 intent 成为 Input 或 Interaction result，Harness 原生 verb 经 Adapter 成为 Interaction draft，Plugin reconcile verb 经 host 成为 Interaction 或 HarnessInvocation。所有 Plugin 发起的 Turn 都回到同一条 Input、Context、Permission 与 routing 路径。
 
 ![Baton、Plugin 与 Harness 的关系](docs/kernel-pipeline_v2.svg)
 

@@ -70,8 +70,8 @@ pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最�
 
 ## 5. Interaction 与输出
 
-Codex 的 permission、question 等 server request 由 Adapter 转成 `InteractionDraft`，等待 Baton
-result 后再回原生协议。hook trust 是 thread 打开前的 setup Interaction：Baton 按 hook
+Codex 的 permission、question 等 server verb 由 Adapter lowering 成 `InteractionDraft`，通过
+`OpenInteraction` 等待 Baton result 后再回原生协议。hook trust 是 thread 打开前的 setup Interaction：Baton 按 hook
 精确定义保存信任指纹，定义变化后重新询问；已信任且未变化时显示可见 notice。
 
 delegated reviewer 没有向 Baton 打开 Interaction 时，Adapter 把 review 终态归一为带独立

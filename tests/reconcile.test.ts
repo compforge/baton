@@ -4,9 +4,9 @@ import {
   CodexAdapter,
   mapThreadStatus,
 } from "../src/harness/codex/adapter.ts";
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "deny" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -37,7 +37,7 @@ describe("Codex reconcile capability", () => {
         };
       },
     };
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const runtime = { threadId: "thread-1", peer };
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }

@@ -18,11 +18,11 @@ import {
   type NativeSessionSource,
   type ResolvedNativeSession,
 } from "../src/harness/native-session.ts";
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 
 const roots: string[] = [];
-const interactionHandler: InteractionHandler = async (interaction) =>
+const openInteraction: OpenInteraction = async (interaction) =>
   interaction.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "decline" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -435,7 +435,7 @@ describe("native session ownership", () => {
       turnId,
       payload: { state: "running" },
     });
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const drafts: AnyEventDraft[] = [];
     const runtime = {
       threadId: "thread-live",
@@ -580,7 +580,7 @@ describe("native session ownership", () => {
       turnId,
       payload: { state: "running" },
     });
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const drafts: AnyEventDraft[] = [];
     const runtime = {
       cwd: "/repo",

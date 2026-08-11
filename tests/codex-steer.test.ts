@@ -1,14 +1,14 @@
 // codex sendTurn 的 active-turn 映射（见 docs/harness/codex.md）：baton turnId → codex turn id、
 // 成功发 delivery:"steer" 的 user_message 并绑定原 turn、stale/finalized/wire 失败
 // 一律 rejected 且不发事件（降级由 controller 决定）。
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
 
 import { CodexAdapter, codexPromptInput } from "../src/harness/codex/adapter.ts";
 import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "decline" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -23,7 +23,7 @@ interface FakeRt {
 }
 
 function harness(opts: { requestError?: Error } = {}) {
-  const adapter = new CodexAdapter({ interactionHandler });
+  const adapter = new CodexAdapter({ openInteraction });
   const events: Array<AnyEventDraft & { turnId?: string }> = [];
   const requests: Array<{ method: string; params: unknown }> = [];
   const rt: FakeRt = {

@@ -1,8 +1,9 @@
 /**
- * Baton 持有的、需要外部参与者给出结果后才能继续的持久交互。
+ * Baton 持有的、需要外部参与者给出结果后才能继续的持久协作对象。
  *
- * Interaction 是跨 Harness / Plugin 的稳定对象；permission、question、hook trust 只是
- * kind。Event source 表示谁报告了生命周期事实，requester 表示谁在等待结果，两者不能混用。
+ * Harness 与 Plugin 都通过 typed request 打开 Interaction，人通过同一 Core 生命周期作答。
+ * 它不是承载任意 payload 的消息信封；permission、question、hook trust 是封闭 kind。
+ * Event source 表示谁报告生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
 import type {
@@ -94,7 +95,7 @@ export type InteractionDraft = PermissionInteraction | QuestionInteraction | Hoo
  * Durable routing owned by Baton for an Interaction emitted from Resource reconcile.
  * The structured operation is part of identity; the basis is provenance, not callback state.
  */
-export interface PluginResourceInteractionContext {
+export interface ReconcileInteractionContext {
   operation: ReconcileOperationRef<"ask" | "confirm">;
   resource: ResourceRef;
   resourceOwner: "plugin" | "baton";
@@ -106,7 +107,8 @@ export interface PluginResourceInteractionContext {
 export type Interaction = InteractionDraft & {
   interactionId: string;
   requester: InteractionRequester;
-  pluginContext?: PluginResourceInteractionContext;
+  /** Plugin requester 恢复 Resource reconcile 所需的持久路由事实。 */
+  pluginContext?: ReconcileInteractionContext;
   /** Durable absolute deadline for host-owned timeout cancellation. */
   expiresAt?: string;
 };

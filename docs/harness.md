@@ -13,6 +13,7 @@ Controller、Store、Projection 或 chat-tui。边界因此分为三层：
 ```text
 harness wire ── Adapter ──▶ Baton Event ── Projection ──▶ chat-tui view
 harness wire ◀─ Adapter ◀── Baton action ◀─ Controller ◀── chat-tui intent
+harness verb ─ Adapter lowering ─▶ InteractionDraft ─ OpenInteraction ─▶ Core
 ```
 
 Adapter 是唯一同时理解原生协议与 Baton 契约的模块。Baton 采用“稳定共同语义 + capability +
@@ -161,9 +162,11 @@ Controller 的 driven admission 队列。
 
 ### 5.3 Interaction
 
-Adapter 需要外部参与者时提交 `InteractionDraft` 并等待 result。Controller 签发
-`interactionId` 和 requester，持久化 requested/answered/cancelled；Adapter 不得自行发完整生命周期 Event。
-Interaction 的执行坐标和原生请求留在 envelope context/raw，不能污染稳定 payload。
+Harness 的 request approval、request user input 等原生 verb 属于各家协议。Adapter 先把它们
+lowering 成闭合的 `InteractionDraft`，再通过 `OpenInteraction` typed Core port 等待 result。
+Core 签发 `interactionId` 和 requester，持久化 requested/answered/cancelled；Adapter 不得自行发
+完整生命周期 Event，也不能把原生 DTO 当作通用消息上送。Interaction 的执行坐标和原生请求留在
+envelope context/raw，不能污染稳定 payload。
 
 ## 6. 外部 HarnessSession 纳管
 

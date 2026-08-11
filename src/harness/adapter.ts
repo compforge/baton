@@ -380,7 +380,6 @@ export function isContextSynchronizable(
   return typeof (adapter as Partial<ContextSynchronizable>).syncContext === "function";
 }
 
-/** Adapter 显式暴露可持久化 checkpoint；Baton 不解析其中的 adapter 私有 data。 */
 /**
  * Adapter 报告 Interaction 时附带的执行坐标与原始协议消息。它们进入 Event 信封，
  * 不混入 Interaction 的稳定内容。
@@ -391,10 +390,11 @@ export interface InteractionContext {
 }
 
 /**
- * Harness 只提交 kind-specific 草稿并等待结果。宿主负责铸造 interactionId/requester、
- * 先持久化 `interaction.requested`，再把持久化后的 result 送回 Adapter。
+ * Harness 的原生 verb 由 Adapter lowering 成 kind-specific draft，再通过这个 Core port
+ * 打开 Interaction。Core 负责铸造 identity/requester、先持久化 requested，最后把持久化后的
+ * result 送回 Adapter；Adapter 不能把原生 DTO 当成 Core 消息转发。
  */
-export type InteractionHandler = (
-  interaction: InteractionDraft,
+export type OpenInteraction = (
+  draft: InteractionDraft,
   context?: InteractionContext,
 ) => Promise<InteractionResult>;
