@@ -8,6 +8,7 @@ export {
   PluginRunnerClient,
   type PluginRunnerClientOptions,
 } from "./client.ts";
+export { installRegistration } from "./registration.ts";
 
 export type {
   ActivationResult,

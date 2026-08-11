@@ -25,7 +25,6 @@ import {
   type Resource,
   type ResourceRef,
   type ResourceType,
-  type SourceContext,
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
   type PluginLogRecord,
@@ -61,12 +60,8 @@ import {
   selectBoardItems,
 } from "./board.ts";
 import {
+  installRegistration,
   PluginSupervisor,
-  type PluginRunnerClient,
-  type CommandRegistration as RunnerCommandRegistration,
-  type ContextProviderRegistration as RunnerContextProviderRegistration,
-  type ControllerRegistration as RunnerControllerRegistration,
-  type PluginRegistration as RunnerRegistration,
 } from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { InteractionResult } from "../interaction/types.ts";
@@ -93,11 +88,7 @@ import {
 import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
-import {
-  reconcileScope,
-  reconcileSnapshot,
-  Verb,
-} from "./verb.ts";
+import { Verb } from "./verb.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -630,7 +621,7 @@ export class Manager {
             // withdraws host registrations before terminating third-party code.
             binding.onClose(() => runner.close());
             for (const registration of runner.activation.registrations) {
-              this.installRunnerRegistration(
+              installRegistration(
                 binding,
                 runner.client,
                 registration,
@@ -957,120 +948,6 @@ export class Manager {
         this.enqueueInitial(controller);
       }),
     );
-  }
-
-  private installRunnerRegistration(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerRegistration,
-  ): void {
-    if (registration.kind === "command") {
-      this.installRunnerCommand(binding, runner, registration);
-      return;
-    }
-    if (registration.kind === "context-provider") {
-      this.installRunnerContextProvider(binding, runner, registration);
-      return;
-    }
-    this.installRunnerController(binding, runner, registration);
-  }
-
-  private installRunnerCommand(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerCommandRegistration,
-  ): void {
-    binding.registerCommand({
-      commandId: registration.commandId,
-      name: registration.name,
-      description: registration.description,
-      execute: async (input) =>
-        await runner.invoke<PluginCommandResult | undefined>(
-          registration.handlerId,
-          input,
-        ),
-    });
-  }
-
-  private installRunnerContextProvider(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerContextProviderRegistration,
-  ): void {
-    binding.registerContextProvider({
-      kind: registration.providerKind,
-      search: async (query) =>
-        await runner.invoke(
-          registration.searchHandlerId,
-          query,
-        ),
-      provide: async (id, options) =>
-        await runner.invoke<string | undefined>(
-          registration.provideHandlerId,
-          id,
-          options,
-        ),
-    });
-  }
-
-  private installRunnerController(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerControllerRegistration,
-  ): void {
-    const sources = registration.sources.map((source) =>
-      source.type === "cron"
-        ? {
-            type: "cron" as const,
-            sourceId: source.sourceId,
-            cron: source.cron,
-            timeZone: source.timeZone,
-          }
-        : {
-            type: "resource" as const,
-            sourceId: source.sourceId,
-            start: async (context: SourceContext<unknown>) =>
-              await runner.startSource(
-                source.startHandlerId,
-                context,
-              ),
-          }
-    );
-    const watches: Watch[] = registration.watches.map((watch) => ({
-      resourceType: watch.resourceType,
-      handler: {
-        create: async (event) =>
-          await runner.invoke(watch.createHandlerId, event),
-        update: async (event) =>
-          await runner.invoke(watch.updateHandlerId, event),
-        delete: async (event) =>
-          await runner.invoke(watch.deleteHandlerId, event),
-      },
-    }));
-    binding.registerController({
-      resourceType: registration.resourceType,
-      sources,
-      watches,
-      ...(registration.maxConcurrency === undefined
-        ? {}
-        : { maxConcurrency: registration.maxConcurrency }),
-      reconcile: async (context, resource) =>
-        await runner.invoke(
-          registration.reconcileHandlerId,
-          reconcileSnapshot(context),
-          reconcileScope(context),
-          resource,
-        ),
-      ...(registration.presentHandlerId === undefined
-        ? {}
-        : {
-            present: async (resource) =>
-              await runner.invoke(
-                registration.presentHandlerId!,
-                resource,
-              ),
-          }),
-    });
   }
 
   private bindController<TSpec, TStatus>(
