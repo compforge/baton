@@ -38,7 +38,10 @@ export type {
   ReconcileContext,
   VerbResult,
 } from "./reconcile-context.ts";
-export { MAIN_LANE_ID } from "./reconcile-context.ts";
+export {
+  MAIN_LANE_ID,
+  MAX_VERB_TIMEOUT_MS,
+} from "./reconcile-context.ts";
 
 export type {
   PluginActivationContext,

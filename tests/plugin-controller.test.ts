@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AskInput } from "@compforge/baton-plugin";
+import {
+  MAX_VERB_TIMEOUT_MS,
+  type AskInput,
+} from "@compforge/baton-plugin";
 
 import {
   Controller,
@@ -470,6 +473,21 @@ describe("plugin Controller", () => {
     });
     await expect(invalidDeadline.enqueue(key())).rejects.toThrow(
       "ask timeoutMs must be a positive integer",
+    );
+    const excessiveDeadline = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile(ctx) {
+        await ctx.ask({
+          timeoutMs: MAX_VERB_TIMEOUT_MS + 1,
+          title: "Review",
+          prompt: "Continue?",
+          allowOther: true,
+        });
+      },
+    });
+    await expect(excessiveDeadline.enqueue(key())).rejects.toThrow(
+      `ask timeoutMs must not exceed ${MAX_VERB_TIMEOUT_MS}`,
     );
     const ambiguousAsk = new Controller<Spec, Status>({
       store: resources,

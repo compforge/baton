@@ -185,7 +185,7 @@ function interactionView(
       kind: "approval",
       blocking: true,
       requester,
-      cancelResponse: { kind: "approval", optionId: "decline" },
+      cancelResponse: { kind: "cancelled" },
       approval: {
         title: interaction.title,
         description: interaction.prompt,

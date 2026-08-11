@@ -139,7 +139,7 @@ Plugin-facing typed verbs：
 也必须先持久化 Interaction 的 requested/answered 事实。identity、准入和终态由 Baton 决定；Plugin
 不能提供 topic、路由 callback 或 Harness 原生 DTO。
 
-每次能力调用都必须带正整数 `timeoutMs`，并真实 await 到 `success / dismissed / timeout /
+每次能力调用都必须带有界正整数 `timeoutMs`，并真实 await 到 `success / dismissed / timeout /
 failure`。Core 为当前 reconcile 签发 Plugin execution identity；Interaction 和 HarnessInvocation
 关联这个 execution，而不绑定触发 reconcile 的 Resource。等待时保留 async continuation，同时
 释放 Controller 并发位和 Manager 总并发位；结果先落 ledger，再取回并发位恢复原调用栈，不重新
