@@ -467,6 +467,7 @@ describe("maybeGenerateSessionTitle", () => {
       { id: "broken", harness: "broken" },
     ];
     let changes = 0;
+    let titleChanges = 0;
     const controller = new Controller({
       session,
       mentionBudgetChars: 4_096,
@@ -477,6 +478,10 @@ describe("maybeGenerateSessionTitle", () => {
       },
       textgenTargets: targets,
       textgenPrefer: "claude",
+      onSessionTitleChange: () => {
+        expect(session.meta.title).toBe("Fix Flaky Login Test");
+        titleChanges++;
+      },
       onChange: () => {
         changes++;
       },
@@ -492,6 +497,7 @@ describe("maybeGenerateSessionTitle", () => {
     finishTitle({ title: "Fix Flaky Login Test" });
     await until(() => session.meta.title === "Fix Flaky Login Test");
     expect(changes).toBe(changesBeforeTitle + 1);
+    expect(titleChanges).toBe(1);
 
     expect(
       await controller.submit("codex", [{ type: "text", text: "add another assertion" }]),

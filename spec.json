@@ -78,5 +78,15 @@
         ]
       }
     ]
+  },
+  "src/tui/protocol/state.ts::projectChatState": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Order status segments by volatility: stable model and configuration precede active phase or tool activity, while changing observations such as context usage stay at the end so frequent updates disturb only the right side."
+        ]
+      }
+    ]
   }
 }

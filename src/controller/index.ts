@@ -140,6 +140,8 @@ export interface ControllerOptions {
   textgenPrefer?: string;
   /** 按 canonical harness id 覆盖 textgen 模型（ID 方言由各 adapter 收口）。 */
   textgenModels?: Record<string, string>;
+  /** Session 标题异步生成并落盘后的通知；终端等宿主投影可据此同步标题。 */
+  onSessionTitleChange?: () => void;
   onChange?: () => void;
   /**
    * cancel 后等待 harness 确认终态的宽限期。到期仍无终态则合成 terminal error 并
@@ -1142,7 +1144,10 @@ export class Controller {
     })
       .then((updated) => {
         // Session metadata 不走 Event broadcast；标题落盘后显式刷新当前投影。
-        if (updated) this.changed();
+        if (updated) {
+          this.options.onSessionTitleChange?.();
+          this.changed();
+        }
       })
       .catch((error) => {
         session.log({

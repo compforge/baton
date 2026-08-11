@@ -827,7 +827,7 @@ describe("BatonChatProtocol harness commands", () => {
       expect(mode).toBe("plan");
       expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex mode: Plan");
       expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · plan mode");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · plan mode · idle");
 
       await protocol.cycleMode();
       expect(mode).toBe("default");
@@ -883,7 +883,7 @@ describe("BatonChatProtocol harness commands", () => {
       expect(protocol.stateStore.getState("footer").toast?.text).toBe(
         "codex Fast mode: on (takes effect next turn)",
       );
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toContain("Fast");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · Fast · idle");
 
       await protocol.command("fast", "");
       expect(protocol.stateStore.getState("footer").toast?.text).toBe(

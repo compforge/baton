@@ -367,7 +367,13 @@ export function projectBoardView(
   };
 }
 
-/** Baton 领域状态 → chat-tui State。 */
+/**
+ * Baton 领域状态 → chat-tui State。
+ *
+ * @rule Order status segments by volatility: stable model and configuration precede active phase
+ * or tool activity, while changing observations such as context usage stay at the end so frequent
+ * updates disturb only the right side.
+ */
 export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const {
     state,
@@ -421,21 +427,27 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const modelAndEffort = statusEffort
     ? `${statusModel} · ${statusEffort}`
     : statusModel;
-  const contextStatus = contextUsageStatusText(
-    targetState?.contextUsage,
-    statusModel,
-  );
-  const approvalStatus =
-    controller.approvalRoute(statusTargetId) === "delegated"
-      ? "approvals:auto-review"
-      : undefined;
   const fastStatus = targetState?.configOptions?.some(
     (option) => option.id === "fast" && option.type === "boolean" && option.value,
   )
     ? "Fast"
     : undefined;
   const modeStatus = statusMode === "default" ? undefined : `${statusMode} mode`;
-  const statusDetails = [fastStatus, modeStatus, contextStatus, approvalStatus].filter(
+  const approvalStatus =
+    controller.approvalRoute(statusTargetId) === "delegated"
+      ? "approvals:auto-review"
+      : undefined;
+  const harnessConfigStatus = [
+    modelAndEffort,
+    fastStatus,
+    modeStatus,
+    approvalStatus,
+  ].filter((detail): detail is string => detail !== undefined).join(" · ");
+  const contextStatus = contextUsageStatusText(
+    targetState?.contextUsage,
+    statusModel,
+  );
+  const statusDetails = [contextStatus].filter(
     (detail): detail is string => detail !== undefined,
   );
   const withStatusDetails = (item: RunStatusItem): RunStatusItem => ({
@@ -446,14 +458,14 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     ? {
         id: `run:${activeTargetId}`,
         author: harnessAuthor(statusHarness),
-        label: `${modelAndEffort} · ${runStatusLabel(state, activeTurnId)}`,
+        label: `${harnessConfigStatus} · ${runStatusLabel(state, activeTurnId)}`,
         startedAt: controller.activeStartedAt,
       }
     : observedRun
       ? {
           id: `run:observed:${observedRun.turnId}`,
           author: harnessAuthor(statusHarness),
-          label: `${modelAndEffort} · ${runStatusLabel(state, observedRun.turnId)} · observed`,
+          label: `${harnessConfigStatus} · ${runStatusLabel(state, observedRun.turnId)} · observed`,
           startedAt: observedRun.startedAt,
         }
       : {
@@ -463,7 +475,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
               harnessDefinitionFor(harnessTargetId)?.sessionKey ??
               harnessTargetId,
           ),
-          label: `${modelAndEffort} · idle`,
+          label: `${harnessConfigStatus} · idle`,
         };
   const sideStartedAt = sideRuns
     .flatMap((turn) => (turn.startedAt === undefined ? [] : [turn.startedAt]))
