@@ -387,15 +387,15 @@ export function buildTranscript(
       if (tc && !hidden(tc.laneId)) items.push(toolTranscriptItem(tc));
       continue;
     }
-    if (entry.type === "turn_request") {
-      const request = state.turnRequests.get(entry.id);
+    if (entry.type === "harness_invocation") {
+      const request = state.harnessInvocations.get(entry.id);
       if (!request) continue;
       const status: TranscriptBlockStatus =
         request.phase === "completed"
           ? request.result?.stopReason === "error" || request.result?.stopReason === "failed"
             ? "failed"
             : "completed"
-          : request.phase === "declined" || request.phase === "cancelled"
+          : request.phase === "cancelled"
             ? "declined"
             : request.phase === "running" || request.phase === "uncertain"
               ? "in_progress"
@@ -409,7 +409,7 @@ export function buildTranscript(
       ].filter((value): value is string => Boolean(value));
       items.push({
         type: "block",
-        id: `turn-request:${request.requestId}`,
+        id: `harness-invocation:${request.invocationId}`,
         kind: "task",
         status,
         author: request.pluginInstanceId,

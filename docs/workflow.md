@@ -1,6 +1,6 @@
 # Baton 工作流
 
-本文是 Baton 双向工作流的唯一入口：用户 Input 或获批的非用户 TurnRequest 如何经过 Controller
+本文是 Baton 双向工作流的唯一入口：用户 Input 或 Baton verb 发起的 HarnessInvocation 如何经过 Controller
 到达 Harness，Harness 的输出如何成为可恢复事实并返回用户，以及 steer、Interaction、cancel、
 失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
 [Harness](./harness.md)。
@@ -10,8 +10,9 @@
 ```text
 控制（发起方 → Turn → Harness）
 
-User ───────────────────────────────→ user-source Input ┐
-Plugin → TurnRequest → authorization → plugin-source Input ┘
+User ─────────────────────────────────────────────→ user-source Input ┐
+Plugin → draft verb   → editable draft ──────────→ user-source Input │
+Plugin → harness verb ───────────────────────────→ plugin-source Input┘
   → admission / queue
   → Context Snapshot + Delivery
   → Delivery Attempt
@@ -28,15 +29,15 @@ Harness wire
   → User
 ```
 
-Plugin 不另开执行通道。`proposed-input` 先展示给用户；只有用户确认或编辑并提交后，它才成为
-user-source Input。`turn-request` 经授权后成为 plugin-source Input，并在独立支线 Lane 开启新 Turn。
-Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
+Plugin 不另开执行通道。需要用户决定时先调用 `ask` / `confirm`；需要用户修改 prompt 时调用
+`draft`；无需编辑时调用 `harness`。Core 将 verb 持久化并返回当前状态，ledger 变化后重新
+reconcile Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
 ## 2. Input 到 Harness
 
 ### 2.1 采集与准入
 
-chat-tui 把 composer 内容和用户意图交给 Baton；获批 TurnRequest 则由控制面物化为 Input。
+chat-tui 把 composer 内容和用户意图交给 Baton；HarnessInvocation 则由控制面物化为 Input。
 mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
 Harness wire。
 
@@ -57,25 +58,27 @@ accepted_steer → finalized | interrupted
 ```
 
 `queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
-不能再伪装成“从未提交”；此后只能 cancel/interrupt。当前 Controller 分开调度两类队列：
+不能再伪装成“从未提交”；此后只能 cancel/interrupt。Controller 按 `laneId` 调度，而不按
+Input source 调度：
 
-- 直接 user-source Input 进入 BatonSession 的主 Lane，跨 Target 保持串行；
-- plugin-source Input 进入 TurnRequest 预留的支线 Lane，受支线并发上限约束，
-  不占用主 Lane admission 槽。
+- `lane:main` 绑定 BatonSession 的 `mainLaneId`，跨 Target 保持串行；
+- `lane:new` 在准备调度时创建支线 Lane，受支线并发上限约束，不占用主 Lane admission 槽。
 
-这只是当前两个 Input 入口的映射，不是 Lane 类型定义：未来人发起的异步任务也会创建支线 Lane。
+Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代表是否调用 Harness。人或 Plugin
+发起的异步任务都可以使用新 Lane。
 每个 Lane 同时最多一个 driven Turn，不同 Lane 可并行。Harness 自发产生的 observed Turn 不进 Input 队列。
 
-prompt Input 另有一条与状态正交的 source 轴：composer、确认后的 Proposal 和 ProposedPlan 实施
-是 `user`；当前 Plugin 发起的 TurnRequest 物化后是
-`{ type: "plugin", pluginInstanceId, turnRequestId }`。TurnRequest 是 Input 之前的创建 Turn 意图，
-不是 Harness 调用；cron、Watch 和 Source 只负责唤醒 reconcile，不是 Input source。用户 recall
-只撤回 queued user Input。
+prompt Input 另有一条与状态和 Lane 正交的 source 轴：composer、ProposedPlan 实施和用户编辑提交的
+HarnessInvocation draft 是 `user`；`harness` verb 直接运行的 HarnessInvocation 是
+`{ type: "plugin", pluginInstanceId }`。Input 顶层 `harnessInvocationId` 单独保存因果，
+不混入 source。HarnessInvocation 是 Core 的 verb 执行记录，不是 Plugin 侧的 Harness 句柄；cron、Watch 和
+Source 只负责唤醒 reconcile，不是 Input source。带 `harnessInvocationId` 的 queued Input 由
+HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
 ### 2.2 Turn 开界
 
-Input 在 admission 前已经绑定 `laneId`。直接用户输入使用 `mainLaneId`；TurnRequest 在 scheduled
-fact 中预签独立支线 Lane。Controller 出队时先 append：
+Input 在 admission 前已经绑定 `laneId`。普通用户输入使用 `mainLaneId`；HarnessInvocation 在最终 Input
+准备调度时，按 `lane` 策略绑定 `mainLaneId` 或签发新 Lane。Controller 出队时先 append：
 
 1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。
@@ -149,8 +152,8 @@ live 和重开 Session 使用相同 reducer。自愈也必须合成新的事实 
 Harness DTO。
 
 多 Lane 仍 append 到同一 `session.jsonl`。全局 `seq` 只是 ledger 观察到的写入顺序，
-不用来推断跨 Lane 因果。TurnRequest 支线的原始 transcript 保留在 Lane 事实中；默认主时间线
-把它投影为一张包含状态、Lane 和结果的 TurnRequest 卡片。
+不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；默认主时间线
+把它投影为一张包含状态、Lane 和结果的任务卡片。
 
 ### 3.3 Turn 收口
 
@@ -187,7 +190,8 @@ Esc 只打断主 Lane 当前的 driven Turn，不影响支线 Lane。已经接�
 不静默重发；仍在 queue 的 follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
 最终以 Harness 的 `idle/cancelled` 为准；超过 cancel 宽限且 transport 状态足够明确时，Controller
 可以合成终态兜底。
-TurnRequest 只用 request identity 定向取消自己的 queued Input 或支线 Turn。
+HarnessInvocation 只用 invocation identity 定向取消自己的 queued Input 或 driven Turn，不论它位于主 Lane
+还是新 Lane。
 
 ## 5. Interaction 闭环
 
@@ -208,8 +212,9 @@ Harness / Plugin request
 Harness Adapter 不自签 interaction ID，也不自行伪造 opened/resolved。resolution 就地解开等待方，
 不进入 prompt queue。cancel、timeout、requester 带外解决和恢复清理都是显式 resolution。
 
-Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。Baton 先持久化答案，再
-重新 enqueue 原 Resource；下一次 reconcile 从持久 Interaction 读取结果。
+Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await baton.ask(...)`
+立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
+reconcile 用同一 verb key 读取结果。
 
 自动 reviewer 没有向 Baton 打开 Interaction 时，审批回执是独立 `ApprovalReview` 审计事实，
 不能伪造一组 opened/resolved；详见 [审批生命周期](./approval-lifecycle.md)。

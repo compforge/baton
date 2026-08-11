@@ -9,6 +9,11 @@ import type {
   ToastMessage,
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
+import type {
+  BatonVerbContext,
+  BatonVerbRequest,
+  BatonVerbResponse,
+} from "../verbs.ts";
 
 import {
   type ActivationResult,
@@ -37,6 +42,10 @@ interface SourceCallbacks {
 
 export interface PluginRunnerCallbacks {
   readonly resources: ResourceClient;
+  readonly invokeBatonVerb: (
+    context: BatonVerbContext,
+    request: BatonVerbRequest,
+  ) => Promise<BatonVerbResponse>;
   readonly onToast: (message: ToastMessage) => void;
   readonly onLog: (record: PluginLogRecord) => void;
   readonly onOutput?: (
@@ -342,6 +351,11 @@ export class PluginRunnerClient {
 
   private async handleHostRequest(request: HostRequest): Promise<unknown> {
     switch (request.method) {
+      case "baton.invoke":
+        return await this.callbacks.invokeBatonVerb(
+          request.context,
+          request.request,
+        );
       case "resource.get":
         return await this.callbacks.resources.get(request.type, request.name);
       case "resource.list":

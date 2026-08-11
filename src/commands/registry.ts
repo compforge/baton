@@ -68,7 +68,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     name: "cancel-request",
-    description: "Cancel a pending TurnRequest (latest by default)",
+    description: "Cancel a pending HarnessInvocation (latest by default)",
     scope: "baton",
     runPolicy: "always",
   },

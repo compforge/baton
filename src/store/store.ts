@@ -84,7 +84,7 @@ export interface HarnessTargetMeta {
 
 export type LaneCreatedFor =
   | { type: "session" }
-  | { type: "turn_request"; requestId: string }
+  | { type: "harness_invocation"; invocationId: string }
   /** Reserved for the direct human “start this asynchronously” intake path. */
   | { type: "user_request"; requestId: string };
 
@@ -1289,15 +1289,15 @@ export class SessionHandle {
     return lane;
   }
 
-  ensureTurnRequestLane(
+  ensureHarnessInvocationLane(
     laneId: string,
-    requestId: string,
+    invocationId: string,
   ): LaneMeta {
     const existing = this.meta.lanes[laneId];
     if (existing) {
       if (
-        existing.createdFor.type !== "turn_request" ||
-        existing.createdFor.requestId !== requestId
+        existing.createdFor.type !== "harness_invocation" ||
+        existing.createdFor.invocationId !== invocationId
       ) {
         throw new Error(`Lane identity conflict: ${laneId}`);
       }
@@ -1305,7 +1305,7 @@ export class SessionHandle {
     }
     const lane: LaneMeta = {
       laneId,
-      createdFor: { type: "turn_request", requestId },
+      createdFor: { type: "harness_invocation", invocationId },
       harnessSessions: {},
     };
     this.setLane(laneId, lane);

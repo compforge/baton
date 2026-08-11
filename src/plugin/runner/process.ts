@@ -21,6 +21,10 @@ import type {
   Watch,
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
+import {
+  createBaton,
+  type BatonVerbResponse,
+} from "../verbs.ts";
 
 import {
   type ActivationResult,
@@ -214,7 +218,20 @@ function controllerRegistration(
     resourceType: controller.resourceType,
     reconcileHandlerId: handler(
       `${controllerId}:reconcile`,
-      controller.reconcile.bind(controller) as (...args: never[]) => unknown,
+      (async (snapshot, context, resource) =>
+        await controller.reconcile(
+          createBaton(
+            snapshot,
+            context,
+            async (verbContext, request) =>
+              await callHost<BatonVerbResponse>({
+                method: "baton.invoke",
+                context: verbContext,
+                request,
+              }),
+          ),
+          resource,
+        )) as (...args: never[]) => unknown,
     ),
     ...(controller.present === undefined
       ? {}

@@ -49,8 +49,8 @@ HarnessTarget 保存的 HarnessSession binding；原生 Session 因恢复失败�
 不变。Lane 不绑定某一个 Target，可以在相邻 Turn 之间切换 Harness 接力。
 
 BatonSession 的 `mainLaneId` 指向默认主线；其它 Lane 表达异步支线。Lane 可以由人或 Plugin
-发起，`createdFor` 只记录创建事实，不决定它是不是主线。当前每个获批 TurnRequest 会创建一个
-`createdFor:turn_request` 支线；未来人发起的异步任务复用同一对象。
+发起，`createdFor` 只记录创建事实，不决定它是不是主线。只有按 `lane:new` 调度的 HarnessInvocation
+才在准备执行时创建 `createdFor:harness_invocation` 支线；`lane:main` 复用主 Lane。
 
 每个 Lane 同时最多一个 driven Turn。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
 Handle 和原生 Session；Binding 索引必须使用 `(laneId, harnessTargetId)`，不能只用其中一个。

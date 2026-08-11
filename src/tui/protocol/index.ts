@@ -302,10 +302,37 @@ export class BatonChatProtocol implements ChatProtocol {
     text: string,
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
+    const target = this.harnessTargetId;
+    const blocks = await this.prepareComposerInput(text);
+
+    // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
+    // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
+    const sent = await this.controller.sendTurn(target, blocks, options);
+    if (sent.effective === "steer") {
+      this.toast = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
+      this.changed();
+      return;
+    }
+    if (sent.reason) {
+      this.toast = {
+        text: `${target} same-turn send rejected (${sent.reason}); queued as follow-up`,
+        tone: "info",
+      };
+    } else if (sent.queued) {
+      this.toast = { text: `${target} turn queued`, tone: "info" };
+    }
+    this.changed();
+    const outcome = await sent.outcome;
+    if (outcome === "completed" && this.toast?.tone !== "error") {
+      this.toast = null;
+      this.changed();
+    }
+  }
+
+  private async prepareComposerInput(text: string): Promise<PromptBlock[]> {
     // 用户实际提交的内容进历史；一次新提交结束当前的 ↑ 浏览会话。
     this.recordHistory(composerPromptBlocks(text, this.composerImagePaths));
     this.resetHistoryNav();
-    const target = this.harnessTargetId;
     this.toast = null;
     this.commandOutput = null;
     const previousTitle = sessionDisplayTitle(this.session.meta);
@@ -338,29 +365,7 @@ export class BatonChatProtocol implements ChatProtocol {
       ].join("\n\n");
     const blocks = composerPromptBlocks(prompt, this.composerImagePaths);
     this.composerImagePaths = [];
-
-    // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
-    // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
-    const sent = await this.controller.sendTurn(target, blocks, options);
-    if (sent.effective === "steer") {
-      this.toast = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
-      this.changed();
-      return;
-    }
-    if (sent.reason) {
-      this.toast = {
-        text: `${target} same-turn send rejected (${sent.reason}); queued as follow-up`,
-        tone: "info",
-      };
-    } else if (sent.queued) {
-      this.toast = { text: `${target} turn queued`, tone: "info" };
-    }
-    this.changed();
-    const outcome = await sent.outcome;
-    if (outcome === "completed" && this.toast?.tone !== "error") {
-      this.toast = null;
-      this.changed();
-    }
+    return blocks;
   }
 
   async command(name: string, argument: string): Promise<void> {
@@ -446,18 +451,18 @@ export class BatonChatProtocol implements ChatProtocol {
       }
       case "cancel-request": {
         const identifier = argument.trim() || undefined;
-        const cancelled = await this.plugins.cancelTurnRequest(identifier);
+        const cancelled = await this.plugins.cancelHarnessInvocation(identifier);
         if (!cancelled) {
           throw new Error(
             identifier
-              ? `Cancellable TurnRequest not found: ${identifier}`
-              : "No cancellable TurnRequest found",
+              ? `Cancellable HarnessInvocation not found: ${identifier}`
+              : "No cancellable HarnessInvocation found",
           );
         }
         this.toast = {
           text: identifier
-            ? `Cancelled TurnRequest ${identifier}`
-            : "Cancelled latest TurnRequest",
+            ? `Cancelled HarnessInvocation ${identifier}`
+            : "Cancelled latest HarnessInvocation",
           tone: "info",
         };
         this.changed();
@@ -701,8 +706,21 @@ export class BatonChatProtocol implements ChatProtocol {
       const pending = this.plugins
         .listPendingProposals()
         .find((proposal) => proposal.proposalId === id);
-      if (!pending) {
+      const harnessInvocation = this.plugins
+        .listPendingHarnessInvocationInputs()
+        .find((request) => request.invocationId === id);
+      if (!pending && !harnessInvocation) {
         this.toast = { text: "plugin suggestion is no longer pending", tone: "info" };
+        this.changed();
+        return;
+      }
+      if (harnessInvocation) {
+        if (response.outcome === "submitted") {
+          const blocks = await this.prepareComposerInput(response.text);
+          this.plugins.resolveHarnessInvocationInput(id, { kind: "submitted", blocks });
+        } else {
+          this.plugins.resolveHarnessInvocationInput(id, { kind: "dismissed" });
+        }
         this.changed();
         return;
       }
@@ -741,9 +759,7 @@ export class BatonChatProtocol implements ChatProtocol {
     const resolved =
       resolution &&
       (interaction?.requester.type === "plugin"
-        ? await this.plugins.resolveInteraction(id, resolution, {
-            harnessTargetId: this.harnessTargetId,
-          })
+        ? await this.plugins.resolveInteraction(id, resolution)
         : this.controller.resolveInteraction(id, resolution));
     if (!resolved) {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
@@ -925,6 +941,7 @@ export class BatonChatProtocol implements ChatProtocol {
             label: definition.label,
           })),
         }),
+      selectedHarnessTargetId: () => this.harnessTargetId,
       loadPackageEntry: (pluginId, version, options) => {
         if (!options?.marketplace) {
           throw new Error(`marketplace is required to load ${pluginId}`);
@@ -937,18 +954,25 @@ export class BatonChatProtocol implements ChatProtocol {
         );
       },
       pluginSupervisor: new PluginSupervisor(),
-      enqueueTurnRequest: (request) =>
-        this.controller.enqueueTurnRequest({
-          turnRequestId: request.requestId,
+      enqueueHarnessInvocation: (request) =>
+        this.controller.enqueueHarnessInvocation({
+          harnessInvocationId: request.invocationId,
           pluginInstanceId: request.pluginInstanceId,
           harnessTargetId: request.harnessTargetId,
           laneId: request.laneId,
+          lane: request.lane,
+          source: request.source === "user"
+            ? { type: "user" }
+            : {
+                type: "plugin",
+                pluginInstanceId: request.pluginInstanceId,
+              },
           messageId: request.messageId,
           turnId: request.turnId,
-          blocks: [{ type: "text", text: request.prompt }],
+          blocks: [...request.blocks],
         }),
-      cancelTurnRequest: (requestId) =>
-        this.controller.cancelTurnRequest(requestId),
+      cancelHarnessInvocation: (requestId) =>
+        this.controller.cancelHarnessInvocation(requestId),
       onProposal: () => {
         this.changed();
       },
@@ -1349,6 +1373,7 @@ export class BatonChatProtocol implements ChatProtocol {
       state: this.state,
       controller: this.controller,
       pendingProposals: this.plugins.listPendingProposals(),
+      pendingHarnessInvocationInputs: this.plugins.listPendingHarnessInvocationInputs(),
       session: this.session,
       config: this.config,
       harnessTargetId: this.harnessTargetId,

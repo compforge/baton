@@ -55,6 +55,7 @@ export interface ChatStateProjectionInput {
   state: SessionState;
   controller: Controller;
   pendingProposals: ReturnType<Manager["listPendingProposals"]>;
+  pendingHarnessInvocationInputs: ReturnType<Manager["listPendingHarnessInvocationInputs"]>;
   session: SessionHandle;
   config: Pick<BatonConfig, "showThoughts">;
   harnessTargetId: string;
@@ -105,19 +106,9 @@ function interactionRequester(interaction: Interaction): string {
 
 function interactionView(
   interaction: Interaction,
-  selectedHarnessTargetId: string,
 ): InteractionView {
   const requester = interactionRequester(interaction);
   if (interaction.kind === "permission") {
-    const turnRequestTarget = interaction.turnRequestContext
-      ? interaction.turnRequestContext.requestedHarnessTargetId ??
-        selectedHarnessTargetId
-      : undefined;
-    const description = turnRequestTarget
-      ? [`Target: ${turnRequestTarget}`, interaction.description]
-          .filter((part): part is string => Boolean(part))
-          .join("\n\n")
-      : interaction.description;
     return {
       id: interaction.interactionId,
       kind: "approval",
@@ -126,7 +117,7 @@ function interactionView(
       cancelResponse: { kind: "cancelled" },
       approval: {
         title: interaction.title,
-        description,
+        description: interaction.description,
         options: interaction.options.map((option) => ({
           optionId: option.optionId,
           name: option.name,
@@ -346,16 +337,17 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     session,
     harnessTargetId,
     pendingProposals,
+    pendingHarnessInvocationInputs,
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
   const hasRecallableQueuedInput = controller.queuedTurns.some(
-    (turn) => turn.source.type === "user",
+    (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
   const interactions: InteractionView[] = [
     ...[...state.interactions.values()]
       .filter((item) => !item.resolution)
-      .map((item) => interactionView(item.interaction, harnessTargetId)),
+      .map((item) => interactionView(item.interaction)),
     ...pendingProposals.map((proposal) => ({
       id: proposal.proposalId,
       kind: "suggested_input" as const,
@@ -363,6 +355,18 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       requester: proposal.key.pluginInstanceId,
       title: "Suggested follow-up",
       text: proposal.text,
+      cancelResponse: {
+        kind: "suggested_input" as const,
+        outcome: "dismissed" as const,
+      },
+    })),
+    ...pendingHarnessInvocationInputs.map((request) => ({
+      id: request.invocationId,
+      kind: "suggested_input" as const,
+      blocking: false,
+      requester: request.pluginInstanceId,
+      title: request.title,
+      text: request.prompt,
       cancelResponse: {
         kind: "suggested_input" as const,
         outcome: "dismissed" as const,

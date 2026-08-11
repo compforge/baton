@@ -15,8 +15,8 @@
 
 ## 多 Harness 批量 fan-out 与结果收录
 
-当前同一 BatonSession 已能用独立支线 Lane 并发执行多个 Plugin TurnRequest，且支线不阻塞
-用户主 Lane。尚未提供的是“把同一输入一次性派给多个 Harness、比较后收录一个或多个
+当前同一 BatonSession 已能用独立支线 Lane 并发执行多个异步 HarnessInvocation，且支线不阻塞
+用户主 Lane。HarnessInvocation 是否新开 Lane 由独立调度策略决定。尚未提供的是“把同一输入一次性派给多个 Harness、比较后收录一个或多个
 结果”的 Baton-owned 批量算子；Plugin 也不能靠私持 Adapter 句柄绕过授权与 ledger 来实现它。
 
 该能力需要先定义 fan-out 的幂等 identity、预算/并发策略、结果策展以及代码改动如何进入用户

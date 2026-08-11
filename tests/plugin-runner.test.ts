@@ -48,6 +48,7 @@ function stores() {
       harnessSessions: {},
     },
   );
+  mkdirSync(session.dir, { recursive: true });
   const packageDir = join(root, "installed-package");
   const entry = join(packageDir, "index.ts");
   mkdirSync(packageDir, { recursive: true });
@@ -93,6 +94,60 @@ describe("Plugin Runner process boundary", () => {
     expect((restored.cause as Error).message).toBe(
       "GET /repos/openai/plugins/pulls returned 404",
     );
+  });
+
+  test("routes reconcile-scoped Baton verbs across the process boundary", async () => {
+    const { instances, proposals, session, entry } = stores();
+    session.append({
+      kind: "_baton_turn_summary",
+      source: { type: "baton" },
+      harness: "codex",
+      harnessTargetId: "codex_default",
+      turnId: "turn_runner",
+      payload: {
+        turnId: "turn_runner",
+        userText: "test Baton verbs",
+        agentText: "ready",
+        toolCalls: [],
+      },
+    });
+    instances.create({
+      pluginInstanceId: "process_default",
+      pluginId: "tests/process-plugin",
+      marketplace: "fixtures",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      proposals,
+      session,
+      pluginSupervisor: new PluginSupervisor(),
+      async loadPackageEntry(pluginId, version) {
+        return {
+          pluginId,
+          version,
+          entryUrl: pathToFileURL(entry).href,
+        };
+      },
+      onProposal() {},
+    });
+
+    await manager.start();
+    await waitFor(() => session.loadState().interactions.size === 1);
+    expect([...session.loadState().interactions.values()][0]).toMatchObject({
+      interaction: {
+        requester: {
+          type: "plugin",
+          pluginInstanceId: "process_default",
+        },
+        questions: [{
+          header: "Runner question",
+          question: "Review turn_runner?",
+        }],
+      },
+    });
+
+    await manager.close();
   });
 
   test("keeps the host responsive and withdraws registrations after a crash", async () => {
@@ -201,7 +256,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("terminates a Runner whose handler exceeds its deadline", async () => {
-    const { instances, proposals, entry } = stores();
+    const { instances, proposals, session, entry } = stores();
     instances.create({
       pluginInstanceId: "process_timeout",
       pluginId: "tests/process-plugin",
@@ -212,6 +267,7 @@ describe("Plugin Runner process boundary", () => {
     const manager = new Manager({
       instances,
       proposals,
+      session,
       pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
       async loadPackageEntry(pluginId, version) {
         return {

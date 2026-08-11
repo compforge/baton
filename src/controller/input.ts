@@ -8,7 +8,6 @@ export type InputSource =
   | {
       type: "plugin";
       pluginInstanceId: string;
-      turnRequestId: string;
     };
 
 /**
@@ -39,6 +38,8 @@ export interface InputRecord {
   laneId: string;
   blocks: PromptBlock[];
   source: InputSource;
+  /** Durable causal link; orthogonal to the actor recorded in source. */
+  harnessInvocationId?: string;
   status: InputStatus;
   delivery: "prompt" | "steer";
   /** 本 turn 是用户对某个已完成计划提案的明确执行请求。 */
@@ -56,6 +57,7 @@ export interface QueuedTurnSnapshot {
   harness: string;
   blocks: PromptBlock[];
   source: InputSource;
+  harnessInvocationId?: string;
 }
 
 /** Input 只读快照：投影 / 诊断消费 status，不触碰内部 resolve/reject。 */
@@ -68,6 +70,7 @@ export interface InputSnapshot {
   status: InputStatus;
   delivery: "prompt" | "steer";
   source: InputSource;
+  harnessInvocationId?: string;
   sourceProposedPlanId?: string;
 }
 
@@ -99,6 +102,7 @@ export class InputQueue {
     blocks: PromptBlock[],
     options?: {
       source?: InputSource;
+      harnessInvocationId?: string;
       sourceProposedPlanId?: string;
       identity?: { messageId: string; turnId: string };
     },
@@ -112,6 +116,9 @@ export class InputQueue {
         laneId,
         blocks,
         source: options?.source ?? { type: "user" },
+        ...(options?.harnessInvocationId === undefined
+          ? {}
+          : { harnessInvocationId: options.harnessInvocationId }),
         status: "queued",
         delivery: "prompt",
         ...(options?.sourceProposedPlanId
@@ -151,7 +158,9 @@ export class InputQueue {
 
   recallLatestUser(): QueuedTurnSnapshot | undefined {
     const index = this.queue.findLastIndex(
-      (input) => input.source.type === "user",
+      // HarnessInvocation owns its own durable cancellation lifecycle. Generic
+      // composer recall must not detach a queued Input from that Request.
+      (input) => input.source.type === "user" && !input.harnessInvocationId,
     );
     if (index < 0) return undefined;
     const [input] = this.queue.splice(index, 1);
@@ -161,11 +170,9 @@ export class InputQueue {
     return queuedTurnSnapshot(input);
   }
 
-  cancelTurnRequest(turnRequestId: string): QueuedTurnSnapshot | undefined {
+  cancelHarnessInvocation(harnessInvocationId: string): QueuedTurnSnapshot | undefined {
     const index = this.queue.findIndex(
-      (input) =>
-        input.source.type === "plugin" &&
-        input.source.turnRequestId === turnRequestId,
+      (input) => input.harnessInvocationId === harnessInvocationId,
     );
     if (index < 0) return undefined;
     const [input] = this.queue.splice(index, 1);
@@ -186,6 +193,9 @@ export function inputSnapshot(input: InputRecord): InputSnapshot {
     status: input.status,
     delivery: input.delivery,
     source: { ...input.source },
+    ...(input.harnessInvocationId === undefined
+      ? {}
+      : { harnessInvocationId: input.harnessInvocationId }),
     ...(input.sourceProposedPlanId
       ? { sourceProposedPlanId: input.sourceProposedPlanId }
       : {}),
@@ -201,5 +211,8 @@ function queuedTurnSnapshot(input: InputRecord): QueuedTurnSnapshot {
     harness: input.target.harness,
     blocks: [...input.blocks],
     source: { ...input.source },
+    ...(input.harnessInvocationId === undefined
+      ? {}
+      : { harnessInvocationId: input.harnessInvocationId }),
   };
 }

@@ -1,6 +1,3 @@
-import type { Snapshot as InteractionSnapshot } from "./interaction.ts";
-import type { ResourceRef } from "./resource.ts";
-
 export type SessionRunState = "running" | "idle" | "requires_action";
 
 export type InputStatus =
@@ -11,13 +8,12 @@ export type InputStatus =
   | "recalled"
   | "interrupted";
 
-/** Identifies who caused a prompt Input to enter Baton. */
+/** Identifies the actor that submitted a prompt Input to Baton. */
 export type InputSource =
   | { readonly type: "user" }
   | {
       readonly type: "plugin";
       readonly pluginInstanceId: string;
-      readonly turnRequestId: string;
     };
 
 export type InteractionRequester =
@@ -80,28 +76,7 @@ export interface BatonInputSnapshot {
   readonly status: InputStatus;
   readonly delivery: "prompt" | "steer";
   readonly source: InputSource;
-}
-
-export type TurnRequestPhase =
-  | "pending_approval"
-  | "declined"
-  | "queued"
-  | "running"
-  | "uncertain"
-  | "completed"
-  | "cancelled";
-
-/** A Resource-scoped view of a request to create one new driven Turn. */
-export interface TurnRequestSnapshot {
-  readonly requestId: string;
-  readonly requestKey: string;
-  readonly resource: ResourceRef;
-  readonly phase: TurnRequestPhase;
-  readonly harnessTargetId?: string;
-  readonly laneId?: string;
-  readonly turnId?: string;
-  /** Present after admission has produced and closed the driven Turn. */
-  readonly result?: TurnSummary;
+  readonly harnessInvocationId?: string;
 }
 
 export interface BatonHarnessTargetSnapshot {
@@ -123,13 +98,6 @@ export interface BatonSnapshot {
   readonly inputs: readonly BatonInputSnapshot[];
   readonly harnessTargets: readonly BatonHarnessTargetSnapshot[];
   readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
-  /**
-   * Durable decisions requested by the Resource currently being reconciled.
-   * Baton scopes this list to that PluginInstance and Resource before invocation.
-   */
-  readonly pluginInteractions: readonly InteractionSnapshot[];
-  /** Durable Turns requested by the Resource currently being reconciled. */
-  readonly turnRequests: readonly TurnRequestSnapshot[];
   readonly latestTurn?: TurnSummary;
   readonly turns: readonly TurnSummary[];
 }

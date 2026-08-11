@@ -106,9 +106,9 @@ describe("Baton Resource index", () => {
     resources.close();
   });
 
-  test("lets a Plugin watch turns and produce revision-based Proposals", async () => {
+  test("lets a Plugin watch turns and request editable drafts", async () => {
     const session = testSession();
-    const firstEvent = appendTurn(session, "t_existing", "which harness?");
+    appendTurn(session, "t_existing", "which harness?");
     const instances = new PluginInstanceStore({ session });
     const proposals = new ProposalStore({ session });
     instances.create({
@@ -117,7 +117,6 @@ describe("Baton Resource index", () => {
       packageVersion: "1.0.0",
     });
     const reconciled: string[] = [];
-    const surfaced: string[] = [];
     const plugin: PluginPackage = {
       pluginId: "example/router",
       version: "1.0.0",
@@ -128,16 +127,14 @@ describe("Baton Resource index", () => {
         >({
           resourceType: BATON_TURN_RESOURCE_TYPE,
           async reconcile(baton, resource) {
-              expect(Object.isFrozen(baton)).toBe(true);
-              expect(baton.session.batonSessionId).toBe(session.id);
-              reconciled.push(resource.metadata.name);
-              return {
-                output: {
-                  kind: "proposed-input",
-                  text: `Route: ${resource.status.userText}`,
-                },
-              };
-            },
+            expect(Object.isFrozen(baton)).toBe(true);
+            expect(baton.session.batonSessionId).toBe(session.id);
+            reconciled.push(resource.metadata.name);
+            await baton.draft({
+              key: `route:${resource.metadata.name}`,
+              prompt: `Route: ${resource.status.userText}`,
+            });
+          },
         });
       },
     };
@@ -146,31 +143,35 @@ describe("Baton Resource index", () => {
       instances,
       proposals,
       packages: [plugin],
-      onProposal(proposal) {
-        surfaced.push(proposal.text);
-      },
+      snapshot: () => ({
+        session: {
+          batonSessionId: session.id,
+          cwd: session.meta.cwd,
+          runState: "idle",
+          revision: session.loadState().lastSeq,
+        },
+        activeTurns: [],
+        inputs: [],
+        harnessTargets: [{ id: "codex_default", harness: "codex" }],
+        pendingInteractions: [],
+        turns: [],
+      }),
+      selectedHarnessTargetId: () => "codex_default",
+      enqueueHarnessInvocation() {},
+      onProposal() {},
     });
 
     await manager.start();
-    await waitFor(() => surfaced.length === 1);
-    const first = manager.listPendingProposals()[0];
-    expect(first).toMatchObject({
-      key: {
-        batonSessionId: session.id,
-        pluginInstanceId: "router_default",
-        resourceOwner: "baton",
-        resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
-        resourceKind: BATON_TURN_RESOURCE_KIND,
-        resourceId: "t_existing",
-      },
-      basedOnRevision: firstEvent.seq,
-      text: "Route: which harness?",
+    await waitFor(() => manager.listPendingHarnessInvocationInputs().length === 1);
+    expect(manager.listPendingHarnessInvocationInputs()[0]).toMatchObject({
+      pluginInstanceId: "router_default",
+      prompt: "Route: which harness?",
     });
 
     appendTurn(session, "t_live", "continue with codex");
-    await waitFor(() => surfaced.length === 2);
+    await waitFor(() => manager.listPendingHarnessInvocationInputs().length === 2);
     expect(reconciled).toEqual(["t_existing", "t_live"]);
-    expect(surfaced).toEqual([
+    expect(manager.listPendingHarnessInvocationInputs().map((item) => item.prompt)).toEqual([
       "Route: which harness?",
       "Route: continue with codex",
     ]);

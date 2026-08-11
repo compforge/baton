@@ -1,10 +1,7 @@
 import {
   Controller,
   type ReconcileKey,
-  type ReconcileInteraction,
-  type ReconcileProposal,
   type ReconcileScope,
-  type ReconcileTurnRequest,
   type ScheduledReconcile,
 } from "./controller.ts";
 import {
@@ -78,6 +75,7 @@ import {
   type PluginRegistration as RunnerRegistration,
 } from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
+import type { PromptBlock } from "../event/types.ts";
 import type { InteractionResolution } from "../interaction/types.ts";
 import { Store as InteractionStore } from "./interaction.ts";
 import {
@@ -102,9 +100,18 @@ import {
 import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import {
-  type ScheduledTurnRequest,
-  TurnRequestStore,
-} from "./turn-request.ts";
+  type ScheduledHarnessInvocation,
+  HarnessInvocationStore,
+} from "./harness-invocation.ts";
+import type {
+  BatonVerbContext,
+  BatonVerbRequest,
+  BatonVerbResponse,
+} from "./verbs.ts";
+import {
+  batonContext,
+  batonSnapshot,
+} from "./verbs.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -149,7 +156,13 @@ export interface ManagerOptions {
    */
   session?: Pick<
     SessionHandle,
-    "id" | "dir" | "readEvents" | "subscribe" | "append" | "log"
+    | "id"
+    | "dir"
+    | "readEvents"
+    | "subscribe"
+    | "append"
+    | "log"
+    | "ensureMainLane"
   >;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
   instances?: PluginInstanceRepository;
@@ -157,6 +170,8 @@ export interface ManagerOptions {
   packages?: readonly PluginPackage[];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
   snapshot?: () => BatonSnapshot;
+  /** Current host selection used when baton.harness omits harnessTargetId. */
+  selectedHarnessTargetId?: () => string;
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
   loadPackage?(
     pluginId: string,
@@ -176,13 +191,13 @@ export interface ManagerOptions {
   pluginSupervisor?: PluginSupervisor;
   /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
   onProposal(proposal: Proposal): Promise<void> | void;
-  /** Host-owned bridge into a dedicated side Lane; never steers. */
-  enqueueTurnRequest?(
-    request: ScheduledTurnRequest,
+  /** Host-owned bridge that materializes the request's explicit Lane policy. */
+  enqueueHarnessInvocation?(
+    request: ScheduledHarnessInvocation,
   ): Promise<unknown> | void;
   /** Cancels a queued Request or interrupts its admitted Turn. */
-  cancelTurnRequest?(
-    turnRequestId: string,
+  cancelHarnessInvocation?(
+    harnessInvocationId: string,
   ): "queued" | "running" | undefined;
   /** Board 展示内容变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
@@ -321,11 +336,12 @@ export class Manager {
   private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => BatonSnapshot;
+  private readonly selectedHarnessTargetId?: () => string;
   private readonly interactions?: InteractionStore;
-  private readonly turnRequests?: TurnRequestStore;
-  private readonly enqueueTurnRequest?: ManagerOptions["enqueueTurnRequest"];
-  private readonly cancelHostTurnRequest?: ManagerOptions["cancelTurnRequest"];
-  private readonly dispatchedTurnRequests = new Set<string>();
+  private readonly harnessInvocations?: HarnessInvocationStore;
+  private readonly enqueueHarnessInvocation?: ManagerOptions["enqueueHarnessInvocation"];
+  private readonly cancelHostHarnessInvocation?: ManagerOptions["cancelHarnessInvocation"];
+  private readonly dispatchedHarnessInvocations = new Set<string>();
   private readonly bindings = new Map<string, PluginBinding>();
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
@@ -395,15 +411,16 @@ export class Manager {
     this.snapshot =
       options.snapshot ??
       (() => emptyBatonSnapshot(options.proposals.batonSessionId));
+    this.selectedHarnessTargetId = options.selectedHarnessTargetId;
     if (options.session) {
       this.interactions = new InteractionStore(options.session);
-      this.turnRequests = new TurnRequestStore(options.session, {
+      this.harnessInvocations = new HarnessInvocationStore(options.session, {
         onChanged: (request, key) =>
-          this.enqueueTurnRequestOwner(key, request.resource),
+          this.enqueueHarnessInvocationOwner(key, request.resource),
       });
     }
-    this.enqueueTurnRequest = options.enqueueTurnRequest;
-    this.cancelHostTurnRequest = options.cancelTurnRequest;
+    this.enqueueHarnessInvocation = options.enqueueHarnessInvocation;
+    this.cancelHostHarnessInvocation = options.cancelHarnessInvocation;
     this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
@@ -471,10 +488,8 @@ export class Manager {
     const controller = new Controller({
       ...definition,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
+      invokeVerb: (context, request) => this.invokeVerb(context, request),
       executeWithCapacity: (execute) => this.capacity.run(execute),
-      onProposal: (proposal) => this.publishProposal(proposal),
-      onInteraction: (interaction) => this.publishInteraction(interaction),
-      onTurnRequest: (request) => this.publishTurnRequest(request),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -515,10 +530,8 @@ export class Manager {
       ...definition,
       resources: this.batonResources,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
+      invokeVerb: (context, request) => this.invokeVerb(context, request),
       executeWithCapacity: (execute) => this.capacity.run(execute),
-      onProposal: (proposal) => this.publishProposal(proposal),
-      onInteraction: (interaction) => this.publishInteraction(interaction),
-      onTurnRequest: (request) => this.publishTurnRequest(request),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -644,6 +657,14 @@ export class Manager {
               dataDirs,
               {
                 resources,
+                invokeBatonVerb: (context, request) => {
+                  if (context.key.pluginInstanceId !== instance.pluginInstanceId) {
+                    throw new Error(
+                      `Plugin Runner Baton verb scope must belong to ${instance.pluginInstanceId}`,
+                    );
+                  }
+                  return this.invokeVerb(context, request);
+                },
                 onToast: (message) =>
                   this.notifyToast(instance.pluginInstanceId, message),
                 onLog: (entry) => this.writePluginLog(instance, entry),
@@ -904,8 +925,12 @@ export class Manager {
     return this.proposals.listPending();
   }
 
-  listTurnRequests() {
-    return this.turnRequests?.list() ?? [];
+  listHarnessInvocations() {
+    return this.harnessInvocations?.list() ?? [];
+  }
+
+  listPendingHarnessInvocationInputs() {
+    return this.harnessInvocations?.pendingDraftInputs() ?? [];
   }
 
   listBoardItems(): readonly BoardItem[] {
@@ -934,23 +959,7 @@ export class Manager {
   async resolveInteraction(
     interactionId: string,
     resolution: InteractionResolution,
-    options?: { harnessTargetId?: string },
   ): Promise<boolean> {
-    if (this.turnRequests) {
-      const targetIds = new Set(
-        this.snapshot().harnessTargets.map((target) => target.id),
-      );
-      const resolved = this.turnRequests.resolve(
-        interactionId,
-        resolution,
-        options?.harnessTargetId ?? "",
-        targetIds,
-      );
-      if (resolved) {
-        if (resolved.scheduled) this.dispatchTurnRequest(resolved.scheduled);
-        return true;
-      }
-    }
     const key = this.interactions?.resolve(interactionId, resolution);
     if (!key) return false;
     try {
@@ -961,22 +970,37 @@ export class Manager {
     return true;
   }
 
-  async cancelTurnRequest(identifier?: string): Promise<boolean> {
-    const request = this.turnRequests?.latestCancellable(
+  async cancelHarnessInvocation(identifier?: string): Promise<boolean> {
+    const request = this.harnessInvocations?.latestCancellable(
       identifier?.trim() || undefined,
     );
-    if (!request || !this.turnRequests) return false;
+    if (!request || !this.harnessInvocations) return false;
 
-    if (this.turnRequests.isAdmitted(request.requestId)) {
-      return this.cancelHostTurnRequest?.(request.requestId) === "running";
+    if (this.harnessInvocations.isAdmitted(request.invocationId)) {
+      return this.cancelHostHarnessInvocation?.(request.invocationId) === "running";
     }
 
-    const key = this.turnRequests.cancelBeforeAdmission(
-      request.requestId,
+    const key = this.harnessInvocations.cancelBeforeAdmission(
+      request.invocationId,
       "user",
     );
-    this.cancelHostTurnRequest?.(request.requestId);
+    this.cancelHostHarnessInvocation?.(request.invocationId);
     return key !== undefined;
+  }
+
+  resolveHarnessInvocationInput(
+    invocationId: string,
+    outcome:
+      | {
+          readonly kind: "submitted";
+          readonly blocks: readonly PromptBlock[];
+        }
+      | { readonly kind: "dismissed" },
+  ): boolean {
+    const resolved = this.harnessInvocations?.resolveDraftInput(invocationId, outcome);
+    if (!resolved) return false;
+    if (resolved.scheduled) this.dispatchHarnessInvocation(resolved.scheduled);
+    return true;
   }
 
   getBatonResource<K extends BuiltinResourceKind>(
@@ -989,46 +1013,88 @@ export class Manager {
     return this.batonResources.get(kind, resourceId);
   }
 
-  private async publishProposal(draft: ReconcileProposal): Promise<void> {
-    const proposal = this.proposals.record(draft);
-    if (!proposal.resolution) await this.onProposal(proposal);
-  }
-
-  private publishInteraction(draft: ReconcileInteraction): void {
-    if (!this.interactions) {
+  private async invokeVerb(
+    context: BatonVerbContext,
+    request: BatonVerbRequest,
+  ): Promise<BatonVerbResponse> {
+    if (request.verb === "ask") {
+      if (!this.interactions) {
+        throw new Error("plugin Manager requires a SessionHandle for baton.ask");
+      }
+      return this.interactions.ask(context, request.input);
+    }
+    if (request.verb === "confirm") {
+      if (!this.interactions) {
+        throw new Error("plugin Manager requires a SessionHandle for baton.confirm");
+      }
+      return this.interactions.confirm(context, request.input);
+    }
+    if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
+      throw new Error("plugin Manager host does not support baton.harness");
+    }
+    const existing = this.harnessInvocations.current(context, request.input.key);
+    const harnessTargetId = request.input.harnessTargetId ??
+      existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+    if (!harnessTargetId) {
       throw new Error(
-        "plugin Manager requires a SessionHandle to open Interactions",
+        `baton.${request.verb} ${request.input.key} requires a HarnessTarget selection`,
       );
     }
-    this.interactions.open(draft);
-  }
-
-  private publishTurnRequest(draft: ReconcileTurnRequest): void {
-    if (!this.turnRequests || !this.enqueueTurnRequest) {
-      throw new Error(
-        "plugin Manager host does not support TurnRequest execution",
-      );
-    }
-    const requestedTarget = draft.request.harnessTargetId;
     if (
-      requestedTarget &&
-      !this.snapshot().harnessTargets.some(
-        (target) => target.id === requestedTarget,
-      )
+      !existing &&
+      !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
     ) {
       throw new Error(
-        `TurnRequest ${draft.request.requestKey} references unknown HarnessTarget: ${requestedTarget}`,
+        `baton.${request.verb} ${request.input.key} references unknown HarnessTarget: ${harnessTargetId}`,
       );
     }
-    this.turnRequests.record(draft);
+    const snapshot = this.harnessInvocations.record({
+      ...context,
+      invocation: {
+        operationKey: request.input.key,
+        title: request.input.key,
+        prompt: request.input.prompt,
+        delivery: request.verb === "draft" ? "draft" : "direct",
+        lane: request.verb === "draft" ? "main" : request.input.lane,
+        harnessTargetId,
+      },
+    });
+    const scheduled = this.harnessInvocations.scheduled(snapshot.invocationId);
+    if (scheduled) this.dispatchHarnessInvocation(scheduled);
+    if (request.verb === "draft" && snapshot.phase === "awaiting_input") {
+      return Object.freeze({ state: "editing" });
+    }
+    if (snapshot.phase === "completed" && snapshot.result && snapshot.laneId) {
+      return Object.freeze({
+        state: "completed",
+        laneId: snapshot.laneId,
+        turn: snapshot.result,
+      });
+    }
+    if (snapshot.phase === "cancelled") {
+      return request.verb === "draft"
+        ? Object.freeze({ state: "dismissed" })
+        : Object.freeze({ state: "cancelled" });
+    }
+    if (
+      snapshot.phase !== "queued" &&
+      snapshot.phase !== "running" &&
+      snapshot.phase !== "uncertain"
+    ) {
+      throw new Error(
+        `baton.${request.verb} ${request.input.key} entered unexpected phase: ${snapshot.phase}`,
+      );
+    }
+    return Object.freeze({
+      state: "pending",
+      phase: snapshot.phase,
+      ...(snapshot.laneId === undefined ? {} : { laneId: snapshot.laneId }),
+      ...(snapshot.turnId === undefined ? {} : { turnId: snapshot.turnId }),
+    });
   }
 
   private snapshotFor(key: ReconcileKey, resource: ResourceRef): BatonSnapshot {
-    return {
-      ...this.snapshot(),
-      pluginInteractions: this.interactions?.snapshots(key) ?? [],
-      turnRequests: this.turnRequests?.snapshots(key, resource) ?? [],
-    };
+    return this.snapshot();
   }
 
   private async restoreProposals(): Promise<void> {
@@ -1037,43 +1103,43 @@ export class Manager {
     }
   }
 
-  private restoreTurnRequests(): void {
-    for (const request of this.turnRequests?.restore() ?? []) {
-      this.dispatchTurnRequest(request);
+  private restoreHarnessInvocations(): void {
+    for (const request of this.harnessInvocations?.restore() ?? []) {
+      this.dispatchHarnessInvocation(request);
     }
   }
 
-  private dispatchTurnRequest(request: ScheduledTurnRequest): void {
+  private dispatchHarnessInvocation(request: ScheduledHarnessInvocation): void {
     if (
-      !this.enqueueTurnRequest ||
-      this.dispatchedTurnRequests.has(request.requestId)
+      !this.enqueueHarnessInvocation ||
+      this.dispatchedHarnessInvocations.has(request.invocationId)
     ) {
       return;
     }
-    this.dispatchedTurnRequests.add(request.requestId);
+    this.dispatchedHarnessInvocations.add(request.invocationId);
     void Promise.resolve()
-      .then(() => this.enqueueTurnRequest!(request))
+      .then(() => this.enqueueHarnessInvocation!(request))
       .catch((error) => {
-        this.turnRequests?.cancelBeforeAdmission(
-          request.requestId,
+        this.harnessInvocations?.cancelBeforeAdmission(
+          request.invocationId,
           "recovery",
           error instanceof Error ? error.message : String(error),
         );
         this.log?.({
           level: "error",
           source: "baton",
-          component: "plugin.turn-request",
-          message: "TurnRequest dispatch failed",
+          component: "plugin.harness-invocation",
+          message: "HarnessInvocation dispatch failed",
           pluginInstanceId: request.pluginInstanceId,
           turnId: request.turnId,
           harnessTargetId: request.harnessTargetId,
           error: logError(error),
-          attributes: { turnRequestId: request.requestId },
+          attributes: { harnessInvocationId: request.invocationId },
         });
       });
   }
 
-  private enqueueTurnRequestOwner(
+  private enqueueHarnessInvocationOwner(
     key: ReconcileKey,
     resource: ResourceRef,
   ): void {
@@ -1106,7 +1172,7 @@ export class Manager {
     for (const failure of failures) {
       if (failure) this.reportActivationFailure(failure);
     }
-    this.restoreTurnRequests();
+    this.restoreHarnessInvocations();
     await this.restoreProposals();
     const controllers = [...this.controllers.values()];
     const scheduled = controllers.map((controller) => ({
@@ -1368,7 +1434,8 @@ export class Manager {
       reconcile: async (baton, resource) =>
         await runner.invoke(
           registration.reconcileHandlerId,
-          baton,
+          batonSnapshot(baton),
+          batonContext(baton),
           resource,
         ),
       ...(registration.presentHandlerId === undefined
@@ -1633,7 +1700,7 @@ export class Manager {
     this.unsubscribeBatonResources?.();
     this.batonResources?.close();
     this.interactions?.close();
-    this.turnRequests?.close();
+    this.harnessInvocations?.close();
     try {
       await this.pluginSupervisor?.close();
     } catch (error) {
@@ -1702,7 +1769,7 @@ export class Manager {
   }
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
-    if (change.kind === "deleted" && this.turnRequests) {
+    if (change.kind === "deleted" && this.harnessInvocations) {
       const resource = change.resource;
       const ref: ResourceRef = {
         apiVersion: resource.apiVersion,
@@ -1711,8 +1778,8 @@ export class Manager {
         name: resource.metadata.name,
         uid: resource.metadata.uid,
       };
-      for (const requestId of this.turnRequests.cancelForResource(ref)) {
-        this.cancelHostTurnRequest?.(requestId);
+      for (const requestId of this.harnessInvocations.cancelForResource(ref)) {
+        this.cancelHostHarnessInvocation?.(requestId);
       }
     }
     this.notifyBoardChanged();

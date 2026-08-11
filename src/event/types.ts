@@ -359,6 +359,9 @@ export interface TurnSummaryToolCall {
   status?: string;
 }
 
+export type HarnessInvocationDelivery = "draft" | "direct";
+export type HarnessInvocationLane = "main" | "new";
+
 /**
  * turn 结束时落盘的汇总事件：人可 grep、@ 引用的紧凑投影数据源、reduce 的 checkpoint。
  * 见 docs/workflow.md“append、reduce 与 Projection”。
@@ -374,36 +377,34 @@ export interface TurnSummary {
   endedAt?: string;
 }
 
-export interface TurnRequestRecorded {
-  requestId: string;
-  requestKey: string;
+export interface HarnessInvocationRecorded {
+  invocationId: string;
+  operationKey: string;
   resourceOwner: "plugin" | "baton";
   resource: ResourceRef;
   title: string;
-  description?: string;
   prompt: string;
-  requestedHarnessTargetId?: string;
+  delivery: HarnessInvocationDelivery;
+  lane: HarnessInvocationLane;
+  harnessTargetId: string;
 }
 
-export interface TurnRequestAuthorizationResolved {
-  requestId: string;
-  interactionId?: string;
-  outcome: "allowed" | "declined";
-  /** Present for allowed requests and fixed before scheduling. */
-  harnessTargetId?: string;
+export interface HarnessInvocationInputSubmitted {
+  invocationId: string;
+  blocks: PromptBlock[];
 }
 
-export interface TurnRequestScheduled {
-  requestId: string;
+export interface HarnessInvocationScheduled {
+  invocationId: string;
   messageId: string;
   turnId: string;
   harnessTargetId: string;
-  /** Baton-owned task line reserved for this Request. */
+  /** Baton-owned task line reserved for this invocation. */
   laneId: string;
 }
 
-export interface TurnRequestCancelled {
-  requestId: string;
+export interface HarnessInvocationCancelled {
+  invocationId: string;
   reason: "user" | "resource" | "recovery";
   detail?: string;
 }
@@ -436,10 +437,10 @@ export type EventPayloadMap = {
   _baton_context_delivery_receipt: ContextDeliveryReceipt;
   _baton_delivery_attempt_update: HarnessDeliveryAttemptUpdate;
   _baton_turn_summary: TurnSummary;
-  _baton_turn_request_recorded: TurnRequestRecorded;
-  _baton_turn_request_authorization_resolved: TurnRequestAuthorizationResolved;
-  _baton_turn_request_scheduled: TurnRequestScheduled;
-  _baton_turn_request_cancelled: TurnRequestCancelled;
+  _baton_harness_invocation_recorded: HarnessInvocationRecorded;
+  _baton_harness_invocation_input_submitted: HarnessInvocationInputSubmitted;
+  _baton_harness_invocation_scheduled: HarnessInvocationScheduled;
+  _baton_harness_invocation_cancelled: HarnessInvocationCancelled;
 };
 
 export type EventKind = keyof EventPayloadMap;

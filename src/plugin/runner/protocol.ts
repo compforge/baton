@@ -9,6 +9,10 @@ import type {
   ToastMessage,
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
+import type {
+  BatonVerbContext,
+  BatonVerbRequest,
+} from "../verbs.ts";
 
 export interface PluginPackageEntry {
   readonly pluginId: string;
@@ -102,6 +106,11 @@ export type RunnerRequest =
     };
 
 export type HostRequest =
+  | {
+      readonly method: "baton.invoke";
+      readonly context: BatonVerbContext;
+      readonly request: BatonVerbRequest;
+    }
   | {
       readonly method: "resource.get";
       readonly type: ResourceType;

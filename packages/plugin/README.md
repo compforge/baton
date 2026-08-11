@@ -161,8 +161,8 @@ Controller Sources have two narrow roles:
   Controller.
 
 Both paths use the same keyed reconcile queue as Resource changes and
-`requeueAfterMs`. Sources never update status or produce Plugin Output; those
-remain exclusively owned by `reconcile`.
+`requeueAfterMs`. Sources never update status or call Baton verbs; those remain
+exclusively owned by `reconcile`.
 
 Resources may set one `metadata.owner` when they are created or emitted. The
 owner must be an existing Resource in the same PluginInstance namespace and
@@ -234,22 +234,19 @@ wake their former owner, then deduplicate the resulting requests. A Watch
 routes Resources already stored by Baton; a Source discovers external state
 and materializes the primary Resource before it is reconciled.
 
-A Controller can return `kind: "interaction"` when its Resource needs a durable
-user decision:
+A Controller calls `baton.ask` when its Resource needs a durable user decision:
 
 ```ts
-return {
-  output: {
-    kind: "interaction",
-    decisionKey: "associate-pr",
-    title: "Associate pull request",
-    prompt: "Which requirement should own this pull request?",
-    options: [
-      { optionId: "req_1", label: "REQ-1" },
-      { optionId: "reject", label: "Do not associate", role: "reject" },
-    ],
-  },
-};
+const decision = await baton.ask({
+  key: "associate-pr",
+  title: "Associate pull request",
+  prompt: "Which requirement should own this pull request?",
+  choices: [
+    { value: "req_1", label: "REQ-1" },
+    { value: "standalone", label: "Do not associate" },
+  ],
+});
+if (decision.state !== "answered") return;
 ```
 
 A command can return `search.mode: "local"` to let chat-tui filter its current
@@ -258,41 +255,32 @@ options, or `"remote"` to receive later query text in
 responses superseded by a newer query. A remote result may contain no options;
 return the same remote-search picker shape so the field stays open.
 
-On the next reconcile, read the result from
-`baton.pluginInteractions` by `decisionKey`. Baton persists the answer before
-re-enqueuing the same Resource, so plugins do not register option callbacks or
-hold an in-memory promise while waiting. Omit `options` for free text.
+The call returns `waiting` until the answer is durable. Baton then re-enqueues
+the same Resource, and the same key returns `answered`. Plugins do not register
+callbacks or keep a Runner promise alive while waiting.
 
-A Controller can use `TurnRequest` to originate exactly one new driven Turn
-without pretending the request is direct user input. This is a control-plane
-path for creating a Turn, not a Harness-work abstraction: after authorization,
-Baton materializes it as plugin-source Input and owns target selection,
-admission, an isolated side Lane, execution, cancellation, and recovery.
-The side Lane does not block the BatonSession main Lane. Lane is a Baton-native
-task line rather than a Plugin-private execution type. The prompt is read-only
-during authorization:
+A Controller uses `baton.draft` to let the user edit a prompt, or
+`baton.harness` to originate a driven Turn directly. The Plugin explicitly
+declares Lane placement for direct execution:
+
+- `lane: "main"` schedules the final Input on the BatonSession main lane.
+- `lane: "new"` allocates a new asynchronous lane when the Input is ready to
+  run.
+
+Baton owns target selection, admission, execution, cancellation, ledger and
+recovery. Lane is a Baton-native task line rather than a Plugin-private
+execution type:
 
 ```ts
-const request = baton.turnRequests.find(
-  (candidate) => candidate.requestKey === "implement-v1",
-);
-if (!request) {
-  return {
-    output: {
-      kind: "turn-request",
-      requestKey: "implement-v1",
-      title: "Implement this example",
-      description: "The Resource is ready for implementation.",
-      prompt: "Implement the example and run its focused tests.",
-    },
-  };
-}
-if (request.phase === "completed") {
-  // Inspect request.result?.stopReason and update Resource status.
-}
+const execution = await baton.harness({
+  key: "implement-v1",
+  prompt: "Implement the example and run its focused tests.",
+  lane: "new",
+});
+if (execution.state !== "completed") return;
+// Inspect execution.turn.stopReason and update Resource status.
 ```
 
-`requestKey` is immutable for one logical request. Returning the same key with
-a changed prompt, title, description, or target is an identity conflict; use a
-new key to request another Turn. A completed phase means the Turn closed, not
-that domain acceptance succeeded.
+The key and parameters are immutable for one logical operation; use a new key
+to request another question, draft, or Turn. `completed` means the Turn closed,
+not that domain acceptance succeeded.
