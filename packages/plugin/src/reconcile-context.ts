@@ -30,6 +30,7 @@ export interface AskInput<TValue extends string = string> {
 
 export type AskResult<TValue extends string = string> =
   | {
+      /** Waiting for an external answer; this operation has no Harness execution. */
       readonly state: "waiting";
     }
   | {
@@ -54,6 +55,7 @@ export interface ConfirmInput {
 
 export type ConfirmResult =
   | {
+      /** Waiting for an external decision; this operation has no Harness execution. */
       readonly state: "waiting";
     }
   | {
@@ -102,6 +104,7 @@ export interface DraftInput {
 
 export type HarnessResult =
   | {
+      /** A durable HarnessInvocation exists without a terminal result; phase tracks its progress. */
       readonly state: "pending";
       readonly phase: "queued" | "running" | "uncertain";
       readonly laneId?: string;
@@ -118,7 +121,10 @@ export type HarnessResult =
     };
 
 export type DraftResult =
-  | { readonly state: "editing" }
+  | {
+      /** Waiting for edited input; no Harness Input has been submitted. */
+      readonly state: "editing";
+    }
   | { readonly state: "dismissed" }
   | HarnessResult;
 
