@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReconcileInteractionStore } from "../src/interaction/reconcile.ts";
-import type { ReconcileVerbScope } from "../src/plugin/verbs.ts";
+import type { ExecutionScope } from "../src/plugin/verb.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
@@ -15,7 +15,7 @@ function session() {
   return new SessionStore(root).createSession({ cwd: "/repo" });
 }
 
-function scope(batonSessionId: string, executionId = "pex_1"): ReconcileVerbScope {
+function scope(batonSessionId: string, executionId = "pex_1"): ExecutionScope {
   return {
     batonSessionId,
     pluginInstanceId: "reqloop_default",

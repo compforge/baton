@@ -25,9 +25,9 @@ import {
 import { validateWatches } from "./watch.ts";
 import {
   createReconcileContext,
-  type InvokeReconcileVerb,
-  type ReconcileVerbScope,
-} from "./verbs.ts";
+  type ExecutionScope,
+  type InvokeVerb,
+} from "./verb.ts";
 import type {
   ControllerSource,
   CronSource,
@@ -222,9 +222,9 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
   snapshot?: (key: ReconcileKey, resource: ResourceRef) => ReconcileSnapshot;
-  invokeVerb?: InvokeReconcileVerb;
+  invokeVerb?: InvokeVerb;
   executeReconcile?: <T>(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     localLease: ReconcileCapacityLease,
     execute: () => Promise<T>,
   ) => Promise<T>;
@@ -256,7 +256,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
-  private readonly invokeVerb: InvokeReconcileVerb;
+  private readonly invokeVerb: InvokeVerb;
   private readonly executeReconcile: NonNullable<
     BuiltinControllerOptions<K>["executeReconcile"]
   >;
@@ -295,7 +295,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     });
     this.executeReconcile = options.executeReconcile ??
       (async <T>(
-        _scope: ReconcileVerbScope,
+        _scope: ExecutionScope,
         _localLease: ReconcileCapacityLease,
         execute: () => Promise<T>,
       ) => await execute());

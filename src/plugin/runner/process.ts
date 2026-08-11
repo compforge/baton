@@ -24,8 +24,8 @@ import type {
 import type { PluginLogRecord } from "../package.ts";
 import {
   createReconcileContext,
-  type ReconcileVerbResponse,
-} from "../verbs.ts";
+  type VerbResponse,
+} from "../verb.ts";
 
 import {
   type ActivationResult,
@@ -228,8 +228,8 @@ function controllerRegistration(
             snapshot,
             context,
             async (verbContext, request) =>
-              await callHost<ReconcileVerbResponse>({
-                method: "reconcile.invoke",
+              await callHost<VerbResponse>({
+                method: "verb.invoke",
                 context: verbContext,
                 request,
               }),
