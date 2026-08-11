@@ -22,8 +22,8 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import {
-  createBaton,
-  type BatonVerbResponse,
+  createReconcileContext,
+  type ReconcileVerbResponse,
 } from "../verbs.ts";
 
 import {
@@ -220,12 +220,12 @@ function controllerRegistration(
       `${controllerId}:reconcile`,
       (async (snapshot, context, resource) =>
         await controller.reconcile(
-          createBaton(
+          createReconcileContext(
             snapshot,
             context,
             async (verbContext, request) =>
-              await callHost<BatonVerbResponse>({
-                method: "baton.invoke",
+              await callHost<ReconcileVerbResponse>({
+                method: "reconcile.invoke",
                 context: verbContext,
                 request,
               }),

@@ -93,7 +93,7 @@ const plugin: PluginPackage = {
         cron: "*/5 * * * *",
         timeZone: "UTC",
       }],
-      async reconcile(_baton, resource: Example) {
+      async reconcile(_ctx, resource: Example) {
         // Observe current facts and patch status through context.resources.
       },
       async present(resource) {
@@ -161,8 +161,8 @@ Controller Sources have two narrow roles:
   Controller.
 
 Both paths use the same keyed reconcile queue as Resource changes and
-`requeueAfterMs`. Sources never update status or call Baton verbs; those remain
-exclusively owned by `reconcile`.
+`requeueAfterMs`. Sources never update status or use reconcile capabilities;
+those remain exclusively owned by `reconcile`.
 
 Resources may set one `metadata.owner` when they are created or emitted. The
 owner must be an existing Resource in the same PluginInstance namespace and
@@ -223,7 +223,7 @@ const repositories: EventHandler = {
 registerController({
   resourceType: "Repository",
   watches: [{ resourceType: "Workspace", handler: repositories }],
-  async reconcile(_baton, repository) {
+  async reconcile(_ctx, repository) {
     // Reconcile repository.metadata.name from the latest stored state.
   },
 });
@@ -234,10 +234,12 @@ wake their former owner, then deduplicate the resulting requests. A Watch
 routes Resources already stored by Baton; a Source discovers external state
 and materializes the primary Resource before it is reconciled.
 
-A Controller calls `baton.ask` when its Resource needs a durable user decision:
+A Controller receives a `ReconcileContext`, reads current facts from
+`ctx.snapshot`, and calls `ctx.ask` when its Resource needs a durable user
+decision:
 
 ```ts
-const decision = await baton.ask({
+const decision = await ctx.ask({
   key: "associate-pr",
   title: "Associate pull request",
   prompt: "Which requirement should own this pull request?",
@@ -259,8 +261,8 @@ The call returns `waiting` until the answer is durable. Baton then re-enqueues
 the same Resource, and the same key returns `answered`. Plugins do not register
 callbacks or keep a Runner promise alive while waiting.
 
-A Controller uses `baton.draft` to let the user edit a prompt, or
-`baton.harness` to originate a driven Turn directly. The Plugin explicitly
+A Controller uses `ctx.draft` to let the user edit a prompt, or
+`ctx.harness` to originate a driven Turn directly. The Plugin explicitly
 declares Lane placement for direct execution:
 
 - `lane: "main"` schedules the final Input on the BatonSession main lane.
@@ -272,7 +274,7 @@ recovery. Lane is a Baton-native task line rather than a Plugin-private
 execution type:
 
 ```ts
-const execution = await baton.harness({
+const execution = await ctx.harness({
   key: "implement-v1",
   prompt: "Implement the example and run its focused tests.",
   lane: "new",

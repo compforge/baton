@@ -50,14 +50,14 @@ export interface TurnSummary {
   readonly endedAt?: string;
 }
 
-export interface BatonSessionSnapshot {
+export interface SessionSnapshot {
   readonly batonSessionId: string;
   readonly cwd?: string;
   readonly runState: SessionRunState;
   readonly revision: number;
 }
 
-export interface BatonActiveTurnSnapshot {
+export interface ActiveTurnSnapshot {
   readonly turnId: string;
   readonly role: "driven" | "observed";
   readonly state: "running" | "requires_action";
@@ -67,7 +67,7 @@ export interface BatonActiveTurnSnapshot {
   readonly startedAt?: number;
 }
 
-export interface BatonInputSnapshot {
+export interface InputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
@@ -79,25 +79,25 @@ export interface BatonInputSnapshot {
   readonly harnessInvocationId?: string;
 }
 
-export interface BatonHarnessTargetSnapshot {
+export interface HarnessTargetSnapshot {
   readonly id: string;
   readonly harness: string;
   readonly label?: string;
 }
 
-export interface BatonPendingInteractionSnapshot {
+export interface PendingInteractionSnapshot {
   readonly interactionId: string;
   readonly kind: "permission" | "question" | "hook_trust";
   readonly requester: InteractionRequester;
   readonly turnId?: string;
 }
 
-export interface BatonSnapshot {
-  readonly session: BatonSessionSnapshot;
-  readonly activeTurns: readonly BatonActiveTurnSnapshot[];
-  readonly inputs: readonly BatonInputSnapshot[];
-  readonly harnessTargets: readonly BatonHarnessTargetSnapshot[];
-  readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
+export interface ReconcileSnapshot {
+  readonly session: SessionSnapshot;
+  readonly activeTurns: readonly ActiveTurnSnapshot[];
+  readonly inputs: readonly InputSnapshot[];
+  readonly harnessTargets: readonly HarnessTargetSnapshot[];
+  readonly pendingInteractions: readonly PendingInteractionSnapshot[];
   readonly latestTurn?: TurnSummary;
   readonly turns: readonly TurnSummary[];
 }

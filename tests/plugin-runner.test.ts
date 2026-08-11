@@ -96,7 +96,7 @@ describe("Plugin Runner process boundary", () => {
     );
   });
 
-  test("routes reconcile-scoped Baton verbs across the process boundary", async () => {
+  test("routes reconcile capabilities across the process boundary", async () => {
     const { instances, proposals, session, entry } = stores();
     session.append({
       kind: "_baton_turn_summary",
@@ -106,7 +106,7 @@ describe("Plugin Runner process boundary", () => {
       turnId: "turn_runner",
       payload: {
         turnId: "turn_runner",
-        userText: "test Baton verbs",
+        userText: "test reconcile capabilities",
         agentText: "ready",
         toolCalls: [],
       },

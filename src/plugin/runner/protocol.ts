@@ -10,8 +10,8 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import type {
-  BatonVerbContext,
-  BatonVerbRequest,
+  ReconcileVerbScope,
+  ReconcileVerbRequest,
 } from "../verbs.ts";
 
 export interface PluginPackageEntry {
@@ -107,9 +107,9 @@ export type RunnerRequest =
 
 export type HostRequest =
   | {
-      readonly method: "baton.invoke";
-      readonly context: BatonVerbContext;
-      readonly request: BatonVerbRequest;
+      readonly method: "reconcile.invoke";
+      readonly context: ReconcileVerbScope;
+      readonly request: ReconcileVerbRequest;
     }
   | {
       readonly method: "resource.get";

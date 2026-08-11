@@ -236,7 +236,7 @@ function scheduledOf(
   });
 }
 
-/** Event-backed owner for one durable baton.harness or baton.draft execution. */
+/** Event-backed owner for one durable harness() or draft() execution. */
 export class HarnessInvocationStore {
   private readonly states = new Map<string, InvocationState>();
   private readonly invocationIdByMessage = new Map<string, string>();

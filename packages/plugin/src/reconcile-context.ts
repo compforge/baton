@@ -1,4 +1,4 @@
-import type { BatonSnapshot, TurnSummary } from "./snapshot.ts";
+import type { ReconcileSnapshot, TurnSummary } from "./snapshot.ts";
 
 export type LanePlacement = "main" | "new";
 export type CancellationReason =
@@ -63,7 +63,7 @@ export interface HarnessInput {
   readonly key: string;
   readonly prompt: string;
   readonly lane: LanePlacement;
-  /** Omit to use the Baton host's selected HarnessTarget when scheduling. */
+  /** Omit to use the host's selected HarnessTarget when scheduling. */
   readonly harnessTargetId?: string;
 }
 
@@ -71,7 +71,7 @@ export interface DraftInput {
   /** Stable within the Resource operation. Change it to offer another draft. */
   readonly key: string;
   readonly prompt: string;
-  /** Omit to use the Baton host's selected HarnessTarget on submission. */
+  /** Omit to use the host's selected HarnessTarget on submission. */
   readonly harnessTargetId?: string;
 }
 
@@ -98,11 +98,12 @@ export type DraftResult =
   | HarnessResult;
 
 /**
- * Reconcile-scoped Baton capabilities. Calls are durable and level-based: an
- * unresolved call returns its current state, then Baton re-enqueues the
- * Resource after the corresponding ledger result changes.
+ * Reconcile-scoped host view and capabilities. Calls are durable and
+ * level-based: an unresolved call returns its current state, then the host
+ * re-enqueues the Resource after the corresponding ledger result changes.
  */
-export interface Baton extends BatonSnapshot {
+export interface ReconcileContext {
+  readonly snapshot: ReconcileSnapshot;
   ask<const TValue extends string>(
     input: AskInput<TValue>,
   ): Promise<AskResult<TValue>>;

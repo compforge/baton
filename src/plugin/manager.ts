@@ -79,9 +79,9 @@ import type { PromptBlock } from "../event/types.ts";
 import type { InteractionResolution } from "../interaction/types.ts";
 import { Store as InteractionStore } from "./interaction.ts";
 import {
-  emptyBatonSnapshot,
-  type BatonSnapshot,
-} from "./baton-snapshot.ts";
+  emptyReconcileSnapshot,
+  type ReconcileSnapshot,
+} from "./reconcile-snapshot.ts";
 import {
   reconcileResourceOwner,
   reconcileScopeId,
@@ -104,13 +104,13 @@ import {
   HarnessInvocationStore,
 } from "./harness-invocation.ts";
 import type {
-  BatonVerbContext,
-  BatonVerbRequest,
-  BatonVerbResponse,
+  ReconcileVerbScope,
+  ReconcileVerbRequest,
+  ReconcileVerbResponse,
 } from "./verbs.ts";
 import {
-  batonContext,
-  batonSnapshot,
+  reconcileScope,
+  reconcileSnapshot,
 } from "./verbs.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
@@ -169,8 +169,8 @@ export interface ManagerOptions {
   /** 当前进程可激活的可信、不可变 Package 版本。 */
   packages?: readonly PluginPackage[];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
-  snapshot?: () => BatonSnapshot;
-  /** Current host selection used when baton.harness omits harnessTargetId. */
+  snapshot?: () => ReconcileSnapshot;
+  /** Current host selection used when harness() omits harnessTargetId. */
   selectedHarnessTargetId?: () => string;
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
   loadPackage?(
@@ -335,7 +335,7 @@ export class Manager {
   private readonly loadPackage: ManagerOptions["loadPackage"];
   private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
   private readonly pluginSupervisor?: PluginSupervisor;
-  private readonly snapshot: () => BatonSnapshot;
+  private readonly snapshot: () => ReconcileSnapshot;
   private readonly selectedHarnessTargetId?: () => string;
   private readonly interactions?: InteractionStore;
   private readonly harnessInvocations?: HarnessInvocationStore;
@@ -410,7 +410,7 @@ export class Manager {
     this.pluginSupervisor = options.pluginSupervisor;
     this.snapshot =
       options.snapshot ??
-      (() => emptyBatonSnapshot(options.proposals.batonSessionId));
+      (() => emptyReconcileSnapshot(options.proposals.batonSessionId));
     this.selectedHarnessTargetId = options.selectedHarnessTargetId;
     if (options.session) {
       this.interactions = new InteractionStore(options.session);
@@ -657,10 +657,10 @@ export class Manager {
               dataDirs,
               {
                 resources,
-                invokeBatonVerb: (context, request) => {
+                invokeReconcileVerb: (context, request) => {
                   if (context.key.pluginInstanceId !== instance.pluginInstanceId) {
                     throw new Error(
-                      `Plugin Runner Baton verb scope must belong to ${instance.pluginInstanceId}`,
+                      `Plugin Runner reconcile scope must belong to ${instance.pluginInstanceId}`,
                     );
                   }
                   return this.invokeVerb(context, request);
@@ -1014,30 +1014,30 @@ export class Manager {
   }
 
   private async invokeVerb(
-    context: BatonVerbContext,
-    request: BatonVerbRequest,
-  ): Promise<BatonVerbResponse> {
+    context: ReconcileVerbScope,
+    request: ReconcileVerbRequest,
+  ): Promise<ReconcileVerbResponse> {
     if (request.verb === "ask") {
       if (!this.interactions) {
-        throw new Error("plugin Manager requires a SessionHandle for baton.ask");
+        throw new Error("plugin Manager requires a SessionHandle for ask()");
       }
       return this.interactions.ask(context, request.input);
     }
     if (request.verb === "confirm") {
       if (!this.interactions) {
-        throw new Error("plugin Manager requires a SessionHandle for baton.confirm");
+        throw new Error("plugin Manager requires a SessionHandle for confirm()");
       }
       return this.interactions.confirm(context, request.input);
     }
     if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
-      throw new Error("plugin Manager host does not support baton.harness");
+      throw new Error("plugin Manager host does not support harness()");
     }
     const existing = this.harnessInvocations.current(context, request.input.key);
     const harnessTargetId = request.input.harnessTargetId ??
       existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
     if (!harnessTargetId) {
       throw new Error(
-        `baton.${request.verb} ${request.input.key} requires a HarnessTarget selection`,
+        `${request.verb}() ${request.input.key} requires a HarnessTarget selection`,
       );
     }
     if (
@@ -1045,7 +1045,7 @@ export class Manager {
       !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
     ) {
       throw new Error(
-        `baton.${request.verb} ${request.input.key} references unknown HarnessTarget: ${harnessTargetId}`,
+        `${request.verb}() ${request.input.key} references unknown HarnessTarget: ${harnessTargetId}`,
       );
     }
     const snapshot = this.harnessInvocations.record({
@@ -1082,7 +1082,7 @@ export class Manager {
       snapshot.phase !== "uncertain"
     ) {
       throw new Error(
-        `baton.${request.verb} ${request.input.key} entered unexpected phase: ${snapshot.phase}`,
+        `${request.verb}() ${request.input.key} entered unexpected phase: ${snapshot.phase}`,
       );
     }
     return Object.freeze({
@@ -1093,7 +1093,7 @@ export class Manager {
     });
   }
 
-  private snapshotFor(key: ReconcileKey, resource: ResourceRef): BatonSnapshot {
+  private snapshotFor(key: ReconcileKey, resource: ResourceRef): ReconcileSnapshot {
     return this.snapshot();
   }
 
@@ -1431,11 +1431,11 @@ export class Manager {
       ...(registration.maxConcurrency === undefined
         ? {}
         : { maxConcurrency: registration.maxConcurrency }),
-      reconcile: async (baton, resource) =>
+      reconcile: async (context, resource) =>
         await runner.invoke(
           registration.reconcileHandlerId,
-          batonSnapshot(baton),
-          batonContext(baton),
+          reconcileSnapshot(context),
+          reconcileScope(context),
           resource,
         ),
       ...(registration.presentHandlerId === undefined
@@ -1555,9 +1555,9 @@ export class Manager {
         sources: cronSources,
         watches: pluginController.watches,
         maxConcurrency: pluginController.maxConcurrency,
-        reconcile: async (baton, resource) =>
+        reconcile: async (context, resource) =>
           await pluginController.reconcile(
-            baton,
+            context,
             this.exposeBatonResource<TSpec, TStatus>(
               pluginInstanceId,
               resource,

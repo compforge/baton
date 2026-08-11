@@ -20,7 +20,7 @@ import type {
 import type { SessionHandle } from "../store/store.ts";
 import type { ReconcileKey } from "./controller.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
-import type { BatonVerbContext } from "./verbs.ts";
+import type { ReconcileVerbScope } from "./verbs.ts";
 
 const QUESTION_ID = "decision";
 
@@ -196,7 +196,7 @@ export class Store {
   }
 
   ask<TValue extends string>(
-    context: BatonVerbContext,
+    context: ReconcileVerbScope,
     input: AskInput<TValue>,
   ): AskResult<TValue> {
     const interaction = this.open({
@@ -238,7 +238,7 @@ export class Store {
   }
 
   confirm(
-    context: BatonVerbContext,
+    context: ReconcileVerbScope,
     input: ConfirmInput,
   ): ConfirmResult {
     const result = this.ask(context, {

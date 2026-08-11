@@ -1,7 +1,7 @@
 export * from "./event/ids.ts";
 export * from "./event/types.ts";
 export * from "./interaction/types.ts";
-export * from "./plugin/baton-snapshot.ts";
+export * from "./plugin/reconcile-snapshot.ts";
 export {
   Controller as ResourceControllerRuntime,
   type BuiltinResourceReconcileProposal,

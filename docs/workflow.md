@@ -1,6 +1,7 @@
 # Baton 工作流
 
-本文是 Baton 双向工作流的唯一入口：用户 Input 或 Baton verb 发起的 HarnessInvocation 如何经过 Controller
+本文是 Baton 双向工作流的唯一入口：用户 Input 或 reconcile 控制能力发起的 HarnessInvocation
+如何经过 Controller
 到达 Harness，Harness 的输出如何成为可恢复事实并返回用户，以及 steer、Interaction、cancel、
 失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
 [Harness](./harness.md)。
@@ -11,8 +12,8 @@
 控制（发起方 → Turn → Harness）
 
 User ─────────────────────────────────────────────→ user-source Input ┐
-Plugin → draft verb   → editable draft ──────────→ user-source Input │
-Plugin → harness verb ───────────────────────────→ plugin-source Input┘
+Plugin → draft()       → editable draft ──────────→ user-source Input │
+Plugin → harness()     ───────────────────────────→ plugin-source Input┘
   → admission / queue
   → Context Snapshot + Delivery
   → Delivery Attempt
@@ -30,7 +31,7 @@ Harness wire
 ```
 
 Plugin 不另开执行通道。需要用户决定时先调用 `ask` / `confirm`；需要用户修改 prompt 时调用
-`draft`；无需编辑时调用 `harness`。Core 将 verb 持久化并返回当前状态，ledger 变化后重新
+`draft`；无需编辑时调用 `harness`。Core 将调用持久化并返回当前状态，ledger 变化后重新
 reconcile Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
 ## 2. Input 到 Harness
@@ -69,9 +70,9 @@ Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代�
 每个 Lane 同时最多一个 driven Turn，不同 Lane 可并行。Harness 自发产生的 observed Turn 不进 Input 队列。
 
 prompt Input 另有一条与状态和 Lane 正交的 source 轴：composer、ProposedPlan 实施和用户编辑提交的
-HarnessInvocation draft 是 `user`；`harness` verb 直接运行的 HarnessInvocation 是
+HarnessInvocation draft 是 `user`；`harness()` 直接运行的 HarnessInvocation 是
 `{ type: "plugin", pluginInstanceId }`。Input 顶层 `harnessInvocationId` 单独保存因果，
-不混入 source。HarnessInvocation 是 Core 的 verb 执行记录，不是 Plugin 侧的 Harness 句柄；cron、Watch 和
+不混入 source。HarnessInvocation 是 Core 的持久执行记录，不是 Plugin 侧的 Harness 句柄；cron、Watch 和
 Source 只负责唤醒 reconcile，不是 Input source。带 `harnessInvocationId` 的 queued Input 由
 HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
@@ -212,9 +213,9 @@ Harness / Plugin request
 Harness Adapter 不自签 interaction ID，也不自行伪造 opened/resolved。resolution 就地解开等待方，
 不进入 prompt queue。cancel、timeout、requester 带外解决和恢复清理都是显式 resolution。
 
-Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await baton.ask(...)`
+Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await ctx.ask(...)`
 立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
-reconcile 用同一 verb key 读取结果。
+reconcile 用同一 operation key 读取结果。
 
 自动 reviewer 没有向 Baton 打开 Interaction 时，审批回执是独立 `ApprovalReview` 审计事实，
 不能伪造一组 opened/resolved；详见 [审批生命周期](./approval-lifecycle.md)。

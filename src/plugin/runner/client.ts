@@ -10,9 +10,9 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import type {
-  BatonVerbContext,
-  BatonVerbRequest,
-  BatonVerbResponse,
+  ReconcileVerbScope,
+  ReconcileVerbRequest,
+  ReconcileVerbResponse,
 } from "../verbs.ts";
 
 import {
@@ -42,10 +42,10 @@ interface SourceCallbacks {
 
 export interface PluginRunnerCallbacks {
   readonly resources: ResourceClient;
-  readonly invokeBatonVerb: (
-    context: BatonVerbContext,
-    request: BatonVerbRequest,
-  ) => Promise<BatonVerbResponse>;
+  readonly invokeReconcileVerb: (
+    context: ReconcileVerbScope,
+    request: ReconcileVerbRequest,
+  ) => Promise<ReconcileVerbResponse>;
   readonly onToast: (message: ToastMessage) => void;
   readonly onLog: (record: PluginLogRecord) => void;
   readonly onOutput?: (
@@ -351,8 +351,8 @@ export class PluginRunnerClient {
 
   private async handleHostRequest(request: HostRequest): Promise<unknown> {
     switch (request.method) {
-      case "baton.invoke":
-        return await this.callbacks.invokeBatonVerb(
+      case "reconcile.invoke":
+        return await this.callbacks.invokeReconcileVerb(
           request.context,
           request.request,
         );

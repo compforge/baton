@@ -126,11 +126,11 @@ describe("Baton Resource index", () => {
           { userText?: string }
         >({
           resourceType: BATON_TURN_RESOURCE_TYPE,
-          async reconcile(baton, resource) {
-            expect(Object.isFrozen(baton)).toBe(true);
-            expect(baton.session.batonSessionId).toBe(session.id);
+          async reconcile(ctx, resource) {
+            expect(Object.isFrozen(ctx)).toBe(true);
+            expect(ctx.snapshot.session.batonSessionId).toBe(session.id);
             reconciled.push(resource.metadata.name);
-            await baton.draft({
+            await ctx.draft({
               key: `route:${resource.metadata.name}`,
               prompt: `Route: ${resource.status.userText}`,
             });

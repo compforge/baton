@@ -8,7 +8,7 @@ Plugin 让长期领域 loop 在不进入 Baton core 的前提下拥有自己的 
 ## 1. 理念与边界
 
 Baton core 不理解 Requirement、Deployment、Review 等领域语义，只提供生命周期、调度、
-持久化、权限、Board、Context 和 Baton verbs。Plugin 可以封装完整 loop，也可以提供能独立
+持久化、权限、Board、Context 和 reconcile 作用域能力。Plugin 可以封装完整 loop，也可以提供能独立
 演进的领域能力或本地自动化。
 
 ```text
@@ -124,7 +124,7 @@ Resource change / startup / Source / Watch / cron / requeueAfter
                     keyed reconcile queue
                              │ same key coalesces
                              ▼
-              reconcile(BatonSnapshot, latest Resource)
+              reconcile(ReconcileContext, latest Resource)
                              │
                    ┌─────────┼─────────┐
                    ▼         ▼         ▼
@@ -144,25 +144,26 @@ Runner crash 无条件重复副作用。
 Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
 让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
 
-## 5. Baton verbs、Board 与 Context
+## 5. Reconcile Context、Board 与 Context
 
-### 5.1 Reconcile-scoped Baton verbs
+### 5.1 Reconcile 作用域能力
 
-Controller 的第一个参数提供 Core-owned verbs：
+Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
+Core-owned 控制能力：
 
 - `ask`：请求一个选项或自由文本答案；
 - `confirm`：请求 grant / decline 决定；
 - `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
 - `harness`：直接形成 plugin-source Input，并显式选择 `main` 或 `new` Lane。
 
-verb 调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction、
+能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction、
 草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
 Plugin 用同一个 operation key 读取答案或执行结果。`requeueAfterMs` 仍只负责时间调度。
 
 Plugin 可以自由组合这些 primitives：有的辅助动作直接异步执行，有的先询问用户，再按选择进入
 draft、主 Lane 或新 Lane。这个策略属于领域编排，不由 Core 从 Plugin 类型推断。Core 始终拥有
 Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
-[Baton verbs](./baton-verbs.md)。
+[Reconcile Context](./reconcile-context.md)。
 
 `lane` 与 Input source 正交：`main` 使用 `mainLaneId`，`new` 创建可并行支线；draft 提交是
 user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行边界，不是 Plugin
@@ -240,6 +241,6 @@ HarnessInvocation 继续使用宿主 API，不能复制到私有 JSON 形成第�
 - [Resource 生命周期](./resource-lifecycle.md) — 创建、owner、metadata 与删除状态机
 - [Kernel](./kernel.md) — core、Harness 与 Plugin 的顶层边界
 - [工作流](./workflow.md) — Input/Interaction 如何进入统一执行路径
-- [Baton verbs](./baton-verbs.md) — Plugin 编排决议、draft 与 Harness Turn
+- [Reconcile Context](./reconcile-context.md) — Plugin 编排决议、draft 与 Harness Turn
 - [日志体系](./logging.md) — Plugin 结构化诊断
 - reqloop 领域设计：<https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md>

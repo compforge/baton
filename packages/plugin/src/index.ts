@@ -23,7 +23,6 @@ export type {
   AskChoice,
   AskInput,
   AskResult,
-  Baton,
   CancellationReason,
   ConfirmInput,
   ConfirmResult,
@@ -32,7 +31,8 @@ export type {
   HarnessInput,
   HarnessResult,
   LanePlacement,
-} from "./baton.ts";
+  ReconcileContext,
+} from "./reconcile-context.ts";
 
 export type {
   PluginActivationContext,
@@ -94,12 +94,12 @@ export type {
 } from "./resource.ts";
 
 export type {
-  BatonActiveTurnSnapshot,
-  BatonHarnessTargetSnapshot,
-  BatonInputSnapshot,
-  BatonPendingInteractionSnapshot,
-  BatonSessionSnapshot,
-  BatonSnapshot,
+  ActiveTurnSnapshot,
+  HarnessTargetSnapshot,
+  InputSnapshot,
+  PendingInteractionSnapshot,
+  SessionSnapshot,
+  ReconcileSnapshot,
   InputSource,
   InputStatus,
   InteractionRequester,
