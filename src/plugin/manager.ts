@@ -22,20 +22,20 @@ import {
   type CronSource,
   type PluginCommandInput,
   type PluginCommandResult,
-  type PluginPackage,
   type Resource,
   type ResourceRef,
   type ResourceType,
-  type SourceContext,
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
-  pluginPackageKey,
   type PluginLogRecord,
   type ToastMessage,
   type ToastTone,
   type Watch,
-  validatePluginPackage,
 } from "./package.ts";
+import {
+  PackageLoader,
+  type PackageLoaderOptions,
+} from "./package-loader.ts";
 import {
   reconcileKeyId,
   ReconcileCapacity,
@@ -60,13 +60,8 @@ import {
   selectBoardItems,
 } from "./board.ts";
 import {
+  installRegistration,
   PluginSupervisor,
-  type PluginRunnerClient,
-  type CommandRegistration as RunnerCommandRegistration,
-  type ContextProviderRegistration as RunnerContextProviderRegistration,
-  type ControllerRegistration as RunnerControllerRegistration,
-  type PluginPackageEntry,
-  type PluginRegistration as RunnerRegistration,
 } from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { InteractionResult } from "../interaction/types.ts";
@@ -93,11 +88,7 @@ import {
 import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
-import {
-  reconcileScope,
-  reconcileSnapshot,
-  Verb,
-} from "./verb.ts";
+import { Verb } from "./verb.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -154,7 +145,7 @@ export interface ManagerOptions {
     | "requireLane"
   >;
   /** 当前进程可激活的可信、不可变 Package 版本。 */
-  packages?: readonly PluginPackage[];
+  packages?: PackageLoaderOptions["packages"];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
   snapshot?: () => ReconcileSnapshot;
   /** Current host selection used by an implicit harness() or a submitted draft(). */
@@ -162,21 +153,13 @@ export interface ManagerOptions {
   /** Policy decision for the mandatory Interaction before a Plugin Harness invocation. */
   harnessInvocationGate?: ReconcileInteractionStoreOptions["harnessInvocationGate"];
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
-  loadPackage?(
-    pluginId: string,
-    version: string,
-    options?: { fresh?: boolean; marketplace?: string },
-  ): Promise<PluginPackage>;
+  loadPackage?: PackageLoaderOptions["loadPackage"];
   /**
    * Resolve an immutable entry without importing it into Baton. When supplied
    * with a PluginSupervisor, Marketplace Plugin code runs in a per-Binding
    * child process.
    */
-  loadPackageEntry?(
-    pluginId: string,
-    version: string,
-    options: { marketplace: string; fresh?: boolean },
-  ): Promise<PluginPackageEntry>;
+  loadPackageEntry?: PackageLoaderOptions["loadPackageEntry"];
   pluginSupervisor?: PluginSupervisor;
   /** Host-owned bridge that materializes the request's explicit Lane policy. */
   enqueueHarnessInvocation?(
@@ -262,16 +245,6 @@ interface RetryState {
   attempt: number;
 }
 
-type ActivatablePackage =
-  | {
-      readonly kind: "in-process";
-      readonly plugin: PluginPackage;
-    }
-  | {
-      readonly kind: "runner";
-      readonly entry: PluginPackageEntry;
-    };
-
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
   present(): Promise<readonly BoardItemCandidate[]>;
@@ -312,15 +285,7 @@ export class Manager {
   private readonly commandRegistry: PluginCommandRegistry;
   private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
-  private readonly packages = new Map<string, PluginPackage>();
-  private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
-  private readonly packageEntries = new Map<string, PluginPackageEntry>();
-  private readonly packageEntryLoads = new Map<
-    string,
-    Promise<PluginPackageEntry>
-  >();
-  private readonly loadPackage: ManagerOptions["loadPackage"];
-  private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
+  private readonly packageLoader: PackageLoader;
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => ReconcileSnapshot;
   private readonly verb: Verb;
@@ -367,17 +332,14 @@ export class Manager {
     this.log = options.session
       ? (entry) => options.session!.log(entry)
       : undefined;
-    for (const plugin of options.packages ?? []) {
-      validatePluginPackage(plugin);
-      const key = pluginPackageKey(plugin.pluginId, plugin.version);
-      if (this.packages.has(key)) {
-        throw new Error(`plugin Package already registered: ${plugin.pluginId}@${plugin.version}`);
-      }
-      this.packages.set(key, plugin);
-    }
-    this.loadPackage = options.loadPackage;
-    this.loadPackageEntry = options.loadPackageEntry;
     this.pluginSupervisor = options.pluginSupervisor;
+    this.packageLoader = new PackageLoader({
+      ...(options.packages ? { packages: options.packages } : {}),
+      ...(options.loadPackage ? { loadPackage: options.loadPackage } : {}),
+      ...(options.pluginSupervisor && options.loadPackageEntry
+        ? { loadPackageEntry: options.loadPackageEntry }
+        : {}),
+    });
     this.snapshot =
       options.snapshot ??
       (() => emptyReconcileSnapshot(this.instances.session.id));
@@ -563,7 +525,7 @@ export class Manager {
     if (!instance.enabled) {
       throw new Error(`plugin Instance is disabled: ${pluginInstanceId}`);
     }
-    const packageSource = await this.preparePackage(instance);
+    const packageSource = await this.packageLoader.load(instance);
     const batonSession = this.snapshot().session;
     if (batonSession.batonSessionId !== this.instances.session.id) {
       throw new Error(
@@ -659,7 +621,7 @@ export class Manager {
             // withdraws host registrations before terminating third-party code.
             binding.onClose(() => runner.close());
             for (const registration of runner.activation.registrations) {
-              this.installRunnerRegistration(
+              installRegistration(
                 binding,
                 runner.client,
                 registration,
@@ -794,7 +756,7 @@ export class Manager {
     const current = this.instances.get(pluginInstanceId);
     if (current.packageVersion === packageVersion) return current;
 
-    await this.preparePackage(
+    await this.packageLoader.load(
       Object.freeze({ ...current, packageVersion }),
     );
     const wasActive = this.isInstanceActive(pluginInstanceId);
@@ -847,11 +809,11 @@ export class Manager {
     const packageFailures = new Map<string, unknown>();
     const loadedPackages = new Set<string>();
     for (const instance of enabled) {
-      const key = this.packageSourceKey(instance);
+      const key = this.packageLoader.sourceKey(instance);
       if (loadedPackages.has(key)) continue;
       loadedPackages.add(key);
       try {
-        await this.preparePackage(instance, true);
+        await this.packageLoader.load(instance, true);
       } catch (error) {
         packageFailures.set(key, error);
       }
@@ -861,7 +823,7 @@ export class Manager {
     for (const instance of enabled) {
       if (failures.has(instance.pluginInstanceId)) continue;
       const error = packageFailures.get(
-        this.packageSourceKey(instance),
+        this.packageLoader.sourceKey(instance),
       );
       if (error) {
         failures.set(instance.pluginInstanceId, {
@@ -986,251 +948,6 @@ export class Manager {
         this.enqueueInitial(controller);
       }),
     );
-  }
-
-  private async preparePackage(
-    instance: PluginInstance,
-    fresh = false,
-  ): Promise<ActivatablePackage> {
-    if (
-      this.pluginSupervisor &&
-      this.loadPackageEntry &&
-      instance.marketplace
-    ) {
-      return {
-        kind: "runner",
-        entry: await this.resolvePackageEntry(
-          instance.pluginId,
-          instance.packageVersion,
-          instance.marketplace,
-          fresh,
-        ),
-      };
-    }
-    return {
-      kind: "in-process",
-      plugin: await this.resolvePackage(
-        instance.pluginId,
-        instance.packageVersion,
-        instance.marketplace,
-        fresh,
-      ),
-    };
-  }
-
-  private async resolvePackageEntry(
-    pluginId: string,
-    version: string,
-    marketplace: string,
-    fresh = false,
-  ): Promise<PluginPackageEntry> {
-    if (!this.loadPackageEntry) {
-      throw new Error(
-        `plugin Package entry is unavailable: ${pluginId}@${marketplace} ${version}`,
-      );
-    }
-    const key = JSON.stringify([pluginId, marketplace, version]);
-    if (!fresh) {
-      const cached = this.packageEntries.get(key);
-      if (cached) return cached;
-      const loading = this.packageEntryLoads.get(key);
-      if (loading) return await loading;
-    }
-    const loading = Promise.resolve()
-      .then(() =>
-        this.loadPackageEntry!(
-          pluginId,
-          version,
-          {
-            marketplace,
-            ...(fresh ? { fresh: true } : {}),
-          },
-        ),
-      )
-      .then((entry) => {
-        if (entry.pluginId !== pluginId || entry.version !== version) {
-          throw new Error(
-            `resolved Package entry ${entry.pluginId}@${entry.version} does not match ${pluginId}@${version}`,
-          );
-        }
-        this.packageEntries.set(key, entry);
-        return entry;
-      })
-      .finally(() => {
-        if (this.packageEntryLoads.get(key) === loading) {
-          this.packageEntryLoads.delete(key);
-        }
-      });
-    this.packageEntryLoads.set(key, loading);
-    return await loading;
-  }
-
-  private async resolvePackage(
-    pluginId: string,
-    version: string,
-    marketplace?: string,
-    fresh = false,
-  ): Promise<PluginPackage> {
-    const key = marketplace
-      ? JSON.stringify([pluginId, marketplace, version])
-      : pluginPackageKey(pluginId, version);
-    if (!fresh) {
-      const cached = this.packages.get(key);
-      if (cached) return cached;
-      const loading = this.packageLoads.get(key);
-      if (loading) return await loading;
-    }
-    if (!this.loadPackage) {
-      const cached = this.packages.get(key);
-      if (cached) return cached;
-      throw new Error(`plugin Package is unavailable: ${pluginId}@${version}`);
-    }
-    const loading = Promise.resolve()
-      .then(() =>
-        this.loadPackage!(
-          pluginId,
-          version,
-          {
-            ...(fresh ? { fresh: true } : {}),
-            ...(marketplace ? { marketplace } : {}),
-          },
-        ),
-      )
-      .then((plugin) => {
-        validatePluginPackage(plugin);
-        if (plugin.pluginId !== pluginId || plugin.version !== version) {
-          throw new Error(
-            `loaded Package identity ${plugin.pluginId}@${plugin.version} does not match ${pluginId}@${version}`,
-          );
-        }
-        this.packages.set(key, plugin);
-        return plugin;
-      })
-      .finally(() => {
-        if (this.packageLoads.get(key) === loading) this.packageLoads.delete(key);
-      });
-    this.packageLoads.set(key, loading);
-    return await loading;
-  }
-
-  private packageSourceKey(instance: PluginInstance): string {
-    return instance.marketplace
-      ? JSON.stringify([instance.pluginId, instance.marketplace, instance.packageVersion])
-      : pluginPackageKey(instance.pluginId, instance.packageVersion);
-  }
-
-  private installRunnerRegistration(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerRegistration,
-  ): void {
-    if (registration.kind === "command") {
-      this.installRunnerCommand(binding, runner, registration);
-      return;
-    }
-    if (registration.kind === "context-provider") {
-      this.installRunnerContextProvider(binding, runner, registration);
-      return;
-    }
-    this.installRunnerController(binding, runner, registration);
-  }
-
-  private installRunnerCommand(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerCommandRegistration,
-  ): void {
-    binding.registerCommand({
-      commandId: registration.commandId,
-      name: registration.name,
-      description: registration.description,
-      execute: async (input) =>
-        await runner.invoke<PluginCommandResult | undefined>(
-          registration.handlerId,
-          input,
-        ),
-    });
-  }
-
-  private installRunnerContextProvider(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerContextProviderRegistration,
-  ): void {
-    binding.registerContextProvider({
-      kind: registration.providerKind,
-      search: async (query) =>
-        await runner.invoke(
-          registration.searchHandlerId,
-          query,
-        ),
-      provide: async (id, options) =>
-        await runner.invoke<string | undefined>(
-          registration.provideHandlerId,
-          id,
-          options,
-        ),
-    });
-  }
-
-  private installRunnerController(
-    binding: PluginBinding,
-    runner: PluginRunnerClient,
-    registration: RunnerControllerRegistration,
-  ): void {
-    const sources = registration.sources.map((source) =>
-      source.type === "cron"
-        ? {
-            type: "cron" as const,
-            sourceId: source.sourceId,
-            cron: source.cron,
-            timeZone: source.timeZone,
-          }
-        : {
-            type: "resource" as const,
-            sourceId: source.sourceId,
-            start: async (context: SourceContext<unknown>) =>
-              await runner.startSource(
-                source.startHandlerId,
-                context,
-              ),
-          }
-    );
-    const watches: Watch[] = registration.watches.map((watch) => ({
-      resourceType: watch.resourceType,
-      handler: {
-        create: async (event) =>
-          await runner.invoke(watch.createHandlerId, event),
-        update: async (event) =>
-          await runner.invoke(watch.updateHandlerId, event),
-        delete: async (event) =>
-          await runner.invoke(watch.deleteHandlerId, event),
-      },
-    }));
-    binding.registerController({
-      resourceType: registration.resourceType,
-      sources,
-      watches,
-      ...(registration.maxConcurrency === undefined
-        ? {}
-        : { maxConcurrency: registration.maxConcurrency }),
-      reconcile: async (context, resource) =>
-        await runner.invoke(
-          registration.reconcileHandlerId,
-          reconcileSnapshot(context),
-          reconcileScope(context),
-          resource,
-        ),
-      ...(registration.presentHandlerId === undefined
-        ? {}
-        : {
-            present: async (resource) =>
-              await runner.invoke(
-                registration.presentHandlerId!,
-                resource,
-              ),
-          }),
-    });
   }
 
   private bindController<TSpec, TStatus>(
