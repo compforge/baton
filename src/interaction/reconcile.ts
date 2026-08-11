@@ -254,6 +254,11 @@ export class ReconcileInteractionStore {
     this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
 
+  /**
+   * @spec Plugin ask identity keeps the authored key separate from the ask verb; choice values cross the Interaction boundary unchanged.
+   * @case id=choice_value_round_trip,desc=`resolve an authored choice`,expect=`the AskResult value equals AskChoice.value`
+   * @rule Keep operation verb and key structured; do not encode the verb into the key.
+   */
   ask<TValue extends string>(
     context: ReconcileVerbScope,
     input: AskInput<TValue>,
@@ -265,6 +270,11 @@ export class ReconcileInteractionStore {
     );
   }
 
+  /**
+   * @spec Plugin confirm identity keeps the authored key separate from the confirm verb and maps the fixed accept/decline choices to ConfirmResult states.
+   * @case id=confirm_choice_mapping,desc=`resolve a confirm choice`,expect=`accept becomes accepted and decline becomes declined`
+   * @rule Keep operation verb and key structured; do not encode the verb into the key.
+   */
   confirm(
     context: ReconcileVerbScope,
     input: ConfirmInput,
