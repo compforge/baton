@@ -41,6 +41,7 @@ import {
 import {
   reconcileKeyId,
   ReconcileCapacity,
+  type ReconcileCapacityLease,
   ReconcileDueQueue,
 } from "./queue.ts";
 import {
@@ -275,6 +276,11 @@ interface RetryState {
   attempt: number;
 }
 
+interface ActivePluginExecution {
+  readonly scope: ReconcileVerbScope;
+  suspend<T>(wait: Promise<T>): Promise<T>;
+}
+
 type ActivatablePackage =
   | {
       readonly kind: "in-process";
@@ -345,6 +351,7 @@ export class Manager {
   private readonly bindings = new Map<string, PluginBinding>();
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
+  private readonly executions = new Map<string, ActivePluginExecution>();
   private readonly batonResources?: BatonResourceIndex;
   private readonly unsubscribeBatonResources?: () => void;
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
@@ -404,16 +411,8 @@ export class Manager {
       this.reconcileInteractions = new ReconcileInteractionStore(options.session, {
         now: this.now,
         harnessInvocationGate: options.harnessInvocationGate,
-        onTimeout: (key) => {
-          void this.enqueue(key).catch(() => {
-            // The durable result remains available to initial reconcile or retry.
-          });
-        },
       });
-      this.harnessInvocations = new HarnessInvocationStore(options.session, {
-        onChanged: (request, key) =>
-          this.enqueueHarnessInvocationOwner(key, request.resource),
-      });
+      this.harnessInvocations = new HarnessInvocationStore(options.session);
     }
     this.enqueueHarnessInvocation = options.enqueueHarnessInvocation;
     this.cancelHostHarnessInvocation = options.cancelHarnessInvocation;
@@ -484,7 +483,10 @@ export class Manager {
       ...definition,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
       invokeVerb: (context, request) => this.invokeVerb(context, request),
-      executeWithCapacity: (execute) => this.capacity.run(execute),
+      executeWithCapacity: (execute) =>
+        this.capacity.run(async () => await execute()),
+      executeReconcile: (scope, localLease, execute) =>
+        this.runPluginExecution(scope, localLease, execute),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -526,7 +528,8 @@ export class Manager {
       resources: this.batonResources,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
       invokeVerb: (context, request) => this.invokeVerb(context, request),
-      executeWithCapacity: (execute) => this.capacity.run(execute),
+      executeReconcile: (scope, localLease, execute) =>
+        this.runPluginExecution(scope, localLease, execute),
       onReconcileSuccess: (key, next) => {
         if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
         this.retries.delete(reconcileKeyId(key));
@@ -553,7 +556,7 @@ export class Manager {
     return controller.enqueue(key);
   }
 
-  /** 恢复进程退出前尚未处理的 HarnessInvocation 和 Resource due time。 */
+  /** 收口崩溃遗留的 Plugin execution，再恢复 Resource due time。 */
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error("plugin Manager is closed"));
     if (this.started) return Promise.resolve();
@@ -650,7 +653,7 @@ export class Manager {
               {
                 resources,
                 invokeReconcileVerb: (context, request) => {
-                  if (context.key.pluginInstanceId !== instance.pluginInstanceId) {
+                  if (context.pluginInstanceId !== instance.pluginInstanceId) {
                     throw new Error(
                       `Plugin Runner reconcile scope must belong to ${instance.pluginInstanceId}`,
                     );
@@ -729,6 +732,10 @@ export class Manager {
     const binding = this.bindings.get(pluginInstanceId);
     if (!binding) return;
     this.bindings.delete(pluginInstanceId);
+    this.failPluginExecutions(
+      pluginInstanceId,
+      "Plugin instance was deactivated",
+    );
     try {
       await binding.close();
     } finally {
@@ -932,22 +939,12 @@ export class Manager {
     return await this.commandRegistry.execute(name, input);
   }
 
-  /**
-   * 先持久化 Interaction result，再唤醒原 Resource。即使当前 Controller 暂不可用，
-   * 后续激活或初始 reconcile 仍能从 Snapshot 恢复这份结果。
-   */
+  /** Persist the Interaction result before resuming its live Plugin execution. */
   async completeInteraction(
     interactionId: string,
     result: InteractionResult,
   ): Promise<boolean> {
-    const key = this.reconcileInteractions?.complete(interactionId, result);
-    if (!key) return false;
-    try {
-      await this.enqueue(key);
-    } catch {
-      // Result 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
-    }
-    return true;
+    return this.reconcileInteractions?.complete(interactionId, result) ?? false;
   }
 
   async cancelHarnessInvocation(identifier?: string): Promise<boolean> {
@@ -956,16 +953,12 @@ export class Manager {
     );
     if (!request || !this.harnessInvocations) return false;
 
-    if (this.harnessInvocations.isAdmitted(request.invocationId)) {
-      return this.cancelHostHarnessInvocation?.(request.invocationId) === "running";
-    }
-
-    const key = this.harnessInvocations.cancelBeforeAdmission(
+    const cancelled = this.harnessInvocations.cancel(
       request.invocationId,
       "user",
     );
     this.cancelHostHarnessInvocation?.(request.invocationId);
-    return key !== undefined;
+    return cancelled;
   }
 
   getBatonResource<K extends BuiltinResourceKind>(
@@ -982,162 +975,230 @@ export class Manager {
     context: ReconcileVerbScope,
     request: ReconcileVerbRequest,
   ): Promise<ReconcileVerbResponse> {
-    if (request.verb === "ask") {
-      if (!this.reconcileInteractions) {
-        throw new Error("plugin Manager requires a SessionHandle for ask()");
-      }
-      return this.reconcileInteractions.ask(context, request.input);
+    const execution = this.executions.get(context.executionId);
+    if (
+      !execution ||
+      execution.scope.pluginInstanceId !== context.pluginInstanceId ||
+      execution.scope.batonSessionId !== context.batonSessionId
+    ) {
+      throw new Error(`Plugin execution is not active: ${context.executionId}`);
     }
-    if (request.verb === "confirm") {
-      if (!this.reconcileInteractions) {
-        throw new Error("plugin Manager requires a SessionHandle for confirm()");
-      }
-      return this.reconcileInteractions.confirm(context, request.input);
-    }
-    if (request.verb === "withdraw") {
-      if (!this.reconcileInteractions) {
-        throw new Error("plugin Manager requires a SessionHandle for withdraw()");
-      }
-      return this.reconcileInteractions.withdraw(context, request.input);
-    }
-    if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
-      throw new Error("plugin Manager host does not support harness()");
-    }
+    const operation = this.performVerb(context, request).catch((error) =>
+      Object.freeze({
+        state: "failure" as const,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+    return await execution.suspend(operation);
+  }
+
+  private async performVerb(
+    context: ReconcileVerbScope,
+    request: ReconcileVerbRequest,
+  ): Promise<ReconcileVerbResponse> {
     if (!this.reconcileInteractions) {
       throw new Error(
         `plugin Manager requires a SessionHandle for ${request.verb}()`,
       );
     }
-    const operation = Object.freeze({
-      verb: request.verb,
-      key: request.input.key,
-    });
-    const existing = this.harnessInvocations.current(context, operation);
+    if (request.verb === "ask") {
+      return await this.reconcileInteractions.ask(context, request.input);
+    }
+    if (request.verb === "confirm") {
+      return await this.reconcileInteractions.confirm(context, request.input);
+    }
+    if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
+      throw new Error("plugin Manager host does not support HarnessInvocation");
+    }
+
+    const deadline = this.timestamp() + request.input.timeoutMs;
     let harnessTargetId: string;
     let draftBlocks: readonly PromptBlock[] | undefined;
     if (request.verb === "draft") {
-      if (
-        !existing &&
-        request.input.harnessTargetId !== undefined &&
-        !this.snapshot().harnessTargets.some(
-          (target) => target.id === request.input.harnessTargetId,
-        )
-      ) {
-        throw new Error(
-          `draft() ${request.input.key} references unknown HarnessTarget: ${request.input.harnessTargetId}`,
-        );
-      }
-      const interaction = this.reconcileInteractions.draft(
+      const interaction = await this.reconcileInteractions.draft(
         context,
         request.input,
       );
-      if (interaction.state !== "submitted") return interaction;
-      draftBlocks = interaction.blocks;
+      if (interaction.state !== "success") return interaction;
+      draftBlocks = interaction.value.blocks;
       const target = request.input.harnessTargetId ??
-        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+        this.selectedHarnessTargetId?.();
       if (!target) {
         throw new Error(
-          `draft() ${request.input.key} requires a HarnessTarget selection on submission`,
+          "draft() requires a HarnessTarget selection on submission",
         );
       }
       harnessTargetId = target;
     } else {
       const target = request.input.harnessTargetId ??
-        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+        this.selectedHarnessTargetId?.();
       if (!target) {
-        throw new Error(
-          `harness() ${request.input.key} requires a HarnessTarget selection`,
-        );
+        throw new Error("harness() requires a HarnessTarget selection");
       }
       harnessTargetId = target;
-      const interaction = this.reconcileInteractions.harness(
+      const interaction = await this.reconcileInteractions.harness(
         context,
         { ...request.input, harnessTargetId },
       );
-      if (interaction.state !== "approved") return interaction;
+      if (interaction.state !== "success") return interaction;
+      if (interaction.value === "declined") {
+        return Object.freeze({
+          state: "success",
+          value: { outcome: "declined" as const },
+        });
+      }
     }
     if (
-      !existing &&
-      !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
+      !this.snapshot().harnessTargets.some(
+        (target) => target.id === harnessTargetId,
+      )
     ) {
       throw new Error(
-        `${request.verb}() ${request.input.key} references unknown HarnessTarget: ${harnessTargetId}`,
+        `${request.verb}() references unknown HarnessTarget: ${harnessTargetId}`,
       );
     }
     const snapshot = this.harnessInvocations.record({
-      ...context,
+      scope: context,
       invocation: {
-        operation,
-        title: request.input.key,
+        verb: request.verb,
+        title: request.input.title,
         prompt: request.input.prompt,
         ...(draftBlocks === undefined ? {} : { blocks: draftBlocks }),
         laneId: request.verb === "draft" ? MAIN_LANE_ID : request.input.laneId,
-        newLane: request.verb === "draft" ? false : (request.input.newLane ?? false),
+        newLane: request.verb === "draft"
+          ? false
+          : (request.input.newLane ?? false),
         harnessTargetId,
       },
     });
     const scheduled = this.harnessInvocations.scheduled(snapshot.invocationId);
     if (scheduled) this.dispatchHarnessInvocation(scheduled);
-    if (snapshot.phase === "completed" && snapshot.result && snapshot.laneId) {
+    const terminal = await this.waitForHarnessInvocation(
+      snapshot.invocationId,
+      deadline,
+    );
+    if (terminal.phase === "completed" && terminal.result && terminal.laneId) {
       return Object.freeze({
-        state: "completed",
-        laneId: snapshot.laneId,
-        turn: snapshot.result,
+        state: "success",
+        value: {
+          outcome: "completed" as const,
+          laneId: terminal.laneId,
+          turn: terminal.result,
+        },
       });
     }
-    if (snapshot.phase === "cancelled") {
-      const cancellation = snapshot.cancellation;
-      if (!cancellation) {
-        throw new Error(
-          `${request.verb}() ${request.input.key} has no cancellation outcome`,
-        );
+    if (terminal.phase === "cancelled") {
+      if (terminal.cancellation?.reason === "user") {
+        return Object.freeze({ state: "dismissed" });
+      }
+      if (terminal.cancellation?.reason === "timeout") {
+        return Object.freeze({ state: "timeout" });
       }
       return Object.freeze({
-        state: "cancelled",
-        reason: cancellation.reason,
-        ...(cancellation.detail === undefined
+        state: "failure",
+        ...(terminal.cancellation?.detail === undefined
           ? {}
-          : { detail: cancellation.detail }),
+          : { error: terminal.cancellation.detail }),
       });
-    }
-    if (snapshot.phase === "failed") {
-      const failure = snapshot.failure;
-      if (!failure) {
-        throw new Error(
-          `${request.verb}() ${request.input.key} has no failure outcome`,
-        );
-      }
-      return Object.freeze({
-        state: "failed",
-        reason: failure.reason,
-        detail: failure.detail,
-      });
-    }
-    if (
-      snapshot.phase !== "queued" &&
-      snapshot.phase !== "running" &&
-      snapshot.phase !== "uncertain"
-    ) {
-      throw new Error(
-        `${request.verb}() ${request.input.key} entered unexpected phase: ${snapshot.phase}`,
-      );
     }
     return Object.freeze({
-      state: "pending",
-      phase: snapshot.phase,
-      ...(snapshot.laneId === undefined ? {} : { laneId: snapshot.laneId }),
-      ...(snapshot.turnId === undefined ? {} : { turnId: snapshot.turnId }),
+      state: "failure",
+      ...(terminal.failure?.detail === undefined
+        ? {}
+        : { error: terminal.failure.detail }),
     });
+  }
+
+  private async waitForHarnessInvocation(
+    invocationId: string,
+    deadline: number,
+  ) {
+    if (!this.harnessInvocations) {
+      throw new Error("HarnessInvocation store is unavailable");
+    }
+    const remaining = deadline - this.timestamp();
+    if (remaining <= 0) {
+      this.harnessInvocations.cancel(invocationId, "timeout");
+      this.cancelHostHarnessInvocation?.(invocationId);
+      return await this.harnessInvocations.wait(invocationId);
+    }
+    const timer = setTimeout(() => {
+      if (this.harnessInvocations?.cancel(invocationId, "timeout")) {
+        this.cancelHostHarnessInvocation?.(invocationId);
+      }
+    }, remaining);
+    timer.unref?.();
+    try {
+      return await this.harnessInvocations.wait(invocationId);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private timestamp(): number {
+    const value = this.now().getTime();
+    if (Number.isNaN(value)) {
+      throw new Error("plugin Manager now() returned an invalid Date");
+    }
+    return value;
+  }
+
+  private async runPluginExecution<T>(
+    scope: ReconcileVerbScope,
+    localLease: ReconcileCapacityLease,
+    execute: () => Promise<T>,
+  ): Promise<T> {
+    return await this.capacity.run(async (globalLease) => {
+      if (this.executions.has(scope.executionId)) {
+        throw new Error(`Plugin execution already exists: ${scope.executionId}`);
+      }
+      const active: ActivePluginExecution = {
+        scope,
+        suspend: async <U>(wait: Promise<U>): Promise<U> =>
+          await globalLease.suspend(localLease.suspend(wait)),
+      };
+      this.executions.set(scope.executionId, active);
+      let failure = "Plugin execution completed before its verb";
+      try {
+        return await execute();
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        this.failExecution(scope.executionId, failure);
+        this.executions.delete(scope.executionId);
+      }
+    });
+  }
+
+  private failExecution(executionId: string, error: string): void {
+    this.reconcileInteractions?.failExecution(executionId, error);
+    for (
+      const invocationId of
+        this.harnessInvocations?.failExecution(executionId, error) ?? []
+    ) {
+      this.cancelHostHarnessInvocation?.(invocationId);
+    }
+  }
+
+  private failPluginExecutions(pluginInstanceId: string, error: string): void {
+    for (const execution of this.executions.values()) {
+      if (execution.scope.pluginInstanceId !== pluginInstanceId) continue;
+      this.failExecution(execution.scope.executionId, error);
+    }
   }
 
   private snapshotFor(key: ReconcileKey, resource: ResourceRef): ReconcileSnapshot {
     return this.snapshot();
   }
 
-  private restoreHarnessInvocations(): void {
-    for (const request of this.harnessInvocations?.restore() ?? []) {
-      this.dispatchHarnessInvocation(request);
-    }
+  private failInterruptedPluginExecutions(): void {
+    this.reconcileInteractions?.failOrphans(
+      "Plugin execution was interrupted by Core restart",
+    );
+    this.harnessInvocations?.failOrphans(
+      "Plugin execution was interrupted by Core restart",
+    );
   }
 
   private dispatchHarnessInvocation(request: ScheduledHarnessInvocation): void {
@@ -1151,7 +1212,7 @@ export class Manager {
     void Promise.resolve()
       .then(() => this.enqueueHarnessInvocation!(request))
       .catch((error) => {
-        this.harnessInvocations?.failBeforeAdmission(
+        this.harnessInvocations?.fail(
           request.invocationId,
           "dispatch",
           error instanceof Error ? error.message : String(error),
@@ -1170,24 +1231,6 @@ export class Manager {
       });
   }
 
-  private enqueueHarnessInvocationOwner(
-    key: ReconcileKey,
-    resource: ResourceRef,
-  ): void {
-    if (this.closed) return;
-    const controller = this.controllers.get(reconcileScopeId(key));
-    if (
-      !controller ||
-      !controller.ownsResource(resource) ||
-      this.suspendedControllers.has(reconcileScopeId(key))
-    ) {
-      return;
-    }
-    void controller.enqueue(key).catch(() => {
-      // Reconcile failures use the ordinary retry path.
-    });
-  }
-
   private async startManager(): Promise<void> {
     const enabled = this.instances.list().filter((instance) => instance.enabled);
     const failures = await Promise.all(
@@ -1203,7 +1246,7 @@ export class Manager {
     for (const failure of failures) {
       if (failure) this.reportActivationFailure(failure);
     }
-    this.restoreHarnessInvocations();
+    this.failInterruptedPluginExecutions();
     const controllers = [...this.controllers.values()];
     const scheduled = controllers.map((controller) => ({
       controller,
@@ -1711,6 +1754,12 @@ export class Manager {
 
   private async closeManager(): Promise<void> {
     await Promise.allSettled(this.activations.values());
+    for (const execution of [...this.executions.values()]) {
+      this.failExecution(
+        execution.scope.executionId,
+        "Plugin Manager was closed",
+      );
+    }
     const errors: unknown[] = [];
     for (const [pluginInstanceId, binding] of [...this.bindings].reverse()) {
       this.bindings.delete(pluginInstanceId);
@@ -1799,22 +1848,6 @@ export class Manager {
   }
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
-    if (change.kind === "deleted") {
-      const resource = change.resource;
-      const ref: ResourceRef = {
-        apiVersion: resource.apiVersion,
-        kind: resource.kind,
-        namespace: resource.metadata.namespace,
-        name: resource.metadata.name,
-        uid: resource.metadata.uid,
-      };
-      this.reconcileInteractions?.cancelForResource(ref);
-      if (this.harnessInvocations) {
-        for (const requestId of this.harnessInvocations.cancelForResource(ref)) {
-          this.cancelHostHarnessInvocation?.(requestId);
-        }
-      }
-    }
     this.notifyBoardChanged();
     void this.routePluginResourceChange(change);
   }
@@ -1965,6 +1998,7 @@ export class Manager {
     pluginInstanceId: string,
     error: Error,
   ): void {
+    this.failPluginExecutions(pluginInstanceId, error.message);
     this.log?.({
       level: "error",
       source: "baton",

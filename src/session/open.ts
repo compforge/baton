@@ -84,8 +84,8 @@ function resolveSession(
  * 崩溃残留归一化。前提：调用方已持有会话锁——否则"最后事件是 running"可能是
  * 另一个活进程正在执行，合成终态会污染活会话。
  * 收口顺序与 controller.finalize 一致（终态 → notice → summary），三类残留：
- * 悬挂 Harness/Baton 审批 → cancelled；Plugin Interaction 由 Resource
- * reconcile 恢复，不在进程重启时取消。每个未收口的 turn（driven/observed 并发崩溃时
+ * 悬挂 Harness/Baton 审批 → cancelled；Plugin Interaction 也以 recovery 收口，使对应 verb
+ * 明确成为 failure，而不是尝试重放进程内 continuation。每个未收口的 turn（driven/observed 并发崩溃时
  * 可能不止一个）→ 各补 idle(cancelled) + 中断 notice；缺 summary 的 turn
  * （含 fork 从运行中源会话复制来的半截 turn）→ 补 summary。
  */
@@ -109,18 +109,13 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   if (
     interruptedTurns.length === 0 &&
     unsummarized.length === 0 &&
-    ![...state.interactions.values()].some(
-      (interaction) =>
-        !interaction.result &&
-        interaction.interaction.requester.type !== "plugin",
-    )
+    ![...state.interactions.values()].some((interaction) => !interaction.result)
   ) {
     return recoveredAttempt;
   }
 
   for (const [interactionId, interaction] of state.interactions) {
     if (interaction.result) continue;
-    if (interaction.interaction.requester.type === "plugin") continue;
     const requested = events.findLast(
       (event) =>
         event.kind === "interaction.requested" &&
@@ -133,7 +128,13 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       ...(requested?.harnessTargetId ? { harnessTargetId: requested.harnessTargetId } : {}),
       ...(requested?.laneId ? { laneId: requested.laneId } : {}),
       ...(interaction.turnId ? { turnId: interaction.turnId } : {}),
-      payload: { interactionId, reason: "recovery" },
+      payload: {
+        interactionId,
+        reason: "recovery",
+        ...(interaction.interaction.requester.type === "plugin"
+          ? { detail: "Plugin execution was interrupted by Core restart" }
+          : {}),
+      },
     });
   }
   // 每个未收口的 turn 各补一份终态 + 中断标记（并发崩溃不止一个；恒带 turnId，

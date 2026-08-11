@@ -21,7 +21,7 @@ interface DueReconcile {
 
 export interface ReconcileQueueOptions {
   maxConcurrency?: number;
-  execute(key: ReconcileKey): Promise<void>;
+  execute(key: ReconcileKey, lease: ReconcileCapacityLease): Promise<void>;
   onError?(key: ReconcileKey, error: unknown): void;
 }
 
@@ -40,19 +40,40 @@ export class ReconcileCapacity {
     }
   }
 
-  async run<T>(execute: () => Promise<T>): Promise<T> {
-    await this.acquire();
+  async run<T>(
+    execute: (lease: ReconcileCapacityLease) => Promise<T>,
+  ): Promise<T> {
+    const admission = this.acquire();
+    if (admission) await admission;
+    let held = true;
+    const lease: ReconcileCapacityLease = Object.freeze({
+      suspend: async <U>(wait: Promise<U>): Promise<U> => {
+        if (held) {
+          held = false;
+          this.release();
+        }
+        try {
+          return await wait;
+        } finally {
+          if (!held) {
+            const resume = this.acquire();
+            if (resume) await resume;
+            held = true;
+          }
+        }
+      },
+    });
     try {
-      return await execute();
+      return await execute(lease);
     } finally {
-      this.release();
+      if (held) this.release();
     }
   }
 
-  private acquire(): Promise<void> {
+  private acquire(): Promise<void> | undefined {
     if (this.active < this.limit) {
       this.active += 1;
-      return Promise.resolve();
+      return;
     }
     return new Promise((resolve) => this.waiting.push(resolve));
   }
@@ -62,6 +83,14 @@ export class ReconcileCapacity {
     if (next) next();
     else this.active -= 1;
   }
+}
+
+/**
+ * @spec Suspending a reconcile releases its capacity slot for the full external wait and reacquires a slot before the original continuation resumes.
+ * @rule A Plugin verb wait must suspend both the Controller-local and Manager-global leases so one human wait cannot block unrelated Resources at either limit.
+ */
+export interface ReconcileCapacityLease {
+  suspend<T>(wait: Promise<T>): Promise<T>;
 }
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -99,11 +128,11 @@ function timestamp(now: () => Date, label: string): number {
  */
 export class ReconcileQueue {
   private readonly pending = new Map<string, QueuedReconcile>();
+  private readonly admitting = new Set<string>();
   private readonly running = new Set<string>();
-  private readonly maxConcurrency: number;
+  private readonly capacity: ReconcileCapacity;
   private readonly execute: ReconcileQueueOptions["execute"];
   private readonly onError: ReconcileQueueOptions["onError"];
-  private activeCount = 0;
   private closed = false;
 
   constructor(options: ReconcileQueueOptions) {
@@ -111,7 +140,7 @@ export class ReconcileQueue {
     if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
       throw new Error("maxConcurrency must be a positive integer");
     }
-    this.maxConcurrency = maxConcurrency;
+    this.capacity = new ReconcileCapacity(maxConcurrency);
     this.execute = options.execute;
     this.onError = options.onError;
   }
@@ -148,22 +177,27 @@ export class ReconcileQueue {
 
   private drain(): void {
     if (this.closed) return;
-    while (this.activeCount < this.maxConcurrency) {
-      const next = [...this.pending].find(([id]) => !this.running.has(id));
-      if (!next) return;
-      const [id, item] = next;
-      this.pending.delete(id);
-      this.running.add(id);
-      this.activeCount += 1;
+    for (const [id, item] of this.pending) {
+      if (this.admitting.has(id) || this.running.has(id)) continue;
+      this.admitting.add(id);
       void this.executeOne(id, item);
     }
   }
 
   private async executeOne(id: string, item: QueuedReconcile): Promise<void> {
+    let admitted = false;
     try {
-      await this.execute(item.key);
+      await this.capacity.run(async (lease) => {
+        if (this.pending.get(id) !== item) return;
+        this.pending.delete(id);
+        this.running.add(id);
+        admitted = true;
+        await this.execute(item.key, lease);
+      });
+      if (!admitted) return;
       item.resolve();
     } catch (error) {
+      if (!admitted) return;
       item.reject(error);
       try {
         this.onError?.(item.key, error);
@@ -171,8 +205,8 @@ export class ReconcileQueue {
         // Queue completion must not be replaced by an observer failure.
       }
     } finally {
-      this.running.delete(id);
-      this.activeCount -= 1;
+      this.admitting.delete(id);
+      if (admitted) this.running.delete(id);
       this.drain();
     }
   }

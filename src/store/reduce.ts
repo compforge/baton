@@ -124,7 +124,7 @@ export interface TurnSummaryState extends TurnSummary {
 
 export interface HarnessInvocationState {
   invocationId: string;
-  operation: HarnessInvocationRecorded["operation"];
+  verb: HarnessInvocationRecorded["verb"];
   title: string;
   pluginInstanceId?: string;
   phase:
@@ -571,7 +571,13 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     case "interaction.cancelled": {
       const existing = state.interactions.get(ev.payload.interactionId);
       if (!existing || existing.result) break;
-      existing.result = { kind: "cancelled", reason: ev.payload.reason };
+      existing.result = {
+        kind: "cancelled",
+        reason: ev.payload.reason,
+        ...(ev.payload.detail === undefined
+          ? {}
+          : { detail: ev.payload.detail }),
+      };
       unflagRequiresAction(state, existing.turnId);
       break;
     }
@@ -629,7 +635,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       if (state.harnessInvocations.has(ev.payload.invocationId)) break;
       state.harnessInvocations.set(ev.payload.invocationId, {
         invocationId: ev.payload.invocationId,
-        operation: { ...ev.payload.operation },
+        verb: ev.payload.verb,
         title: ev.payload.title,
         pluginInstanceId:
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,

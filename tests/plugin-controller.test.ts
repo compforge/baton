@@ -461,23 +461,22 @@ describe("plugin Controller", () => {
       resourceType: REQ_LOOP_RUN,
       async reconcile(ctx) {
         await ctx.ask({
-          key: "review",
+          timeoutMs: 0,
           title: "Review",
           prompt: "Continue?",
           allowOther: true,
-          expiresAt: "tomorrow",
         });
       },
     });
     await expect(invalidDeadline.enqueue(key())).rejects.toThrow(
-      "ask expiresAt must be an ISO 8601 timestamp with a timezone",
+      "ask timeoutMs must be a positive integer",
     );
     const ambiguousAsk = new Controller<Spec, Status>({
       store: resources,
       resourceType: REQ_LOOP_RUN,
       async reconcile(ctx) {
         await ctx.ask({
-          key: "review",
+          timeoutMs: 1_000,
           title: "Review",
           prompt: "Continue?",
         } as AskInput);

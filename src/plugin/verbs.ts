@@ -9,20 +9,15 @@ import type {
   HarnessInput,
   HarnessResult,
   ReconcileContext,
-  ResourceRef,
-  WithdrawInput,
-  WithdrawResult,
 } from "@compforge/baton-plugin";
 
 import type { ReconcileSnapshot } from "./reconcile-snapshot.ts";
-import type { ReconcileKey } from "./controller.ts";
 
 export interface ReconcileVerbScope {
-  readonly key: ReconcileKey;
-  readonly resource: ResourceRef;
-  readonly basedOnGeneration?: number;
-  readonly basedOnResourceVersion?: string;
-  readonly basedOnRevision?: number;
+  readonly batonSessionId: string;
+  readonly pluginInstanceId: string;
+  /** Core-issued identity for one live Controller reconcile execution. */
+  readonly executionId: string;
 }
 
 /**
@@ -40,10 +35,6 @@ export type ReconcileVerbRequest =
       readonly input: ConfirmInput;
     }
   | {
-      readonly verb: "withdraw";
-      readonly input: WithdrawInput;
-    }
-  | {
       readonly verb: "draft";
       readonly input: DraftInput;
     }
@@ -55,7 +46,6 @@ export type ReconcileVerbRequest =
 export type ReconcileVerbResponse =
   | AskResult
   | ConfirmResult
-  | WithdrawResult
   | DraftResult
   | HarnessResult;
 
@@ -71,10 +61,9 @@ function nonEmpty(name: string, value: string): void {
 }
 
 function validateAsk(input: AskInput): void {
-  nonEmpty("ask key", input.key);
+  validateTimeout("ask", input.timeoutMs);
   nonEmpty("ask title", input.title);
   nonEmpty("ask prompt", input.prompt);
-  validateExpiresAt("ask", input.expiresAt);
   if (input.choices === undefined) {
     if (input.allowOther !== true) {
       throw new Error("ask without choices must set allowOther to true");
@@ -96,7 +85,7 @@ function validateAsk(input: AskInput): void {
 }
 
 function validateConfirm(input: ConfirmInput): void {
-  nonEmpty("confirm key", input.key);
+  validateTimeout("confirm", input.timeoutMs);
   nonEmpty("confirm title", input.title);
   nonEmpty("confirm prompt", input.prompt);
   if (input.confirmLabel !== undefined) {
@@ -105,30 +94,17 @@ function validateConfirm(input: ConfirmInput): void {
   if (input.declineLabel !== undefined) {
     nonEmpty("confirm declineLabel", input.declineLabel);
   }
-  validateExpiresAt("confirm", input.expiresAt);
 }
 
-function validateExpiresAt(name: string, value: string | undefined): void {
-  if (value === undefined) return;
-  if (
-    !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
-    Number.isNaN(Date.parse(value))
-  ) {
-    throw new Error(
-      `${name} expiresAt must be an ISO 8601 timestamp with a timezone`,
-    );
-  }
-}
-
-function validateWithdraw(input: WithdrawInput): void {
-  nonEmpty("withdraw key", input.key);
-  if (input.verb !== "ask" && input.verb !== "confirm") {
-    throw new Error(`withdraw verb is invalid: ${String(input.verb)}`);
+function validateTimeout(name: string, timeoutMs: number): void {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error(`${name} timeoutMs must be a positive integer`);
   }
 }
 
 function validateHarness(input: HarnessInput): void {
-  nonEmpty("harness key", input.key);
+  validateTimeout("harness", input.timeoutMs);
+  nonEmpty("harness title", input.title);
   nonEmpty("harness prompt", input.prompt);
   nonEmpty("harness laneId", input.laneId);
   if (input.newLane !== undefined && typeof input.newLane !== "boolean") {
@@ -140,7 +116,8 @@ function validateHarness(input: HarnessInput): void {
 }
 
 function validateDraft(input: DraftInput): void {
-  nonEmpty("draft key", input.key);
+  validateTimeout("draft", input.timeoutMs);
+  nonEmpty("draft title", input.title);
   nonEmpty("draft prompt", input.prompt);
   if (input.harnessTargetId !== undefined) {
     nonEmpty("draft harnessTargetId", input.harnessTargetId);
@@ -168,13 +145,6 @@ export function createReconcileContext(
         verb: "confirm",
         input,
       }) as ConfirmResult;
-    },
-    async withdraw(input: WithdrawInput) {
-      validateWithdraw(input);
-      return await invoke(scope, {
-        verb: "withdraw",
-        input,
-      }) as WithdrawResult;
     },
     async draft(input: DraftInput) {
       validateDraft(input);

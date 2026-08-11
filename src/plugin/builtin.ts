@@ -9,13 +9,14 @@ import type {
   Watch,
 } from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
+import { newId } from "../event/ids.ts";
 import {
   type ReconcileKey,
   type ReconcileResult,
   type ReconcileScope,
   type ScheduledReconcile,
 } from "./controller.ts";
-import { ReconcileQueue } from "./queue.ts";
+import { ReconcileQueue, type ReconcileCapacityLease } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
   emptyReconcileSnapshot,
@@ -25,6 +26,7 @@ import { validateWatches } from "./watch.ts";
 import {
   createReconcileContext,
   type InvokeReconcileVerb,
+  type ReconcileVerbScope,
 } from "./verbs.ts";
 import type {
   ControllerSource,
@@ -221,7 +223,11 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   /** 每次执行前读取最新 BatonSession 只读视图。 */
   snapshot?: (key: ReconcileKey, resource: ResourceRef) => ReconcileSnapshot;
   invokeVerb?: InvokeReconcileVerb;
-  executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
+  executeReconcile?: <T>(
+    scope: ReconcileVerbScope,
+    localLease: ReconcileCapacityLease,
+    execute: () => Promise<T>,
+  ) => Promise<T>;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
 }
@@ -251,8 +257,8 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly now: () => Date;
   private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
   private readonly invokeVerb: InvokeReconcileVerb;
-  private readonly executeWithCapacity: NonNullable<
-    BuiltinControllerOptions<K>["executeWithCapacity"]
+  private readonly executeReconcile: NonNullable<
+    BuiltinControllerOptions<K>["executeReconcile"]
   >;
   private readonly queue: ReconcileQueue;
   private closed = false;
@@ -287,11 +293,20 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       resourceKind: options.resourceKind,
       resourceOwner: "baton",
     });
-    this.executeWithCapacity =
-      options.executeWithCapacity ?? (async <T>(execute: () => Promise<T>) => await execute());
+    this.executeReconcile = options.executeReconcile ??
+      (async <T>(
+        _scope: ReconcileVerbScope,
+        _localLease: ReconcileCapacityLease,
+        execute: () => Promise<T>,
+      ) => await execute());
     this.queue = new ReconcileQueue({
-      execute: (key) =>
-        this.executeWithCapacity(async () => {
+      execute: (key, localLease) => {
+        const executionScope = Object.freeze({
+          batonSessionId: key.batonSessionId,
+          pluginInstanceId: key.pluginInstanceId,
+          executionId: newId("pex"),
+        });
+        return this.executeReconcile(executionScope, localLease, async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
           const resourceRef = builtinResourceRef(resource);
@@ -303,11 +318,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
           }
           const context = createReconcileContext(
             snapshot,
-            {
-              key,
-              resource: resourceRef,
-              basedOnRevision: resource.metadata.revision,
-            },
+            executionScope,
             this.invokeVerb,
           );
           const result = validatedResult(
@@ -322,7 +333,8 @@ export class BuiltinController<K extends BuiltinResourceKind> {
               ? null
               : new Date(now.getTime() + result.requeueAfterMs);
           options.onReconcileSuccess?.(key, nextReconcileAt);
-        }),
+        });
+      },
       maxConcurrency: options.maxConcurrency,
       onError: options.onReconcileError,
     });

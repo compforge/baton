@@ -104,7 +104,7 @@ afterEach(() => {
 });
 
 describe("plugin Manager", () => {
-  test("persists ctx.ask and reconciles its durable answer", async () => {
+  test("suspends ctx.ask until its durable answer resumes the same reconcile", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -126,7 +126,7 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
         const result = await ctx.ask({
-          key: "associate-pr",
+          timeoutMs: 1_000,
           title: "Associate pull request",
           prompt: "Choose a requirement",
           choices: [
@@ -134,7 +134,11 @@ describe("plugin Manager", () => {
             { value: "reject", label: "Do not associate" },
           ],
         });
-        states.push(result.state === "answered" ? `${result.state}:${result.value}` : result.state);
+        states.push(
+          result.state === "success"
+            ? `${result.state}:${result.value}`
+            : result.state,
+        );
       },
     });
     const reconcileKey = {
@@ -145,7 +149,8 @@ describe("plugin Manager", () => {
       resourceId: "run_1",
     };
 
-    await manager.enqueue(reconcileKey);
+    const reconcile = manager.enqueue(reconcileKey);
+    await waitFor(() => session.loadState().interactions.size === 1);
     const interaction = [...session.loadState().interactions.values()][0]
       ?.interaction;
     expect(interaction?.requester).toEqual({
@@ -160,8 +165,8 @@ describe("plugin Manager", () => {
         answers: { decision: ["req_1"] },
       }),
     ).toBe(true);
-    await waitFor(() => states.length === 2);
-    expect(states).toEqual(["waiting", "answered:req_1"]);
+    await reconcile;
+    expect(states).toEqual(["success:req_1"]);
     expect(
       session.loadState().interactions.get(interaction!.interactionId)
         ?.result,
@@ -173,7 +178,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("reconciles a Resource again when ctx.ask reaches its deadline", async () => {
+  test("returns timeout without re-running the Resource reconcile", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -186,7 +191,6 @@ describe("plugin Manager", () => {
       spec: { value: "run_1" },
     });
     const states: string[] = [];
-    const expiresAt = new Date(Date.now() + 200).toISOString();
     const manager = new Manager({
       session,
       instances: new PluginInstanceStore({ session }),
@@ -196,17 +200,12 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
         const result = await ctx.ask({
-          key: "associate-pr",
+          timeoutMs: 30,
           title: "Associate pull request",
           prompt: "Choose a requirement",
           allowOther: true,
-          expiresAt,
         });
-        states.push(
-          result.state === "cancelled"
-            ? `${result.state}:${result.reason}`
-            : result.state,
-        );
+        states.push(result.state);
       },
     });
 
@@ -217,13 +216,59 @@ describe("plugin Manager", () => {
       resourceKind: "Requirement",
       resourceId: "run_1",
     });
-    expect(states).toEqual(["waiting"]);
-    await waitFor(() => states.length === 2, 2_000);
-    expect(states).toEqual(["waiting", "cancelled:timeout"]);
+    expect(states).toEqual(["timeout"]);
     await manager.close();
   });
 
-  test("runs ctx.harness on a new lane once and reconciles its result", async () => {
+  test("returns failure when Core closes a waiting Plugin execution", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const states: string[] = [];
+    const manager = new Manager({
+      session,
+      instances: new PluginInstanceStore({ session }),
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(ctx) {
+        const result = await ctx.ask({
+          title: "Approve",
+          prompt: "Continue?",
+          timeoutMs: 60_000,
+          allowOther: true,
+        });
+        states.push(
+          result.state === "failure"
+            ? `${result.state}:${result.error}`
+            : result.state,
+        );
+      },
+    });
+    const reconcile = manager.enqueue({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    });
+    await waitFor(() => session.loadState().interactions.size === 1);
+
+    await manager.close();
+    await reconcile;
+    expect(states).toEqual(["failure:Plugin Manager was closed"]);
+  });
+
+  test("awaits ctx.harness on a new lane and returns its Turn", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -260,12 +305,17 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
         const result = await ctx.harness({
-          key: "implement",
+          title: "Implement",
           prompt: "Implement run_1.",
+          timeoutMs: 1_000,
           laneId: "main",
           newLane: true,
         });
-        states.push(result.state === "pending" ? `${result.state}:${result.phase}` : result.state);
+        states.push(
+          result.state === "success"
+            ? `${result.state}:${result.value.outcome}`
+            : result.state,
+        );
       },
     });
     const reconcileKey = {
@@ -276,7 +326,7 @@ describe("plugin Manager", () => {
       resourceId: "run_1",
     };
 
-    await manager.enqueue(reconcileKey);
+    const reconcile = manager.enqueue(reconcileKey);
     await waitFor(() => scheduled.length === 1);
     expect(scheduled[0]).toMatchObject({
       harnessTargetId: "claude",
@@ -306,9 +356,7 @@ describe("plugin Manager", () => {
       "_baton_harness_invocation_recorded",
       "_baton_harness_invocation_scheduled",
     ]);
-    expect(states).toEqual(["pending:queued"]);
-    await manager.start();
-    expect(scheduled).toHaveLength(1);
+    expect(states).toEqual([]);
     selectedHarnessTargetId = "codex";
 
     const input = scheduled[0]!;
@@ -326,7 +374,6 @@ describe("plugin Manager", () => {
         content: [...input.blocks],
       },
     });
-    await waitFor(() => states.includes("pending:running"));
     session.append({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
@@ -340,7 +387,8 @@ describe("plugin Manager", () => {
         toolCalls: [],
       },
     });
-    await waitFor(() => states.includes("completed"));
+    await reconcile;
+    expect(states).toEqual(["success:completed"]);
     expect(manager.listHarnessInvocations()[0]).toMatchObject({
       phase: "completed",
       result: { agentText: "Implemented." },
@@ -388,21 +436,23 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
         await ctx.draft({
-          key: "implement",
+          title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
+          timeoutMs: 1_000,
           ...(resource.metadata.name === "run_2"
             ? { harnessTargetId: "codex" }
             : {}),
         });
       },
     });
-    await manager.enqueue({
+    const firstReconcile = manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
     });
+    await waitFor(() => session.loadState().interactions.size === 1);
     expect(scheduled).toEqual([]);
     expect(manager.listHarnessInvocations()).toEqual([]);
     const interaction = [...session.loadState().interactions.values()]
@@ -411,7 +461,7 @@ describe("plugin Manager", () => {
       )?.interaction;
     expect(interaction).toMatchObject({
       kind: "suggested_input",
-      title: "implement",
+      title: "Implement",
       text: "Implement run_1.",
     });
     expect(interaction).not.toHaveProperty("harnessTargetId");
@@ -438,21 +488,22 @@ describe("plugin Manager", () => {
       newLane: false,
       laneId: MAIN_LANE_ID,
     });
-    await manager.enqueue({
+    const secondReconcile = manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_2",
     });
+    await waitFor(() => session.loadState().interactions.size === 2);
     const fixed = [...session.loadState().interactions.values()]
       .find(({ interaction: candidate }) =>
         candidate.kind === "suggested_input" &&
-        candidate.pluginContext?.resource.name === "run_2"
+        candidate.text === "Implement run_2."
       )?.interaction;
     expect(fixed).toMatchObject({
       kind: "suggested_input",
-      title: "implement",
+      title: "Implement",
       text: "Implement run_2.",
       harnessTargetId: "codex",
     });
@@ -466,6 +517,7 @@ describe("plugin Manager", () => {
       harnessTargetId: "codex",
     });
     await manager.close();
+    await Promise.all([firstReconcile, secondReconcile]);
   });
 
   test("waits for a manual Interaction gate and never invokes a declined request", async () => {
@@ -502,14 +554,15 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
         const result = await ctx.harness({
-          key: "implement",
+          title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
+          timeoutMs: 1_000,
           laneId: MAIN_LANE_ID,
         });
         const observed = states.get(resource.metadata.name) ?? [];
         observed.push(
-          result.state === "pending"
-            ? `${result.state}:${result.phase}`
+          result.state === "success"
+            ? `${result.state}:${result.value.outcome}`
             : result.state,
         );
         states.set(resource.metadata.name, observed);
@@ -523,13 +576,11 @@ describe("plugin Manager", () => {
       resourceId,
     });
 
-    await manager.enqueue(reconcileKey("approve"));
-    await manager.enqueue(reconcileKey("decline"));
+    const approveReconcile = manager.enqueue(reconcileKey("approve"));
+    const declineReconcile = manager.enqueue(reconcileKey("decline"));
+    await waitFor(() => session.loadState().interactions.size === 2);
     expect(manager.listHarnessInvocations()).toEqual([]);
-    expect(states).toEqual(new Map([
-      ["approve", ["waiting"]],
-      ["decline", ["waiting"]],
-    ]));
+    expect(states).toEqual(new Map());
     const interactions = [...session.loadState().interactions.values()]
       .map(({ interaction }) => interaction)
       .filter((interaction) => interaction.kind === "harness_invocation");
@@ -550,19 +601,20 @@ describe("plugin Manager", () => {
       kind: "harness_invocation",
       outcome: "declined",
     })).toBe(true);
-    await waitFor(() =>
-      states.get("approve")?.includes("pending:queued") === true &&
-      states.get("decline")?.includes("declined") === true
-    );
+    await waitFor(() => states.get("decline")?.includes("success:declined") === true);
     expect(scheduled).toHaveLength(1);
     expect(manager.listHarnessInvocations()).toHaveLength(1);
     expect(scheduled[0]?.blocks).toEqual([
       { type: "text", text: "Implement approve." },
     ]);
+    expect(await manager.cancelHarnessInvocation(scheduled[0]!.invocationId))
+      .toBe(true);
+    await Promise.all([approveReconcile, declineReconcile]);
+    expect(states.get("approve")).toEqual(["dismissed"]);
     await manager.close();
   });
 
-  test("returns typed cancellation from ctx.harness", async () => {
+  test("returns dismissed when the user cancels ctx.harness", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -590,15 +642,12 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
         const result = await ctx.harness({
-          key: "implement",
+          title: "Implement",
           prompt: "Implement run_1.",
+          timeoutMs: 1_000,
           laneId: "main",
         });
-        states.push(
-          result.state === "cancelled"
-            ? `${result.state}:${result.reason}`
-            : result.state,
-        );
+        states.push(result.state);
       },
     });
 
@@ -609,17 +658,16 @@ describe("plugin Manager", () => {
       resourceKind: "Requirement",
       resourceId: "run_1",
     };
-    await manager.enqueue(reconcileKey);
-    await Bun.sleep(5);
+    const reconcile = manager.enqueue(reconcileKey);
+    await waitFor(() => manager.listHarnessInvocations().length === 1);
     const invocationId = manager.listHarnessInvocations()[0]!.invocationId;
     expect(await manager.cancelHarnessInvocation(invocationId)).toBe(true);
     expect(manager.listHarnessInvocations()[0]).toMatchObject({
       phase: "cancelled",
       cancellation: { reason: "user" },
     });
-    await waitFor(() => states.includes("cancelled:user"), 2_000);
-    expect(states[0]).toBe("pending");
-    expect(states.at(-1)).toBe("cancelled:user");
+    await reconcile;
+    expect(states).toEqual(["dismissed"]);
     await manager.close();
   });
 
@@ -655,13 +703,14 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
         const result = await ctx.draft({
-          key: "implement",
+          title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
+          timeoutMs: 1_000,
         });
         const observed = states.get(resource.metadata.name) ?? [];
         observed.push(
-          result.state === "failed"
-            ? `${result.state}:${result.reason}:${result.detail}`
+          result.state === "failure"
+            ? `${result.state}:${result.error}`
             : result.state,
         );
         states.set(resource.metadata.name, observed);
@@ -675,8 +724,9 @@ describe("plugin Manager", () => {
       resourceId,
     });
 
-    await manager.enqueue(reconcileKey("dismiss"));
-    await manager.enqueue(reconcileKey("fail"));
+    const dismissReconcile = manager.enqueue(reconcileKey("dismiss"));
+    const failReconcile = manager.enqueue(reconcileKey("fail"));
+    await waitFor(() => session.loadState().interactions.size === 2);
     expect(manager.listHarnessInvocations()).toEqual([]);
     const interactions = [...session.loadState().interactions.values()]
       .map(({ interaction }) => interaction)
@@ -702,93 +752,12 @@ describe("plugin Manager", () => {
     await waitFor(() =>
       states.get("dismiss")?.includes("dismissed") === true &&
       states.get("fail")?.includes(
-          "failed:dispatch:dispatcher unavailable",
+          "failure:dispatcher unavailable",
         ) === true
     );
-    expect(states.get("dismiss")?.[0]).toBe("editing");
-    expect(states.get("dismiss")?.at(-1)).toBe("dismissed");
-    expect(states.get("fail")?.[0]).toBe("editing");
-    expect(states.get("fail")?.at(-1)).toBe(
-      "failed:dispatch:dispatcher unavailable",
-    );
-    await manager.close();
-  });
-
-  test("cancels pending work when its Resource incarnation is deleted", async () => {
-    const root = testRoot();
-    const session = new SessionStore(root).createSession({ cwd: "/repo" });
-    const resources = new PluginResourceStore({
-      session,
-      pluginInstanceId: "reqloop_default",
-    });
-    resources.create<Spec>({
-      type: resourceType("Requirement"),
-      name: "run_1",
-      spec: { value: "run_1" },
-    });
-    const cancelled: string[] = [];
-    const failures: unknown[] = [];
-    const manager = new Manager({
-      session,
-      instances: new PluginInstanceStore({ session }),
-      snapshot: () => ({
-        ...emptyReconcileSnapshot(session.id),
-        harnessTargets: [{ id: "codex", harness: "codex" }],
-      }),
-      selectedHarnessTargetId: () => "codex",
-      enqueueHarnessInvocation() {},
-      cancelHarnessInvocation(requestId) {
-        cancelled.push(requestId);
-        return "queued";
-      },
-      onReconcileError(failure) {
-        failures.push(failure.error);
-      },
-    });
-    manager.registerController<Spec, Record<string, never>>({
-      store: resources,
-      resourceType: resourceType("Requirement"),
-      async reconcile(ctx, resource) {
-        if (resource.metadata.deletionTimestamp) return;
-        await ctx.ask({
-          key: "approve",
-          title: "Approve implementation",
-          prompt: "Continue?",
-          allowOther: true,
-        });
-        await ctx.harness({
-          key: "implement",
-          prompt: "Implement run_1.",
-          laneId: "main",
-        });
-      },
-    });
-    const reconcileKey = {
-      batonSessionId: session.id,
-      pluginInstanceId: "reqloop_default",
-      resourceApiVersion: API_VERSION,
-      resourceKind: "Requirement",
-      resourceId: "run_1",
-    };
-
-    await manager.enqueue(reconcileKey);
-    const requestId = manager.listHarnessInvocations()[0]!.invocationId;
-    const interactionId = [...session.loadState().interactions.keys()][0]!;
-    resources.requestDeletion(
-      resourceType("Requirement"),
-      "run_1",
-      new Date("2026-08-10T00:00:00.000Z"),
-    );
-    await manager.enqueue(reconcileKey);
-    await Bun.sleep(20);
-
-    expect(manager.listHarnessInvocations()[0]?.phase).toBe("cancelled");
-    expect(session.loadState().interactions.get(interactionId)?.result).toEqual({
-      kind: "cancelled",
-      reason: "requester",
-    });
-    expect(cancelled).toEqual([requestId]);
-    expect(failures).toEqual([]);
+    expect(states.get("dismiss")).toEqual(["dismissed"]);
+    expect(states.get("fail")).toEqual(["failure:dispatcher unavailable"]);
+    await Promise.all([dismissReconcile, failReconcile]);
     await manager.close();
   });
 

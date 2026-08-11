@@ -116,7 +116,11 @@ export class HarnessInteractionContinuations<
         {
           kind: "interaction.cancelled",
           ...turn,
-          payload: { interactionId, reason: result.reason },
+          payload: {
+            interactionId,
+            reason: result.reason,
+            ...(result.detail === undefined ? {} : { detail: result.detail }),
+          },
         },
         source,
       );

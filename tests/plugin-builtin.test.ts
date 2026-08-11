@@ -129,8 +129,9 @@ describe("Baton Resource index", () => {
             expect(ctx.snapshot.session.batonSessionId).toBe(session.id);
             reconciled.push(resource.metadata.name);
             await ctx.draft({
-              key: `route:${resource.metadata.name}`,
+              title: `Route ${resource.metadata.name}`,
               prompt: `Route: ${resource.status.userText}`,
+              timeoutMs: 20,
             });
           },
         });

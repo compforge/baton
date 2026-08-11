@@ -309,7 +309,7 @@ describe("crash recovery on open", () => {
     });
   });
 
-  test("dangling Plugin Interactions remain pending for Resource reconcile", () => {
+  test("dangling Plugin Interactions fail with their interrupted execution", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.append({
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
@@ -321,18 +321,7 @@ describe("crash recovery on open", () => {
           type: "plugin",
           pluginInstanceId: "reqloop_default",
         },
-        pluginContext: {
-          operation: { verb: "ask", key: "associate-pr" },
-          resource: {
-            apiVersion: "reqloop.baton.dev/v1alpha1",
-            kind: "Requirement",
-            namespace: "reqloop_default",
-            name: "run_1",
-            uid: "pr_resource_uid",
-          },
-          resourceOwner: "plugin",
-          basedOnGeneration: 1,
-        },
+        pluginContext: { executionId: "pex_plugin", verb: "ask" },
         questions: [
           {
             questionId: "decision",
@@ -347,10 +336,14 @@ describe("crash recovery on open", () => {
       cwd: "/repo",
       sessionId: h.id,
     });
-    expect(result.recovered).toBe(false);
+    expect(result.recovered).toBe(true);
     expect(
       result.session.loadState().interactions.get("ix_plugin")?.result,
-    ).toBeUndefined();
+    ).toEqual({
+      kind: "cancelled",
+      reason: "recovery",
+      detail: "Plugin execution was interrupted by Core restart",
+    });
   });
 
   test("dangling hook trust Interactions are cancelled", () => {
