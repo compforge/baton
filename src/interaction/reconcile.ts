@@ -255,9 +255,8 @@ export class ReconcileInteractionStore {
   }
 
   /**
-   * @spec Plugin ask identity keeps the authored key separate from the ask verb; choice values cross the Interaction boundary unchanged.
-   * @case id=choice_value_round_trip,desc=`resolve an authored choice`,expect=`the AskResult value equals AskChoice.value`
-   * @rule Keep operation verb and key structured; do not encode the verb into the key.
+   * @spec A Plugin decision key is domain identity, independent of the reconcile verb. Ask choices preserve Plugin-authored values end-to-end so results need no Store-specific translation.
+   * @rule Keep verb and key separate; do not reconstruct operation identity with string prefixes.
    */
   ask<TValue extends string>(
     context: ReconcileVerbScope,
@@ -271,9 +270,8 @@ export class ReconcileInteractionStore {
   }
 
   /**
-   * @spec Plugin confirm identity keeps the authored key separate from the confirm verb and maps the fixed accept/decline choices to ConfirmResult states.
-   * @case id=confirm_choice_mapping,desc=`resolve a confirm choice`,expect=`accept becomes accepted and decline becomes declined`
-   * @rule Keep operation verb and key structured; do not encode the verb into the key.
+   * @spec Confirm is a constrained decision over the same operation identity model: the verb distinguishes it from ask, while accept and decline remain stable domain outcomes.
+   * @rule Keep verb and key separate; do not reconstruct operation identity with string prefixes.
    */
   confirm(
     context: ReconcileVerbScope,
