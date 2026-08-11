@@ -911,6 +911,7 @@ export class BatonChatProtocol implements ChatProtocol {
       textgenTargets: bundledTextgenTargets(),
       ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),
       ...(this.config.textgenModels ? { textgenModels: this.config.textgenModels } : {}),
+      onSessionTitleChange: () => this.syncTerminalTitle(),
       probeTarget: (target, cwd) =>
         probeHarnessTarget(target, {
           cwd,
