@@ -2,10 +2,8 @@ import type {
   Controller as PluginController,
   ControllerSource,
   CronSource,
-  Output as PluginInteractionOutput,
   ResourceRef,
   ResourceType,
-  TurnRequestOutput,
   Watch,
 } from "@compforge/baton-plugin";
 
@@ -20,12 +18,12 @@ import {
   emptyBatonSnapshot,
   type BatonSnapshot,
 } from "./baton-snapshot.ts";
-import {
-  type PluginOutput,
-  validatePluginOutput,
-} from "./output.ts";
 import { ControllerSources } from "./source.ts";
 import { validateWatches } from "./watch.ts";
+import {
+  createBaton,
+  type InvokeBatonVerb,
+} from "./verbs.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
 
@@ -38,84 +36,20 @@ export interface ReconcileScope {
   readonly resourceOwner?: ReconcileResourceOwner;
 }
 
+export type {
+  BuiltinResourceReconcileProposal,
+  PluginResourceReconcileProposal,
+  ReconcileProposal,
+} from "./proposal.ts";
+
 export interface ReconcileKey extends ReconcileScope {
   readonly resourceId: string;
 }
 
 export interface ReconcileResult {
-  /** 交给 Baton 校验、持久化并进入对应宿主生命周期。 */
-  output?: PluginOutput;
   /** 一次性动态唤醒间隔；Controller 负责换算并持久化 nextReconcileAt。 */
   requeueAfterMs?: number;
 }
-
-export interface PluginResourceReconcileProposal {
-  readonly key: ReconcileKey;
-  readonly basedOnGeneration: number;
-  /**
-   * Controller 产出建议时看到的最新 Resource revision。
-   * 同一 spec generation 下的不同外部 observation 必须能形成不同 Proposal。
-   */
-  readonly basedOnResourceVersion?: string;
-  readonly basedOnRevision?: never;
-  readonly text: string;
-}
-
-export interface BuiltinResourceReconcileProposal {
-  readonly key: ReconcileKey;
-  readonly basedOnGeneration?: never;
-  readonly basedOnResourceVersion?: never;
-  readonly basedOnRevision: number;
-  readonly text: string;
-}
-
-export type ReconcileProposal =
-  | PluginResourceReconcileProposal
-  | BuiltinResourceReconcileProposal;
-
-export interface PluginResourceReconcileInteraction {
-  readonly key: ReconcileKey;
-  readonly resource: ResourceRef;
-  readonly basedOnGeneration: number;
-  readonly basedOnResourceVersion?: string;
-  readonly basedOnRevision?: never;
-  readonly request: PluginInteractionOutput;
-}
-
-export interface BuiltinResourceReconcileInteraction {
-  readonly key: ReconcileKey;
-  readonly resource: ResourceRef;
-  readonly basedOnGeneration?: never;
-  readonly basedOnResourceVersion?: never;
-  readonly basedOnRevision: number;
-  readonly request: PluginInteractionOutput;
-}
-
-export type ReconcileInteraction =
-  | PluginResourceReconcileInteraction
-  | BuiltinResourceReconcileInteraction;
-
-export interface PluginResourceReconcileTurnRequest {
-  readonly key: ReconcileKey;
-  readonly resource: ResourceRef;
-  readonly basedOnGeneration: number;
-  readonly basedOnResourceVersion?: string;
-  readonly basedOnRevision?: never;
-  readonly request: TurnRequestOutput;
-}
-
-export interface BuiltinResourceReconcileTurnRequest {
-  readonly key: ReconcileKey;
-  readonly resource: ResourceRef;
-  readonly basedOnGeneration?: never;
-  readonly basedOnResourceVersion?: never;
-  readonly basedOnRevision: number;
-  readonly request: TurnRequestOutput;
-}
-
-export type ReconcileTurnRequest =
-  | PluginResourceReconcileTurnRequest
-  | BuiltinResourceReconcileTurnRequest;
 
 export interface ScheduledReconcile {
   readonly key: ReconcileKey;
@@ -133,11 +67,9 @@ export interface ControllerOptions<TSpec, TStatus> {
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
   snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
+  invokeVerb?: InvokeBatonVerb;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
-  onProposal(proposal: ReconcileProposal): Promise<void> | void;
-  onInteraction?(interaction: ReconcileInteraction): Promise<void> | void;
-  onTurnRequest?(request: ReconcileTurnRequest): Promise<void> | void;
   /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
@@ -189,9 +121,6 @@ function deepFreeze<T>(value: T): T {
 
 function validatedResult(result: ReconcileResult | void): ReconcileResult {
   if (!result) return {};
-  if (result.output !== undefined) {
-    validatePluginOutput(result.output);
-  }
   if (
     result.requeueAfterMs !== undefined &&
     (!Number.isSafeInteger(result.requeueAfterMs) || result.requeueAfterMs < 1)
@@ -202,9 +131,6 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
 }
 
 interface ReconcileExecution {
-  proposal?: ReconcileProposal;
-  interaction?: ReconcileInteraction;
-  turnRequest?: ReconcileTurnRequest;
   deletedResource?: Readonly<PluginResource<unknown, unknown>>;
   nextReconcileAt: Date | null;
 }
@@ -228,13 +154,7 @@ export class Controller<TSpec, TStatus> {
   private readonly executeWithCapacity: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
-  private readonly onProposal: ControllerOptions<TSpec, TStatus>["onProposal"];
-  private readonly onInteraction: NonNullable<
-    ControllerOptions<TSpec, TStatus>["onInteraction"]
-  >;
-  private readonly onTurnRequest: NonNullable<
-    ControllerOptions<TSpec, TStatus>["onTurnRequest"]
-  >;
+  private readonly invokeVerb: InvokeBatonVerb;
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private closed = false;
@@ -252,17 +172,9 @@ export class Controller<TSpec, TStatus> {
       options.snapshot ?? (() => emptyBatonSnapshot(options.store.batonSessionId));
     this.executeWithCapacity =
       options.executeWithCapacity ?? (async (execute) => await execute());
-    this.onProposal = options.onProposal;
-    this.onInteraction =
-      options.onInteraction ??
-      (() => {
-        throw new Error("plugin Controller has no Interaction publisher");
-      });
-    this.onTurnRequest =
-      options.onTurnRequest ??
-      (() => {
-        throw new Error("plugin Controller has no TurnRequest publisher");
-      });
+    this.invokeVerb = options.invokeVerb ?? (async () => {
+      throw new Error("plugin Controller has no Baton verb host");
+    });
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -274,13 +186,6 @@ export class Controller<TSpec, TStatus> {
         this.executeWithCapacity(async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const execution = await this.reconcile(key);
-          if (execution.proposal) await this.onProposal(execution.proposal);
-          if (execution.interaction) {
-            await this.onInteraction(execution.interaction);
-          }
-          if (execution.turnRequest) {
-            await this.onTurnRequest(execution.turnRequest);
-          }
           if (execution.deletedResource) {
             options.onResourceDeleted?.(execution.deletedResource);
           }
@@ -346,7 +251,7 @@ export class Controller<TSpec, TStatus> {
     );
   }
 
-  /** Exact incarnation guard for Event-driven wakeups such as TurnRequest results. */
+  /** Exact incarnation guard for Event-driven wakeups such as HarnessInvocation results. */
   ownsResource(resource: ResourceRef): boolean {
     if (
       resource.apiVersion !== this.resourceType.apiVersion ||
@@ -401,12 +306,22 @@ export class Controller<TSpec, TStatus> {
           name: resource.metadata.name,
           uid: resource.metadata.uid,
         });
-        const baton = deepFreeze(this.snapshot(key, resourceRef));
-        if (baton.session.batonSessionId !== this.scope.batonSessionId) {
+        const snapshot = deepFreeze(this.snapshot(key, resourceRef));
+        if (snapshot.session.batonSessionId !== this.scope.batonSessionId) {
           throw new Error(
-            `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
+            `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
           );
         }
+        const baton = createBaton(
+          snapshot,
+          {
+            key,
+            resource: resourceRef,
+            basedOnGeneration: resource.metadata.generation,
+            basedOnResourceVersion: resource.metadata.resourceVersion,
+          },
+          this.invokeVerb,
+        );
         const result = validatedResult(
           await this.reconcileResource(baton, resource),
         );
@@ -428,6 +343,10 @@ export class Controller<TSpec, TStatus> {
             this.resourceType,
             key.resourceId,
           );
+          // Invocation/result events may have marked this key dirty while the
+          // terminating reconcile was running. The Resource no longer exists,
+          // so that follow-up must not be admitted after finalization.
+          this.queue.forgetPending(key);
           return {
             nextReconcileAt: null,
             deletedResource: deepFreeze(deletedResource),
@@ -444,41 +363,8 @@ export class Controller<TSpec, TStatus> {
           { expectedResourceVersion: latest.metadata.resourceVersion },
         );
 
-        const output = result.output;
         return {
           nextReconcileAt,
-          ...(output?.kind === "proposed-input"
-            ? {
-                proposal: Object.freeze({
-                  key,
-                  basedOnGeneration: resource.metadata.generation,
-                  basedOnResourceVersion: latest.metadata.resourceVersion,
-                  text: output.text,
-                }),
-              }
-            : {}),
-          ...(output?.kind === "interaction"
-            ? {
-                interaction: Object.freeze({
-                  key,
-                  resource: resourceRef,
-                  basedOnGeneration: resource.metadata.generation,
-                  basedOnResourceVersion: latest.metadata.resourceVersion,
-                  request: output,
-                }),
-              }
-            : {}),
-          ...(output?.kind === "turn-request"
-            ? {
-                turnRequest: Object.freeze({
-                  key,
-                  resource: resourceRef,
-                  basedOnGeneration: resource.metadata.generation,
-                  basedOnResourceVersion: latest.metadata.resourceVersion,
-                  request: output,
-                }),
-              }
-            : {}),
         };
       },
     );

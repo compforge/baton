@@ -4,17 +4,15 @@ import type {
   TurnSummary,
 } from "../event/types.ts";
 import type {
+  Baton,
   ResourceRef,
   Watch,
 } from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
 import {
-  type BuiltinResourceReconcileProposal,
-  type BuiltinResourceReconcileInteraction,
   type ReconcileKey,
   type ReconcileResult,
   type ReconcileScope,
-  type ReconcileTurnRequest,
   type ScheduledReconcile,
 } from "./controller.ts";
 import { ReconcileQueue } from "./queue.ts";
@@ -23,8 +21,11 @@ import {
   emptyBatonSnapshot,
   type BatonSnapshot,
 } from "./baton-snapshot.ts";
-import { validatePluginOutput } from "./output.ts";
 import { validateWatches } from "./watch.ts";
+import {
+  createBaton,
+  type InvokeBatonVerb,
+} from "./verbs.ts";
 import type {
   ControllerSource,
   CronSource,
@@ -212,30 +213,21 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   sources?: readonly ControllerSource[];
   watches?: readonly Watch[];
   reconcile(
-    baton: Readonly<BatonSnapshot>,
+    baton: Baton,
     resource: Readonly<BuiltinResource<K>>,
   ): Promise<ReconcileResult | void>;
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
   snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
+  invokeVerb?: InvokeBatonVerb;
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
-  onProposal(
-    proposal: BuiltinResourceReconcileProposal,
-  ): Promise<void> | void;
-  onInteraction?(
-    interaction: BuiltinResourceReconcileInteraction,
-  ): Promise<void> | void;
-  onTurnRequest?(request: ReconcileTurnRequest): Promise<void> | void;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
 }
 
 function validatedResult(result: ReconcileResult | void): ReconcileResult {
   if (!result) return {};
-  if (result.output !== undefined) {
-    validatePluginOutput(result.output);
-  }
   if (
     result.requeueAfterMs !== undefined &&
     (!Number.isSafeInteger(result.requeueAfterMs) || result.requeueAfterMs < 1)
@@ -258,13 +250,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
-  private readonly onProposal: BuiltinControllerOptions<K>["onProposal"];
-  private readonly onInteraction: NonNullable<
-    BuiltinControllerOptions<K>["onInteraction"]
-  >;
-  private readonly onTurnRequest: NonNullable<
-    BuiltinControllerOptions<K>["onTurnRequest"]
-  >;
+  private readonly invokeVerb: InvokeBatonVerb;
   private readonly executeWithCapacity: NonNullable<
     BuiltinControllerOptions<K>["executeWithCapacity"]
   >;
@@ -291,17 +277,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.snapshot =
       options.snapshot ??
       (() => emptyBatonSnapshot(options.resources.batonSessionId));
-    this.onProposal = options.onProposal;
-    this.onInteraction =
-      options.onInteraction ??
-      (() => {
-        throw new Error("plugin BuiltinController has no Interaction publisher");
-      });
-    this.onTurnRequest =
-      options.onTurnRequest ??
-      (() => {
-        throw new Error("plugin BuiltinController has no TurnRequest publisher");
-      });
+    this.invokeVerb = options.invokeVerb ?? (async () => {
+      throw new Error("plugin BuiltinController has no Baton verb host");
+    });
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
@@ -317,12 +295,21 @@ export class BuiltinController<K extends BuiltinResourceKind> {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
           const resourceRef = builtinResourceRef(resource);
-          const baton = deepFreeze(this.snapshot(key, resourceRef));
-          if (baton.session.batonSessionId !== this.scope.batonSessionId) {
+          const snapshot = deepFreeze(this.snapshot(key, resourceRef));
+          if (snapshot.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
-              `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${baton.session.batonSessionId}`,
+              `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
             );
           }
+          const baton = createBaton(
+            snapshot,
+            {
+              key,
+              resource: resourceRef,
+              basedOnRevision: resource.metadata.revision,
+            },
+            this.invokeVerb,
+          );
           const result = validatedResult(
             await this.reconcileResource(baton, resource),
           );
@@ -334,29 +321,6 @@ export class BuiltinController<K extends BuiltinResourceKind> {
             result.requeueAfterMs === undefined
               ? null
               : new Date(now.getTime() + result.requeueAfterMs);
-          if (result.output?.kind === "proposed-input") {
-            await this.onProposal(Object.freeze({
-              key,
-              basedOnRevision: resource.metadata.revision,
-              text: result.output.text,
-            }));
-          }
-          if (result.output?.kind === "interaction") {
-            await this.onInteraction(Object.freeze({
-              key,
-              resource: resourceRef,
-              basedOnRevision: resource.metadata.revision,
-              request: result.output,
-            }));
-          }
-          if (result.output?.kind === "turn-request") {
-            await this.onTurnRequest(Object.freeze({
-              key,
-              resource: resourceRef,
-              basedOnRevision: resource.metadata.revision,
-              request: result.output,
-            }));
-          }
           options.onReconcileSuccess?.(key, nextReconcileAt);
         }),
       maxConcurrency: options.maxConcurrency,
@@ -402,7 +366,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     return [];
   }
 
-  /** Exact incarnation guard for Event-driven wakeups such as TurnRequest results. */
+  /** Exact incarnation guard for Event-driven wakeups such as HarnessInvocation results. */
   ownsResource(resource: ResourceRef): boolean {
     if (
       resource.apiVersion !== BATON_TURN_RESOURCE_TYPE.apiVersion ||

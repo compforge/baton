@@ -37,6 +37,19 @@ const plugin: PluginPackage = {
         };
       },
     });
+    context.registerController({
+      resourceType: {
+        apiVersion: "baton.dev/v1alpha1",
+        kind: "Turn",
+      },
+      async reconcile(baton, turn) {
+        await baton.ask({
+          key: `runner:${turn.metadata.name}`,
+          title: "Runner question",
+          prompt: `Review ${turn.metadata.name}?`,
+        });
+      },
+    });
   },
 };
 

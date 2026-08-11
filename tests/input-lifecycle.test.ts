@@ -178,11 +178,13 @@ describe("Input lifecycle (InputRecord)", () => {
     });
     const active = controller.submit("codex", text("first"));
     await until(() => mainAdapter.prompts.length === 1);
-    const plugin = controller.enqueueTurnRequest({
-      turnRequestId: "trq_1",
+    const plugin = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_1",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_request",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_plugin",
       turnId: "t_plugin",
       blocks: text("plugin work"),

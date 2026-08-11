@@ -16,7 +16,7 @@ Baton 按三层协作：
 1. **Baton core** 负责 Input、Interaction、Event、Context、权限、Harness routing、调度和
    Projection，不理解 Requirement、Deployment、Review 等领域语义。
 2. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
-   只能通过受控 Output 建议 Input、请求用户决议或发起 TurnRequest，不能直接调用 Harness。
+   通过 Core-owned Baton verbs 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
 3. **Harness** 提供智能执行能力，Adapter 把各家协议归一成稳定契约。devloop 等 Harness
    Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
 
@@ -51,7 +51,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
 | **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
-| **TurnRequest** | 直接 user Input 之外，由控制面主体请求创建一个新 driven Turn 的持久意图；获批后物化为 Input，不抽象或直接执行 Harness Work |
+| **HarnessInvocation** | `draft` / `harness` verb 的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
@@ -140,31 +140,29 @@ src/harness/ids.ts
 ### 4.4 事实先于副作用和投影
 
 获准执行的 prompt Input 先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
-再调用 Adapter。Plugin Output 先持久化，再通知 UI。Context Snapshot 只说明准备送什么，只有
+再调用 Adapter。Baton verb 的 Interaction 或 HarnessInvocation 先持久化，再产生 UI 或执行副作用。Context Snapshot 只说明准备送什么，只有
 DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发生时保留 `uncertain`，不盲目
 重投。
 
 ### 4.5 长期 loop 与执行小闭环分层
 
 Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
-Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 建议的
-`proposed-input` 经用户确认后成为 user-source Input；`turn-request` 则开辟了直接 user Input
-之外发起新 Turn 的受控路径，当前由 Plugin 产生并在获批后成为 plugin-source Input。它目前也是
-创建支线 Lane 的第一个入口，但 Lane 不从属于 TurnRequest：未来人可以显式要求“异步开一条支线，
-主线继续”。TurnRequest 表达创建 Turn 的意图，而非 Harness Work；两类 Input 此后走同一
-Context、Permission、Attempt 和 Harness routing 主路径。
+Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 用 `ask` /
+`confirm` 组织 human-in-the-loop，用 `draft` 交给用户修改，用 `harness` 直接执行。Core 把这些
+verb 物化为持久 Interaction 或 HarnessInvocation，并让最终 Input 继续走统一的 Context、
+Permission、Attempt 和 Harness routing 主路径。Plugin 决定业务步骤，Core 始终拥有授权与执行。
 
 ### 4.6 单 Ledger、多 Lane
 
 一个 BatonSession 仍只有一份 `session.jsonl`。`seq` 只表示 append 的全局观测顺序，
 不表示跨 Lane 因果；因果由 `turnId`、`parentEventId` 和领域 identity 表达。新的
-Harness 执行事实必须带 `laneId`；旧事件缺失时归入迁移生成的主 Lane。
+Harness 执行事实必须带 `laneId`；缺失该坐标的事件不属于当前 ledger 契约。
 
 BatonSession 用 `mainLaneId` 指向默认主线（概念上的 lane0，但 ID 仍是不透明值），其它 Lane 是
 可异步推进的支线任务。Lane 的发起者可以是人或 Plugin，`createdFor` 只记录创建来源，不定义
 主/支角色；角色只由 `mainLaneId` 判断。每个 Lane 同时最多一个 driven Turn，Lane 内即使切换
 HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住主线 admission。
-TurnRequest 支线的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与 TurnSummary。
+新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与 TurnSummary。
 
 ## 5. 演进规则
 

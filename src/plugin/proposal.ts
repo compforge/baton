@@ -12,12 +12,29 @@ import { dirname, join } from "node:path";
 
 import { withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
-import {
-  type ReconcileKey,
-  type ReconcileProposal,
-} from "./controller.ts";
+import type { ReconcileKey } from "./controller.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import { validateResourceType } from "./resource.ts";
+
+export interface PluginResourceReconcileProposal {
+  readonly key: ReconcileKey;
+  readonly basedOnGeneration: number;
+  readonly basedOnResourceVersion?: string;
+  readonly basedOnRevision?: never;
+  readonly text: string;
+}
+
+export interface BuiltinResourceReconcileProposal {
+  readonly key: ReconcileKey;
+  readonly basedOnGeneration?: never;
+  readonly basedOnResourceVersion?: never;
+  readonly basedOnRevision: number;
+  readonly text: string;
+}
+
+export type ReconcileProposal =
+  | PluginResourceReconcileProposal
+  | BuiltinResourceReconcileProposal;
 
 export type ProposalOutcome = "submitted" | "dismissed";
 

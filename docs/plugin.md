@@ -8,7 +8,7 @@ Plugin 让长期领域 loop 在不进入 Baton core 的前提下拥有自己的 
 ## 1. 理念与边界
 
 Baton core 不理解 Requirement、Deployment、Review 等领域语义，只提供生命周期、调度、
-持久化、权限、Board、Context 和受控 Output。Plugin 可以封装完整 loop，也可以提供能独立
+持久化、权限、Board、Context 和 Baton verbs。Plugin 可以封装完整 loop，也可以提供能独立
 演进的领域能力或本地自动化。
 
 ```text
@@ -20,8 +20,7 @@ Baton core 不理解 Requirement、Deployment、Review 等领域语义，只提�
 - `spec` 是用户认可的期望与 Contract；
 - `status` 是 Controller 重新观察或计算的当前状态；
 - signal 只提示“可能变化”，reconcile 每次读取最新事实；
-- 智能判断通过 `proposed-input` 交给用户编辑，或通过 `turn-request` 作为非用户发起方请求一个
-  受控的新 Turn，不要求先把业务穷举成 DSL。
+- 智能判断通过 `ask/confirm/draft/harness` 组合人机步骤与 Harness 执行，不要求先把业务穷举成 DSL。
 
 ### 1.1 三种扩展边界
 
@@ -68,7 +67,7 @@ PluginPackage（不可变交付物）
 ```text
 Baton host process
   └── Manager
-        ├── Instance / Resource / Proposal / Interaction / TurnRequest stores
+        ├── Instance / Resource / Proposal / Interaction / HarnessInvocation stores
         ├── keyed reconcile queues / Sources / Watches / Board cache
         └── Supervisor
               └── Runner process × active Binding
@@ -145,26 +144,29 @@ Runner crash 无条件重复副作用。
 Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
 让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
 
-## 5. Output、Board 与 Context
+## 5. Baton verbs、Board 与 Context
 
-### 5.1 受控 Output
+### 5.1 Reconcile-scoped Baton verbs
 
-Controller 当前可以返回：
+Controller 的第一个参数提供 Core-owned verbs：
 
-- `proposed-input`：Baton 持久化 Proposal，用户确认、编辑或丢弃；只有提交后才成为普通 Input；
-- `interaction`：Baton 持久化问题和答案，再重新 enqueue 原 Resource；
-- `turn-request`：Plugin 在直接 user Input 之外请求一个新 Turn；Baton 持久化请求和授权，将其
-  物化为 plugin-source Input，再把 Turn 结果交回原 Resource reconcile；
-- `requeueAfterMs`：安排下一次 reconcile，不代表副作用授权。
+- `ask`：请求一个选项或自由文本答案；
+- `confirm`：请求 grant / decline 决定；
+- `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
+- `harness`：直接形成 plugin-source Input，并显式选择 `main` 或 `new` Lane。
 
-TurnRequest 抽象的是非用户主体创建 Turn 的控制意图，不是 Harness Work。Plugin 不能持有
-HarnessAdapter、Harness 进程或 SDK 句柄，也不能直接调用 Harness；Baton 将获批请求物化为受控
-Input/Attempt，负责路由、权限、并发、取消、Context 和结果持久化。完整契约见
-[TurnRequest](./turn-request.md)。
+verb 调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction、
+草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
+Plugin 用同一个 operation key 读取答案或执行结果。`requeueAfterMs` 仍只负责时间调度。
 
-每个获批请求会获得独立支线 `Lane`；多个支线可受限并发，但不占用会话主 Lane。
-Plugin 只从 Snapshot 读取 `laneId` 和结果，不能选择或复用别的 Lane。Lane 是 BatonSession 原生
-任务线而非 Plugin 私有对象，后续可以跨 HarnessTarget 接力。
+Plugin 可以自由组合这些 primitives：有的辅助动作直接异步执行，有的先询问用户，再按选择进入
+draft、主 Lane 或新 Lane。这个策略属于领域编排，不由 Core 从 Plugin 类型推断。Core 始终拥有
+Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
+[Baton verbs](./baton-verbs.md)。
+
+`lane` 与 Input source 正交：`main` 使用 `mainLaneId`，`new` 创建可并行支线；draft 提交是
+user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行边界，不是 Plugin
+私有对象、worktree 策略或“前台/后台”标签。
 
 ### 5.2 Board
 
@@ -185,7 +187,7 @@ ContextProvider 提供用户通过 `@` 明确选择的只读 Context。`search` 
 
 > Board 更新 ≠ Context 已交付 ≠ Harness 已被唤醒。
 
-Plugin presentation 变化只更新读模型；只有用户提交 Input 或获批 TurnRequest 准备执行时，Baton
+Plugin presentation 变化只更新读模型；只有用户提交 Input 或 HarnessInvocation 准备执行时，Baton
 才组装 Context，并以 DeliveryReceipt 记录 transport 已接受。
 
 ## 6. Plugin authoring 约束
@@ -217,7 +219,7 @@ import type { PluginPackage, Resource } from "@compforge/baton-plugin";
 
 Plugin 只使用 `context.dataDirs`，不自行拼接 `~/.baton`。持久文件带 schema version 并原子替换；
 project scope 可能被多 Runner 并发写，需要跨进程锁。Event、Resource、Proposal、Interaction 和
-TurnRequest 继续使用宿主 API，不能复制到私有 JSON 形成第二真相源。
+HarnessInvocation 继续使用宿主 API，不能复制到私有 JSON 形成第二真相源。
 
 ## 7. 运行与恢复
 
@@ -238,6 +240,6 @@ TurnRequest 继续使用宿主 API，不能复制到私有 JSON 形成第二真�
 - [Resource 生命周期](./resource-lifecycle.md) — 创建、owner、metadata 与删除状态机
 - [Kernel](./kernel.md) — core、Harness 与 Plugin 的顶层边界
 - [工作流](./workflow.md) — Input/Interaction 如何进入统一执行路径
-- [TurnRequest](./turn-request.md) — Plugin 受控请求一个新 Turn
+- [Baton verbs](./baton-verbs.md) — Plugin 编排决议、draft 与 Harness Turn
 - [日志体系](./logging.md) — Plugin 结构化诊断
 - reqloop 领域设计：<https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md>

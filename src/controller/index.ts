@@ -62,17 +62,19 @@ export type {
   SubmitOutcome,
 } from "./input.ts";
 
-export interface TurnRequestInput {
-  readonly turnRequestId: string;
+export interface HarnessInvocationInput {
+  readonly harnessInvocationId: string;
   readonly pluginInstanceId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
+  readonly lane: "main" | "new";
+  readonly source: InputSource;
   readonly messageId: string;
   readonly turnId: string;
   readonly blocks: PromptBlock[];
 }
 
-export type TurnRequestCancellation = "queued" | "running";
+export type HarnessInvocationCancellation = "queued" | "running";
 
 function eventSourceOf(source: InputSource): EventSource {
   return source.type === "user"
@@ -344,44 +346,43 @@ export class Controller {
     return outcome;
   }
 
-  /**
-   * Materializes an approved TurnRequest as plugin-source Input. Its identities
-   * are already durable, and its request for a new driven Turn deliberately
-   * bypasses same-turn send and enters its dedicated side Lane queue.
-   */
-  async enqueueTurnRequest(input: TurnRequestInput): Promise<SubmitOutcome> {
+  /** Materializes a scheduled HarnessInvocation without inferring Lane from source. */
+  async enqueueHarnessInvocation(input: HarnessInvocationInput): Promise<SubmitOutcome> {
     if (
       this.inputs.some(
-        (candidate) =>
-          candidate.source.type === "plugin" &&
-          candidate.source.turnRequestId === input.turnRequestId,
+        (candidate) => candidate.harnessInvocationId === input.harnessInvocationId,
       )
     ) {
       return Promise.reject(
-        new Error(`TurnRequest already has a live Input: ${input.turnRequestId}`),
+        new Error(`HarnessInvocation already has a live Input: ${input.harnessInvocationId}`),
       );
     }
     const target = this.targetFor(input.harnessTargetId);
-    const lane = this.options.session.ensureTurnRequestLane(input.laneId, input.turnRequestId);
-    const outcome = this.sideQueue.enqueue(target, lane.laneId, input.blocks, {
-      source: {
-        type: "plugin",
-        pluginInstanceId: input.pluginInstanceId,
-        turnRequestId: input.turnRequestId,
-      },
+    const laneId = input.lane === "main"
+      ? this.mainLaneId()
+      : this.options.session
+        .ensureHarnessInvocationLane(input.laneId, input.harnessInvocationId)
+        .laneId;
+    const queue = input.lane === "main" ? this.mainQueue : this.sideQueue;
+    const outcome = queue.enqueue(target, laneId, input.blocks, {
+      source: input.source,
+      harnessInvocationId: input.harnessInvocationId,
       identity: {
         messageId: input.messageId,
         turnId: input.turnId,
       },
     });
     this.changed();
-    this.drainSideLanes();
+    if (input.lane === "main") void this.drainMain();
+    else this.drainSideLanes();
     return outcome;
   }
 
   /** Cancels a queued Request, or interrupts its already-admitted Turn. */
-  cancelTurnRequest(turnRequestId: string): TurnRequestCancellation | undefined {
-    const queued = this.sideQueue.cancelTurnRequest(turnRequestId);
+  cancelHarnessInvocation(harnessInvocationId: string): HarnessInvocationCancellation | undefined {
+    const queued =
+      this.mainQueue.cancelHarnessInvocation(harnessInvocationId) ??
+      this.sideQueue.cancelHarnessInvocation(harnessInvocationId);
     if (queued) {
       this.changed();
       return "queued";
@@ -389,8 +390,7 @@ export class Controller {
     for (const active of this.turns.values()) {
       if (
         active.status === "active" &&
-        active.turn?.source.type === "plugin" &&
-        active.turn.source.turnRequestId === turnRequestId
+        active.turn?.harnessInvocationId === harnessInvocationId
       ) {
         void this.interruptRecord(active);
         return "running";

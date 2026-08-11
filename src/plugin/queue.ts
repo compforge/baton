@@ -130,6 +130,14 @@ export class ReconcileQueue {
     return item.completion;
   }
 
+  /** Drop a dirty follow-up after the running reconcile deletes its Resource. */
+  forgetPending(key: ReconcileKey): void {
+    const item = this.pending.get(reconcileKeyId(key));
+    if (!item) return;
+    this.pending.delete(reconcileKeyId(key));
+    item.resolve();
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;

@@ -1,6 +1,10 @@
 import type {
-  Outcome as PublicInteractionOutcome,
-  Snapshot as PublicInteractionSnapshot,
+  AskInput,
+  AskResult,
+  CancellationReason,
+  ConfirmInput,
+  ConfirmResult,
+  ResourceRef,
 } from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
@@ -14,11 +18,9 @@ import type {
   PluginResourceInteractionContext,
 } from "../interaction/types.ts";
 import type { SessionHandle } from "../store/store.ts";
-import type {
-  ReconcileInteraction,
-  ReconcileKey,
-} from "./controller.ts";
+import type { ReconcileKey } from "./controller.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
+import type { BatonVerbContext } from "./verbs.ts";
 
 const QUESTION_ID = "decision";
 
@@ -30,6 +32,28 @@ type InteractionSession = Pick<
 interface Entry {
   readonly opened: EventEnvelope<"interaction.opened">;
   resolution?: InteractionResolution;
+}
+
+interface InteractionOption {
+  readonly optionId: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
+interface ReconcileInteraction {
+  readonly key: ReconcileKey;
+  readonly resource: ResourceRef;
+  readonly basedOnGeneration?: number;
+  readonly basedOnResourceVersion?: string;
+  readonly basedOnRevision?: number;
+  readonly request: {
+    readonly kind: "interaction";
+    readonly decisionKey: string;
+    readonly title: string;
+    readonly prompt: string;
+    readonly options?: readonly InteractionOption[];
+    readonly allowOther?: boolean;
+  };
 }
 
 function interactionIdentity(
@@ -91,7 +115,6 @@ function pluginInteraction(
                 optionId: option.optionId,
                 label: option.label,
                 description: option.description ?? "",
-                ...(option.role === undefined ? {} : { role: option.role }),
               })),
             }),
         ...(request.allowOther === undefined
@@ -102,9 +125,25 @@ function pluginInteraction(
   });
 }
 
+function stableEnvelope(interaction: Interaction): unknown {
+  const { interactionId: _interactionId, pluginContext, ...presentation } =
+    interaction;
+  if (!pluginContext) return presentation;
+  const {
+    basedOnGeneration: _basedOnGeneration,
+    basedOnResourceVersion: _basedOnResourceVersion,
+    basedOnRevision: _basedOnRevision,
+    ...identity
+  } = pluginContext;
+  return { ...presentation, pluginContext: identity };
+}
+
 function outcome(
   resolution: InteractionResolution | undefined,
-): PublicInteractionOutcome | undefined {
+):
+  | { readonly kind: "answered"; readonly values: readonly string[] }
+  | { readonly kind: "cancelled"; readonly reason: CancellationReason }
+  | undefined {
   if (!resolution) return;
   if (resolution.kind === "cancelled") {
     return {
@@ -156,7 +195,76 @@ export class Store {
     this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
 
-  open(draft: ReconcileInteraction): Interaction {
+  ask<TValue extends string>(
+    context: BatonVerbContext,
+    input: AskInput<TValue>,
+  ): AskResult<TValue> {
+    const interaction = this.open({
+      ...context,
+      request: {
+        kind: "interaction",
+        decisionKey: `ask:${input.key}`,
+        title: input.title,
+        prompt: input.prompt,
+        ...(input.choices === undefined
+          ? {}
+          : {
+              options: input.choices.map((choice) => ({
+                optionId: choice.value,
+                label: choice.label,
+                ...(choice.description === undefined
+                  ? {}
+                  : { description: choice.description }),
+              })),
+            }),
+        ...(input.allowOther === undefined
+          ? {}
+          : { allowOther: input.allowOther }),
+      },
+    });
+    const entry = this.entries.get(interaction.interactionId);
+    const resolved = outcome(entry?.resolution);
+    if (!resolved) return Object.freeze({ state: "waiting" });
+    if (resolved.kind === "cancelled") {
+      return Object.freeze({
+        state: "cancelled",
+        reason: resolved.reason,
+      });
+    }
+    return Object.freeze({
+      state: "answered",
+      value: resolved.values[0] as TValue,
+    });
+  }
+
+  confirm(
+    context: BatonVerbContext,
+    input: ConfirmInput,
+  ): ConfirmResult {
+    const result = this.ask(context, {
+      key: `confirm:${input.key}`,
+      title: input.title,
+      prompt: input.prompt,
+      choices: [
+        {
+          value: "grant",
+          label: input.confirmLabel ?? "Allow",
+        },
+        {
+          value: "decline",
+          label: input.declineLabel ?? "Decline",
+        },
+      ],
+    });
+    if (result.state === "waiting" || result.state === "cancelled") {
+      return result;
+    }
+    return Object.freeze({
+      state: result.value === "grant" ? "granted" : "declined",
+    });
+  }
+
+  private open(draft: ReconcileInteraction): Interaction {
     if (draft.key.batonSessionId !== this.session.id) {
       throw new Error(
         `plugin Interaction batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
@@ -167,7 +275,18 @@ export class Store {
     const existingId = this.interactionIdByIdentity.get(identity);
     if (existingId) {
       const existing = this.entries.get(existingId);
-      if (existing) return existing.opened.payload;
+      if (existing) {
+        const candidate = pluginInteraction(draft);
+        if (
+          JSON.stringify(stableEnvelope(existing.opened.payload)) !==
+            JSON.stringify(stableEnvelope(candidate))
+        ) {
+          throw new Error(
+            `plugin Interaction identity conflict for ${draft.request.decisionKey}`,
+          );
+        }
+        return existing.opened.payload;
+      }
     }
 
     const interaction = pluginInteraction(draft);
@@ -218,34 +337,6 @@ export class Store {
         ? {}
         : { resourceOwner: context.resourceOwner }),
     });
-  }
-
-  snapshots(key: ReconcileKey): readonly PublicInteractionSnapshot[] {
-    const resourceOwner = reconcileResourceOwner(key);
-    const snapshots: PublicInteractionSnapshot[] = [];
-    for (const entry of this.entries.values()) {
-      const interaction = entry.opened.payload;
-      const context = interaction.pluginContext;
-      if (
-        interaction.requester.type !== "plugin" ||
-        interaction.requester.pluginInstanceId !== key.pluginInstanceId ||
-        !context ||
-        context.resourceOwner !== resourceOwner ||
-        context.resource.apiVersion !== key.resourceApiVersion ||
-        context.resource.kind !== key.resourceKind ||
-        context.resource.name !== key.resourceId
-      ) {
-        continue;
-      }
-      const resolved = outcome(entry.resolution);
-      snapshots.push(Object.freeze({
-        interactionId: interaction.interactionId,
-        decisionKey: context.decisionKey,
-        resource: context.resource,
-        ...(resolved === undefined ? {} : { outcome: Object.freeze(resolved) }),
-      }));
-    }
-    return Object.freeze(snapshots);
   }
 
   close(): void {

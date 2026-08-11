@@ -7,8 +7,6 @@ import {
   Controller,
   type ControllerOptions,
   type ReconcileKey,
-  type ReconcileProposal,
-  type ReconcileTurnRequest,
 } from "../src/plugin/controller.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 
@@ -70,7 +68,7 @@ afterEach(() => {
 });
 
 describe("plugin Controller", () => {
-  test("provides a frozen snapshot and persists status, wake-up, and proposal", async () => {
+  test("provides a frozen Baton facade and persists status and wake-up", async () => {
     const resources = store(testRoot());
     resources.create<Spec, Status>({
       type: REQ_LOOP_RUN,
@@ -91,23 +89,13 @@ describe("plugin Controller", () => {
           },
           { expectedResourceVersion: resource.metadata.resourceVersion },
         );
-        return {
-          output: {
-            kind: "proposed-input",
-            text: "Please review the implementation.",
-          },
-          requeueAfterMs: 5_000,
-        };
+        return { requeueAfterMs: 5_000 };
       };
-    const proposals: ReconcileProposal[] = [];
     const controller = new Controller({
       store: resources,
       resourceType: REQ_LOOP_RUN,
       reconcile,
       now: () => new Date("2026-07-25T00:00:00.000Z"),
-      onProposal(proposal) {
-        proposals.push(proposal);
-      },
     });
 
     await controller.enqueue(key());
@@ -121,14 +109,6 @@ describe("plugin Controller", () => {
     expect(resources.scheduledReconciles(REQ_LOOP_RUN)[0]?.nextReconcileAt).toEqual(
       new Date("2026-07-25T00:00:05.000Z"),
     );
-    expect(proposals).toEqual([
-      {
-        key: key(),
-        basedOnGeneration: 1,
-        basedOnResourceVersion: "2",
-        text: "Please review the implementation.",
-      },
-    ]);
   });
 
   test("clears an earlier wake-up when reconcile does not request another", async () => {
@@ -147,59 +127,10 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       async reconcile() {},
-      onProposal() {},
     });
 
     await controller.enqueue(key());
     expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
-  });
-
-  test("publishes a TurnRequest with its exact Resource incarnation", async () => {
-    const resources = store(testRoot());
-    const resource = resources.create<Spec>({
-      type: REQ_LOOP_RUN,
-      name: "run_1",
-      spec: { requirement: "ship it" },
-    });
-    const requests: ReconcileTurnRequest[] = [];
-    const controller = new Controller<Spec, Status>({
-      store: resources,
-      resourceType: REQ_LOOP_RUN,
-      async reconcile() {
-        return {
-          output: {
-            kind: "turn-request",
-            requestKey: "implement",
-            title: "Implement requirement",
-            prompt: "Implement run_1.",
-          },
-        };
-      },
-      onProposal() {},
-      onTurnRequest(request) {
-        requests.push(request);
-      },
-    });
-
-    await controller.enqueue(key());
-    expect(requests).toEqual([{
-      key: key(),
-      resource: {
-        apiVersion: REQ_LOOP_RUN.apiVersion,
-        kind: REQ_LOOP_RUN.kind,
-        namespace: "reqloop_default",
-        name: "run_1",
-        uid: resource.metadata.uid,
-      },
-      basedOnGeneration: 1,
-      basedOnResourceVersion: "1",
-      request: {
-        kind: "turn-request",
-        requestKey: "implement",
-        title: "Implement requirement",
-        prompt: "Implement run_1.",
-      },
-    }]);
   });
 
   test("finalizes a terminating Resource only after reconcile succeeds", async () => {
@@ -223,7 +154,6 @@ describe("plugin Controller", () => {
           "2026-07-29T00:00:00.000Z",
         );
       },
-      onProposal() {},
       onResourceDeleted(resource) {
         deleted.push(resource.metadata.name);
       },
@@ -251,7 +181,6 @@ describe("plugin Controller", () => {
       async reconcile() {
         throw new Error("cleanup failed");
       },
-      onProposal() {},
     });
 
     await expect(controller.enqueue(key())).rejects.toThrow("cleanup failed");
@@ -260,7 +189,7 @@ describe("plugin Controller", () => {
     ).toBeDefined();
   });
 
-  test("rejects stale output when spec changes during reconcile", async () => {
+  test("rejects a stale reconcile when spec changes while it is running", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({
       type: REQ_LOOP_RUN,
@@ -275,14 +204,8 @@ describe("plugin Controller", () => {
       async reconcile() {
           entered.resolve();
           await release.promise;
-          return {
-            output: {
-              kind: "proposed-input",
-              text: "Implement the old requirement.",
-            },
-          };
+        return;
         },
-      onProposal() {},
     });
 
     const running = controller.enqueue(key());
@@ -320,13 +243,11 @@ describe("plugin Controller", () => {
       store: firstStore,
       resourceType: REQ_LOOP_RUN,
       reconcile,
-      onProposal() {},
     });
     const secondController = new Controller({
       store: secondStore,
       resourceType: REQ_LOOP_RUN,
       reconcile,
-      onProposal() {},
     });
 
     const first = firstController.enqueue(key());
@@ -355,7 +276,6 @@ describe("plugin Controller", () => {
           runs += 1;
           if (runs === 1) await gate.promise;
         },
-      onProposal() {},
     });
 
     const first = controller.enqueue(key());
@@ -387,7 +307,6 @@ describe("plugin Controller", () => {
           seen.push(resource.metadata.name);
           if (resource.metadata.name === "run_1") await gate.promise;
         },
-      onProposal() {},
     });
 
     const first = controller.enqueue(key("run_1"));
@@ -416,7 +335,6 @@ describe("plugin Controller", () => {
       async reconcile() {
           await gate.promise;
         },
-      onProposal() {},
     });
 
     const running = controller.enqueue(key("run_1"));
@@ -449,7 +367,6 @@ describe("plugin Controller", () => {
           started.push(resource.metadata.name);
           await gate.promise;
         },
-      onProposal() {},
     });
 
     const first = controller.enqueue(key("run_1"));
@@ -480,7 +397,6 @@ describe("plugin Controller", () => {
             throw new Error("connector unavailable");
           }
         },
-      onProposal() {},
     });
 
     const failed = controller.enqueue(key("run_1"));
@@ -505,7 +421,6 @@ describe("plugin Controller", () => {
           await gate.promise;
           seen.push(resource.metadata.name);
         },
-      onProposal() {},
     });
     const mutable = key();
 
@@ -532,7 +447,6 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       reconcile: invalid,
-      onProposal() {},
     });
 
     await expect(controller.enqueue(key())).rejects.toThrow(
@@ -548,7 +462,6 @@ describe("plugin Controller", () => {
           resourceType: REQ_LOOP_RUN,
           reconcile: invalid,
           maxConcurrency: 0,
-          onProposal() {},
         }),
     ).toThrow("maxConcurrency must be a positive integer");
   });

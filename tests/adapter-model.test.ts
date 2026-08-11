@@ -300,7 +300,7 @@ describe("Codex model capability", () => {
 
   test("maps Plan mode to Codex collaborationMode", async () => {
     const adapter = new CodexAdapter({ interactionHandler });
-    const turnRequests: Record<string, unknown>[] = [];
+    const harnessInvocations: Record<string, unknown>[] = [];
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {
         if (method === "model/list") {
@@ -323,7 +323,7 @@ describe("Codex model capability", () => {
           };
         }
         if (method === "turn/start") {
-          turnRequests.push(params);
+          harnessInvocations.push(params);
           return { turn: { id: "turn-plan", status: "inProgress" } };
         }
         throw new Error(`unexpected request: ${method}`);
@@ -347,7 +347,7 @@ describe("Codex model capability", () => {
     });
     await Bun.sleep(0);
 
-    expect(turnRequests[0]?.collaborationMode).toEqual({
+    expect(harnessInvocations[0]?.collaborationMode).toEqual({
       mode: "plan",
       settings: {
         model: "gpt-5",
@@ -355,8 +355,8 @@ describe("Codex model capability", () => {
         developer_instructions: null,
       },
     });
-    expect(turnRequests[0]?.model).toBeUndefined();
-    expect(turnRequests[0]?.effort).toBeUndefined();
+    expect(harnessInvocations[0]?.model).toBeUndefined();
+    expect(harnessInvocations[0]?.effort).toBeUndefined();
   });
 
   test("rejects an invalid Codex mode before catalog requests", async () => {
@@ -425,7 +425,7 @@ describe("Codex model capability", () => {
 
   test("normalizes model/list and sends the selected model on the next turn", async () => {
     const adapter = new CodexAdapter({ interactionHandler });
-    const turnRequests: Record<string, unknown>[] = [];
+    const harnessInvocations: Record<string, unknown>[] = [];
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {
         if (method === "model/list") {
@@ -446,7 +446,7 @@ describe("Codex model capability", () => {
           };
         }
         if (method === "turn/start") {
-          turnRequests.push(params);
+          harnessInvocations.push(params);
           return { turn: { id: "turn-1", status: "completed" } };
         }
         throw new Error(`unexpected request: ${method}`);
@@ -469,8 +469,8 @@ describe("Codex model capability", () => {
     });
     await Bun.sleep(0); // turn/start 在 submit 回执后异步发出，等微任务刷新
 
-    expect(turnRequests[0]?.model).toBe("gpt-5");
-    expect(turnRequests[0]?.effort).toBe("high");
+    expect(harnessInvocations[0]?.model).toBe("gpt-5");
+    expect(harnessInvocations[0]?.effort).toBe("high");
     await adapter.setEffort(ref, "default");
     expect(adapter.currentEffort(ref)).toBeNull();
     await adapter.sendTurn(ref, {
@@ -479,7 +479,7 @@ describe("Codex model capability", () => {
       blocks: [{ type: "text", text: "again" }],
     });
     await Bun.sleep(0);
-    expect(turnRequests[1]?.effort).toBe("medium");
+    expect(harnessInvocations[1]?.effort).toBe("medium");
   });
 
   test("rejects efforts unsupported by the selected Codex model", async () => {

@@ -117,23 +117,74 @@ function laneController(
 }
 
 describe("Baton Lane scheduling", () => {
+  test("HarnessInvocation placement and Input source remain independent", async () => {
+    const adapters: LaneAdapter[] = [];
+    const controller = laneController(adapters);
+    const direct = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_main_plugin",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId: session.meta.mainLaneId,
+      lane: "main",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_main_plugin",
+      turnId: "t_main_plugin",
+      blocks: blocks("direct input"),
+    });
+    await until(() => adapters[0]?.prompts.length === 1);
+    expect(controller.sideRunCount).toBe(0);
+    expect(controller.inputs[0]).toMatchObject({
+      laneId: session.meta.mainLaneId,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      harnessInvocationId: "trq_main_plugin",
+    });
+    adapters[0]!.finish();
+    expect(await direct).toBe("completed");
+
+    const edited = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_main_user",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId: session.meta.mainLaneId,
+      lane: "main",
+      source: { type: "user" },
+      messageId: "m_main_user",
+      turnId: "t_main_user",
+      blocks: blocks("edited input"),
+    });
+    await until(() => adapters[0]!.prompts.length === 2);
+    const editedEvent = session.readEvents().find((event) =>
+      event.kind === "user_message" && event.payload.messageId === "m_main_user"
+    );
+    expect(editedEvent).toMatchObject({
+      source: { type: "user" },
+      laneId: session.meta.mainLaneId,
+    });
+    adapters[0]!.finish();
+    expect(await edited).toBe("completed");
+  });
+
   test("same-Target side Lanes run beside the main Lane in separate native sessions", async () => {
     const adapters: LaneAdapter[] = [];
     const controller = laneController(adapters);
-    const workerOne = controller.enqueueTurnRequest({
-      turnRequestId: "trq_1",
+    const workerOne = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_1",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_1",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_1",
       turnId: "t_worker_1",
       blocks: blocks("worker one"),
     });
-    const workerTwo = controller.enqueueTurnRequest({
-      turnRequestId: "trq_2",
+    const workerTwo = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_2",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_2",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_2",
       turnId: "t_worker_2",
       blocks: blocks("worker two"),
@@ -191,14 +242,16 @@ describe("Baton Lane scheduling", () => {
       .toEqual(new Set([session.meta.mainLaneId]));
   });
 
-  test("main interrupt and TurnRequest cancellation target only their own Lane", async () => {
+  test("main interrupt and HarnessInvocation cancellation target only their own Lane", async () => {
     const adapters: LaneAdapter[] = [];
     const controller = laneController(adapters);
-    const worker = controller.enqueueTurnRequest({
-      turnRequestId: "trq_cancel",
+    const worker = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_cancel",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_cancel",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_cancel",
       turnId: "t_worker_cancel",
       blocks: blocks("background"),
@@ -213,7 +266,7 @@ describe("Baton Lane scheduling", () => {
     expect(adapters[0]!.cancelCalls).toBe(0);
     expect(controller.sideRunCount).toBe(1);
 
-    expect(controller.cancelTurnRequest("trq_cancel")).toBe("running");
+    expect(controller.cancelHarnessInvocation("trq_cancel")).toBe("running");
     await until(() => adapters[0]!.cancelCalls === 1);
     expect(await worker).toBe("completed");
   });
@@ -221,20 +274,24 @@ describe("Baton Lane scheduling", () => {
   test("side Lane concurrency does not block the main Lane", async () => {
     const adapters: LaneAdapter[] = [];
     const controller = laneController(adapters, 1);
-    const first = controller.enqueueTurnRequest({
-      turnRequestId: "trq_first",
+    const first = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_first",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_first",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_first",
       turnId: "t_first",
       blocks: blocks("first"),
     });
-    const second = controller.enqueueTurnRequest({
-      turnRequestId: "trq_second",
+    const second = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "trq_second",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_second",
+      lane: "new",
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_second",
       turnId: "t_second",
       blocks: blocks("second"),

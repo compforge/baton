@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ReconcileInteraction } from "../src/plugin/controller.ts";
 import { Store as PluginInteractionStore } from "../src/plugin/interaction.ts";
 import { SessionStore } from "../src/store/store.ts";
 
@@ -22,83 +21,74 @@ afterEach(() => {
 });
 
 describe("plugin Interaction Store", () => {
-  test("persists one decision per Resource key and restores its outcome", () => {
+  test("returns level-based ask and confirm results", () => {
     const handle = session();
-    const key = {
-      batonSessionId: handle.id,
-      pluginInstanceId: "reqloop_default",
-      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-      resourceKind: "Requirement",
-      resourceId: "run_1",
-    };
-    const resource = {
-      apiVersion: key.resourceApiVersion,
-      kind: key.resourceKind,
-      namespace: key.pluginInstanceId,
-      name: key.resourceId,
-      uid: "pr_resource_uid",
-    } as const;
-    const draft: ReconcileInteraction = {
-      key,
-      resource,
-      basedOnGeneration: 3,
-      basedOnResourceVersion: "7",
-      request: {
-        kind: "interaction",
-        decisionKey: "associate-pr",
-        title: "Associate pull request",
-        prompt: "Choose a requirement",
-        options: [
-          { optionId: "req_1", label: "REQ-1" },
-          { optionId: "reject", label: "Do not associate", role: "reject" },
-        ],
-      },
-    };
     const store = new PluginInteractionStore(handle);
-
-    const opened = store.open(draft);
-    expect(store.open(draft).interactionId).toBe(opened.interactionId);
-    expect(
-      handle
-        .readEvents()
-        .filter((event) => event.kind === "interaction.opened"),
-    ).toHaveLength(1);
-    expect(
-      store.resolve(opened.interactionId, {
-        kind: "question",
-        outcome: "answered",
-        answers: { decision: ["unknown"] },
-      }),
-    ).toBeUndefined();
-    expect(
-      store.resolve(opened.interactionId, {
-        kind: "question",
-        outcome: "answered",
-        answers: { decision: ["req_1"] },
-      }),
-    ).toEqual(key);
-    expect(store.snapshots(key)).toEqual([
-      {
-        interactionId: opened.interactionId,
-        decisionKey: "associate-pr",
-        resource,
-        outcome: { kind: "answered", values: ["req_1"] },
+    const context = {
+      key: {
+        batonSessionId: handle.id,
+        pluginInstanceId: "reqloop_default",
+        resourceApiVersion: "reqloop.baton.dev/v1alpha1",
+        resourceKind: "Requirement",
+        resourceId: "run_1",
       },
-    ]);
-    store.close();
+      resource: {
+        apiVersion: "reqloop.baton.dev/v1alpha1",
+        kind: "Requirement",
+        namespace: "reqloop_default",
+        name: "run_1",
+        uid: "pr_resource_uid",
+      },
+      basedOnGeneration: 1,
+      basedOnResourceVersion: "1",
+    };
+    const input = {
+      key: "associate-pr",
+      title: "Associate pull request",
+      prompt: "Choose a requirement",
+      choices: [{ value: "req_1", label: "REQ-1" }],
+    } as const;
 
-    const restored = new PluginInteractionStore(handle);
-    expect(restored.snapshots(key)[0]?.outcome).toEqual({
-      kind: "answered",
-      values: ["req_1"],
+    expect(store.ask(context, input)).toEqual({ state: "waiting" });
+    const interaction = [...handle.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(store.resolve(interaction!.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["req_1"] },
+    })).toEqual(context.key);
+    expect(store.ask({
+      ...context,
+      basedOnResourceVersion: "2",
+    }, input)).toEqual({
+      state: "answered",
+      value: "req_1",
     });
-    expect(
-      restored.resolve(opened.interactionId, {
-        kind: "cancelled",
-        reason: "user",
-      }),
-    ).toBeUndefined();
-    restored.close();
+    expect(() => store.ask(context, {
+      ...input,
+      prompt: "Choose a different requirement",
+    })).toThrow("plugin Interaction identity conflict");
+
+    expect(store.confirm(context, {
+      key: "close",
+      title: "Close requirement",
+      prompt: "Close it?",
+    })).toEqual({ state: "waiting" });
+    const confirmation = [...handle.loadState().interactions.values()]
+      .find(({ interaction: candidate }) =>
+        candidate.interactionId !== interaction?.interactionId
+      )?.interaction;
+    store.resolve(confirmation!.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["grant"] },
+    });
+    expect(store.confirm(context, {
+      key: "close",
+      title: "Close requirement",
+      prompt: "Close it?",
+    })).toEqual({ state: "granted" });
+    store.close();
   });
 
 });

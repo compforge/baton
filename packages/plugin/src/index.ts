@@ -19,7 +19,20 @@ export type {
 
 export type { ContextProvider } from "./context.ts";
 
-export type { TurnRequestOutput } from "./turn-request.ts";
+export type {
+  AskChoice,
+  AskInput,
+  AskResult,
+  Baton,
+  CancellationReason,
+  ConfirmInput,
+  ConfirmResult,
+  DraftInput,
+  DraftResult,
+  HarnessInput,
+  HarnessResult,
+  LanePlacement,
+} from "./baton.ts";
 
 export type {
   PluginActivationContext,
@@ -39,17 +52,7 @@ export type {
 } from "./package.ts";
 
 export type {
-  CancellationReason,
-  Option,
-  OptionRole,
-  Outcome,
-  Output,
-  Snapshot,
-} from "./interaction.ts";
-
-export type {
   Controller,
-  PluginOutput,
   ReconcileRequest,
   ReconcileResult,
 } from "./reconcile.ts";
@@ -101,8 +104,6 @@ export type {
   InputStatus,
   InteractionRequester,
   SessionRunState,
-  TurnRequestPhase,
-  TurnRequestSnapshot,
   TurnSummary,
   TurnSummaryToolCall,
 } from "./snapshot.ts";

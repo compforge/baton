@@ -109,7 +109,7 @@ export type LaneTargetState = HarnessTargetState;
 
 /** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
 export interface TimelineItem {
-  type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error" | "turn_request";
+  type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error" | "harness_invocation";
   id: string;
 }
 
@@ -119,19 +119,20 @@ export interface TurnSummaryState extends TurnSummary {
   laneId?: string;
 }
 
-export interface TurnRequestState {
-  requestId: string;
+export interface HarnessInvocationState {
+  invocationId: string;
   title: string;
   pluginInstanceId?: string;
   phase:
-    | "pending_approval"
-    | "declined"
+    | "awaiting_input"
     | "queued"
     | "running"
     | "uncertain"
     | "completed"
     | "cancelled";
   harnessTargetId?: string;
+  delivery?: "draft" | "direct";
+  lane?: "main" | "new";
   laneId?: string;
   messageId?: string;
   turnId?: string;
@@ -200,7 +201,7 @@ export interface SessionState {
    */
   approvalReviews: Map<string, ApprovalReviewUpdate>;
   /** Compact cards for non-user Turn initiation; raw events remain available by Lane. */
-  turnRequests: Map<string, TurnRequestState>;
+  harnessInvocations: Map<string, HarnessInvocationState>;
   usage: UsageTotal;
   /** Target-scoped 状态统一入口；Harness 类型不是状态实例的查询键。 */
   perTarget: Map<string, HarnessTargetState>;
@@ -235,7 +236,7 @@ export function emptySessionState(): SessionState {
     tasks: new Map(),
     interactions: new Map(),
     approvalReviews: new Map(),
-    turnRequests: new Map(),
+    harnessInvocations: new Map(),
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -451,7 +452,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     case "agent_thought": {
       applyMessageUpsert(state, ev, roleOfKind(ev.kind));
       if (ev.kind === "user_message") {
-        const request = [...state.turnRequests.values()].find(
+        const request = [...state.harnessInvocations.values()].find(
           (candidate) => candidate.messageId === ev.payload.messageId,
         );
         if (request) request.phase = "running";
@@ -597,10 +598,10 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       const update = ev.payload;
       const request =
         update.phase === "prepared"
-          ? [...state.turnRequests.values()].find(
+          ? [...state.harnessInvocations.values()].find(
               (candidate) => candidate.messageId === update.inputId,
             )
-          : [...state.turnRequests.values()].find(
+          : [...state.harnessInvocations.values()].find(
               (candidate) => candidate.attemptId === update.attemptId,
             );
       if (!request) break;
@@ -611,28 +612,31 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       }
       break;
     }
-    case "_baton_turn_request_recorded": {
-      if (state.turnRequests.has(ev.payload.requestId)) break;
-      state.turnRequests.set(ev.payload.requestId, {
-        requestId: ev.payload.requestId,
+    case "_baton_harness_invocation_recorded": {
+      if (state.harnessInvocations.has(ev.payload.invocationId)) break;
+      state.harnessInvocations.set(ev.payload.invocationId, {
+        invocationId: ev.payload.invocationId,
         title: ev.payload.title,
         pluginInstanceId:
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
-        phase: "pending_approval",
-        harnessTargetId: ev.payload.requestedHarnessTargetId,
+        phase: ev.payload.delivery === "draft" ? "awaiting_input" : "queued",
+        delivery: ev.payload.delivery,
+        lane: ev.payload.lane,
+        harnessTargetId: ev.payload.harnessTargetId,
       });
-      state.timeline.push({ type: "turn_request", id: ev.payload.requestId });
+      state.timeline.push({
+        type: "harness_invocation",
+        id: ev.payload.invocationId,
+      });
       break;
     }
-    case "_baton_turn_request_authorization_resolved": {
-      const request = state.turnRequests.get(ev.payload.requestId);
-      if (!request) break;
-      request.phase = ev.payload.outcome === "allowed" ? "queued" : "declined";
-      request.harnessTargetId = ev.payload.harnessTargetId ?? request.harnessTargetId;
+    case "_baton_harness_invocation_input_submitted": {
+      const request = state.harnessInvocations.get(ev.payload.invocationId);
+      if (request) request.phase = "queued";
       break;
     }
-    case "_baton_turn_request_scheduled": {
-      const request = state.turnRequests.get(ev.payload.requestId);
+    case "_baton_harness_invocation_scheduled": {
+      const request = state.harnessInvocations.get(ev.payload.invocationId);
       if (!request) break;
       request.phase = "queued";
       request.harnessTargetId = ev.payload.harnessTargetId;
@@ -641,8 +645,8 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       request.turnId = ev.payload.turnId;
       break;
     }
-    case "_baton_turn_request_cancelled": {
-      const request = state.turnRequests.get(ev.payload.requestId);
+    case "_baton_harness_invocation_cancelled": {
+      const request = state.harnessInvocations.get(ev.payload.invocationId);
       if (request && request.phase !== "completed") request.phase = "cancelled";
       break;
     }
@@ -683,7 +687,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         laneId: ev.laneId,
       };
       state.turnSummaries.push(summary);
-      const request = [...state.turnRequests.values()].find(
+      const request = [...state.harnessInvocations.values()].find(
         (candidate) => candidate.turnId === ev.payload.turnId,
       );
       if (request) {

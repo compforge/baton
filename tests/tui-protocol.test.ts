@@ -1110,7 +1110,7 @@ describe("BatonChatProtocol transcript projection", () => {
     }
   });
 
-  test("projects a side Lane as one TurnRequest card and hides its raw transcript", async () => {
+  test("projects a side Lane as one HarnessInvocation card and hides its raw transcript", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-worker-lane-"));
     try {
       const store = new SessionStore(root);
@@ -1119,13 +1119,13 @@ describe("BatonChatProtocol transcript projection", () => {
         harnessTargetId: "codex",
         harness: "codex",
       });
-      session.ensureTurnRequestLane("hl_worker", "trq_worker");
+      session.ensureHarnessInvocationLane("hl_worker", "hinv_worker");
       session.append({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
-        kind: "_baton_turn_request_recorded",
+        kind: "_baton_harness_invocation_recorded",
         payload: {
-          requestId: "trq_worker",
-          requestKey: "implement",
+          invocationId: "hinv_worker",
+          operationKey: "implement",
           resourceOwner: "plugin",
           resource: {
             apiVersion: "reqloop.baton.dev/v1alpha1",
@@ -1136,13 +1136,16 @@ describe("BatonChatProtocol transcript projection", () => {
           },
           title: "Implement requirement",
           prompt: "Implement REQ-1",
+          delivery: "direct",
+          lane: "new",
+          harnessTargetId: "codex",
         },
       });
       session.append({
         source: { type: "baton" },
-        kind: "_baton_turn_request_scheduled",
+        kind: "_baton_harness_invocation_scheduled",
         payload: {
-          requestId: "trq_worker",
+          invocationId: "hinv_worker",
           messageId: "m_worker",
           turnId: "t_worker",
           harnessTargetId: "codex",
@@ -1190,7 +1193,7 @@ describe("BatonChatProtocol transcript projection", () => {
       const items = protocol.stateStore.getState("timeline").items;
       expect(items.find((item) => item.id === "m_worker")).toBeUndefined();
       expect(items.find((item) => item.id === "m_worker_answer")).toBeUndefined();
-      expect(items.find((item) => item.id === "turn-request:trq_worker")).toMatchObject({
+      expect(items.find((item) => item.id === "harness-invocation:hinv_worker")).toMatchObject({
         kind: "task",
         status: "completed",
         title: "Implement requirement · completed",
@@ -1866,68 +1869,6 @@ describe("interaction eventization: pending projects from the event stream", () 
       rmSync(root, { recursive: true, force: true });
     }
   });
-  test("shows the live Target for an implicit TurnRequest and fixes an explicit one", async () => {
-    const root = mkdtempSync(join(tmpdir(), "baton-tui-turn-request-"));
-    try {
-      const store = new SessionStore(root);
-      const session = store.createSession({ cwd: "/repo" });
-      const protocol = new BatonChatProtocol(
-        store,
-        DEFAULT_CONFIG,
-        { session, resumed: false },
-        () => undefined,
-      );
-      session.append({
-        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
-        kind: "interaction.opened",
-        payload: {
-          kind: "permission",
-          interactionId: "ix_turn_implicit",
-          requester: { type: "plugin", pluginInstanceId: "reqloop_default" },
-          turnRequestContext: { turnRequestId: "trq_implicit" },
-          title: "Implement requirement",
-          description: "Prompt (read-only):\n\nImplement it.",
-          options: APPROVAL_OPTIONS,
-        },
-      });
-      expect(
-        protocol.stateStore.getState("composer").interactions?.[0],
-      ).toMatchObject({
-        requester: "reqloop_default",
-        approval: { description: expect.stringContaining("Target: codex") },
-      });
-
-      await protocol.command("claude", "");
-      expect(
-        protocol.stateStore.getState("composer").interactions?.[0],
-      ).toMatchObject({
-        approval: { description: expect.stringContaining("Target: claude") },
-      });
-      session.append({
-        source: { type: "plugin", pluginInstanceId: "reqloop_default" },
-        kind: "interaction.opened",
-        payload: {
-          kind: "permission",
-          interactionId: "ix_turn_explicit",
-          requester: { type: "plugin", pluginInstanceId: "reqloop_default" },
-          turnRequestContext: {
-            turnRequestId: "trq_explicit",
-            requestedHarnessTargetId: "codex",
-          },
-          title: "Review requirement",
-          options: APPROVAL_OPTIONS,
-        },
-      });
-      expect(
-        protocol.stateStore.getState("composer").interactions?.[1],
-      ).toMatchObject({
-        approval: { description: expect.stringContaining("Target: codex") },
-      });
-      await protocol.exit();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("Plugin Proposal projection", () => {
@@ -2004,6 +1945,68 @@ describe("Plugin Proposal projection", () => {
       expect(submittedInputs).toEqual(["Check the implementation and tests"]);
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
 
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a HarnessInvocation draft stays editable before scheduling", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-invocation-input-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      let pending = [{
+        invocationId: "hinv_edit",
+        pluginInstanceId: "reqloop_default",
+        title: "Handle review",
+        prompt: "Handle every review comment.",
+      }];
+      let submitted: unknown;
+      const internals = protocol as unknown as {
+        changed(): void;
+        plugins: {
+          listPendingHarnessInvocationInputs(): typeof pending;
+          resolveHarnessInvocationInput(invocationId: string, outcome: unknown): boolean;
+        };
+      };
+      internals.plugins.listPendingHarnessInvocationInputs = () => pending;
+      internals.plugins.resolveHarnessInvocationInput = (invocationId, outcome) => {
+        submitted = { invocationId, outcome };
+        pending = [];
+        return true;
+      };
+      internals.changed();
+      expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
+        id: "hinv_edit",
+        kind: "suggested_input",
+        title: "Handle review",
+        text: "Handle every review comment.",
+      }]);
+
+      await protocol.resolveInteraction("hinv_edit", {
+        kind: "suggested_input",
+        outcome: "submitted",
+        text: "Handle only the valid review comments.",
+      });
+      expect(submitted).toEqual({
+        invocationId: "hinv_edit",
+        outcome: {
+          kind: "submitted",
+          blocks: [{
+            type: "text",
+            text: "Handle only the valid review comments.",
+          }],
+        },
+      });
+      expect(session.meta.preview).toBe("Handle only the valid review comments.");
+      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });

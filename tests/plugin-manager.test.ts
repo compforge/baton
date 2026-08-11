@@ -11,6 +11,7 @@ import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
+import type { ScheduledHarnessInvocation } from "../src/plugin/harness-invocation.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 interface Spec {
@@ -103,7 +104,7 @@ afterEach(() => {
 });
 
 describe("plugin Manager", () => {
-  test("persists a Resource Interaction and reconciles its answer", async () => {
+  test("persists baton.ask and reconciles its durable answer", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -115,7 +116,7 @@ describe("plugin Manager", () => {
       name: "run_1",
       spec: { value: "run_1" },
     });
-    const snapshots: unknown[] = [];
+    const states: string[] = [];
     const manager = new Manager({
       proposals: new ProposalStore({ session }),
       session,
@@ -125,27 +126,16 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(baton) {
-        const current = baton.pluginInteractions.find(
-          (interaction) => interaction.decisionKey === "associate-pr",
-        );
-        snapshots.push(current?.outcome);
-        if (current?.outcome) return;
-        return {
-          output: {
-            kind: "interaction",
-            decisionKey: "associate-pr",
-            title: "Associate pull request",
-            prompt: "Choose a requirement",
-            options: [
-              { optionId: "req_1", label: "REQ-1" },
-              {
-                optionId: "reject",
-                label: "Do not associate",
-                role: "reject",
-              },
-            ],
-          },
-        };
+        const result = await baton.ask({
+          key: "associate-pr",
+          title: "Associate pull request",
+          prompt: "Choose a requirement",
+          choices: [
+            { value: "req_1", label: "REQ-1" },
+            { value: "reject", label: "Do not associate" },
+          ],
+        });
+        states.push(result.state === "answered" ? `${result.state}:${result.value}` : result.state);
       },
     });
     const reconcileKey = {
@@ -171,10 +161,8 @@ describe("plugin Manager", () => {
         answers: { decision: ["req_1"] },
       }),
     ).toBe(true);
-    expect(snapshots).toEqual([
-      undefined,
-      { kind: "answered", values: ["req_1"] },
-    ]);
+    await waitFor(() => states.length === 2);
+    expect(states).toEqual(["waiting", "answered:req_1"]);
     expect(
       session.loadState().interactions.get(interaction!.interactionId)
         ?.resolution,
@@ -186,7 +174,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("authorizes, schedules, and reconciles a TurnRequest result", async () => {
+  test("runs baton.harness on a new lane once and reconciles its result", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -198,14 +186,9 @@ describe("plugin Manager", () => {
       name: "run_1",
       spec: { value: "run_1" },
     });
-    const phases: Array<string | undefined> = [];
-    const scheduled: Array<{
-      requestId: string;
-      harnessTargetId: string;
-      messageId: string;
-      turnId: string;
-      prompt: string;
-    }> = [];
+    const states: string[] = [];
+    const scheduled: ScheduledHarnessInvocation[] = [];
+    let selectedHarnessTargetId = "claude";
     const manager = new Manager({
       proposals: new ProposalStore({ session }),
       session,
@@ -218,7 +201,8 @@ describe("plugin Manager", () => {
           ],
         };
       },
-      enqueueTurnRequest(request) {
+      selectedHarnessTargetId: () => selectedHarnessTargetId,
+      enqueueHarnessInvocation(request) {
         scheduled.push(request);
       },
       onProposal() {},
@@ -227,19 +211,12 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(baton) {
-        const request = baton.turnRequests.find(
-          (candidate) => candidate.requestKey === "implement",
-        );
-        phases.push(request?.phase);
-        if (request) return;
-        return {
-          output: {
-            kind: "turn-request",
-            requestKey: "implement",
-            title: "Implement requirement",
-            prompt: "Implement run_1.",
-          },
-        };
+        const result = await baton.harness({
+          key: "implement",
+          prompt: "Implement run_1.",
+          lane: "new",
+        });
+        states.push(result.state === "pending" ? `${result.state}:${result.phase}` : result.state);
       },
     });
     const reconcileKey = {
@@ -251,24 +228,19 @@ describe("plugin Manager", () => {
     };
 
     await manager.enqueue(reconcileKey);
-    const interaction = [...session.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(interaction?.turnRequestContext).toBeDefined();
-    expect(
-      await manager.resolveInteraction(
-        interaction!.interactionId,
-        { kind: "permission", outcome: "selected", optionId: "allow_once" },
-        { harnessTargetId: "claude" },
-      ),
-    ).toBe(true);
     await waitFor(() => scheduled.length === 1);
     expect(scheduled[0]).toMatchObject({
       harnessTargetId: "claude",
-      prompt: "Implement run_1.",
+      blocks: [{ type: "text", text: "Implement run_1." }],
+      source: "plugin",
+      lane: "new",
     });
-    await waitFor(() => phases.includes("queued"));
+    expect(scheduled[0]?.laneId).not.toBe(session.meta.mainLaneId);
+    expect([...session.loadState().interactions.values()]).toEqual([]);
+    expect(states).toEqual(["pending:queued"]);
     await manager.start();
     expect(scheduled).toHaveLength(1);
+    selectedHarnessTargetId = "codex";
 
     const input = scheduled[0]!;
     session.append({
@@ -282,10 +254,10 @@ describe("plugin Manager", () => {
       turnId: input.turnId,
       payload: {
         messageId: input.messageId,
-        content: [{ type: "text", text: input.prompt }],
+        content: [...input.blocks],
       },
     });
-    await waitFor(() => phases.includes("running"));
+    await waitFor(() => states.includes("pending:running"));
     session.append({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
@@ -299,8 +271,8 @@ describe("plugin Manager", () => {
         toolCalls: [],
       },
     });
-    await waitFor(() => phases.includes("completed"));
-    expect(manager.listTurnRequests()[0]).toMatchObject({
+    await waitFor(() => states.includes("completed"));
+    expect(manager.listHarnessInvocations()[0]).toMatchObject({
       phase: "completed",
       result: { agentText: "Implemented." },
     });
@@ -308,7 +280,79 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("cancels a pre-admission TurnRequest when its Resource incarnation is deleted", async () => {
+  test("holds baton.draft until the edited input is submitted", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const scheduled: ScheduledHarnessInvocation[] = [];
+    const manager = new Manager({
+      proposals: new ProposalStore({ session }),
+      session,
+      snapshot: () => ({
+        ...emptyBatonSnapshot(session.id),
+        harnessTargets: [{ id: "codex", harness: "codex" }],
+      }),
+      selectedHarnessTargetId: () => "codex",
+      enqueueHarnessInvocation(request) {
+        scheduled.push(request);
+      },
+      onProposal() {},
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(baton) {
+        await baton.draft({
+          key: "implement",
+          prompt: "Implement run_1.",
+        });
+      },
+    });
+    await manager.enqueue({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    });
+    expect(scheduled).toEqual([]);
+    expect(manager.listPendingHarnessInvocationInputs()).toMatchObject([{
+      title: "implement",
+      prompt: "Implement run_1.",
+    }]);
+
+    const invocationId = manager.listPendingHarnessInvocationInputs()[0]!.invocationId;
+    expect(manager.resolveHarnessInvocationInput(invocationId, {
+      kind: "submitted",
+      blocks: [{
+        type: "text",
+        text: "Implement run_1 with the focused test only.",
+      }],
+    })).toBe(true);
+    await waitFor(() => scheduled.length === 1);
+    expect(scheduled[0]).toMatchObject({
+      invocationId,
+      blocks: [{
+        type: "text",
+        text: "Implement run_1 with the focused test only.",
+      }],
+      source: "user",
+      lane: "main",
+      laneId: session.meta.mainLaneId,
+    });
+    expect(manager.listPendingHarnessInvocationInputs()).toEqual([]);
+    await manager.close();
+  });
+
+  test("cancels a pre-admission HarnessInvocation when its Resource incarnation is deleted", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -325,8 +369,13 @@ describe("plugin Manager", () => {
     const manager = new Manager({
       proposals: new ProposalStore({ session }),
       session,
-      enqueueTurnRequest() {},
-      cancelTurnRequest(requestId) {
+      snapshot: () => ({
+        ...emptyBatonSnapshot(session.id),
+        harnessTargets: [{ id: "codex", harness: "codex" }],
+      }),
+      selectedHarnessTargetId: () => "codex",
+      enqueueHarnessInvocation() {},
+      cancelHarnessInvocation(requestId) {
         cancelled.push(requestId);
         return "queued";
       },
@@ -338,16 +387,13 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(_baton, resource) {
+      async reconcile(baton, resource) {
         if (resource.metadata.deletionTimestamp) return;
-        return {
-          output: {
-            kind: "turn-request",
-            requestKey: "implement",
-            title: "Implement requirement",
-            prompt: "Implement run_1.",
-          },
-        };
+        await baton.harness({
+          key: "implement",
+          prompt: "Implement run_1.",
+          lane: "main",
+        });
       },
     });
     const reconcileKey = {
@@ -359,7 +405,7 @@ describe("plugin Manager", () => {
     };
 
     await manager.enqueue(reconcileKey);
-    const requestId = manager.listTurnRequests()[0]!.requestId;
+    const requestId = manager.listHarnessInvocations()[0]!.invocationId;
     resources.requestDeletion(
       resourceType("Requirement"),
       "run_1",
@@ -368,7 +414,7 @@ describe("plugin Manager", () => {
     await manager.enqueue(reconcileKey);
     await Bun.sleep(20);
 
-    expect(manager.listTurnRequests()[0]?.phase).toBe("cancelled");
+    expect(manager.listHarnessInvocations()[0]?.phase).toBe("cancelled");
     expect(cancelled).toEqual([requestId]);
     expect(failures).toEqual([]);
     await manager.close();
@@ -382,15 +428,10 @@ describe("plugin Manager", () => {
     createResource(deployStore, "Deployment", "deployment_1");
     const gate = deferred();
     const started: string[] = [];
-    const proposals: Proposal[] = [];
-    const persisted = proposalStore(root);
     const manager = new Manager({
       maxTotalConcurrency: 1,
-      proposals: persisted,
-      onProposal(proposal) {
-        expect(persisted.get(proposal.proposalId)).toEqual(proposal);
-        proposals.push(proposal);
-      },
+      proposals: proposalStore(root),
+      onProposal() {},
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
@@ -398,12 +439,7 @@ describe("plugin Manager", () => {
       async reconcile(_baton, resource) {
           started.push(resource.metadata.namespace);
           await gate.promise;
-          return {
-            output: {
-              kind: "proposed-input",
-              text: "Review requirement",
-            },
-          };
+          return;
         },
     });
     manager.registerController<Spec, Record<string, never>>({
@@ -422,7 +458,6 @@ describe("plugin Manager", () => {
     gate.resolve();
     await Promise.all([first, second]);
     expect(started).toEqual(["reqloop_default", "deploy_default"]);
-    expect(proposals.map((proposal) => proposal.text)).toEqual(["Review requirement"]);
   });
 
   test("rejects duplicate scopes and an unregistered route", async () => {
@@ -596,42 +631,6 @@ describe("plugin Manager", () => {
           retryBackoff: { initialDelayMs: 20, maxDelayMs: 10 },
         }),
     ).toThrow("retryBackoff.maxDelayMs must be at least initialDelayMs");
-  });
-
-  test("does not surface the same Proposal again after the user resolves it", async () => {
-    const root = testRoot();
-    const resources = store(root, "reqloop_default");
-    createResource(resources, "Requirement", "run_1");
-    const surfaced: Proposal[] = [];
-    const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal(proposal) {
-        surfaced.push(proposal);
-      },
-    });
-    manager.registerController<Spec, Record<string, never>>({
-      store: resources,
-      resourceType: resourceType("Requirement"),
-      async reconcile() {
-          return {
-            output: {
-              kind: "proposed-input",
-              text: "Review requirement",
-            },
-          };
-        },
-    });
-
-    await manager.enqueue(key("reqloop_default", "run_1"));
-    expect(surfaced).toHaveLength(1);
-    const proposal = surfaced[0] as Proposal;
-    expect(manager.resolveProposal(proposal.proposalId, "dismissed").resolution?.outcome).toBe(
-      "dismissed",
-    );
-
-    await manager.enqueue(key("reqloop_default", "run_1"));
-    expect(surfaced).toHaveLength(1);
-    expect(manager.listPendingProposals()).toEqual([]);
   });
 
   test("restores pending Proposals on start and can retry a failed projection", async () => {
