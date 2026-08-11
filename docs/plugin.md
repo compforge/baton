@@ -151,12 +151,14 @@ Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/
 Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
 Core-owned 控制能力：
 
-- `ask`：请求一个选项或自由文本答案；
-- `confirm`：请求 grant / decline 决定；
+- `ask`：请求一个选项或自由文本答案，可声明持久的绝对 deadline；
+- `confirm`：请求 grant / decline 决定，可声明持久的绝对 deadline；
+- `withdraw`：领域流程不再需要答案时，以稳定 operation key 撤回未决 Interaction；
 - `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
 - `harness`：直接形成 plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
 
-能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction、
+能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction 的
+回答、超时或 requester 撤回、
 草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
 Plugin 用同一个 operation key 读取答案或执行结果。`requeueAfterMs` 仍只负责时间调度。
 
@@ -164,6 +166,9 @@ Plugin 可以自由组合这些 primitives：有的辅助动作直接异步执�
 draft、主 Lane 或新 Lane。这个策略属于领域编排，不由 Core 从 Plugin 类型推断。Core 始终拥有
 Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
 [Reconcile Context](./reconcile-context.md)。
+
+deadline 只产生 `cancelled(timeout)` 事实；“超时是否等于拒绝”属于 Plugin 领域策略。Resource
+物理删除会以 `cancelled(requester)` 收口其未决 Interaction，避免已消失 requester 留下孤儿卡片。
 
 Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:true` 从指定 Lane 创建可并行
 支线；draft 提交是 user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行

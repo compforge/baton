@@ -31,6 +31,8 @@ export type {
   HarnessInput,
   HarnessResult,
   ReconcileContext,
+  WithdrawInput,
+  WithdrawResult,
 } from "./reconcile-context.ts";
 export { MAIN_LANE_ID } from "./reconcile-context.ts";
 

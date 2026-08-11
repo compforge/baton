@@ -117,6 +117,7 @@ Terminating
 3. 以 update event 唤醒各自 Controller，并立即从 Board 派生视图隐藏 terminating Resource；
 4. Controller 仍收到完整 Resource，可在看到 `deletionTimestamp` 后释放自己拥有的外部效果；
 5. reconcile 成功后 Baton 物理删除该 Resource，并把最终 delete event 路由给 Watches；
+   仍未决的关联 Interaction 同时以 requester 原因收口；
 6. reconcile 失败时不删除，沿用普通错误退避；Baton 重启后 initial reconcile 会重新处理它。
 
 当前没有公开 finalizer。所属 Controller 的一次成功 reconcile 是唯一删除屏障；Plugin 若需要

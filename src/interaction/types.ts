@@ -104,6 +104,8 @@ export type Interaction = InteractionDraft & {
   interactionId: string;
   requester: InteractionRequester;
   pluginContext?: PluginResourceInteractionContext;
+  /** Durable absolute deadline for host-owned timeout cancellation. */
+  expiresAt?: string;
 };
 
 /** 外部参与者针对 Interaction 提交的 kind-specific 答案。 */

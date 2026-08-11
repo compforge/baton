@@ -5,12 +5,15 @@ import type {
   ConfirmInput,
   ConfirmResult,
   ResourceRef,
+  WithdrawInput,
+  WithdrawResult,
 } from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import type {
   AnyEventEnvelope,
   EventEnvelope,
+  EventSource,
 } from "../event/types.ts";
 import type {
   Interaction,
@@ -53,8 +56,16 @@ interface ReconcileInteraction {
     readonly prompt: string;
     readonly options?: readonly InteractionOption[];
     readonly allowOther?: boolean;
+    readonly expiresAt?: string;
   };
 }
+
+export interface StoreOptions {
+  now?: () => Date;
+  onTimeout?(key: ReconcileKey): void;
+}
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function interactionIdentity(
   pluginInstanceId: string,
@@ -73,10 +84,11 @@ function interactionIdentity(
 }
 
 function interactionContext(
-  draft: ReconcileInteraction,
+  draft: ReconcileVerbScope,
+  decisionKey: string,
 ): PluginResourceInteractionContext {
   return Object.freeze({
-    decisionKey: draft.request.decisionKey,
+    decisionKey,
     resource: draft.resource,
     resourceOwner: reconcileResourceOwner(draft.key),
     ...(draft.basedOnGeneration === undefined
@@ -102,7 +114,10 @@ function pluginInteraction(
       type: "plugin" as const,
       pluginInstanceId: draft.key.pluginInstanceId,
     },
-    pluginContext: interactionContext(draft),
+    pluginContext: interactionContext(draft, request.decisionKey),
+    ...(request.expiresAt === undefined
+      ? {}
+      : { expiresAt: request.expiresAt }),
     questions: [
       {
         questionId: QUESTION_ID,
@@ -123,6 +138,38 @@ function pluginInteraction(
       },
     ],
   });
+}
+
+function reconcileKey(
+  batonSessionId: string,
+  interaction: Interaction,
+): ReconcileKey | undefined {
+  const context = interaction.pluginContext;
+  if (interaction.requester.type !== "plugin" || !context) return;
+  return Object.freeze({
+    batonSessionId,
+    pluginInstanceId: interaction.requester.pluginInstanceId,
+    resourceApiVersion: context.resource.apiVersion,
+    resourceKind: context.resource.kind,
+    resourceId: context.resource.name,
+    ...(context.resourceOwner === "plugin"
+      ? {}
+      : { resourceOwner: context.resourceOwner }),
+  });
+}
+
+function sameResource(left: ResourceRef, right: ResourceRef): boolean {
+  return left.apiVersion === right.apiVersion &&
+    left.kind === right.kind &&
+    left.namespace === right.namespace &&
+    left.name === right.name &&
+    left.uid === right.uid;
+}
+
+function withdrawDecisionKey(input: WithdrawInput): string {
+  return input.kind === "ask"
+    ? `ask:${input.key}`
+    : `ask:confirm:${input.key}`;
 }
 
 function stableEnvelope(interaction: Interaction): unknown {
@@ -189,9 +236,20 @@ export class Store {
   private readonly entries = new Map<string, Entry>();
   private readonly interactionIdByIdentity = new Map<string, string>();
   private readonly unsubscribe: () => void;
+  private readonly now: () => Date;
+  private readonly onTimeout: StoreOptions["onTimeout"];
+  private timer?: ReturnType<typeof setTimeout>;
+  private replaying = true;
 
-  constructor(private readonly session: InteractionSession) {
+  constructor(
+    private readonly session: InteractionSession,
+    options: StoreOptions = {},
+  ) {
+    this.now = options.now ?? (() => new Date());
+    this.onTimeout = options.onTimeout;
     for (const event of session.readEvents()) this.apply(event);
+    this.replaying = false;
+    this.arm();
     this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
 
@@ -220,9 +278,20 @@ export class Store {
         ...(input.allowOther === undefined
           ? {}
           : { allowOther: input.allowOther }),
+        ...(input.expiresAt === undefined
+          ? {}
+          : { expiresAt: input.expiresAt }),
       },
     });
-    const entry = this.entries.get(interaction.interactionId);
+    let entry = this.entries.get(interaction.interactionId);
+    if (entry && !entry.result && this.expired(entry)) {
+      this.settle(
+        interaction.interactionId,
+        { kind: "cancelled", reason: "timeout" },
+        { type: "baton" },
+      );
+      entry = this.entries.get(interaction.interactionId);
+    }
     const result = outcome(entry?.result);
     if (!result) return Object.freeze({ state: "waiting" });
     if (result.kind === "cancelled") {
@@ -255,6 +324,9 @@ export class Store {
           label: input.declineLabel ?? "Decline",
         },
       ],
+      ...(input.expiresAt === undefined
+        ? {}
+        : { expiresAt: input.expiresAt }),
     });
     if (result.state === "waiting" || result.state === "cancelled") {
       return result;
@@ -264,13 +336,61 @@ export class Store {
     });
   }
 
+  withdraw(
+    context: ReconcileVerbScope,
+    input: WithdrawInput,
+  ): WithdrawResult {
+    const identity = interactionIdentity(
+      context.key.pluginInstanceId,
+      interactionContext(context, withdrawDecisionKey(input)),
+    );
+    const interactionId = this.interactionIdByIdentity.get(identity);
+    const entry = interactionId === undefined
+      ? undefined
+      : this.entries.get(interactionId);
+    if (!interactionId || !entry) {
+      return Object.freeze({ state: "not-pending" });
+    }
+    if (entry.result) {
+      return entry.result.kind === "cancelled" &&
+          entry.result.reason === "requester"
+        ? Object.freeze({ state: "cancelled", reason: "requester" })
+        : Object.freeze({ state: "not-pending" });
+    }
+    this.settle(
+      interactionId,
+      { kind: "cancelled", reason: "requester" },
+      {
+        type: "plugin",
+        pluginInstanceId: context.key.pluginInstanceId,
+      },
+    );
+    return Object.freeze({ state: "cancelled", reason: "requester" });
+  }
+
+  cancelForResource(resource: ResourceRef): string[] {
+    const cancelled: string[] = [];
+    for (const [interactionId, entry] of this.entries) {
+      if (entry.result) continue;
+      const context = entry.requested.payload.pluginContext;
+      if (!context || !sameResource(context.resource, resource)) continue;
+      this.settle(
+        interactionId,
+        { kind: "cancelled", reason: "requester" },
+        { type: "baton" },
+      );
+      cancelled.push(interactionId);
+    }
+    return cancelled;
+  }
+
   private open(draft: ReconcileInteraction): Interaction {
     if (draft.key.batonSessionId !== this.session.id) {
       throw new Error(
         `plugin Interaction batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
       );
     }
-    const context = interactionContext(draft);
+    const context = interactionContext(draft, draft.request.decisionKey);
     const identity = interactionIdentity(draft.key.pluginInstanceId, context);
     const existingId = this.interactionIdByIdentity.get(identity);
     if (existingId) {
@@ -317,36 +437,99 @@ export class Store {
       return;
     }
     if (!validResult(interaction, result)) return;
+    return this.settle(interactionId, result, { type: "user" });
+  }
+
+  close(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.unsubscribe();
+  }
+
+  private settle(
+    interactionId: string,
+    result: InteractionResult,
+    source: EventSource,
+  ): ReconcileKey | undefined {
+    const entry = this.entries.get(interactionId);
+    const interaction = entry?.requested.payload;
+    if (!entry || entry.result || !interaction) return;
     if (result.kind === "cancelled") {
       this.session.append({
         kind: "interaction.cancelled",
-        source: { type: "user" },
+        source,
         parentEventId: entry.requested.eventId,
         payload: { interactionId, reason: result.reason },
       });
     } else {
       this.session.append({
         kind: "interaction.answered",
-        source: { type: "user" },
+        source,
         parentEventId: entry.requested.eventId,
         payload: { interactionId, answer: result },
       });
     }
-    const context = interaction.pluginContext;
-    return Object.freeze({
-      batonSessionId: this.session.id,
-      pluginInstanceId: interaction.requester.pluginInstanceId,
-      resourceApiVersion: context.resource.apiVersion,
-      resourceKind: context.resource.kind,
-      resourceId: context.resource.name,
-      ...(context.resourceOwner === "plugin"
-        ? {}
-        : { resourceOwner: context.resourceOwner }),
-    });
+    return reconcileKey(this.session.id, interaction);
   }
 
-  close(): void {
-    this.unsubscribe();
+  private timestamp(): number {
+    const value = this.now().getTime();
+    if (Number.isNaN(value)) {
+      throw new Error("plugin Interaction now() returned an invalid Date");
+    }
+    return value;
+  }
+
+  private expired(entry: Entry): boolean {
+    const expiresAt = entry.requested.payload.expiresAt;
+    return expiresAt !== undefined && Date.parse(expiresAt) <= this.timestamp();
+  }
+
+  private arm(): void {
+    if (this.replaying) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const entry of this.entries.values()) {
+      if (entry.result || entry.requested.payload.expiresAt === undefined) {
+        continue;
+      }
+      earliest = Math.min(
+        earliest,
+        Date.parse(entry.requested.payload.expiresAt),
+      );
+    }
+    if (!Number.isFinite(earliest)) return;
+    const delay = Math.min(
+      MAX_TIMER_DELAY_MS,
+      Math.max(0, earliest - this.timestamp()),
+    );
+    this.timer = setTimeout(() => this.expireDue(), delay);
+    this.timer.unref?.();
+  }
+
+  private expireDue(): void {
+    this.timer = undefined;
+    const now = this.timestamp();
+    const owners: ReconcileKey[] = [];
+    for (const [interactionId, entry] of this.entries) {
+      const expiresAt = entry.requested.payload.expiresAt;
+      if (
+        entry.result ||
+        expiresAt === undefined ||
+        Date.parse(expiresAt) > now
+      ) {
+        continue;
+      }
+      const key = this.settle(
+        interactionId,
+        { kind: "cancelled", reason: "timeout" },
+        { type: "baton" },
+      );
+      if (key) owners.push(key);
+    }
+    this.arm();
+    for (const key of owners) this.onTimeout?.(key);
   }
 
   private apply(event: AnyEventEnvelope): void {
@@ -363,6 +546,7 @@ export class Store {
       if (existingId) return;
       this.entries.set(interaction.interactionId, { requested: event });
       this.interactionIdByIdentity.set(identity, interaction.interactionId);
+      this.arm();
       return;
     }
     if (
@@ -374,5 +558,6 @@ export class Store {
     entry.result = event.kind === "interaction.answered"
       ? event.payload.answer
       : { kind: "cancelled", reason: event.payload.reason };
+    this.arm();
   }
 }

@@ -455,6 +455,21 @@ describe("plugin Controller", () => {
     await expect(
       controller.enqueue({ ...key(), pluginInstanceId: "another_instance" }),
     ).rejects.toThrow("reconcile key is outside controller scope");
+    const invalidDeadline = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile(ctx) {
+        await ctx.ask({
+          key: "review",
+          title: "Review",
+          prompt: "Continue?",
+          expiresAt: "tomorrow",
+        });
+      },
+    });
+    await expect(invalidDeadline.enqueue(key())).rejects.toThrow(
+      "ask expiresAt must be an ISO 8601 timestamp with a timezone",
+    );
     expect(
       () =>
         new Controller({

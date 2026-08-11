@@ -213,7 +213,9 @@ Harness / Plugin request
 ```
 
 Harness Adapter 不自签 interaction ID，也不自行伪造 requested/answered/cancelled。result 就地解开等待方，
-不进入 prompt queue。cancel、timeout、requester 带外结束和恢复清理都显式记录为 cancelled。
+不进入 prompt queue。Plugin Interaction 的绝对 deadline 随 requested 事实持久化；到期、requester
+显式撤回或 Resource 删除都先记录 cancelled，再推进原 Resource。cancel、timeout、requester 带外结束
+和恢复清理都显式记录为 cancelled，所有终态遵守 first-terminal-wins。
 
 Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await ctx.ask(...)`
 立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
