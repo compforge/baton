@@ -1,16 +1,14 @@
 # Baton Plugin
 
-Plugin 让长期领域 loop 在不进入 Baton core 的前提下拥有自己的 Resource、Controller、Connector
-和用户入口。本文定义 Plugin 的理念、运行模型和主流程；公共 TypeScript API 与最短示例见
+Plugin 让长期领域 loop 拥有自己的 Resource、Controller、Connector 和用户入口，而不把领域模型
+固化在 Baton 中。本文定义 Plugin 的理念、运行模型和主流程；公共 TypeScript API 与最短示例见
 [`packages/plugin/README.md`](../packages/plugin/README.md)，Resource 删除等细节见
 [Resource 生命周期](./resource-lifecycle.md)。
 
 ## 1. 理念与边界
 
-Baton core 不理解 Requirement、Deployment、Review 等领域语义，但它不是透明消息总线：Core
-拥有 Interaction、HarnessInvocation、Input 与 Event 的 identity、状态机、权限、调度和恢复。
-Plugin 作为三类参与者之一，通过 typed reconcile verbs 使用这些能力，可以封装完整 loop，也可以
-提供能独立演进的领域能力或本地自动化。
+Baton Plugin 是 Baton 的领域扩展机制。它用 Resource `spec/status` 保存长期目标与观测，由 Controller
+执行 level-based reconcile，并通过 Connector 适配外部系统。
 
 ```text
 领域 loop = Resource(spec + status) + level-based reconcile
@@ -21,21 +19,27 @@ Plugin 作为三类参与者之一，通过 typed reconcile verbs 使用这些�
 - `spec` 是用户认可的期望与 Contract；
 - `status` 是 Controller 重新观察或计算的当前状态；
 - signal 只提示“可能变化”，reconcile 每次读取最新事实；
-- 智能判断通过 `ask/confirm/draft/harness` 组合人机步骤与 Harness 执行，不要求先把业务穷举成 DSL。
+- `ask/confirm/draft/harness` 让 reconcile 可以请求人的决定或 Harness 执行，不要求先把业务穷举成
+  DSL。
+
+这些 verbs 扩展的是 reconcile 作用域内的行动方式，不改变 Plugin 的稳定状态模型。Plugin 可以等待
+当前调用的终态并组合后续步骤，但不能直接持有 Harness，也不能把进程内调用栈当成恢复状态；长期
+loop 仍由 Resource facts 与下一次 level-based reconcile 推进。
 
 ### 1.1 三种扩展边界
 
 | 边界 | 职责 |
 |---|---|
-| **Baton Plugin** | 运行在 Harness 之上的控制面，观察和推进跨 Session、跨系统的长期 loop |
+| **Baton Plugin** | 定义领域 Resource、Controller 与 Connector，观察和推进跨 Session、跨系统的长期 loop |
 | **Harness** | Codex、Claude Code 等智能执行协议，负责推理、工具调用和原生 Session |
 | **Harness Plugin** | skill、hook、command 等 Harness 内扩展，约束当前 agent 小闭环 |
 
 devloop 属于 Harness Plugin：它规范开发、lint/test、commit 和 PR/MR，不注册为 Baton Plugin。
-reqloop 属于 Baton Plugin/Marketplace：它拥有 Requirement、Deployment、Evaluation 等领域模型
-与 Connector。外部系统适配留在 Plugin 内部，不提升为 Baton 的另一种顶层运行角色。
+reqloop 是独立仓库中的 Requirement Loop 项目，也是 Baton Plugin/Marketplace 的一个示例：它拥有
+Requirement、Deployment、Evaluation 等领域模型与 Connector。外部系统适配留在 Plugin 内部，
+不提升为 Baton 的另一种顶层运行角色。
 
-## 2. 共同模型
+## 2. 共同模型与事实边界
 
 ```text
 PluginPackage（不可变交付物）
@@ -63,44 +67,9 @@ PluginPackage（不可变交付物）
 
 它们可以通过 reference 和 reconcile 关联，但不能复制成可独立修改的第二真相源。
 
-## 3. Host 与进程边界
+## 3. Resource 与 reconcile 流程
 
-```text
-Baton host process
-  ├── Interaction / Input / HarnessInvocation core
-  └── Plugin Manager
-        ├── Instance / Resource stores
-        ├── reconcile continuation / invocation correlation
-        ├── keyed reconcile queues / Sources / Watches / Board cache
-        └── Supervisor
-              └── Runner process × active Binding
-                    └── third-party Package + Connector
-```
-
-**Manager** 是 Plugin 侧唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource、
-把 reconcile verbs 先 lowering 到 Core-owned Interaction、再把批准的执行 gate lowering 到
-HarnessInvocation，并控制 reconcile 容量和维护 Board cache。
-
-**Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
-
-**Runner** 加载一份 Package，保存 Plugin 回调，通过 IPC 执行 activate、Command、ContextProvider、
-Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton Store、Controller、Harness
-或 TUI。
-
-隔离粒度选择 Binding，因为它同时是注册撤销、局部连接共享和故障回收的原子边界。同一 Package
-在不同 Session 的可变状态不能共享；单次调用起进程又会破坏 Source/Connector 生命周期。
-进程隔离是故障和调度边界，不是安全沙箱：Plugin 仍以当前用户身份访问文件、网络和子进程。
-
-IPC 只传可结构化克隆的数据。激活完成后注册表封口，避免异步偷注册留下半个 Binding。调用
-timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、ContextProvider、Controller、
-Source 和 Board，并把该 Runner 尚未完成的 verb 以 `failure` 收口。Resource、Interaction、
-HarnessInvocation 和日志保留为事实，但进程内 continuation 不恢复。当前不自动重启失败 Runner，
-因为外部副作用可能已经生效却没有回执。Runner 的一般调用 watchdog 在 verb 等待期间暂停；该段
-等待由 verb 自己的必填 timeout 约束。
-
-## 4. Resource 与 reconcile 流程
-
-### 4.1 Resource
+### 3.1 Resource
 
 Plugin Resource 使用版本化类型身份：
 
@@ -121,7 +90,7 @@ Resource 删除是 reconcile 生命周期，不是立即移除：Baton 先设置
 后代级联删除请求，并在 terminating reconcile 成功后最终移除。完整契约见
 [Resource 生命周期](./resource-lifecycle.md)。
 
-### 4.2 统一唤醒
+### 3.2 统一唤醒
 
 ```text
 Resource change / startup / Source / Watch / cron / requeueAfter
@@ -150,12 +119,12 @@ Plugin 对外部系统写入时仍应使用领域自己的幂等键。无法确�
 Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
 让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
 
-## 5. Reconcile Context、Board 与 Context
+## 4. ReconcileContext、Board 与 Context
 
-### 5.1 Reconcile 作用域能力
+### 4.1 Reconcile 作用域能力
 
 Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
-Plugin-facing typed Core verbs：
+Plugin-facing typed verbs：
 
 - `ask`：请求一个选项或自由文本答案；
 - `confirm`：请求 accept / decline 决定；
@@ -167,7 +136,7 @@ Plugin-facing typed Core verbs：
 这些方法不是通用 `send(type, payload)`：`ask/confirm/draft/harness` 都先物化为 Interaction；
 `draft/harness` 只有在
 对应 Interaction 提交或批准后才能继续物化为 HarnessInvocation。即使宿主策略自动批准 `harness`，
-也必须先持久化 Interaction 的 requested/answered 事实。identity、准入和终态由 Core 决定；Plugin
+也必须先持久化 Interaction 的 requested/answered 事实。identity、准入和终态由 Baton 决定；Plugin
 不能提供 topic、路由 callback 或 Harness 原生 DTO。
 
 每次能力调用都必须带正整数 `timeoutMs`，并真实 await 到 `success / dismissed / timeout /
@@ -182,9 +151,8 @@ Interaction 后按 Esc 或关闭卡片返回 `dismissed`；总 deadline 到期�
 Interaction gate 与后续整个 HarnessInvocation，不在 gate 通过后重置。
 
 Plugin 可以自由组合这些 primitives：有的 gate 由策略自动批准，有的等待用户，再按结果进入
-draft、主 Lane 或新 Lane。这个策略属于领域编排和宿主 policy，不由 Core 从 Plugin 类型推断。
-Core 始终拥有
-Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
+draft、主 Lane 或新 Lane。这个策略属于领域逻辑和宿主 policy，不由 Baton 从 Plugin 类型推断；
+Interaction、Harness routing、权限、并发、取消和恢复仍由 Baton 承接。完整契约见
 [`@compforge/baton-plugin` README](../packages/plugin/README.md)。
 
 Resource 删除不会替 live Plugin execution 决定 verb 终态；当前调用仍由回答、Esc、timeout 或
@@ -195,7 +163,7 @@ Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:tru
 边界，不是 Plugin 私有对象、worktree 策略或“前台/后台”标签。`createdFor` 仅记录创建事实，
 不会阻止其它 invocation 继续该 Lane。
 
-### 5.2 Board
+### 4.2 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、
 Resource reference 和身份，再生成面向用户的 Board view。`present` 只读、可重复，不能修改
@@ -205,7 +173,7 @@ Board 是共享协作读模型，但不是 Event、Resource 或外部系统的�
 和 Resource Type 分组排序，每组只展示有限条目，避免一个 Plugin 占满侧栏。持续状态进入
 Resource status/Board；toast 只用于一次操作或状态边沿的短寿命反馈。
 
-### 5.3 Context
+### 4.3 Context
 
 ContextProvider 提供用户通过 `@` 明确选择的只读 Context。`search` 无副作用，`provide` 遵守
 `maxChars`，不能返回 secret。Binding 关闭时注册整体撤销。
@@ -216,6 +184,41 @@ ContextProvider 提供用户通过 `@` 明确选择的只读 Context。`search` 
 
 Plugin presentation 变化只更新读模型；只有用户提交 Input 或 HarnessInvocation 准备执行时，Baton
 才组装 Context，并以 DeliveryReceipt 记录 transport 已接受。
+
+## 5. Host 与进程边界
+
+```text
+Baton host process
+  ├── Interaction / Input / HarnessInvocation
+  └── Plugin Manager
+        ├── Instance / Resource stores
+        ├── reconcile continuation / invocation correlation
+        ├── keyed reconcile queues / Sources / Watches / Board cache
+        └── Supervisor
+              └── Runner process × active Binding
+                    └── third-party Package + Connector
+```
+
+**Manager** 是 Plugin 侧唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource、
+把 reconcile verbs 先 lowering 到 Baton-owned Interaction、再把批准的执行 gate lowering 到
+HarnessInvocation，并控制 reconcile 容量和维护 Board cache。
+
+**Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
+
+**Runner** 加载一份 Package，保存 Plugin 回调，通过 IPC 执行 activate、Command、ContextProvider、
+Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton Store、Controller、Harness
+或 TUI。
+
+隔离粒度选择 Binding，因为它同时是注册撤销、局部连接共享和故障回收的原子边界。同一 Package
+在不同 Session 的可变状态不能共享；单次调用起进程又会破坏 Source/Connector 生命周期。
+进程隔离是故障和调度边界，不是安全沙箱：Plugin 仍以当前用户身份访问文件、网络和子进程。
+
+IPC 只传可结构化克隆的数据。激活完成后注册表封口，避免异步偷注册留下半个 Binding。调用
+timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、ContextProvider、Controller、
+Source 和 Board，并把该 Runner 尚未完成的 verb 以 `failure` 收口。Resource、Interaction、
+HarnessInvocation 和日志保留为事实，但进程内 continuation 不恢复。当前不自动重启失败 Runner，
+因为外部副作用可能已经生效却没有回执。Runner 的一般调用 watchdog 在 verb 等待期间暂停；该段
+等待由 verb 自己的必填 timeout 约束。
 
 ## 6. Plugin authoring 约束
 

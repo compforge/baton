@@ -13,7 +13,7 @@ Codex、Claude Code 等原生会话用于执行与加速恢复，不能成为逻
 
 Baton core 位于三类参与者之间：
 
-1. **人** 提交目标、编辑工作、回答问题与作出授权决定，并拥有 BatonSession 的正典历史。
+1. **人** 提交目标、编辑工作、回答问题与作出授权决定，并拥有 BatonSession 的 Event Ledger。
 2. **Harness** 提供推理、工具调用与原生执行能力，Adapter 把各家协议归一成稳定契约。
 3. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
    通过 `ReconcileContext` 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
@@ -54,7 +54,7 @@ Core 直接改变另一方状态。
 | 概念 | 语义与 owner |
 |---|---|
 | **Project** | 按 cwd 组织和发现 BatonSession，并承载同 workspace 跨 Session 的 Plugin 私有数据；不拥有 Session 历史 |
-| **BatonSession** | 用户拥有的正典逻辑历史和 session-scoped Plugin 数据；跨 Harness 的唯一时间线 |
+| **BatonSession** | 用户拥有的跨 Harness、跨 Lane Event Ledger，以及 session-scoped Plugin 数据 |
 | **HarnessTarget** | Baton 配置、调度和状态查询侧的一份具体执行目标；同一 Harness 可有多个 Target，状态必须按 Target 隔离 |
 | **Lane** | BatonSession 原生的持久串行任务线；主线 identity 为保留值 `main`，支线使用 `hl_` identity，可由人或 Plugin 发起，并可跨多个 HarnessTarget 接力 |
 | **HarnessSession** | Harness 在某个 `Lane × HarnessTarget` 下持有的持久原生执行会话；缺失只影响恢复优化，不阻止 Lane 继续 |
