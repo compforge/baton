@@ -22,20 +22,21 @@ import {
   type CronSource,
   type PluginCommandInput,
   type PluginCommandResult,
-  type PluginPackage,
   type Resource,
   type ResourceRef,
   type ResourceType,
   type SourceContext,
   BATON_SYSTEM_NAMESPACE,
   BATON_TURN_RESOURCE_TYPE,
-  pluginPackageKey,
   type PluginLogRecord,
   type ToastMessage,
   type ToastTone,
   type Watch,
-  validatePluginPackage,
 } from "./package.ts";
+import {
+  PackageLoader,
+  type PackageLoaderOptions,
+} from "./package-loader.ts";
 import {
   reconcileKeyId,
   ReconcileCapacity,
@@ -65,7 +66,6 @@ import {
   type CommandRegistration as RunnerCommandRegistration,
   type ContextProviderRegistration as RunnerContextProviderRegistration,
   type ControllerRegistration as RunnerControllerRegistration,
-  type PluginPackageEntry,
   type PluginRegistration as RunnerRegistration,
 } from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
@@ -154,7 +154,7 @@ export interface ManagerOptions {
     | "requireLane"
   >;
   /** 当前进程可激活的可信、不可变 Package 版本。 */
-  packages?: readonly PluginPackage[];
+  packages?: PackageLoaderOptions["packages"];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
   snapshot?: () => ReconcileSnapshot;
   /** Current host selection used by an implicit harness() or a submitted draft(). */
@@ -162,21 +162,13 @@ export interface ManagerOptions {
   /** Policy decision for the mandatory Interaction before a Plugin Harness invocation. */
   harnessInvocationGate?: ReconcileInteractionStoreOptions["harnessInvocationGate"];
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
-  loadPackage?(
-    pluginId: string,
-    version: string,
-    options?: { fresh?: boolean; marketplace?: string },
-  ): Promise<PluginPackage>;
+  loadPackage?: PackageLoaderOptions["loadPackage"];
   /**
    * Resolve an immutable entry without importing it into Baton. When supplied
    * with a PluginSupervisor, Marketplace Plugin code runs in a per-Binding
    * child process.
    */
-  loadPackageEntry?(
-    pluginId: string,
-    version: string,
-    options: { marketplace: string; fresh?: boolean },
-  ): Promise<PluginPackageEntry>;
+  loadPackageEntry?: PackageLoaderOptions["loadPackageEntry"];
   pluginSupervisor?: PluginSupervisor;
   /** Host-owned bridge that materializes the request's explicit Lane policy. */
   enqueueHarnessInvocation?(
@@ -262,16 +254,6 @@ interface RetryState {
   attempt: number;
 }
 
-type ActivatablePackage =
-  | {
-      readonly kind: "in-process";
-      readonly plugin: PluginPackage;
-    }
-  | {
-      readonly kind: "runner";
-      readonly entry: PluginPackageEntry;
-    };
-
 interface ManagedBoardSource {
   readonly pluginInstanceId: string;
   present(): Promise<readonly BoardItemCandidate[]>;
@@ -312,15 +294,7 @@ export class Manager {
   private readonly commandRegistry: PluginCommandRegistry;
   private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
-  private readonly packages = new Map<string, PluginPackage>();
-  private readonly packageLoads = new Map<string, Promise<PluginPackage>>();
-  private readonly packageEntries = new Map<string, PluginPackageEntry>();
-  private readonly packageEntryLoads = new Map<
-    string,
-    Promise<PluginPackageEntry>
-  >();
-  private readonly loadPackage: ManagerOptions["loadPackage"];
-  private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
+  private readonly packageLoader: PackageLoader;
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => ReconcileSnapshot;
   private readonly verb: Verb;
@@ -367,17 +341,14 @@ export class Manager {
     this.log = options.session
       ? (entry) => options.session!.log(entry)
       : undefined;
-    for (const plugin of options.packages ?? []) {
-      validatePluginPackage(plugin);
-      const key = pluginPackageKey(plugin.pluginId, plugin.version);
-      if (this.packages.has(key)) {
-        throw new Error(`plugin Package already registered: ${plugin.pluginId}@${plugin.version}`);
-      }
-      this.packages.set(key, plugin);
-    }
-    this.loadPackage = options.loadPackage;
-    this.loadPackageEntry = options.loadPackageEntry;
     this.pluginSupervisor = options.pluginSupervisor;
+    this.packageLoader = new PackageLoader({
+      ...(options.packages ? { packages: options.packages } : {}),
+      ...(options.loadPackage ? { loadPackage: options.loadPackage } : {}),
+      ...(options.pluginSupervisor && options.loadPackageEntry
+        ? { loadPackageEntry: options.loadPackageEntry }
+        : {}),
+    });
     this.snapshot =
       options.snapshot ??
       (() => emptyReconcileSnapshot(this.instances.session.id));
@@ -563,7 +534,7 @@ export class Manager {
     if (!instance.enabled) {
       throw new Error(`plugin Instance is disabled: ${pluginInstanceId}`);
     }
-    const packageSource = await this.preparePackage(instance);
+    const packageSource = await this.packageLoader.load(instance);
     const batonSession = this.snapshot().session;
     if (batonSession.batonSessionId !== this.instances.session.id) {
       throw new Error(
@@ -794,7 +765,7 @@ export class Manager {
     const current = this.instances.get(pluginInstanceId);
     if (current.packageVersion === packageVersion) return current;
 
-    await this.preparePackage(
+    await this.packageLoader.load(
       Object.freeze({ ...current, packageVersion }),
     );
     const wasActive = this.isInstanceActive(pluginInstanceId);
@@ -847,11 +818,11 @@ export class Manager {
     const packageFailures = new Map<string, unknown>();
     const loadedPackages = new Set<string>();
     for (const instance of enabled) {
-      const key = this.packageSourceKey(instance);
+      const key = this.packageLoader.sourceKey(instance);
       if (loadedPackages.has(key)) continue;
       loadedPackages.add(key);
       try {
-        await this.preparePackage(instance, true);
+        await this.packageLoader.load(instance, true);
       } catch (error) {
         packageFailures.set(key, error);
       }
@@ -861,7 +832,7 @@ export class Manager {
     for (const instance of enabled) {
       if (failures.has(instance.pluginInstanceId)) continue;
       const error = packageFailures.get(
-        this.packageSourceKey(instance),
+        this.packageLoader.sourceKey(instance),
       );
       if (error) {
         failures.set(instance.pluginInstanceId, {
@@ -986,137 +957,6 @@ export class Manager {
         this.enqueueInitial(controller);
       }),
     );
-  }
-
-  private async preparePackage(
-    instance: PluginInstance,
-    fresh = false,
-  ): Promise<ActivatablePackage> {
-    if (
-      this.pluginSupervisor &&
-      this.loadPackageEntry &&
-      instance.marketplace
-    ) {
-      return {
-        kind: "runner",
-        entry: await this.resolvePackageEntry(
-          instance.pluginId,
-          instance.packageVersion,
-          instance.marketplace,
-          fresh,
-        ),
-      };
-    }
-    return {
-      kind: "in-process",
-      plugin: await this.resolvePackage(
-        instance.pluginId,
-        instance.packageVersion,
-        instance.marketplace,
-        fresh,
-      ),
-    };
-  }
-
-  private async resolvePackageEntry(
-    pluginId: string,
-    version: string,
-    marketplace: string,
-    fresh = false,
-  ): Promise<PluginPackageEntry> {
-    if (!this.loadPackageEntry) {
-      throw new Error(
-        `plugin Package entry is unavailable: ${pluginId}@${marketplace} ${version}`,
-      );
-    }
-    const key = JSON.stringify([pluginId, marketplace, version]);
-    if (!fresh) {
-      const cached = this.packageEntries.get(key);
-      if (cached) return cached;
-      const loading = this.packageEntryLoads.get(key);
-      if (loading) return await loading;
-    }
-    const loading = Promise.resolve()
-      .then(() =>
-        this.loadPackageEntry!(
-          pluginId,
-          version,
-          {
-            marketplace,
-            ...(fresh ? { fresh: true } : {}),
-          },
-        ),
-      )
-      .then((entry) => {
-        if (entry.pluginId !== pluginId || entry.version !== version) {
-          throw new Error(
-            `resolved Package entry ${entry.pluginId}@${entry.version} does not match ${pluginId}@${version}`,
-          );
-        }
-        this.packageEntries.set(key, entry);
-        return entry;
-      })
-      .finally(() => {
-        if (this.packageEntryLoads.get(key) === loading) {
-          this.packageEntryLoads.delete(key);
-        }
-      });
-    this.packageEntryLoads.set(key, loading);
-    return await loading;
-  }
-
-  private async resolvePackage(
-    pluginId: string,
-    version: string,
-    marketplace?: string,
-    fresh = false,
-  ): Promise<PluginPackage> {
-    const key = marketplace
-      ? JSON.stringify([pluginId, marketplace, version])
-      : pluginPackageKey(pluginId, version);
-    if (!fresh) {
-      const cached = this.packages.get(key);
-      if (cached) return cached;
-      const loading = this.packageLoads.get(key);
-      if (loading) return await loading;
-    }
-    if (!this.loadPackage) {
-      const cached = this.packages.get(key);
-      if (cached) return cached;
-      throw new Error(`plugin Package is unavailable: ${pluginId}@${version}`);
-    }
-    const loading = Promise.resolve()
-      .then(() =>
-        this.loadPackage!(
-          pluginId,
-          version,
-          {
-            ...(fresh ? { fresh: true } : {}),
-            ...(marketplace ? { marketplace } : {}),
-          },
-        ),
-      )
-      .then((plugin) => {
-        validatePluginPackage(plugin);
-        if (plugin.pluginId !== pluginId || plugin.version !== version) {
-          throw new Error(
-            `loaded Package identity ${plugin.pluginId}@${plugin.version} does not match ${pluginId}@${version}`,
-          );
-        }
-        this.packages.set(key, plugin);
-        return plugin;
-      })
-      .finally(() => {
-        if (this.packageLoads.get(key) === loading) this.packageLoads.delete(key);
-      });
-    this.packageLoads.set(key, loading);
-    return await loading;
-  }
-
-  private packageSourceKey(instance: PluginInstance): string {
-    return instance.marketplace
-      ? JSON.stringify([instance.pluginId, instance.marketplace, instance.packageVersion])
-      : pluginPackageKey(instance.pluginId, instance.packageVersion);
   }
 
   private installRunnerRegistration(
