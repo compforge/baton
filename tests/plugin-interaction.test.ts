@@ -96,13 +96,13 @@ describe("plugin Interaction Store", () => {
     store.complete(confirmation!.interactionId, {
       kind: "question",
       outcome: "answered",
-      answers: { decision: ["grant"] },
+      answers: { decision: ["accept"] },
     });
     expect(store.confirm(context, {
       key: "close",
       title: "Close requirement",
       prompt: "Close it?",
-    })).toEqual({ state: "granted" });
+    })).toEqual({ state: "accepted" });
     store.close();
   });
 

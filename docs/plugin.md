@@ -152,7 +152,7 @@ Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只
 Core-owned 控制能力：
 
 - `ask`：请求一个选项或自由文本答案，可声明持久的绝对 deadline；
-- `confirm`：请求 grant / decline 决定，可声明持久的绝对 deadline；
+- `confirm`：请求 accept / decline 决定，可声明持久的绝对 deadline；
 - `withdraw`：领域流程不再需要答案时，以稳定 operation key 撤回未决 Interaction；
 - `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
 - `harness`：直接形成 plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
