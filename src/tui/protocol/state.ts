@@ -419,8 +419,13 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller.approvalRoute(statusTargetId) === "delegated"
       ? "approvals:auto-review"
       : undefined;
+  const fastStatus = targetState?.configOptions?.some(
+    (option) => option.id === "fast" && option.type === "boolean" && option.value,
+  )
+    ? "Fast"
+    : undefined;
   const modeStatus = statusMode === "default" ? undefined : `${statusMode} mode`;
-  const statusDetails = [modeStatus, contextStatus, approvalStatus].filter(
+  const statusDetails = [fastStatus, modeStatus, contextStatus, approvalStatus].filter(
     (detail): detail is string => detail !== undefined,
   );
   const withStatusDetails = (item: RunStatusItem): RunStatusItem => ({

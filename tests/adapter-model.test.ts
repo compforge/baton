@@ -241,6 +241,74 @@ describe("Claude model capability", () => {
 });
 
 describe("Codex model capability", () => {
+  test("toggles Fast mode through the current thread settings", async () => {
+    const adapter = new CodexAdapter({ interactionHandler });
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const events: Array<{ kind: string; payload: unknown }> = [];
+    const peer = {
+      request: async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "model/list") {
+          return {
+            data: [{
+              id: "gpt-5.6",
+              displayName: "GPT-5.6",
+              isDefault: true,
+              supportedReasoningEfforts: [],
+              serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+            }],
+          };
+        }
+        if (method === "thread/settings/update") return {};
+        if (method === "collaborationMode/list") return { data: [] };
+        throw new Error(`unexpected request: ${method}`);
+      },
+    };
+    const runtime = {
+      threadId: "thread-1",
+      peer,
+      serviceTier: null,
+      sink: (event: { kind: string; payload: unknown }) => events.push(event),
+    };
+    (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
+    const ref = { harness: "codex", handleId: "thread-1" };
+
+    const enabled = await adapter.setConfig(ref, "fast", true);
+    expect(requests).toContainEqual({
+      method: "thread/settings/update",
+      params: { threadId: "thread-1", serviceTier: "priority" },
+    });
+    expect(enabled.find((option) => option.id === "fast")).toMatchObject({ value: true });
+
+    (
+      adapter as unknown as {
+        handleNotification: (
+          runtime: unknown,
+          method: string,
+          params: unknown,
+        ) => void;
+      }
+    ).handleNotification(runtime, "thread/settings/updated", {
+      threadId: "thread-1",
+      threadSettings: { serviceTier: "default" },
+    });
+    expect(events.at(-1)).toMatchObject({
+      kind: "config_option_update",
+      payload: { options: expect.arrayContaining([expect.objectContaining({ id: "fast", value: false })]) },
+    });
+
+    const disabled = await adapter.setConfig(ref, "fast", false);
+    expect(requests).toContainEqual({
+      method: "thread/settings/update",
+      params: { threadId: "thread-1", serviceTier: null },
+    });
+    expect(disabled.find((option) => option.id === "fast")).toMatchObject({ value: false });
+    expect(events.at(-1)).toMatchObject({
+      kind: "config_option_update",
+      payload: { options: expect.arrayContaining([expect.objectContaining({ id: "fast", value: false })]) },
+    });
+  });
+
   test("generic config returns a full snapshot after mutation", async () => {
     const adapter = new CodexAdapter({ interactionHandler });
     const peer = {
@@ -261,7 +329,7 @@ describe("Codex model capability", () => {
         throw new Error(`unexpected request: ${method}`);
       },
     };
-    const runtime = { threadId: "thread-1", peer };
+    const runtime = { threadId: "thread-1", peer, serviceTier: null, sink: () => undefined };
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
@@ -329,7 +397,7 @@ describe("Codex model capability", () => {
         throw new Error(`unexpected request: ${method}`);
       },
     };
-    const runtime = { threadId: "thread-1", peer };
+    const runtime = { threadId: "thread-1", peer, serviceTier: null, sink: () => undefined };
     (
       adapter as unknown as { threads: Map<string, typeof runtime> }
     ).threads.set("thread-1", runtime);
@@ -409,7 +477,7 @@ describe("Codex model capability", () => {
         throw new Error(`unexpected request: ${method}`);
       },
     };
-    const runtime = { threadId: "thread-1", peer };
+    const runtime = { threadId: "thread-1", peer, serviceTier: null, sink: () => undefined };
     (adapter as unknown as { threads: Map<string, typeof runtime> }).threads.set("thread-1", runtime);
     const ref = { harness: "codex", handleId: "thread-1" };
 

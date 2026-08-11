@@ -79,6 +79,10 @@ interface ThreadRuntime {
   threadId: string;
   /** codex 回吐的生效审批路由（权威）；null = 本次没问出来，投影据此静默。 */
   approvalRoute: ApprovalRoute | null;
+  /** app-server 回吐的当前 service tier；priority 即 Codex Fast mode。 */
+  serviceTier: string | null;
+  /** 最近一次发布的完整 session config 快照，供 settings 通知原地校准 Fast。 */
+  configOptions?: SessionConfigOption[];
   sink: EventSink;
   /** 最近一次 submit 的 baton turn id：迟到通知（tokenUsage 等）也用它标注信封 */
   turnId?: string;
@@ -129,6 +133,8 @@ interface CodexModelInfo {
   isDefault: boolean;
   defaultEffort?: string;
   efforts: EffortOption[];
+  /** undefined 表示旧 app-server 未提供 service tier catalog。 */
+  supportsFast?: boolean;
 }
 
 interface CodexModeInfo {
@@ -142,8 +148,44 @@ const CODEX_FALLBACK_MODES: readonly CodexModeInfo[] = [
   { id: "plan", label: "Plan" },
 ];
 
+const CODEX_FAST_SERVICE_TIER = "priority";
+const CODEX_STANDARD_SERVICE_TIER = "default";
+const CODEX_FAST_CONFIG = { "features.fast_mode": true } as const;
+
+function isFastServiceTier(serviceTier: string | null | undefined): boolean {
+  return serviceTier === CODEX_FAST_SERVICE_TIER || serviceTier === "fast";
+}
+
+function fastConfigOption(
+  serviceTier: string | null | undefined,
+  model?: CodexModelInfo,
+): SessionConfigOption {
+  return {
+    id: "fast",
+    type: "boolean",
+    name: "Fast",
+    category: "model",
+    value: isFastServiceTier(serviceTier) && model?.supportsFast !== false,
+    description: model?.supportsFast === false
+      ? `${model.label} does not support Fast mode`
+      : "Use Codex Fast mode for subsequent turns",
+  };
+}
+
 function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function codexModelSupportsFast(model: Record<string, unknown>): boolean | undefined {
+  const serviceTierRows = model.serviceTiers ?? model.service_tiers;
+  const additionalSpeedTiers = model.additionalSpeedTiers ?? model.additional_speed_tiers;
+  if (!Array.isArray(serviceTierRows) && !Array.isArray(additionalSpeedTiers)) return undefined;
+  const hasFastServiceTier = Array.isArray(serviceTierRows) && serviceTierRows.some((row) => {
+    const tier = typeof row === "string" ? row : (row as Record<string, unknown>).id;
+    return tier === CODEX_FAST_SERVICE_TIER || tier === "fast";
+  });
+  return hasFastServiceTier ||
+    (Array.isArray(additionalSpeedTiers) && additionalSpeedTiers.includes("fast"));
 }
 
 function codexModelInfos(result: unknown): CodexModelInfo[] {
@@ -177,6 +219,7 @@ function codexModelInfos(result: unknown): CodexModelInfo[] {
       isDefault: model.isDefault === true || model.is_default === true,
       defaultEffort: String(model.defaultReasoningEffort ?? model.default_reasoning_effort ?? "").trim() || undefined,
       efforts,
+      supportsFast: codexModelSupportsFast(model),
     });
   }
   return models;
@@ -752,6 +795,12 @@ function routeFrom(response: unknown): ApprovalRoute | null {
   return approvalRouteOf(record.approvalsReviewer);
 }
 
+/** thread/start|resume 对 feature gate 与模型支持校验后的 service tier。 */
+function serviceTierFrom(response: unknown): string | null {
+  const record = response && typeof response === "object" ? (response as Record<string, unknown>) : {};
+  return typeof record.serviceTier === "string" ? record.serviceTier : null;
+}
+
 /**
  * 恢复优先；原生 thread 已丢失时新建，BatonSession 会在宿主层补齐历史。
  *
@@ -767,8 +816,15 @@ export async function openCodexThread(
     resumeSessionId?: string;
     approvalReviewer?: "user" | "auto_review";
   },
-): Promise<{ threadId: string; resumed: boolean; route: ApprovalRoute | null }> {
+): Promise<{
+  threadId: string;
+  resumed: boolean;
+  route: ApprovalRoute | null;
+  serviceTier: string | null;
+}> {
   const reviewer = opts.approvalReviewer ? { approvalsReviewer: opts.approvalReviewer } : {};
+  // 只开启 Fast 的可选能力；是否付费走 Fast 仍由 serviceTier 明确切换。
+  const config = { config: CODEX_FAST_CONFIG };
   const resumeSessionId = opts.resumeState
     ? sessionIdFromResumeState(opts.resumeState)
     : opts.resumeSessionId;
@@ -776,13 +832,14 @@ export async function openCodexThread(
     try {
       const response = await peer.request(
         "thread/resume",
-        { threadId: resumeSessionId, ...reviewer },
+        { threadId: resumeSessionId, ...reviewer, ...config },
         { timeoutMs: STARTUP_REQUEST_TIMEOUT_MS },
       );
       return {
         threadId: threadIdFrom(response, "thread/resume"),
         resumed: true,
         route: routeFrom(response),
+        serviceTier: serviceTierFrom(response),
       };
     } catch (error) {
       if (!missingThread(error)) throw error;
@@ -791,10 +848,15 @@ export async function openCodexThread(
 
   const response = await peer.request(
     "thread/start",
-    { cwd: opts.cwd, ...reviewer },
+    { cwd: opts.cwd, ...reviewer, ...config },
     { timeoutMs: STARTUP_REQUEST_TIMEOUT_MS },
   );
-  return { threadId: threadIdFrom(response, "thread/start"), resumed: false, route: routeFrom(response) };
+  return {
+    threadId: threadIdFrom(response, "thread/start"),
+    resumed: false,
+    route: routeFrom(response),
+    serviceTier: serviceTierFrom(response),
+  };
 }
 
 type CodexPromptItem =
@@ -877,7 +939,14 @@ export class CodexAdapter implements HarnessAdapter {
       });
     });
 
-    const rt: ThreadRuntime = { child, peer, threadId: "", approvalRoute: null, sink };
+    const rt: ThreadRuntime = {
+      child,
+      peer,
+      threadId: "",
+      approvalRoute: null,
+      serviceTier: null,
+      sink,
+    };
     // transport 终结 = 该 session 所有在途工作的终结点：pending JSON-RPC request 全部 reject，
     // 活跃 turn 必须在此合成终态，否则 controller 永远等不到 idle（见 docs/harness.md）。
     child.on("close", (code) => {
@@ -984,7 +1053,11 @@ export class CodexAdapter implements HarnessAdapter {
       const threadId = opened.threadId;
       rt.threadId = threadId;
       rt.approvalRoute = opened.route;
+      rt.serviceTier = opened.serviceTier;
       this.threads.set(threadId, rt);
+      // thread/start|resume 已回吐当前 tier；先发布无额外 RPC 的最小快照，避免会话启动
+      // 被 model/list 等可选 catalog 阻塞。首次 /config 或 /fast 会补齐完整快照。
+      this.publishConfigSnapshot(rt, [fastConfigOption(rt.serviceTier)]);
       binding?.({
         identity: { id: threadId },
         resumeState: sessionIdResumeState(threadId),
@@ -1057,13 +1130,18 @@ export class CodexAdapter implements HarnessAdapter {
     return this.mustThread(ref).effortSelection ?? null;
   }
 
-  async getConfig(ref: HarnessSessionHandle): Promise<SessionConfigOption[]> {
-    const rt = this.mustThread(ref);
+  private publishConfigSnapshot(rt: ThreadRuntime, options: SessionConfigOption[], raw?: unknown): void {
+    rt.configOptions = options;
+    this.emit(rt, { kind: "config_option_update", payload: { options } }, raw);
+  }
+
+  private async configSnapshot(rt: ThreadRuntime): Promise<SessionConfigOption[]> {
     // 一次 model/list 生成整份快照，避免 model 与 effort 来自两个不同时点的 catalog。
     const catalog = await rt.peer.request("model/list", { limit: 200 });
     updateCodexResolvedSettings(rt, catalog);
     const models = codexModels(catalog);
     const efforts = codexEfforts(catalog, rt.model);
+    const selectedModel = selectedCodexModel(catalog, rt.model);
     const modes = await rt.peer
       .request("collaborationMode/list", {})
       .then(codexModes)
@@ -1076,7 +1154,7 @@ export class CodexAdapter implements HarnessAdapter {
         type: "select",
         name: "Model",
         category: "model",
-        value: this.currentModel(ref) ?? "default",
+        value: rt.model ?? "default",
         options: models.map(({ id, label, description }) => ({
           value: id,
           name: label,
@@ -1088,13 +1166,14 @@ export class CodexAdapter implements HarnessAdapter {
         type: "select",
         name: "Effort",
         category: "thought_level",
-        value: this.currentEffort(ref) ?? "default",
+        value: rt.effortSelection ?? "default",
         options: efforts.map(({ id, label, description }) => ({
           value: id,
           name: label,
           ...(description ? { description } : {}),
         })),
       },
+      fastConfigOption(rt.serviceTier, selectedModel),
       ...(modes.length > 0
         ? [{
             id: "mode",
@@ -1115,11 +1194,38 @@ export class CodexAdapter implements HarnessAdapter {
     ];
   }
 
+  async getConfig(ref: HarnessSessionHandle): Promise<SessionConfigOption[]> {
+    const rt = this.mustThread(ref);
+    const options = await this.configSnapshot(rt);
+    this.publishConfigSnapshot(rt, options);
+    return options;
+  }
+
   async setConfig(
     ref: HarnessSessionHandle,
     configId: string,
     value: ConfigValue,
   ): Promise<SessionConfigOption[]> {
+    const rt = this.mustThread(ref);
+    if (configId === "fast") {
+      if (typeof value !== "boolean") {
+        throw new Error("Codex config fast requires a boolean value");
+      }
+      if (value) {
+        const catalog = await rt.peer.request("model/list", { limit: 200 });
+        const selected = selectedCodexModel(catalog, rt.model);
+        if (selected?.supportsFast === false) {
+          throw new Error(`Codex model ${selected.id} does not support Fast mode`);
+        }
+      }
+      await rt.peer.request("thread/settings/update", {
+        threadId: rt.threadId,
+        serviceTier: value ? CODEX_FAST_SERVICE_TIER : null,
+      });
+      // RPC 表示更新已通过预检并入队；settings/updated 到达后还会用权威值校准。
+      rt.serviceTier = value ? CODEX_FAST_SERVICE_TIER : CODEX_STANDARD_SERVICE_TIER;
+      return this.getConfig(ref);
+    }
     if (typeof value !== "string") {
       throw new Error(`Codex config ${configId} requires a string value`);
     }
@@ -1131,7 +1237,6 @@ export class CodexAdapter implements HarnessAdapter {
       if (value !== "default" && value !== "plan") {
         throw new Error(`Unknown Codex mode: ${value}`);
       }
-      const rt = this.mustThread(ref);
       if (rt.activeTurn && !rt.activeTurn.finalized) {
         throw new Error("Cannot switch Codex mode while a turn is running");
       }
@@ -1413,6 +1518,19 @@ export class CodexAdapter implements HarnessAdapter {
     if (p.threadId !== undefined && p.threadId !== rt.threadId) return;
 
     switch (method) {
+      case "thread/settings/updated": {
+        const settings = asRecord(p.threadSettings);
+        rt.serviceTier = typeof settings?.serviceTier === "string" ? settings.serviceTier : null;
+        if (rt.configOptions) {
+          const options = rt.configOptions.map((option) =>
+            option.id === "fast" && option.type === "boolean"
+              ? { ...option, value: isFastServiceTier(rt.serviceTier) }
+              : option,
+          );
+          this.publishConfigSnapshot(rt, options, params);
+        }
+        break;
+      }
       case "turn/started": {
         const turn = p.turn as Record<string, unknown> | undefined;
         rt.codexTurnId = turn ? String(turn.id) : undefined;

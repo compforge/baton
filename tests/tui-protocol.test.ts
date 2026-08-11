@@ -837,6 +837,64 @@ describe("BatonChatProtocol harness commands", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("toggles Fast mode and shows it in the harness status", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-fast-command-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      let fast = false;
+      const controller = (
+        protocol as unknown as {
+          controller: {
+            getConfig: () => Promise<Array<{
+              id: string;
+              type: "boolean";
+              name: string;
+              value: boolean;
+            }>>;
+            setConfig: (_target: string, _id: string, value: boolean) => Promise<unknown>;
+          };
+        }
+      ).controller;
+      controller.getConfig = async () => [{ id: "fast", type: "boolean", name: "Fast", value: fast }];
+      controller.setConfig = async (_target, _id, value) => {
+        fast = value;
+        session.append({
+          kind: "config_option_update",
+          source: { type: "harness", harnessTargetId: "codex" },
+          harness: "codex",
+          harnessTargetId: "codex",
+          laneId: session.meta.mainLaneId,
+          payload: {
+            options: [{ id: "fast", type: "boolean", name: "Fast", value: fast }],
+          },
+        });
+        return [];
+      };
+
+      await protocol.command("fast", "");
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
+        "codex Fast mode: on (takes effect next turn)",
+      );
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toContain("Fast");
+
+      await protocol.command("fast", "");
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
+        "codex Fast mode: off (takes effect next turn)",
+      );
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).not.toContain("Fast");
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("BatonChatProtocol State projection", () => {

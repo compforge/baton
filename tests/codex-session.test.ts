@@ -22,8 +22,12 @@ describe("openCodexThread", () => {
       threadId: "thread-old",
       resumed: true,
       route: null,
+      serviceTier: null,
     });
-    expect(calls).toEqual([{ method: "thread/resume", params: { threadId: "thread-old" } }]);
+    expect(calls).toEqual([{
+      method: "thread/resume",
+      params: { threadId: "thread-old", config: { "features.fast_mode": true } },
+    }]);
   });
 
   test("starts a replacement thread when the native rollout is gone", async () => {
@@ -40,6 +44,7 @@ describe("openCodexThread", () => {
       threadId: "thread-new",
       resumed: false,
       route: null,
+      serviceTier: null,
     });
     expect(calls).toEqual(["thread/resume", "thread/start"]);
   });
@@ -89,7 +94,10 @@ describe("codex approval routing rides the native thread param", () => {
   test("no configured reviewer → nothing is sent, codex decides for itself", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     await openCodexThread(peerReturning({ approvalsReviewer: "user" }, calls), { cwd: "/repo" });
-    expect(calls).toEqual([{ method: "thread/start", params: { cwd: "/repo" } }]);
+    expect(calls).toEqual([{
+      method: "thread/start",
+      params: { cwd: "/repo", config: { "features.fast_mode": true } },
+    }]);
   });
 
   test("an explicit reviewer is sent as a thread/start param", async () => {
@@ -99,7 +107,14 @@ describe("codex approval routing rides the native thread param", () => {
       approvalReviewer: "auto_review",
     });
     expect(calls).toEqual([
-      { method: "thread/start", params: { cwd: "/repo", approvalsReviewer: "auto_review" } },
+      {
+        method: "thread/start",
+        params: {
+          cwd: "/repo",
+          approvalsReviewer: "auto_review",
+          config: { "features.fast_mode": true },
+        },
+      },
     ]);
     expect(opened.route).toBe("delegated");
   });
@@ -129,5 +144,14 @@ describe("codex approval routing rides the native thread param", () => {
       (await openCodexThread(peerReturning({ approvalsReviewer: "future_mode" }, calls), { cwd: "/repo" }))
         .route,
     ).toBeNull();
+  });
+
+  test("reports the effective service tier returned by app-server", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const opened = await openCodexThread(
+      peerReturning({ serviceTier: "priority" }, calls),
+      { cwd: "/repo" },
+    );
+    expect(opened.serviceTier).toBe("priority");
   });
 });

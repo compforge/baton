@@ -558,6 +558,24 @@ export class BatonChatProtocol implements ChatProtocol {
         if (!effort) throw new Error(`Unknown ${target} effort: ${argument}`);
         return this.configureEffort(target, effort);
       }
+      case "fast": {
+        if (argument) throw new Error("/fast takes no arguments");
+        const target = this.harnessTargetId;
+        const option = (await this.controller.getConfig(target)).find(
+          (candidate) => candidate.id === "fast" && candidate.type === "boolean",
+        );
+        if (!option || option.type !== "boolean") {
+          throw new Error(`${target} does not support Fast mode`);
+        }
+        const enabled = !option.value;
+        await this.controller.setConfig(target, option.id, enabled);
+        this.toast = {
+          text: `${target} Fast mode: ${enabled ? "on" : "off"} (takes effect next turn)`,
+          tone: "info",
+        };
+        this.changed();
+        return;
+      }
       default: {
         if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
           throw new Error(`Unknown command: /${name}`);
