@@ -185,6 +185,24 @@ Every `matchLabels` entry must match exactly. Annotations are opaque string
 metadata and are not selectable. Use `patchMetadata()` to update either map by
 key; a `null` value removes that key without replacing unrelated entries.
 
+Use `get(ref)` to read a Resource. Omit `uid` for a name-based lookup that may
+resolve the current incarnation. Include `uid` when continuing work from an
+earlier observation, especially after awaiting a Core verb:
+
+```ts
+const current = await context.resources.get({
+  ...EXAMPLE_RESOURCE,
+  namespace: resource.metadata.namespace,
+  name: resource.metadata.name,
+  uid: resource.metadata.uid,
+});
+if (!current) return; // Deleted or replaced while this continuation waited.
+```
+
+`get(ref)` returns `undefined` when the name is absent or its `uid` no longer
+matches. Omitting `uid` intentionally performs a name-based lookup that may
+resolve a replacement. Namespace isolation is still enforced.
+
 `ResourceClient.delete()` requests deletion. Baton persists
 `metadata.deletionTimestamp`, cascades the request to structural descendants,
 hides terminating Resources from the Board, and removes each Resource after

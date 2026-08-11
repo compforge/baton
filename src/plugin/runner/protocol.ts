@@ -5,6 +5,7 @@ import type {
   Resource,
   ResourceListOptions,
   ResourceOwnerReference,
+  ResourceRef,
   ResourceType,
   ToastMessage,
 } from "@compforge/baton-plugin";
@@ -113,8 +114,7 @@ export type HostRequest =
     }
   | {
       readonly method: "resource.get";
-      readonly type: ResourceType;
-      readonly name: string;
+      readonly ref: ResourceRef;
     }
   | {
       readonly method: "resource.list";

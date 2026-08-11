@@ -258,6 +258,14 @@ describe("Plugin Runner process boundary", () => {
         ),
       }),
     });
+    await expect(
+      manager.executeCommand("process-check", { argument: "resource-ref" }),
+    ).resolves.toEqual({
+      kind: "message",
+      text: expect.stringMatching(
+        /^\{"currentUid":"pr_[^"]+"\}$/,
+      ),
+    });
     const heartbeat = Bun.sleep(25).then(() => "heartbeat");
     const invocation = manager.executeCommand("process-check", {
       argument: "200",
