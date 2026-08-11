@@ -154,7 +154,7 @@ Core-owned 控制能力：
 - `ask`：请求一个选项或自由文本答案；
 - `confirm`：请求 grant / decline 决定；
 - `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
-- `harness`：直接形成 plugin-source Input，并显式选择 `main` 或 `new` Lane。
+- `harness`：直接形成 plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
 
 能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction、
 草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
@@ -165,9 +165,10 @@ draft、主 Lane 或新 Lane。这个策略属于领域编排，不由 Core 从 
 Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
 [Reconcile Context](./reconcile-context.md)。
 
-`lane` 与 Input source 正交：`main` 使用 `mainLaneId`，`new` 创建可并行支线；draft 提交是
-user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行边界，不是 Plugin
-私有对象、worktree 策略或“前台/后台”标签。
+Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:true` 从指定 Lane 创建可并行
+支线；draft 提交是 user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行
+边界，不是 Plugin 私有对象、worktree 策略或“前台/后台”标签。`createdFor` 仅记录创建事实，
+不会阻止其它 invocation 继续该 Lane。
 
 ### 5.2 Board
 

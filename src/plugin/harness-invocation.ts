@@ -7,7 +7,6 @@ import type {
   AnyEventEnvelope,
   EventEnvelope,
   HarnessInvocationDelivery,
-  HarnessInvocationLane,
   HarnessInvocationRecorded,
   HarnessInvocationScheduled,
   PromptBlock,
@@ -30,7 +29,7 @@ export interface HarnessInvocationSnapshot {
   readonly resource: ResourceRef;
   readonly phase: HarnessInvocationPhase;
   readonly delivery: HarnessInvocationDelivery;
-  readonly lane: HarnessInvocationLane;
+  readonly newLane: boolean;
   readonly harnessTargetId: string;
   readonly laneId?: string;
   readonly turnId?: string;
@@ -48,14 +47,15 @@ export interface ReconcileHarnessInvocation {
     readonly title: string;
     readonly prompt: string;
     readonly delivery: HarnessInvocationDelivery;
-    readonly lane: HarnessInvocationLane;
+    readonly laneId: string;
+    readonly newLane: boolean;
     readonly harnessTargetId: string;
   };
 }
 
 type HarnessInvocationSession = Pick<
   SessionHandle,
-  "id" | "readEvents" | "subscribe" | "append" | "ensureMainLane"
+  "id" | "readEvents" | "subscribe" | "append" | "requireLane"
 >;
 
 export interface ScheduledHarnessInvocation {
@@ -63,7 +63,8 @@ export interface ScheduledHarnessInvocation {
   readonly pluginInstanceId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
-  readonly lane: HarnessInvocationLane;
+  readonly newLane: boolean;
+  readonly parentLaneId?: string;
   readonly source: "user" | "plugin";
   readonly messageId: string;
   readonly turnId: string;
@@ -136,7 +137,8 @@ function sameEnvelope(
     current.title === invocation.title &&
     current.prompt === invocation.prompt &&
     current.delivery === invocation.delivery &&
-    current.lane === invocation.lane &&
+    current.laneId === invocation.laneId &&
+    current.newLane === invocation.newLane &&
     current.harnessTargetId === invocation.harnessTargetId;
 }
 
@@ -201,7 +203,7 @@ function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
     resource: Object.freeze({ ...recorded.resource }),
     phase: phaseOf(state),
     delivery: recorded.delivery,
-    lane: recorded.lane,
+    newLane: recorded.newLane,
     harnessTargetId: recorded.harnessTargetId,
     ...(state.scheduled === undefined
       ? {}
@@ -226,7 +228,8 @@ function scheduledOf(
     pluginInstanceId: pluginInstanceIdOf(state),
     harnessTargetId: scheduled.harnessTargetId,
     laneId: scheduled.laneId,
-    lane: recorded.lane,
+    newLane: recorded.newLane,
+    ...(recorded.newLane ? { parentLaneId: recorded.laneId } : {}),
     source: recorded.delivery === "draft" ? "user" : "plugin",
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
@@ -279,6 +282,9 @@ export class HarnessInvocationStore {
     }
 
     const invocation = draft.invocation;
+    // Lane selection is part of the durable request envelope. Reject a stale or
+    // unknown base Lane before writing an invocation that can never be scheduled.
+    this.session.requireLane(invocation.laneId);
     this.session.append({
       kind: "_baton_harness_invocation_recorded",
       source: {
@@ -293,7 +299,8 @@ export class HarnessInvocationStore {
         title: invocation.title,
         prompt: invocation.prompt,
         delivery: invocation.delivery,
-        lane: invocation.lane,
+        laneId: invocation.laneId,
+        newLane: invocation.newLane,
         harnessTargetId: invocation.harnessTargetId,
       },
     });
@@ -456,14 +463,13 @@ export class HarnessInvocationStore {
     ) {
       return;
     }
+    this.session.requireLane(recorded.laneId);
     const scheduled: HarnessInvocationScheduled = {
       invocationId: recorded.invocationId,
       messageId: newId("m"),
       turnId: newId("t"),
       harnessTargetId: recorded.harnessTargetId,
-      laneId: recorded.lane === "main"
-        ? this.session.ensureMainLane().laneId
-        : newId("hl"),
+      laneId: recorded.newLane ? newId("hl") : recorded.laneId,
     };
     this.session.append({
       kind: "_baton_harness_invocation_scheduled",

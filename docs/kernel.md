@@ -46,7 +46,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **Project** | 按 cwd 组织和发现 BatonSession，并承载同 workspace 跨 Session 的 Plugin 私有数据；不拥有 Session 历史 |
 | **BatonSession** | 用户拥有的正典逻辑历史和 session-scoped Plugin 数据；跨 Harness 的唯一时间线 |
 | **HarnessTarget** | Baton 配置、调度和状态查询侧的一份具体执行目标；同一 Harness 可有多个 Target，状态必须按 Target 隔离 |
-| **Lane** | BatonSession 原生的持久串行任务线；拥有 `hl_` identity，可由人或 Plugin 发起，并可跨多个 HarnessTarget 接力 |
+| **Lane** | BatonSession 原生的持久串行任务线；主线 identity 为保留值 `main`，支线使用 `hl_` identity，可由人或 Plugin 发起，并可跨多个 HarnessTarget 接力 |
 | **HarnessSession** | Harness 在某个 `Lane × HarnessTarget` 下持有的持久原生执行会话；缺失只影响恢复优化，不阻止 Lane 继续 |
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
@@ -159,11 +159,12 @@ Permission、Attempt 和 Harness routing 主路径。Plugin 决定业务步骤�
 不表示跨 Lane 因果；因果由 `turnId`、`parentEventId` 和领域 identity 表达。新的
 Harness 执行事实必须带 `laneId`；缺失该坐标的事件不属于当前 ledger 契约。
 
-BatonSession 用 `mainLaneId` 指向默认主线（概念上的 lane0，但 ID 仍是不透明值），其它 Lane 是
-可异步推进的支线任务。Lane 的发起者可以是人或 Plugin，`createdFor` 只记录创建来源，不定义
-主/支角色；角色只由 `mainLaneId` 判断。每个 Lane 同时最多一个 driven Turn，Lane 内即使切换
-HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住主线 admission。
-新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与 TurnSummary。
+BatonSession 的保留 Lane ID `main` 是默认主线（概念上的 lane0），其它 Lane 是可异步推进的
+支线任务。Lane 的发起者可以是人或 Plugin，`createdFor` 与 `parentLaneId` 只记录创建来源，不定义
+后续调用权限；主/支角色只由 Lane ID 是否为 `main` 判断。每个 Lane 同时最多一个 driven Turn，
+Lane 内即使切换 HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住
+主线 admission。新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与
+TurnSummary。
 
 ## 5. 演进规则
 

@@ -263,11 +263,11 @@ callbacks or keep a Runner promise alive while waiting.
 
 A Controller uses `ctx.draft` to let the user edit a prompt, or
 `ctx.harness` to originate a driven Turn directly. The Plugin explicitly
-declares Lane placement for direct execution:
+declares the Lane for direct execution:
 
-- `lane: "main"` schedules the final Input on the BatonSession main lane.
-- `lane: "new"` allocates a new asynchronous lane when the Input is ready to
-  run.
+- `laneId` names an existing Lane to continue. `main` is the reserved main Lane ID.
+- `newLane: true` allocates a new asynchronous Lane from `laneId`; omitted or
+  `false` continues that Lane.
 
 Baton owns target selection, admission, execution, cancellation, ledger and
 recovery. Lane is a Baton-native task line rather than a Plugin-private
@@ -277,12 +277,14 @@ execution type:
 const execution = await ctx.harness({
   key: "implement-v1",
   prompt: "Implement the example and run its focused tests.",
-  lane: "new",
+  laneId: "main",
+  newLane: true,
 });
 if (execution.state !== "completed") return;
 // Inspect execution.turn.stopReason and update Resource status.
 ```
 
-The key and parameters are immutable for one logical operation; use a new key
-to request another question, draft, or Turn. `completed` means the Turn closed,
-not that domain acceptance succeeded.
+The result `laneId` is the actual execution Lane and can be passed to a later
+call to continue the same side task. The key and parameters are immutable for
+one logical operation; use a new key to request another question, draft, or
+Turn. `completed` means the Turn closed, not that domain acceptance succeeded.

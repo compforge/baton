@@ -38,13 +38,12 @@ function stores() {
       createdAt: new Date().toISOString(),
       harnessTargets: {},
       lanes: {
-        hl_main: {
-          laneId: "hl_main",
+        main: {
+          laneId: "main",
           createdFor: { type: "session" },
           harnessSessions: {},
         },
       },
-      mainLaneId: "hl_main",
       harnessSessions: {},
     },
   );

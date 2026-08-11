@@ -30,9 +30,9 @@ export type {
   DraftResult,
   HarnessInput,
   HarnessResult,
-  LanePlacement,
   ReconcileContext,
 } from "./reconcile-context.ts";
+export { MAIN_LANE_ID } from "./reconcile-context.ts";
 
 export type {
   PluginActivationContext,

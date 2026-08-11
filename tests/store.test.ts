@@ -148,13 +148,12 @@ describe("session lifecycle", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       harnessTargets: {},
       lanes: {
-        hl_main: {
-          laneId: "hl_main",
+        main: {
+          laneId: "main",
           createdFor: { type: "session" },
           harnessSessions: {},
         },
       },
-      mainLaneId: "hl_main",
       harnessSessions: {},
     };
     writeFileSync(join(legacy, "meta.json"), JSON.stringify(meta));
@@ -186,13 +185,12 @@ describe("session lifecycle", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       harnessTargets: {},
       lanes: {
-        hl_main: {
-          laneId: "hl_main",
+        main: {
+          laneId: "main",
           createdFor: { type: "session" },
           harnessSessions: {},
         },
       },
-      mainLaneId: "hl_main",
       harnessSessions: {},
     };
     writeFileSync(join(legacy, "meta.json"), JSON.stringify(meta));
@@ -246,8 +244,8 @@ describe("session lifecycle", () => {
     }));
 
     const reopened = store.openSession(h.id);
-    const laneId = reopened.meta.mainLaneId;
-    expect(laneId).toMatch(/^hl_/);
+    const laneId = "main";
+    expect(laneId).toBe("main");
     expect(reopened.meta.harnessTargets.codex).toEqual({
       harnessTargetId: "codex",
       harness: "codex",
@@ -265,7 +263,7 @@ describe("session lifecycle", () => {
     ) as Record<string, unknown>;
     expect(persisted.harnessSessions).toBeUndefined();
     expect(persisted.lanes).toBeDefined();
-    expect(persisted.mainLaneId).toBe(laneId);
+    expect(persisted.mainLaneId).toBeUndefined();
   });
 
   test("harness session metadata cannot be stored under another target", () => {

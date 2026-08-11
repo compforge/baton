@@ -44,13 +44,15 @@ Target probe 只发现 model、effort、command 等静态目录，不创建 Harn
 
 ### 2.2 Lane
 
-`Lane` 是 BatonSession 原生的逻辑任务线，ID 使用 `hl_` 前缀。它拥有创建来源，以及按
-HarnessTarget 保存的 HarnessSession binding；原生 Session 因恢复失败而重建时，Lane identity
-不变。Lane 不绑定某一个 Target，可以在相邻 Turn 之间切换 Harness 接力。
+`Lane` 是 BatonSession 原生的逻辑任务线。主线使用保留 ID `main`，支线 ID 使用 `hl_` 前缀。
+它拥有创建来源，以及按 HarnessTarget 保存的 HarnessSession binding；原生 Session 因恢复失败
+而重建时，Lane identity 不变。Lane 不绑定某一个 Target，可以在相邻 Turn 之间切换 Harness
+接力。
 
-BatonSession 的 `mainLaneId` 指向默认主线；其它 Lane 表达异步支线。Lane 可以由人或 Plugin
-发起，`createdFor` 只记录创建事实，不决定它是不是主线。只有按 `lane:new` 调度的 HarnessInvocation
-才在准备执行时创建 `createdFor:harness_invocation` 支线；`lane:main` 复用主 Lane。
+BatonSession 的 `main` Lane 是默认主线；其它 Lane 表达异步支线。Lane 可以由人或 Plugin 发起，
+`createdFor` 与 `parentLaneId` 只记录创建事实，不决定它是不是主线，也不限制后续使用者。
+HarnessInvocation 用 `laneId` 继续既有 Lane；`newLane:true` 才在准备执行时创建
+`createdFor:harness_invocation` 支线。
 
 每个 Lane 同时最多一个 driven Turn。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
 Handle 和原生 Session；Binding 索引必须使用 `(laneId, harnessTargetId)`，不能只用其中一个。

@@ -130,8 +130,10 @@ export class InputQueue {
     });
   }
 
-  dequeue(): InputRecord | undefined {
-    const input = this.queue.shift();
+  dequeue(predicate?: (input: InputRecord) => boolean): InputRecord | undefined {
+    const index = predicate ? this.queue.findIndex(predicate) : 0;
+    if (index < 0) return;
+    const [input] = this.queue.splice(index, 1);
     if (input) input.status = "admitted";
     return input;
   }

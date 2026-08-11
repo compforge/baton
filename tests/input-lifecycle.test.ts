@@ -17,7 +17,7 @@ import type {
 } from "../src/harness/adapter.ts";
 import { textOf, type PromptBlock } from "../src/event/types.ts";
 import { Controller } from "../src/controller/index.ts";
-import { SessionStore, type SessionHandle } from "../src/store/store.ts";
+import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
@@ -183,7 +183,8 @@ describe("Input lifecycle (InputRecord)", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_request",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_plugin",
       turnId: "t_plugin",

@@ -40,7 +40,7 @@ import type {
   InteractionDraft,
   InteractionResolution,
 } from "../interaction/types.ts";
-import type { SessionHandle } from "../store/store.ts";
+import { MAIN_LANE_ID, type SessionHandle } from "../store/store.ts";
 import { DeliveryAttempts } from "./attempt.ts";
 import {
   InputQueue,
@@ -67,7 +67,8 @@ export interface HarnessInvocationInput {
   readonly pluginInstanceId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
-  readonly lane: "main" | "new";
+  readonly newLane: boolean;
+  readonly parentLaneId?: string;
   readonly source: InputSource;
   readonly messageId: string;
   readonly turnId: string;
@@ -236,7 +237,7 @@ export class Controller {
   }
 
   private mainLaneId(): string {
-    return this.options.session.ensureMainLane().laneId;
+    return MAIN_LANE_ID;
   }
 
   private activeMainTurn(): TurnRecord<HarnessBinding> | undefined {
@@ -244,7 +245,7 @@ export class Controller {
       if (
         record.status === "active" &&
         record.role === "driven" &&
-        record.laneId === this.options.session.meta.mainLaneId
+        record.laneId === MAIN_LANE_ID
       ) {
         return record;
       }
@@ -258,7 +259,7 @@ export class Controller {
     const processing = active
       ? this.processing.get(active.laneId)
       : [...this.processing.entries()].find(
-          ([laneId]) => laneId === this.options.session.meta.mainLaneId,
+          ([laneId]) => laneId === MAIN_LANE_ID,
         )?.[1];
     return processing?.target.id ?? active?.harnessTargetId;
   }
@@ -358,12 +359,18 @@ export class Controller {
       );
     }
     const target = this.targetFor(input.harnessTargetId);
-    const laneId = input.lane === "main"
-      ? this.mainLaneId()
-      : this.options.session
-        .ensureHarnessInvocationLane(input.laneId, input.harnessInvocationId)
-        .laneId;
-    const queue = input.lane === "main" ? this.mainQueue : this.sideQueue;
+    const parentLaneId = input.parentLaneId;
+    if (input.newLane && !parentLaneId) {
+      throw new Error(`HarnessInvocation ${input.harnessInvocationId} is missing parentLaneId`);
+    }
+    const laneId = input.newLane && parentLaneId
+      ? this.options.session.ensureHarnessInvocationLane(
+        input.laneId,
+        input.harnessInvocationId,
+        parentLaneId,
+      ).laneId
+      : this.options.session.requireLane(input.laneId).laneId;
+    const queue = laneId === this.mainLaneId() ? this.mainQueue : this.sideQueue;
     const outcome = queue.enqueue(target, laneId, input.blocks, {
       source: input.source,
       harnessInvocationId: input.harnessInvocationId,
@@ -373,7 +380,7 @@ export class Controller {
       },
     });
     this.changed();
-    if (input.lane === "main") void this.drainMain();
+    if (laneId === this.mainLaneId()) void this.drainMain();
     else this.drainSideLanes();
     return outcome;
   }
@@ -727,7 +734,10 @@ export class Controller {
   private drainSideLanes(): void {
     const concurrency = this.options.sideLaneConcurrency ?? DEFAULT_SIDE_LANE_CONCURRENCY;
     while (this.activeSideRuns < concurrency && this.sideQueue.length > 0) {
-      const turn = this.sideQueue.dequeue();
+      const turn = this.sideQueue.dequeue(
+        (candidate) => !this.processing.has(candidate.laneId) &&
+          !this.turns.activeDriven(candidate.laneId),
+      );
       if (!turn) return;
       this.activeSideRuns++;
       this.changed();
@@ -1104,7 +1114,7 @@ export class Controller {
     this.turns.finish(record, stopReason);
     if (
       record.role === "driven" &&
-      record.laneId === session.meta.mainLaneId
+      record.laneId === MAIN_LANE_ID
     ) {
       this.maybeGenerateTitle(record.harnessTargetId);
     }

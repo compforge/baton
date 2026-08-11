@@ -360,7 +360,6 @@ export interface TurnSummaryToolCall {
 }
 
 export type HarnessInvocationDelivery = "draft" | "direct";
-export type HarnessInvocationLane = "main" | "new";
 
 /**
  * turn 结束时落盘的汇总事件：人可 grep、@ 引用的紧凑投影数据源、reduce 的 checkpoint。
@@ -385,7 +384,9 @@ export interface HarnessInvocationRecorded {
   title: string;
   prompt: string;
   delivery: HarnessInvocationDelivery;
-  lane: HarnessInvocationLane;
+  /** Existing Lane used as the execution Lane or as the parent of a new Lane. */
+  laneId: string;
+  newLane: boolean;
   harnessTargetId: string;
 }
 
