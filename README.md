@@ -40,9 +40,9 @@ Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carr
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-v2 keeps that pipeline and makes baton a durable coordination kernel among humans, Harnesses, and Baton Plugins. Each participant keeps its own semantics and enters Core through typed ports: human intent becomes Input or an Interaction result, Harness-native verbs become Interaction drafts through Adapters, and every operation-producing Plugin reconcile verb first becomes an Interaction through the host. An approved execution gate then becomes a HarnessInvocation. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
+v3 distills that pipeline to one stable boundary: humans, Harnesses, and Baton Plugins keep their own semantics and resources while coordinating through Core-owned Input, Interaction, HarnessInvocation, and Event facts. Plugins reach external systems through Connectors; every Plugin-initiated Turn still follows the same Input, context, permission, and routing path.
 
-![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
+![Baton v3 coordination kernel](docs/kernel-pipeline_v3.svg)
 
 The terminal has one focus and one host event loop; chat-tui isolates updates by surface, while Baton isolates third-party Package code in one Runner process per active Binding. A blocked or crashed Plugin therefore cannot occupy composer input, and its registrations are withdrawn as one unit.
 
