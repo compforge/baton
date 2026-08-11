@@ -17,15 +17,15 @@ import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import type { LogEntry } from "../src/logging.ts";
 import type { AnyEventDraft } from "../src/event/types.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "deny" }
     : { kind: "question", outcome: "answered", answers: {} };
 
 function claudeHarness(): { events: AnyEventDraft[]; feed: (msg: unknown) => void } {
-  const adapter = new ClaudeAdapter({ interactionHandler });
+  const adapter = new ClaudeAdapter({ openInteraction });
   const events: AnyEventDraft[] = [];
   const rt = {
     cwd: "/tmp",
@@ -46,7 +46,7 @@ function claudeHarness(): { events: AnyEventDraft[]; feed: (msg: unknown) => voi
 }
 
 function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, params: unknown) => void } {
-  const adapter = new CodexAdapter({ interactionHandler });
+  const adapter = new CodexAdapter({ openInteraction });
   const events: AnyEventDraft[] = [];
   const rt = {
     threadId: "th1",
@@ -120,7 +120,7 @@ describe("codex: error notifications", () => {
 describe("codex: unmapped notifications", () => {
   test("writes a throttled diagnostic instead of entering the session timeline", () => {
     const diagnostics: LogEntry[] = [];
-    const adapter = new CodexAdapter({ interactionHandler, log: (entry) => diagnostics.push(entry) });
+    const adapter = new CodexAdapter({ openInteraction, log: (entry) => diagnostics.push(entry) });
     const rt = { threadId: "th1", activeTurn: { turnId: "t1", finalized: false } };
     const notify = () =>
       (adapter as unknown as { handleNotification: (r: unknown, m: string, p: unknown) => void }).handleNotification(
@@ -210,7 +210,7 @@ describe("claude: ExitPlanMode → proposed_plan", () => {
     const interactions: InteractionDraft[] = [];
     const runtime = { capturedProposedPlanKeys: new Set<string>() };
     const adapter = new ClaudeAdapter({
-      interactionHandler: async (interaction) => {
+      openInteraction: async (interaction) => {
         interactions.push(interaction);
         return { kind: "permission", outcome: "selected", optionId: "deny" };
       },
@@ -435,7 +435,7 @@ describe("native provider observability", () => {
   test("Codex traces every native notification before mapping", () => {
     const native: unknown[] = [];
     const adapter = new CodexAdapter({
-      interactionHandler,
+      openInteraction,
       nativeEvent: (event) => native.push(event),
     });
     const rt = { threadId: "th1", activeTurn: { turnId: "t1", finalized: false } };
@@ -456,7 +456,7 @@ describe("native provider observability", () => {
   test("Claude reports an unknown SDK message once instead of silently dropping it", () => {
     const diagnostics: LogEntry[] = [];
     const adapter = new ClaudeAdapter({
-      interactionHandler,
+      openInteraction,
       log: (entry) => diagnostics.push(entry),
     });
     const rt = {
@@ -599,7 +599,7 @@ describe("structured questions", () => {
     const events: AnyEventDraft[] = [];
     const interactions: InteractionDraft[] = [];
     const adapter = new ClaudeAdapter({
-      interactionHandler: async (interaction) => {
+      openInteraction: async (interaction) => {
         interactions.push(interaction);
         return interaction.kind === "question"
           ? {
@@ -701,7 +701,7 @@ describe("structured questions", () => {
     const events: AnyEventDraft[] = [];
     const interactions: InteractionDraft[] = [];
     const adapter = new CodexAdapter({
-      interactionHandler: async (interaction) => {
+      openInteraction: async (interaction) => {
         interactions.push(interaction);
         return interaction.kind === "question"
           ? { kind: "question", outcome: "answered", answers: { approach: ["Fast", "Safe"] } }

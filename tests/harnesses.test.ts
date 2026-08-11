@@ -1,4 +1,4 @@
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
@@ -14,7 +14,7 @@ import {
 } from "../src/harness/registry.ts";
 import { agentColorFor } from "../src/tui/theme.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "deny" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -29,7 +29,7 @@ describe("harness registry", () => {
   });
 
   test("constructs adapters without putting harness branches in the TUI or session controller", () => {
-    const options = { interactionHandler, config: DEFAULT_CONFIG };
+    const options = { openInteraction, config: DEFAULT_CONFIG };
     expect(createHarnessAdapter({ id: "codex-a", harness: "codex" }, options).harness).toBe("codex");
     expect(createHarnessAdapter({ id: "claude-a", harness: "claude" }, options).harness).toBe("claude-code");
   });

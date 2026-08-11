@@ -16,7 +16,7 @@ import type {
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import type { PromptBlock } from "../src/event/types.ts";
-import { Controller, type InteractionHandlers } from "../src/controller/index.ts";
+import { Controller, type HarnessAdapterPorts } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
@@ -27,7 +27,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
   sink?: EventSink;
   private active?: PromptInput;
 
-  constructor(private readonly handlers: InteractionHandlers) {}
+  constructor(private readonly handlers: HarnessAdapterPorts) {}
 
   async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
@@ -37,7 +37,7 @@ class ApprovalHoldingAdapter implements HarnessAdapter {
   async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     this.active = input;
     void (async () => {
-      await this.handlers.interactionHandler({
+      await this.handlers.openInteraction({
         kind: "permission",
         title: "Run command?",
         options: [{ optionId: "allow", name: "Allow", polarity: "allow", lifetime: "once" }],

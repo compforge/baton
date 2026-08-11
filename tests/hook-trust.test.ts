@@ -203,7 +203,7 @@ describe("Codex hook trust harness interaction", () => {
     const first = new CodexAdapter({
       command,
       hookTrustStore: trust,
-      interactionHandler: async (request) => {
+      openInteraction: async (request) => {
         questions++;
         if (request.kind !== "hook_trust") throw new Error(`unexpected request ${request.kind}`);
         return { kind: "hook_trust", outcome: "trusted" };
@@ -220,7 +220,7 @@ describe("Codex hook trust harness interaction", () => {
     const second = new CodexAdapter({
       command,
       hookTrustStore: trust,
-      interactionHandler: async (request) => {
+      openInteraction: async (request) => {
         throw new Error(`should not ask again: ${request.kind}`);
       },
     });
@@ -265,7 +265,7 @@ describe("Codex hook trust harness interaction", () => {
     const adapter = new CodexAdapter({
       command: ["bun", "-e", script, "app-server"],
       hookTrustStore: failingStore,
-      interactionHandler: async () => {
+      openInteraction: async () => {
         questions++;
         return { kind: "hook_trust", outcome: "trusted" };
       },

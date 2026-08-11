@@ -7,37 +7,47 @@ Harness 和 Plugin 都不能绕过的约束。一次 Input 如何到达 Harness�
 
 ## 1. 理念与边界
 
-Baton 是 terminal-native 的 Loop Engineering 控制面，也是跨 coding agent 的统一工作区。
+Baton 是 terminal-native 的 Loop Engineering 协作内核与控制面，也是跨 coding agent 的统一工作区。
 用户拥有的不是某个 agent 进程，而是可持久、可恢复、可跨 Harness 接力的 `BatonSession`。
 Codex、Claude Code 等原生会话用于执行与加速恢复，不能成为逻辑历史的唯一载体。
 
-Baton 按三层协作：
+Baton core 位于三类参与者之间：
 
-1. **Baton core** 负责 Input、Interaction、Event、Context、权限、Harness routing、调度和
-   Projection，不理解 Requirement、Deployment、Review 等领域语义。
-2. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
+1. **人** 提交目标、编辑工作、回答问题与作出授权决定，并拥有 BatonSession 的正典历史。
+2. **Harness** 提供推理、工具调用与原生执行能力，Adapter 把各家协议归一成稳定契约。
+3. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
    通过 `ReconcileContext` 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
-3. **Harness** 提供智能执行能力，Adapter 把各家协议归一成稳定契约。devloop 等 Harness
-   Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
+
+Core 接受三方的 typed intent/verb，并将它们物化为有身份、owner、状态机和恢复语义的 Input、
+Interaction、HarnessInvocation 与 Event。它负责路由、权限、调度、取消、恢复和 Projection，
+但不提供任意 payload 的 publish/subscribe，也不理解 Requirement、Deployment、Review 等领域语义。
+devloop 等 Harness Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
 
 chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 Session、队列、Harness 或 Plugin
 生命周期，也不解释领域语义。
 
 ## 2. 核心模型
 
-### 2.1 三域视角
+### 2.1 三方协作视角
 
-从控制关系看，内核收束为三个协作域：
+从参与者关系看，Baton core 是三方之间唯一的持久协调边界：
 
-| 域 | 负责 | 不负责 |
+| 参与者 | 通过 Core 表达 | 自己负责 |
 |---|---|---|
-| **Input** | 表达进入 Baton 的刺激；当前主要是用户 prompt、interaction result 和 control | 不理解 Harness wire，不决定执行终态 |
-| **Controller** | admission、queue、Attempt、Turn、Interaction、Event 持久化和 Projection | 不实现 Harness 方言，不依赖具体 UI shape |
-| **Harness** | Target、原生 Session、Adapter、Capability 和原生事件归一 | 不拥有用户输入生命周期，不直接向页面投影 |
+| **人** | Input、Interaction answer/cancel、control intent | 目标、编辑内容与最终决议 |
+| **Harness** | Interaction request、执行 Event、状态与回执 | 推理、工具调用和原生 Session |
+| **Baton Plugin** | reconcile verbs、Resource、Context 与 presentation | 领域 loop、Connector 和完成条件 |
 
-控制方向是 `Input → Controller → Harness`；感知方向是
-`Harness → Controller → Projection → 用户`。Input 与 Harness 不直接依赖，只有 Controller
-同时理解两侧稳定契约。
+```text
+Human  ── Input ────────────────────────────────> Harness
+Human  <─ Interaction <── Core <── request ───── Harness
+Human  <─ Interaction <── Core <── ask/confirm ─ Plugin
+Plugin ── draft/harness ─> HarnessInvocation ──> Harness
+Harness ── Event ────────> Core Projection ────> Human / Plugin
+```
+
+Core 拥有这些箭头的稳定语义，而不是端点的业务。三方不能互持进程句柄、私建回调通道或绕过
+Core 直接改变另一方状态。
 
 ### 2.2 身份、owner 与生命周期
 
@@ -55,7 +65,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
-| **Interaction** | 需要外部参与者给出结果后才能继续的持久待决对象；Controller 拥有 requested/answered/cancelled 生命周期 |
+| **Interaction** | Harness 或 Plugin requester 等待人返回结果的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复 Harness continuation 或 Resource reconcile |
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 
@@ -71,19 +81,19 @@ Baton 签发的 Event、Interaction、Context Snapshot/Epoch、Session、Turn、
 ## 3. 整体设计
 
 ```text
-                         Baton host process
-┌──────────┐ intent   ┌──────────────────────────────────────┐
-│ chat-tui │─────────▶│ Controller / Session / Event Ledger  │
-│          │◀─────────│ Context / Interaction / Projection   │
-└──────────┘ render   │ Plugin Manager / Runner supervision  │
-                     └──────────────┬───────────────┬─────────┘
-                                    │               │
-                              stable contract       │ IPC
-                                    ▼               ▼
-                            Harness Adapter     Plugin Runner
-                                    │               │
-                                    ▼               ▼
-                                 Harness       Connector / domain
+                            Baton host process
+┌──────────┐ typed intent  ┌──────────────────────────────────────┐
+│  Human   │◀─────────────▶│ Input / Interaction / Invocation     │
+│ via TUI  │  projection   │ Session / Event Ledger / Policy      │
+└──────────┘               │ Routing / Scheduling / Recovery      │
+                           └──────────────┬───────────────┬────────┘
+                                          │               │
+                                   stable contract        │ IPC
+                                          ▼               ▼
+                                  Harness Adapter     Plugin Runner
+                                          │               │
+                                          ▼               ▼
+                                       Harness       Connector / domain
 ```
 
 host 主线程拥有 stdin、焦点、Controller、SessionStore、Plugin Manager 和展示快照。render、键盘
@@ -165,6 +175,16 @@ BatonSession 的保留 Lane ID `main` 是默认主线（概念上的 lane0），
 Lane 内即使切换 HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住
 主线 admission。新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与
 TurnSummary。
+
+### 4.7 Typed coordination，不是通用消息总线
+
+Core 对外暴露 `submit`、`answer`、`cancel`、`ask`、`confirm`、`draft`、`harness` 等稳定操作，
+不暴露 `send(type, payload)` 或任意 topic 订阅。每个操作只能创建或推进一种 Core-owned 对象，
+对象的 identity、owner、准入、终态和恢复规则由 Core 决定；调用方不能把路由 callback 或协议 DTO
+塞进 payload。
+
+领域语义仍属于端点：Plugin 决定 Requirement 下一步，Harness 决定如何执行，人决定目标与授权。
+领域无关不等于语义空心；Core 必须理解协作对象的生命周期和安全策略，否则才会退化为透明消息转发。
 
 ## 5. 演进规则
 

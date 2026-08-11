@@ -1,4 +1,4 @@
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { describe, expect, test } from "bun:test";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
@@ -10,7 +10,7 @@ import {
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "deny" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -65,7 +65,7 @@ describe("Claude model capability", () => {
     expect(closes).toBe(1);
     expect(typeof (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe("function");
 
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
     await adapter.setModel(ref, "sonnet");
     await adapter.setEffort(ref, "high");
@@ -78,7 +78,7 @@ describe("Claude model capability", () => {
   });
 
   test("records a native session id for resume", async () => {
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const bindings: unknown[] = [];
     const ref = await adapter.open(
       { cwd: "/tmp", resumeState: sessionIdResumeState("claude-session-1") },
@@ -93,7 +93,7 @@ describe("Claude model capability", () => {
   });
 
   test("generic config returns a full snapshot after mutation", async () => {
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
     const runtime = (
       adapter as unknown as {
@@ -143,7 +143,7 @@ describe("Claude model capability", () => {
         close: () => {},
       }) as unknown as Query;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
 
     const snapshot = await adapter.setConfig(ref, "mode", "plan");
@@ -171,7 +171,7 @@ describe("Claude model capability", () => {
         close: () => {},
       }) as unknown as Query;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
 
     await adapter.setConfig(ref, "mode", "plan");
@@ -197,7 +197,7 @@ describe("Claude model capability", () => {
         async *[Symbol.asyncIterator]() {},
       } as unknown as ReturnType<NonNullable<ClaudeAdapterOptions["queryFactory"]>>;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+    const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
 
     await adapter.sendTurn(ref, {
@@ -212,13 +212,13 @@ describe("Claude model capability", () => {
   });
 
   test("requires an existing native conversation before compacting", async () => {
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
     await expect(adapter.compactContext(ref, "t_compact")).rejects.toThrow("no conversation to compact");
   });
 
   test("rejects efforts unsupported by the selected Claude model", async () => {
-    const adapter = new ClaudeAdapter({ interactionHandler });
+    const adapter = new ClaudeAdapter({ openInteraction });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
     const runtime = (
       adapter as unknown as {
@@ -242,7 +242,7 @@ describe("Claude model capability", () => {
 
 describe("Codex model capability", () => {
   test("toggles Fast mode through the current thread settings", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const requests: Array<{ method: string; params: unknown }> = [];
     const events: Array<{ kind: string; payload: unknown }> = [];
     const peer = {
@@ -310,7 +310,7 @@ describe("Codex model capability", () => {
   });
 
   test("generic config returns a full snapshot after mutation", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const peer = {
       request: async (method: string) => {
         if (method === "model/list") {
@@ -346,7 +346,7 @@ describe("Codex model capability", () => {
   });
 
   test("maps context compaction to thread/compact/start", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const requests: Array<{ method: string; params: unknown }> = [];
     const runtime = {
       threadId: "thread-1",
@@ -367,7 +367,7 @@ describe("Codex model capability", () => {
   });
 
   test("maps Plan mode to Codex collaborationMode", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const harnessInvocations: Record<string, unknown>[] = [];
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {
@@ -428,7 +428,7 @@ describe("Codex model capability", () => {
   });
 
   test("rejects an invalid Codex mode before catalog requests", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const requests: string[] = [];
     const runtime = {
       threadId: "thread-1",
@@ -449,7 +449,7 @@ describe("Codex model capability", () => {
   });
 
   test("keeps the active Codex mode visible during a catalog failure", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     let modeRequests = 0;
     const peer = {
       request: async (method: string) => {
@@ -492,7 +492,7 @@ describe("Codex model capability", () => {
   });
 
   test("normalizes model/list and sends the selected model on the next turn", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const harnessInvocations: Record<string, unknown>[] = [];
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {
@@ -551,7 +551,7 @@ describe("Codex model capability", () => {
   });
 
   test("rejects efforts unsupported by the selected Codex model", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     const catalog = {
       data: [
         {
@@ -590,7 +590,7 @@ describe("Codex model capability", () => {
   test("delivers BatonSession catch-up via turn/start.additionalContext", async () => {
     // 曾走 thread/inject_items 注入独立 user message：会污染 codex 原生历史（悬空
     // user message），改为随本 turn 的 additionalContext side-channel 送达。
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     let turnParams: Record<string, unknown> | undefined;
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {
@@ -623,7 +623,7 @@ describe("Codex model capability", () => {
   });
 
   test("omits additionalContext when there is no catch-up", async () => {
-    const adapter = new CodexAdapter({ interactionHandler });
+    const adapter = new CodexAdapter({ openInteraction });
     let turnParams: Record<string, unknown> | undefined;
     const peer = {
       request: async (method: string, params: Record<string, unknown>) => {

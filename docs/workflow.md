@@ -1,38 +1,27 @@
 # Baton 工作流
 
-本文是 Baton 双向工作流的唯一入口：用户 Input 或 reconcile 控制能力发起的 HarnessInvocation
-如何经过 Controller
-到达 Harness，Harness 的输出如何成为可恢复事实并返回用户，以及 steer、Interaction、cancel、
-失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
+本文是 Baton 三方协作工作流的唯一入口：人的 intent、Harness 原生 verb 与 Plugin reconcile
+verb 如何在 Core 汇合，Input/HarnessInvocation 如何到达 Harness，Harness 输出如何成为可恢复事实，
+以及 steer、Interaction、cancel、失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
 [Harness](./harness.md)。
 
-## 1. 一条双向流水线
+## 1. 三方通过 typed Core objects 协作
 
 ```text
-控制（发起方 → Turn → Harness）
-
-User ─────────────────────────────────────────────→ user-source Input ┐
-Plugin → draft()       → editable draft ──────────→ user-source Input │
-Plugin → harness()     ───────────────────────────→ plugin-source Input┘
-  → admission / queue
-  → Context Snapshot + Delivery
-  → Delivery Attempt
-  → Harness Adapter
-  → Harness wire
-
-感知（Harness → 用户）
-
-Harness wire
-  → Adapter normalize
-  → Event append / broadcast
-  → reduce / Projection
-  → chat-tui render
-  → User
+Human  ─ submit ────────────────────────────────→ Input ───────────────→ Harness
+Harness ─ native permission/question verb ─────→ Adapter lowering ─┐
+Plugin  ─ ask/confirm reconcile verb ──────────→ Host lowering ────┴─→ Interaction ─→ Human
+Plugin  ─ draft/harness reconcile verb ────────→ HarnessInvocation ───→ Input ───────→ Harness
+Harness ─ native output ─→ Adapter normalize ─→ Event / Projection ───→ Human / Plugin
 ```
 
-Plugin 不另开执行通道。需要用户决定时先调用 `ask` / `confirm`；需要用户修改 prompt 时调用
-`draft`；无需编辑时调用 `harness`。Core 将调用持久化并返回当前状态，ledger 变化后重新
-reconcile Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
+Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core
+对象。Core 不接收任意 message：Interaction 只承载需要人返回结果的协作，HarnessInvocation 只
+承载受控执行，Input 只承载已准备向 Harness 投递的工作。
+
+Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；需要用户修改 prompt 时调用
+`draft`；无需编辑时调用 `harness`。Core 将调用物化并返回当前状态，ledger 变化后重新 reconcile
+Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
 ## 2. Input 到 Harness
 
@@ -198,13 +187,14 @@ HarnessInvocation 只用 invocation identity 定向取消自己的 queued Input 
 
 ## 5. Interaction 闭环
 
-Interaction 表示“某个 requester 正在等待外部参与者给出结果”，当前 kind 包含 permission、
-question 和 hook trust。完整闭环是：
+Interaction 表示“某个 requester 正在等待人给出结果”，当前 kind 包含 permission、question 和
+hook trust。它是 Core-owned rendezvous，不是 Harness 与 Plugin 互传任意 payload 的消息信封。
+完整闭环是：
 
 ```text
-Harness / Plugin request
-  → kind-specific draft
-  → Controller signs interactionId + requester
+Harness native verb → Adapter lowering ┐
+Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
+  → Core signs interactionId + requester
   → interaction.requested persisted
   → chat-tui presents to user
   → user answers or request is cancelled
@@ -212,8 +202,13 @@ Harness / Plugin request
   → waiting Adapter or Resource reconcile continues
 ```
 
-Harness Adapter 不自签 interaction ID，也不自行伪造 requested/answered/cancelled。result 就地解开等待方，
-不进入 prompt queue。Plugin Interaction 的绝对 deadline 随 requested 事实持久化；到期、requester
+Harness Adapter 负责把原生 request approval / request user input 等 verb 归一成 `InteractionDraft`，
+但不自签 interaction ID，也不自行伪造 requested/answered/cancelled。Plugin host 则把 `ask/confirm`
+reconcile verb 归一到相同的 Interaction kind。result 就地解开等待方，不进入 prompt queue。
+
+两类 requester 共享 identity、持久化、展示与终态规则，只在 continuation 上不同：Harness result
+返回当前 Adapter continuation；Plugin result 先落盘，再按 Resource identity 重新 reconcile。
+Reconcile Interaction 的绝对 deadline 随 requested 事实持久化；到期、requester
 显式撤回或 Resource 删除都先记录 cancelled，再推进原 Resource。cancel、timeout、requester 带外结束
 和恢复清理都显式记录为 cancelled，所有终态遵守 first-terminal-wins。
 
@@ -254,7 +249,7 @@ BatonSession；此后 resume/fork 只走 BatonSession 主路径。详细边界�
 
 - `src/controller/input.ts`、`turn.ts`、`attempt.ts` — Input、Turn 与 Delivery Attempt owner
 - `src/context/delivery.ts` — Snapshot、Receipt 与 Epoch
-- `src/controller/interaction.ts`、`src/interaction/types.ts` — Interaction 生命周期
+- `src/interaction/types.ts`、`harness.ts`、`reconcile.ts` — Interaction 公共模型与两种 continuation
 - `src/event/`、`src/store/reduce.ts` — Event 信封、append/reduce 与投影状态
 - `tests/input-lifecycle.test.ts`、`tests/delivery-attempt.test.ts` — 输入与投递状态迁移
 - `tests/lifecycle.test.ts`、`tests/reconcile.test.ts` — 终态与 stall 对账

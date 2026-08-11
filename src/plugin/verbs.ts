@@ -24,6 +24,10 @@ export interface ReconcileVerbScope {
   readonly basedOnRevision?: number;
 }
 
+/**
+ * Plugin-facing typed Core verbs. The host lowers ask/confirm into Interaction
+ * and draft/harness into HarnessInvocation; Runner never sends an opaque message.
+ */
 export type ReconcileVerbRequest =
   | {
       readonly verb: "ask";

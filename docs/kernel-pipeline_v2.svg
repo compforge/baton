@@ -46,9 +46,9 @@
   </defs>
 
   <rect width="1800" height="1020" fill="#ffffff"/>
-  <text x="900" y="48" text-anchor="middle" class="title">Baton、Plugin 与 Harness</text>
+  <text x="900" y="48" text-anchor="middle" class="title">Baton 三方协作内核</text>
   <text x="900" y="78" text-anchor="middle" class="small">
-    Plugin 编排长期工作，Baton 统一控制，Harness 提供智能执行能力
+    人、Harness 与 Plugin 通过 typed verbs 和 Core-owned objects 协作
   </text>
 
   <!-- User -->
@@ -65,7 +65,7 @@
   <text x="302" y="252" text-anchor="middle" class="label">Input</text>
 
   <rect x="210" y="350" width="185" height="108" rx="14" fill="#f2edff" class="box"/>
-  <text x="302" y="389" text-anchor="middle" class="label">Interaction / Draft</text>
+  <text x="302" y="389" text-anchor="middle" class="label">Answer / Draft</text>
   <text x="302" y="419" text-anchor="middle" class="small">回答 · 编辑 · 撤回</text>
   <line x1="302" y1="338" x2="302" y2="296" class="plugin-flow"/>
   <text x="322" y="323" class="tiny">submit</text>
@@ -86,14 +86,15 @@
 
   <!-- Stable kernel -->
   <rect x="505" y="170" width="910" height="350" rx="14" fill="#eef3fb" class="soft-box"/>
-  <text x="530" y="207" class="section-title">Baton core</text>
-  <text x="1385" y="207" text-anchor="end" class="tiny">通用机制，不理解具体领域语义</text>
+  <text x="530" y="207" class="section-title">Baton coordination core</text>
+  <text x="1385" y="207" text-anchor="end" class="tiny">有协作语义，不理解具体领域语义</text>
 
   <rect x="540" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
-  <text x="655" y="282" text-anchor="middle" class="label">Input / Interaction</text>
-  <text x="655" y="311" text-anchor="middle" class="small">可靠投递 · 用户控制</text>
-  <text x="655" y="334" text-anchor="middle" class="tiny">draft / harness 也从这里进入</text>
+  <text x="655" y="282" text-anchor="middle" class="label">Typed coordination</text>
+  <text x="655" y="311" text-anchor="middle" class="small">Input · Interaction · Invocation</text>
+  <text x="655" y="334" text-anchor="middle" class="tiny">identity · lifecycle · recovery</text>
   <line x1="430" y1="244" x2="525" y2="244" class="flow"/>
+  <line x1="540" y1="325" x2="410" y2="390" class="flow"/>
 
   <rect x="835" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
   <text x="950" y="282" text-anchor="middle" class="label">Context / Permission</text>
@@ -132,11 +133,12 @@
   </text>
 
   <rect x="545" y="665" width="185" height="100" rx="14" fill="#fce8c3" class="box"/>
-  <text x="637" y="704" text-anchor="middle" class="label">Interaction / Draft</text>
-  <text x="637" y="733" text-anchor="middle" class="small">请求决定或编辑 Input</text>
+  <text x="637" y="704" text-anchor="middle" class="label">Reconcile verbs</text>
+  <text x="637" y="733" text-anchor="middle" class="small">请求决定或准备执行</text>
   <text x="637" y="754" text-anchor="middle" class="tiny">ask · confirm · draft</text>
   <path d="M790 810 C765 810 755 755 745 730" class="plugin-flow"/>
-  <path d="M545 715 H485 V404 H410" class="plugin-flow"/>
+  <path d="M590 665 V375 H610 V355" class="plugin-flow"/>
+  <path d="M545 715 H485 V430 H410" class="plugin-flow"/>
   <text x="473" y="560" text-anchor="middle" class="tiny" transform="rotate(-90 473 560)">
     请求用户决定或编辑
   </text>
@@ -145,7 +147,7 @@
   <text x="637" y="834" text-anchor="middle" class="small">HarnessInvocation</text>
   <text x="637" y="858" text-anchor="middle" class="tiny">harness · 受控 Harness Turn</text>
   <path d="M790 818 C770 825 755 834 745 838" class="plugin-flow"/>
-  <path d="M637 805 V535 H655 V365" class="plugin-flow"/>
+  <path d="M680 805 V535 H700 V355" class="plugin-flow"/>
 
   <rect x="1190" y="665" width="180" height="100" rx="14" fill="#e7f7ee" class="box"/>
   <text x="1280" y="704" text-anchor="middle" class="label">Connector</text>
@@ -169,6 +171,8 @@
   <circle cx="1677" cy="365" r="58" fill="#e7ddff" class="box"/>
   <text x="1677" y="373" text-anchor="middle" class="label">Claude</text>
   <line x1="1375" y1="297" x2="1500" y2="297" class="flow"/>
+  <path d="M1510 400 H1400 V390 H790 V325 H775" class="flow"/>
+  <text x="1135" y="380" text-anchor="middle" class="tiny">native verb → Adapter lowering</text>
 
   <rect x="1535" y="430" width="185" height="58" rx="29" fill="#dff5e8" class="box"/>
   <text x="1627" y="455" text-anchor="middle" class="label">devloop</text>
@@ -198,7 +202,7 @@
 
   <!-- Legend -->
   <line x1="520" y1="982" x2="575" y2="982" class="flow"/>
-  <text x="590" y="988" class="small">Baton 控制与投递</text>
+  <text x="590" y="988" class="small">Core typed ports 与投递</text>
   <line x1="815" y1="982" x2="870" y2="982" class="event-flow"/>
   <text x="885" y="988" class="small">事件与外部事实</text>
   <line x1="1100" y1="982" x2="1155" y2="982" class="plugin-flow"/>

@@ -5,9 +5,9 @@ import type {
   Interaction,
   InteractionDraft,
   InteractionResult,
-} from "../interaction/types.ts";
+} from "./types.ts";
 
-interface InteractionBinding {
+interface HarnessInteractionBinding {
   target: { id: string };
   laneId: string;
 }
@@ -19,10 +19,12 @@ type AppendEvent<TBinding> = (
 ) => void;
 
 /**
- * 当前进程内的 Interaction continuation owner。持久状态以 requested / answered / cancelled
- * Event 为准；这里仅持有等待结果的 Harness continuation。
+ * Harness 请求的进程内 continuation。Core 仍先持久化 Interaction 生命周期，
+ * 这里才把终态交还给正在等待的 Adapter。
  */
-export class InteractionWaiters<TBinding extends InteractionBinding> {
+export class HarnessInteractionContinuations<
+  TBinding extends HarnessInteractionBinding,
+> {
   private readonly pending = new Map<
     string,
     {

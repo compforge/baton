@@ -2,10 +2,10 @@ import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { expect, test } from "bun:test";
 
 import type { AnyEventDraft } from "../src/event/types.ts";
-import type { InteractionHandler } from "../src/harness/adapter.ts";
+import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "../src/harness/claude/adapter.ts";
 
-const interactionHandler: InteractionHandler = async (req) =>
+const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"
     ? { kind: "permission", outcome: "selected", optionId: "deny" }
     : { kind: "question", outcome: "answered", answers: {} };
@@ -49,7 +49,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     }) as unknown as Query;
   }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
 
-  const adapter = new ClaudeAdapter({ interactionHandler, queryFactory });
+  const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
   const events: Array<{ kind: string; turnId?: string; payload: Record<string, unknown> }> = [];
   const ref = await adapter.open({ cwd: "/tmp" }, (event) => events.push(event as never));
 

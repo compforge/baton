@@ -73,7 +73,7 @@ import {
 import type { SessionHandle } from "../store/store.ts";
 import type { PromptBlock } from "../event/types.ts";
 import type { InteractionResult } from "../interaction/types.ts";
-import { Store as InteractionStore } from "./interaction.ts";
+import { ReconcileInteractionStore } from "../interaction/reconcile.ts";
 import {
   emptyReconcileSnapshot,
   type ReconcileSnapshot,
@@ -332,7 +332,7 @@ export class Manager {
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => ReconcileSnapshot;
   private readonly selectedHarnessTargetId?: () => string;
-  private readonly interactions?: InteractionStore;
+  private readonly reconcileInteractions?: ReconcileInteractionStore;
   private readonly harnessInvocations?: HarnessInvocationStore;
   private readonly enqueueHarnessInvocation?: ManagerOptions["enqueueHarnessInvocation"];
   private readonly cancelHostHarnessInvocation?: ManagerOptions["cancelHarnessInvocation"];
@@ -396,7 +396,7 @@ export class Manager {
       (() => emptyReconcileSnapshot(this.instances.session.id));
     this.selectedHarnessTargetId = options.selectedHarnessTargetId;
     if (options.session) {
-      this.interactions = new InteractionStore(options.session, {
+      this.reconcileInteractions = new ReconcileInteractionStore(options.session, {
         now: this.now,
         onTimeout: (key) => {
           void this.enqueue(key).catch(() => {
@@ -938,7 +938,7 @@ export class Manager {
     interactionId: string,
     result: InteractionResult,
   ): Promise<boolean> {
-    const key = this.interactions?.complete(interactionId, result);
+    const key = this.reconcileInteractions?.complete(interactionId, result);
     if (!key) return false;
     try {
       await this.enqueue(key);
@@ -996,22 +996,22 @@ export class Manager {
     request: ReconcileVerbRequest,
   ): Promise<ReconcileVerbResponse> {
     if (request.verb === "ask") {
-      if (!this.interactions) {
+      if (!this.reconcileInteractions) {
         throw new Error("plugin Manager requires a SessionHandle for ask()");
       }
-      return this.interactions.ask(context, request.input);
+      return this.reconcileInteractions.ask(context, request.input);
     }
     if (request.verb === "confirm") {
-      if (!this.interactions) {
+      if (!this.reconcileInteractions) {
         throw new Error("plugin Manager requires a SessionHandle for confirm()");
       }
-      return this.interactions.confirm(context, request.input);
+      return this.reconcileInteractions.confirm(context, request.input);
     }
     if (request.verb === "withdraw") {
-      if (!this.interactions) {
+      if (!this.reconcileInteractions) {
         throw new Error("plugin Manager requires a SessionHandle for withdraw()");
       }
-      return this.interactions.withdraw(context, request.input);
+      return this.reconcileInteractions.withdraw(context, request.input);
     }
     if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
       throw new Error("plugin Manager host does not support harness()");
@@ -1680,7 +1680,7 @@ export class Manager {
     this.cronSourceQueue.close();
     this.unsubscribeBatonResources?.();
     this.batonResources?.close();
-    this.interactions?.close();
+    this.reconcileInteractions?.close();
     this.harnessInvocations?.close();
     try {
       await this.pluginSupervisor?.close();
@@ -1759,7 +1759,7 @@ export class Manager {
         name: resource.metadata.name,
         uid: resource.metadata.uid,
       };
-      this.interactions?.cancelForResource(ref);
+      this.reconcileInteractions?.cancelForResource(ref);
       if (this.harnessInvocations) {
         for (const requestId of this.harnessInvocations.cancelForResource(ref)) {
           this.cancelHostHarnessInvocation?.(requestId);
