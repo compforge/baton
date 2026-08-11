@@ -40,9 +40,9 @@ Plugin host 又增加了一条原则：
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
-v2 保留这条流水线，并让 baton 成为人、Harness 与 Baton Plugin 之间的持久协作内核。三方保留各自语义，通过 typed port 进入 Core：人的 intent 成为 Input 或 Interaction result，Harness 原生 verb 经 Adapter 成为 Interaction draft，Plugin reconcile verb 经 host 成为 Interaction 或 HarnessInvocation。所有 Plugin 发起的 Turn 都回到同一条 Input、Context、Permission 与 routing 路径。
+v3 将这条流水线收敛成一个稳定边界：人、Harness 与 Baton Plugin 保留各自语义和资源，通过 Core 持有的 Input、Interaction、HarnessInvocation 与 Event 事实协作。Plugin 通过 Connector 连接外部系统；所有 Plugin 发起的 Turn 仍回到同一条 Input、Context、Permission 与 routing 路径。
 
-![Baton、Plugin 与 Harness 的关系](docs/kernel-pipeline_v2.svg)
+![Baton v3 协作内核](docs/kernel-pipeline_v3.svg)
 
 终端只有一个焦点和一个宿主事件循环；chat-tui 按 surface 隔离订阅与重绘，Baton 则让每个活动的三方 Plugin Binding 进入独立 Runner 进程。某个 Plugin 阻塞或崩溃不会占住 composer，它的注册会作为一个整体撤销。
 

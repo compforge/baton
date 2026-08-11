@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
+  <title id="title">Baton Coordination Kernel</title>
+  <desc id="desc">Human, Harness, and Baton Plugin coordinate through one durable Baton Core. A Plugin reconciles Resource spec into status while connecting to external systems.</desc>
+
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#111827" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-start" markerWidth="10" markerHeight="10" refX="2" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+    <style>
+      text {
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+        fill: #111827;
+      }
+      .actor {
+        stroke: #111827;
+        stroke-width: 2.5;
+        filter: url(#shadow);
+      }
+      .actor-title {
+        font-size: 28px;
+        font-weight: 700;
+        text-anchor: middle;
+      }
+      .actor-detail {
+        font-size: 17px;
+        fill: #4b5563;
+        text-anchor: middle;
+      }
+      .port-line {
+        stroke: #374151;
+        stroke-width: 3;
+        marker-start: url(#arrow-start);
+        marker-end: url(#arrow);
+      }
+      .port-pill {
+        fill: #ffffff;
+        stroke: #9ca3af;
+        stroke-width: 1.5;
+      }
+      .port-label {
+        font-size: 16px;
+        font-weight: 650;
+        text-anchor: middle;
+      }
+      .primitive {
+        fill: #ffffff;
+        stroke: #6080b8;
+        stroke-width: 2;
+      }
+      .primitive-label {
+        font-size: 19px;
+        font-weight: 650;
+        text-anchor: middle;
+      }
+    </style>
+  </defs>
+
+  <rect width="1600" height="820" fill="#fbfcfe"/>
+
+  <text x="80" y="58" font-size="34" font-weight="750">Baton Coordination Kernel</text>
+  <text x="80" y="88" font-size="17" fill="#6b7280">One core, three participants, typed coordination.</text>
+
+  <!-- Participants own their semantics and local resources. -->
+  <rect class="actor" x="90" y="130" width="300" height="130" rx="20" fill="#eef3fb"/>
+  <text class="actor-title" x="240" y="180">Human</text>
+  <text class="actor-detail" x="240" y="218">intent · prompt · decision</text>
+
+  <rect class="actor" x="480" y="130" width="320" height="130" rx="20" fill="#fff3cf"/>
+  <text class="actor-title" x="640" y="180">Harness</text>
+  <text class="actor-detail" x="640" y="218">native session · model · sandbox</text>
+
+  <rect class="actor" x="890" y="130" width="320" height="130" rx="20" fill="#e1f4e6"/>
+  <text class="actor-title" x="1050" y="180">Baton Plugin</text>
+  <text class="actor-detail" x="1050" y="218">
+    <tspan font-weight="700" fill="#27633a">Spec</tspan>
+    <tspan> → </tspan>
+    <tspan font-weight="700" fill="#27633a">Reconcile</tspan>
+    <tspan> → </tspan>
+    <tspan font-weight="700" fill="#27633a">Status</tspan>
+  </text>
+
+  <rect class="actor" x="1330" y="146" width="210" height="98" rx="49" fill="#eee7ff"/>
+  <text x="1435" y="188" font-size="22" font-weight="700" text-anchor="middle">External</text>
+  <text x="1435" y="216" font-size="18" fill="#4b5563" text-anchor="middle">system</text>
+
+  <!-- Plugins observe and act through domain connectors. -->
+  <line x1="1214" y1="195" x2="1326" y2="195" class="port-line"/>
+  <rect x="1218" y="164" width="104" height="30" rx="15" fill="#ffffff"/>
+  <text x="1270" y="184" font-size="15" font-weight="650" text-anchor="middle">observe · act</text>
+
+  <!-- Typed ports. The arrows are bidirectional because work and facts flow both ways. -->
+  <line class="port-line" x1="240" y1="266" x2="240" y2="370"/>
+  <rect class="port-pill" x="146" y="292" width="188" height="42" rx="21"/>
+  <text class="port-label" x="240" y="319">Input · Interaction</text>
+
+  <line class="port-line" x1="640" y1="266" x2="640" y2="370"/>
+  <rect class="port-pill" x="515" y="292" width="250" height="42" rx="21"/>
+  <text class="port-label" x="640" y="319">Turn · Interaction · Event</text>
+
+  <line class="port-line" x1="1050" y1="266" x2="1050" y2="370"/>
+  <rect class="port-pill" x="934" y="292" width="232" height="42" rx="21"/>
+  <text class="port-label" x="1050" y="319">ReconcileContext · result</text>
+
+  <!-- The Core owns coordination facts, not participant-specific business semantics. -->
+  <rect x="80" y="370" width="1150" height="360" rx="28" fill="#edf3fc" stroke="#111827" stroke-width="3" filter="url(#shadow)"/>
+  <text x="655" y="425" font-size="31" font-weight="750" text-anchor="middle">Baton Core</text>
+  <text x="655" y="455" font-size="18" fill="#4b5563" text-anchor="middle">typed coordination · durable facts · controlled execution</text>
+
+  <rect class="primitive" x="155" y="500" width="190" height="70" rx="16"/>
+  <text class="primitive-label" x="250" y="542">Input</text>
+
+  <rect class="primitive" x="385" y="500" width="190" height="70" rx="16"/>
+  <text class="primitive-label" x="480" y="542">Interaction</text>
+
+  <rect class="primitive" x="615" y="500" width="250" height="70" rx="16"/>
+  <text class="primitive-label" x="740" y="542">HarnessInvocation</text>
+
+  <rect class="primitive" x="905" y="500" width="190" height="70" rx="16"/>
+  <text class="primitive-label" x="1000" y="542">Event</text>
+
+  <rect x="155" y="615" width="940" height="66" rx="17" fill="#dce8f8" stroke="#6080b8" stroke-width="2"/>
+  <text x="625" y="644" font-size="17" fill="#4b5563" text-anchor="middle">durable coordination history</text>
+  <text x="625" y="670" font-size="20" font-weight="700" text-anchor="middle">BatonSession · Lane · Event Ledger</text>
+
+  <text x="655" y="776" font-size="17" fill="#6b7280" text-anchor="middle">Core owns coordination facts; participants keep their own semantics and resources.</text>
+</svg>
