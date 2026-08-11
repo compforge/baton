@@ -47,6 +47,7 @@ const plugin: PluginPackage = {
           key: `runner:${turn.metadata.name}`,
           title: "Runner question",
           prompt: `Review ${turn.metadata.name}?`,
+          allowOther: true,
         });
       },
     });

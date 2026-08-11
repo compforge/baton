@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AskInput } from "@compforge/baton-plugin";
 
 import {
   Controller,
@@ -463,12 +464,27 @@ describe("plugin Controller", () => {
           key: "review",
           title: "Review",
           prompt: "Continue?",
+          allowOther: true,
           expiresAt: "tomorrow",
         });
       },
     });
     await expect(invalidDeadline.enqueue(key())).rejects.toThrow(
       "ask expiresAt must be an ISO 8601 timestamp with a timezone",
+    );
+    const ambiguousAsk = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile(ctx) {
+        await ctx.ask({
+          key: "review",
+          title: "Review",
+          prompt: "Continue?",
+        } as AskInput);
+      },
+    });
+    await expect(ambiguousAsk.enqueue(key())).rejects.toThrow(
+      "ask without choices must set allowOther to true",
     );
     expect(
       () =>

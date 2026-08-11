@@ -47,10 +47,10 @@ interface Entry {
   result?: InteractionResult;
 }
 
-interface PluginQuestionInput<TValue extends string = string> {
+interface PluginQuestionInput {
   readonly title: string;
   readonly prompt: string;
-  readonly choices?: readonly AskChoice<TValue>[];
+  readonly choices?: readonly AskChoice[];
   readonly allowOther?: boolean;
   readonly expiresAt?: string;
 }
@@ -338,10 +338,10 @@ export class ReconcileInteractionStore {
    * @spec A Plugin decision key is domain identity, independent of the reconcile verb. Ask choices preserve Plugin-authored values end-to-end so results need no Store-specific translation.
    * @rule Keep verb and key separate; do not reconstruct operation identity with string prefixes.
    */
-  ask<TValue extends string>(
+  ask(
     context: ReconcileVerbScope,
-    input: AskInput<TValue>,
-  ): AskResult<TValue> {
+    input: AskInput,
+  ): AskResult {
     return this.question(
       context,
       { verb: "ask", key: input.key },
@@ -508,11 +508,11 @@ export class ReconcileInteractionStore {
     return cancelled;
   }
 
-  private question<TValue extends string>(
+  private question(
     context: ReconcileVerbScope,
     operation: ReconcileOperationRef<"ask" | "confirm">,
-    input: PluginQuestionInput<TValue>,
-  ): AskResult<TValue> {
+    input: PluginQuestionInput,
+  ): AskResult {
     const interaction = this.open({
       ...context,
       request: {
@@ -552,7 +552,7 @@ export class ReconcileInteractionStore {
     }
     return Object.freeze({
       state: "answered",
-      value: result.values[0] as TValue,
+      value: result.values[0]!,
     });
   }
 

@@ -199,6 +199,7 @@ describe("plugin Manager", () => {
           key: "associate-pr",
           title: "Associate pull request",
           prompt: "Choose a requirement",
+          allowOther: true,
           expiresAt,
         });
         states.push(
@@ -753,6 +754,7 @@ describe("plugin Manager", () => {
           key: "approve",
           title: "Approve implementation",
           prompt: "Continue?",
+          allowOther: true,
         });
         await ctx.harness({
           key: "implement",
