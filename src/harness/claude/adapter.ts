@@ -1469,11 +1469,13 @@ export class ClaudeAdapter implements HarnessAdapter {
         questionId: `q${index}`,
         header: String(question.header ?? `Question ${index + 1}`),
         question: String(question.question ?? ""),
-        options: Array.isArray(question.options)
+        choices: Array.isArray(question.options)
           ? question.options.map((option) => {
               const item = (option ?? {}) as Record<string, unknown>;
+              const label = String(item.label ?? "");
               return {
-                label: String(item.label ?? ""),
+                value: label,
+                label,
                 description: String(item.description ?? ""),
                 ...(typeof item.preview === "string" ? { preview: item.preview } : {}),
               };

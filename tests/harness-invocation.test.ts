@@ -37,10 +37,9 @@ function invocation(
     basedOnGeneration: 1,
     basedOnResourceVersion: "1",
     invocation: {
-      operationKey: "implement",
+      operation: { verb: "harness", key: "implement" },
       title: "Implement requirement",
       prompt: "Implement REQ-1 and run its focused tests.",
-      delivery: "direct",
       laneId: "main",
       newLane: false,
       harnessTargetId: "codex",
@@ -64,9 +63,8 @@ describe("HarnessInvocation Store", () => {
     const pending = store.record(draft);
     expect(store.record(draft).invocationId).toBe(pending.invocationId);
     expect(pending).toMatchObject({
-      operationKey: "implement",
+      operation: { verb: "harness", key: "implement" },
       phase: "queued",
-      delivery: "direct",
       newLane: false,
       laneId: MAIN_LANE_ID,
     });
@@ -122,8 +120,7 @@ describe("HarnessInvocation Store", () => {
     const handle = session();
     const store = new HarnessInvocationStore(handle);
     const pending = store.record(invocation(handle.id, {
-      operationKey: "edit-first",
-      delivery: "draft",
+      operation: { verb: "draft", key: "edit-first" },
     }));
 
     expect(pending.phase).toBe("awaiting_input");
@@ -153,7 +150,7 @@ describe("HarnessInvocation Store", () => {
     const handle = session();
     const store = new HarnessInvocationStore(handle);
     const pending = store.record(invocation(handle.id, {
-      operationKey: "async",
+      operation: { verb: "harness", key: "async" },
       newLane: true,
     }));
     const scheduled = store.scheduled(pending.invocationId);
@@ -169,7 +166,7 @@ describe("HarnessInvocation Store", () => {
       scheduled.parentLaneId as string,
     );
     const continued = store.record(invocation(handle.id, {
-      operationKey: "continue-async",
+      operation: { verb: "harness", key: "continue-async" },
       laneId: scheduled.laneId,
     }));
     expect(store.scheduled(continued.invocationId)).toMatchObject({
@@ -178,7 +175,7 @@ describe("HarnessInvocation Store", () => {
     });
 
     const child = store.record(invocation(handle.id, {
-      operationKey: "child-async",
+      operation: { verb: "harness", key: "child-async" },
       laneId: scheduled.laneId,
       newLane: true,
     }));
@@ -208,6 +205,21 @@ describe("HarnessInvocation Store", () => {
       prompt: "A different operation under the same key.",
     }))).toThrow("HarnessInvocation identity conflict");
     expect(handle.readEvents()).toHaveLength(before);
+  });
+
+  test("namespaces the same caller key by reconcile verb", () => {
+    const handle = session();
+    const store = new HarnessInvocationStore(handle);
+    const direct = store.record(invocation(handle.id));
+    const draft = store.record(invocation(handle.id, {
+      operation: { verb: "draft", key: "implement" },
+    }));
+
+    expect(draft.invocationId).not.toBe(direct.invocationId);
+    expect(store.list().map((entry) => entry.operation)).toEqual([
+      { verb: "harness", key: "implement" },
+      { verb: "draft", key: "implement" },
+    ]);
   });
 
   test("restores one schedule and supports cancellation before admission", () => {

@@ -10,6 +10,7 @@ import type {
   ErrorUpdate,
   EventEnvelope,
   EventSource,
+  HarnessInvocationRecorded,
   HarnessTaskUpdate,
   MessageRole,
   Notice,
@@ -121,6 +122,7 @@ export interface TurnSummaryState extends TurnSummary {
 
 export interface HarnessInvocationState {
   invocationId: string;
+  operation: HarnessInvocationRecorded["operation"];
   title: string;
   pluginInstanceId?: string;
   phase:
@@ -131,7 +133,6 @@ export interface HarnessInvocationState {
     | "completed"
     | "cancelled";
   harnessTargetId?: string;
-  delivery?: "draft" | "direct";
   requestedLaneId: string;
   newLane: boolean;
   laneId?: string;
@@ -624,11 +625,11 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       if (state.harnessInvocations.has(ev.payload.invocationId)) break;
       state.harnessInvocations.set(ev.payload.invocationId, {
         invocationId: ev.payload.invocationId,
+        operation: { ...ev.payload.operation },
         title: ev.payload.title,
         pluginInstanceId:
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
-        phase: ev.payload.delivery === "draft" ? "awaiting_input" : "queued",
-        delivery: ev.payload.delivery,
+        phase: ev.payload.operation.verb === "draft" ? "awaiting_input" : "queued",
         requestedLaneId: ev.payload.laneId,
         newLane: ev.payload.newLane,
         harnessTargetId: ev.payload.harnessTargetId,

@@ -1,19 +1,28 @@
 import { createHash } from "node:crypto";
 
-import type { ResourceRef, TurnSummary } from "@compforge/baton-plugin";
+import type {
+  ReconcileOperationRef,
+  ResourceRef,
+  TurnSummary,
+} from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import type {
   AnyEventEnvelope,
   EventEnvelope,
-  HarnessInvocationDelivery,
   HarnessInvocationRecorded,
   HarnessInvocationScheduled,
   PromptBlock,
 } from "../event/types.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { ReconcileKey } from "./controller.ts";
+import {
+  reconcileOperationIdentity,
+  reconcileOperationLabel,
+} from "./reconcile-operation.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
+
+type HarnessOperationRef = ReconcileOperationRef<"draft" | "harness">;
 
 export type HarnessInvocationPhase =
   | "awaiting_input"
@@ -25,10 +34,9 @@ export type HarnessInvocationPhase =
 
 export interface HarnessInvocationSnapshot {
   readonly invocationId: string;
-  readonly operationKey: string;
+  readonly operation: HarnessOperationRef;
   readonly resource: ResourceRef;
   readonly phase: HarnessInvocationPhase;
-  readonly delivery: HarnessInvocationDelivery;
   readonly newLane: boolean;
   readonly harnessTargetId: string;
   readonly laneId?: string;
@@ -43,10 +51,9 @@ export interface ReconcileHarnessInvocation {
   readonly basedOnResourceVersion?: string;
   readonly basedOnRevision?: number;
   readonly invocation: {
-    readonly operationKey: string;
+    readonly operation: HarnessOperationRef;
     readonly title: string;
     readonly prompt: string;
-    readonly delivery: HarnessInvocationDelivery;
     readonly laneId: string;
     readonly newLane: boolean;
     readonly harnessTargetId: string;
@@ -103,19 +110,14 @@ function digest(value: string): string {
 
 function invocationId(
   draft: Pick<ReconcileHarnessInvocation, "key" | "resource">,
-  operationKey: string,
+  operation: HarnessOperationRef,
 ): string {
-  return `hinv_${digest(JSON.stringify([
-    draft.key.batonSessionId,
-    draft.key.pluginInstanceId,
-    reconcileResourceOwner(draft.key),
-    draft.resource.apiVersion,
-    draft.resource.kind,
-    draft.resource.namespace,
-    draft.resource.name,
-    draft.resource.uid,
-    operationKey,
-  ]))}`;
+  return `hinv_${digest(reconcileOperationIdentity({
+    batonSessionId: draft.key.batonSessionId,
+    pluginInstanceId: draft.key.pluginInstanceId,
+    resourceOwner: reconcileResourceOwner(draft.key),
+    resource: draft.resource,
+  }, operation))}`;
 }
 
 function sameResource(left: ResourceRef, right: ResourceRef): boolean {
@@ -131,12 +133,12 @@ function sameEnvelope(
   draft: ReconcileHarnessInvocation,
 ): boolean {
   const invocation = draft.invocation;
-  return current.operationKey === invocation.operationKey &&
+  return current.operation.verb === invocation.operation.verb &&
+    current.operation.key === invocation.operation.key &&
     current.resourceOwner === reconcileResourceOwner(draft.key) &&
     sameResource(current.resource, draft.resource) &&
     current.title === invocation.title &&
     current.prompt === invocation.prompt &&
-    current.delivery === invocation.delivery &&
     current.laneId === invocation.laneId &&
     current.newLane === invocation.newLane &&
     current.harnessTargetId === invocation.harnessTargetId;
@@ -178,7 +180,7 @@ function phaseOf(state: InvocationState): HarnessInvocationPhase {
   if (state.uncertain) return "uncertain";
   if (state.admitted) return "running";
   if (state.scheduled) return "queued";
-  return state.recorded.payload.delivery === "draft"
+  return state.recorded.payload.operation.verb === "draft"
     ? "awaiting_input"
     : "queued";
 }
@@ -199,10 +201,9 @@ function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
   const recorded = state.recorded.payload;
   return Object.freeze({
     invocationId: recorded.invocationId,
-    operationKey: recorded.operationKey,
+    operation: Object.freeze({ ...recorded.operation }),
     resource: Object.freeze({ ...recorded.resource }),
     phase: phaseOf(state),
-    delivery: recorded.delivery,
     newLane: recorded.newLane,
     harnessTargetId: recorded.harnessTargetId,
     ...(state.scheduled === undefined
@@ -230,7 +231,7 @@ function scheduledOf(
     laneId: scheduled.laneId,
     newLane: recorded.newLane,
     ...(recorded.newLane ? { parentLaneId: recorded.laneId } : {}),
-    source: recorded.delivery === "draft" ? "user" : "plugin",
+    source: recorded.operation.verb === "draft" ? "user" : "plugin",
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
     blocks: state.inputSubmission?.payload.blocks ?? [
@@ -257,9 +258,9 @@ export class HarnessInvocationStore {
 
   current(
     context: Pick<ReconcileHarnessInvocation, "key" | "resource">,
-    operationKey: string,
+    operation: HarnessOperationRef,
   ): HarnessInvocationSnapshot | undefined {
-    const state = this.states.get(invocationId(context, operationKey));
+    const state = this.states.get(invocationId(context, operation));
     return state ? snapshotOf(state) : undefined;
   }
 
@@ -269,12 +270,12 @@ export class HarnessInvocationStore {
         `HarnessInvocation batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
       );
     }
-    const id = invocationId(draft, draft.invocation.operationKey);
+    const id = invocationId(draft, draft.invocation.operation);
     const existing = this.states.get(id);
     if (existing) {
       if (!sameEnvelope(existing.recorded.payload, draft)) {
         throw new Error(
-          `HarnessInvocation identity conflict for ${draft.invocation.operationKey}: ${id}`,
+          `HarnessInvocation identity conflict for ${reconcileOperationLabel(draft.invocation.operation)}: ${id}`,
         );
       }
       this.ensureScheduled(existing);
@@ -293,12 +294,11 @@ export class HarnessInvocationStore {
       },
       payload: {
         invocationId: id,
-        operationKey: invocation.operationKey,
+        operation: { ...invocation.operation },
         resourceOwner: reconcileResourceOwner(draft.key),
         resource: { ...draft.resource },
         title: invocation.title,
         prompt: invocation.prompt,
-        delivery: invocation.delivery,
         laneId: invocation.laneId,
         newLane: invocation.newLane,
         harnessTargetId: invocation.harnessTargetId,
@@ -347,7 +347,7 @@ export class HarnessInvocationStore {
     if (
       !state ||
       phaseOf(state) !== "awaiting_input" ||
-      state.recorded.payload.delivery !== "draft"
+      state.recorded.payload.operation.verb !== "draft"
     ) {
       return;
     }
@@ -425,7 +425,7 @@ export class HarnessInvocationStore {
     for (const state of this.states.values()) {
       if (state.result || state.cancelled) continue;
       if (
-        state.recorded.payload.delivery === "draft" &&
+        state.recorded.payload.operation.verb === "draft" &&
         !state.inputSubmission
       ) {
         continue;
@@ -457,7 +457,7 @@ export class HarnessInvocationStore {
     if (state.scheduled) return scheduledOf(state);
     const recorded = state.recorded.payload;
     if (
-      (recorded.delivery === "draft" && !state.inputSubmission) ||
+      (recorded.operation.verb === "draft" && !state.inputSubmission) ||
       state.cancelled ||
       state.result
     ) {

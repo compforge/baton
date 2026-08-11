@@ -31,6 +31,8 @@ export type {
   HarnessInput,
   HarnessResult,
   ReconcileContext,
+  ReconcileOperationRef,
+  ReconcileOperationVerb,
   WithdrawInput,
   WithdrawResult,
 } from "./reconcile-context.ts";

@@ -131,15 +131,15 @@ function interactionView(
       interaction.questions.length === 1
         ? interaction.questions[0]
         : undefined;
-    const rejectOption = onlyQuestion?.options?.find(
-      (option) => option.role === "reject",
+    const rejectChoice = onlyQuestion?.choices?.find(
+      (choice) => choice.role === "reject",
     );
     const cancelResponse: InteractionResponse =
-      onlyQuestion && rejectOption
+      onlyQuestion && rejectChoice
         ? {
             kind: "question",
             answers: {
-              [onlyQuestion.questionId]: [rejectOption.label],
+              [onlyQuestion.questionId]: [rejectChoice.label],
             },
           }
         : { kind: "cancelled" };
@@ -154,10 +154,10 @@ function interactionView(
           id: prompt.questionId,
           header: prompt.header,
           question: prompt.question,
-          options: prompt.options?.map((option) => ({
-            label: option.label,
-            description: option.description,
-            ...(option.preview === undefined ? {} : { preview: option.preview }),
+          options: prompt.choices?.map((choice) => ({
+            label: choice.label,
+            description: choice.description ?? "",
+            ...(choice.preview === undefined ? {} : { preview: choice.preview }),
           })),
           multiSelect: prompt.multiSelect,
           allowOther: prompt.allowOther,

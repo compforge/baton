@@ -322,7 +322,7 @@ describe("crash recovery on open", () => {
           pluginInstanceId: "reqloop_default",
         },
         pluginContext: {
-          decisionKey: "associate-pr",
+          operation: { verb: "ask", key: "associate-pr" },
           resource: {
             apiVersion: "reqloop.baton.dev/v1alpha1",
             kind: "Requirement",

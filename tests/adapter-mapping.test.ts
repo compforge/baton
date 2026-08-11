@@ -655,7 +655,19 @@ describe("structured questions", () => {
     expect(interactions[0]).toMatchObject({
       kind: "question",
       toolCallId: "tu-question",
-      questions: [{ questionId: "q0" }, { questionId: "q1" }],
+      questions: [
+        {
+          questionId: "q0",
+          choices: [{ value: "Careful", label: "Careful" }],
+        },
+        {
+          questionId: "q1",
+          choices: [
+            { value: "Unit", label: "Unit" },
+            { value: "Integration", label: "Integration" },
+          ],
+        },
+      ],
     });
     expect(result).toEqual({
       behavior: "allow",
@@ -718,7 +730,13 @@ describe("structured questions", () => {
     );
 
     expect(events).toEqual([]);
-    expect(interactions[0]).toMatchObject({ kind: "question", questions: [{ questionId: "approach" }] });
+    expect(interactions[0]).toMatchObject({
+      kind: "question",
+      questions: [{
+        questionId: "approach",
+        choices: [{ value: "Fast", label: "Fast" }],
+      }],
+    });
     expect(result).toEqual({ answers: { approach: { answers: ["Fast", "Safe"] } } });
   });
 });

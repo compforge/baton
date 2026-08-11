@@ -62,15 +62,15 @@ async function collectInteractionResult(interaction: Interaction): Promise<Inter
   const answers: Record<string, string[]> = {};
   for (const question of interaction.questions) {
     stdout.write(`\n? ${question.header}: ${question.question}\n`);
-    question.options?.forEach((option, index) =>
-      stdout.write(`  ${index + 1}. ${option.label} — ${option.description}\n`),
+    question.choices?.forEach((choice, index) =>
+      stdout.write(`  ${index + 1}. ${choice.label} — ${choice.description ?? ""}\n`),
     );
     const suffix = question.multiSelect ? " (comma-separated choices)" : "";
     const answer = (await rl.question(`answer${suffix}> `)).trim();
     const values = question.multiSelect ? answer.split(",").map((value) => value.trim()).filter(Boolean) : [answer];
     answers[question.questionId] = values.map((value) => {
-      const option = question.options?.[Number(value) - 1];
-      return option?.optionId ?? option?.label ?? value;
+      const choice = question.choices?.[Number(value) - 1];
+      return choice?.value ?? value;
     });
   }
   return { kind: "question", outcome: "answered", answers };

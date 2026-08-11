@@ -12,9 +12,12 @@ import type {
   InteractionAnswered,
   InteractionCancelled,
 } from "../interaction/types.ts";
-import type { ResourceRef } from "@compforge/baton-plugin";
+import type {
+  ReconcileOperationRef,
+  ResourceRef,
+} from "@compforge/baton-plugin";
 
-export const ENVELOPE_VERSION = 4 as const;
+export const ENVELOPE_VERSION = 5 as const;
 
 /**
  * 事实来源：回答“谁对这条 Event 负责”，不是 payload 中行为主体的角色，也不承载执行坐标。
@@ -363,8 +366,6 @@ export interface TurnSummaryToolCall {
   status?: string;
 }
 
-export type HarnessInvocationDelivery = "draft" | "direct";
-
 /**
  * turn 结束时落盘的汇总事件：人可 grep、@ 引用的紧凑投影数据源、reduce 的 checkpoint。
  * 见 docs/workflow.md“append、reduce 与 Projection”。
@@ -382,12 +383,11 @@ export interface TurnSummary {
 
 export interface HarnessInvocationRecorded {
   invocationId: string;
-  operationKey: string;
+  operation: ReconcileOperationRef<"draft" | "harness">;
   resourceOwner: "plugin" | "baton";
   resource: ResourceRef;
   title: string;
   prompt: string;
-  delivery: HarnessInvocationDelivery;
   /** Existing Lane used as the execution Lane or as the parent of a new Lane. */
   laneId: string;
   newLane: boolean;

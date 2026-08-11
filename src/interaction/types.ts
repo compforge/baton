@@ -5,7 +5,10 @@
  * kind。Event source 表示谁报告了生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
-import type { ResourceRef } from "@compforge/baton-plugin";
+import type {
+  ReconcileOperationRef,
+  ResourceRef,
+} from "@compforge/baton-plugin";
 
 export type InteractionRequester =
   | { type: "harness"; harnessTargetId: string; laneId?: string }
@@ -33,11 +36,11 @@ export interface PermissionInteraction {
   options: PermissionOption[];
 }
 
-export interface QuestionOption {
-  /** Plugin questions use a stable value; Harness-originated questions may omit it. */
-  optionId?: string;
+export interface QuestionChoice {
+  /** Stable value returned to the requester when this choice is selected. */
+  value: string;
   label: string;
-  description: string;
+  description?: string;
   preview?: string;
   /** Presentation hint only; answer semantics belong to the requester. */
   role?: "default" | "reject";
@@ -47,7 +50,7 @@ export interface QuestionPrompt {
   questionId: string;
   header: string;
   question: string;
-  options?: QuestionOption[];
+  choices?: QuestionChoice[];
   multiSelect?: boolean;
   allowOther?: boolean;
   secret?: boolean;
@@ -89,10 +92,10 @@ export type InteractionDraft = PermissionInteraction | QuestionInteraction | Hoo
 
 /**
  * Durable routing owned by Baton for an Interaction emitted from Resource reconcile.
- * decisionKey is Plugin-defined identity; the basis is provenance, not callback state.
+ * The structured operation is part of identity; the basis is provenance, not callback state.
  */
 export interface PluginResourceInteractionContext {
-  decisionKey: string;
+  operation: ReconcileOperationRef<"ask" | "confirm">;
   resource: ResourceRef;
   resourceOwner: "plugin" | "baton";
   basedOnGeneration?: number;
@@ -111,7 +114,12 @@ export type Interaction = InteractionDraft & {
 /** 外部参与者针对 Interaction 提交的 kind-specific 答案。 */
 export type InteractionAnswer =
   | { kind: "permission"; outcome: "selected"; optionId: string }
-  | { kind: "question"; outcome: "answered"; answers: Record<string, string[]> }
+  | {
+      kind: "question";
+      outcome: "answered";
+      /** Selected QuestionChoice.value entries or requester-owned free text. */
+      answers: Record<string, string[]>;
+    }
   | { kind: "hook_trust"; outcome: "trusted" | "skipped" };
 
 export type InteractionCancellationReason =
