@@ -7,7 +7,11 @@ import type {
   ContextDeliveryReceipt,
   ContextSnapshot,
 } from "../context/delivery.ts";
-import type { Interaction, InteractionResolved } from "../interaction/types.ts";
+import type {
+  Interaction,
+  InteractionAnswered,
+  InteractionCancelled,
+} from "../interaction/types.ts";
 import type { ResourceRef } from "@compforge/baton-plugin";
 
 export const ENVELOPE_VERSION = 4 as const;
@@ -424,8 +428,9 @@ export type EventPayloadMap = {
   proposed_plan: ProposedPlan;
   proposed_plan_implementation_started: ProposedPlanImplementationStarted;
   task_update: HarnessTaskUpdate;
-  "interaction.opened": Interaction;
-  "interaction.resolved": InteractionResolved;
+  "interaction.requested": Interaction;
+  "interaction.answered": InteractionAnswered;
+  "interaction.cancelled": InteractionCancelled;
   approval_review_update: ApprovalReviewUpdate;
   usage_update: UsageUpdate;
   available_commands_update: AvailableCommandsUpdate;

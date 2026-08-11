@@ -205,22 +205,22 @@ question 和 hook trust。完整闭环是：
 Harness / Plugin request
   → kind-specific draft
   → Controller signs interactionId + requester
-  → interaction.opened persisted
+  → interaction.requested persisted
   → chat-tui presents to user
-  → user / timeout / cancel resolves
-  → interaction.resolved persisted
+  → user answers or request is cancelled
+  → interaction.answered / interaction.cancelled persisted
   → waiting Adapter or Resource reconcile continues
 ```
 
-Harness Adapter 不自签 interaction ID，也不自行伪造 opened/resolved。resolution 就地解开等待方，
-不进入 prompt queue。cancel、timeout、requester 带外解决和恢复清理都是显式 resolution。
+Harness Adapter 不自签 interaction ID，也不自行伪造 requested/answered/cancelled。result 就地解开等待方，
+不进入 prompt queue。cancel、timeout、requester 带外结束和恢复清理都显式记录为 cancelled。
 
 Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await ctx.ask(...)`
 立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
 reconcile 用同一 operation key 读取结果。
 
 自动 reviewer 没有向 Baton 打开 Interaction 时，审批回执是独立 `ApprovalReview` 审计事实，
-不能伪造一组 opened/resolved；详见 [审批生命周期](./approval-lifecycle.md)。
+不能伪造一组 requested/answered；详见 [审批生命周期](./approval-lifecycle.md)。
 
 ## 6. 失败、对账与恢复
 

@@ -78,7 +78,7 @@ import {
 } from "./runner/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { PromptBlock } from "../event/types.ts";
-import type { InteractionResolution } from "../interaction/types.ts";
+import type { InteractionResult } from "../interaction/types.ts";
 import { Store as InteractionStore } from "./interaction.ts";
 import {
   emptyReconcileSnapshot,
@@ -956,19 +956,19 @@ export class Manager {
   }
 
   /**
-   * 先持久化用户决议，再唤醒原 Resource。即使当前 Controller 暂不可用，
-   * 后续激活或初始 reconcile 仍能从 Snapshot 恢复这份决议。
+   * 先持久化 Interaction result，再唤醒原 Resource。即使当前 Controller 暂不可用，
+   * 后续激活或初始 reconcile 仍能从 Snapshot 恢复这份结果。
    */
-  async resolveInteraction(
+  async completeInteraction(
     interactionId: string,
-    resolution: InteractionResolution,
+    result: InteractionResult,
   ): Promise<boolean> {
-    const key = this.interactions?.resolve(interactionId, resolution);
+    const key = this.interactions?.complete(interactionId, result);
     if (!key) return false;
     try {
       await this.enqueue(key);
     } catch {
-      // Resolution 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
+      // Result 已落 Event Ledger；重试、reload 或下次启动会重新 reconcile。
     }
     return true;
   }

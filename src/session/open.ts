@@ -84,7 +84,7 @@ function resolveSession(
  * 崩溃残留归一化。前提：调用方已持有会话锁——否则"最后事件是 running"可能是
  * 另一个活进程正在执行，合成终态会污染活会话。
  * 收口顺序与 controller.finalize 一致（终态 → notice → summary），三类残留：
- * 悬挂 Harness/Baton 审批 → resolved(cancelled)；Plugin Interaction 由 Resource
+ * 悬挂 Harness/Baton 审批 → cancelled；Plugin Interaction 由 Resource
  * reconcile 恢复，不在进程重启时取消。每个未收口的 turn（driven/observed 并发崩溃时
  * 可能不止一个）→ 各补 idle(cancelled) + 中断 notice；缺 summary 的 turn
  * （含 fork 从运行中源会话复制来的半截 turn）→ 补 summary。
@@ -111,7 +111,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
     unsummarized.length === 0 &&
     ![...state.interactions.values()].some(
       (interaction) =>
-        !interaction.resolution &&
+        !interaction.result &&
         interaction.interaction.requester.type !== "plugin",
     )
   ) {
@@ -119,24 +119,21 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   }
 
   for (const [interactionId, interaction] of state.interactions) {
-    if (interaction.resolution) continue;
+    if (interaction.result) continue;
     if (interaction.interaction.requester.type === "plugin") continue;
-    const opened = events.findLast(
+    const requested = events.findLast(
       (event) =>
-        event.kind === "interaction.opened" &&
+        event.kind === "interaction.requested" &&
         event.payload.interactionId === interactionId,
     );
     session.append({
-      kind: "interaction.resolved",
+      kind: "interaction.cancelled",
       source: { type: "baton" },
-      harness: opened?.harness ?? "baton",
-      ...(opened?.harnessTargetId ? { harnessTargetId: opened.harnessTargetId } : {}),
-      ...(opened?.laneId ? { laneId: opened.laneId } : {}),
+      harness: requested?.harness ?? "baton",
+      ...(requested?.harnessTargetId ? { harnessTargetId: requested.harnessTargetId } : {}),
+      ...(requested?.laneId ? { laneId: requested.laneId } : {}),
       ...(interaction.turnId ? { turnId: interaction.turnId } : {}),
-      payload: {
-        interactionId,
-        resolution: { kind: "cancelled", reason: "recovery" },
-      },
+      payload: { interactionId, reason: "recovery" },
     });
   }
   // 每个未收口的 turn 各补一份终态 + 中断标记（并发崩溃不止一个；恒带 turnId，

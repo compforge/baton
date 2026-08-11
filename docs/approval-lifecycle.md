@@ -13,7 +13,7 @@ Interaction kind 的公共生命周期以 `workflow.md` 为准。
 
 本文聚焦 **permission**——它是 Interaction（见 [工作流](./workflow.md#5-interaction-闭环)）的一个
 `kind`；question / hook_trust / 未来的 elicitation 复用同一生命周期，但各自保持 typed
-payload 和 resolution。ApprovalReview 则是**未打开 Interaction 时**观察到的委托代批审计事实。
+payload 和 answer。ApprovalReview 则是**未打开 Interaction 时**观察到的委托代批审计事实。
 
 原始需求不是“弹个确认框”，而是保证用户始终清楚：**谁批准了什么、以什么依据、最终执行到哪一步**。
 
@@ -29,15 +29,15 @@ payload 和 resolution。ApprovalReview 则是**未打开 Interaction 时**观�
 | 状态 | owner | 语义 |
 |---|---|---|
 | drafted | Adapter | Harness 请求执行某操作，Adapter 提交 permission draft |
-| opened / pending（card） | Controller + Store | Controller 签发 `interactionId` 并 append `interaction.opened`；UI 出审批卡等用户 |
-| resolved | Controller + Store | 决策作出，`interaction.resolved` 留痕后解开 Adapter await |
+| requested / pending（card） | Controller + Store | Controller 签发 `interactionId` 并 append `interaction.requested`；UI 出审批卡等用户 |
+| answered / cancelled | Controller + Store | 决策作出时记录 `interaction.answered`；未完成则记录 `interaction.cancelled`，随后解开 Adapter await |
 | auto-reviewed | Adapter + Store | reviewer 自动决策，带 risk / authorization / rationale 的权威回执 |
 
 ### 各 harness 审批现状（新 harness 接入时扩展本表）
 
 | 审批维度 | baton 统一入口 | Claude Code | Codex | 现状 |
 |---|---|---|---|---|
-| 交互审批（打开→决策→留痕） | `Interaction{kind:permission}` + `interaction.opened/resolved` | SDK `canUseTool` 回调 | app-server 审批请求 | 已支持；两家归一到同一生命周期 |
+| 交互审批（请求→回答/取消→留痕） | `Interaction{kind:permission}` + `interaction.requested/answered/cancelled` | SDK `canUseTool` 回调 | app-server 审批请求 | 已支持；两家归一到同一生命周期 |
 | 审批选项 | `PermissionOption[]`（含 `always`） | 仅当 SDK 给出 permission suggestions 才提供 `always` | `availableDecisions` | 已支持；baton 按 harness 实际候选映射，不自造 always |
 | 权限模式 | 尚无统一入口 | SDK 有 default / acceptEdits / plan / bypassPermissions | `approvals_reviewer` + sandbox 策略 | 未统一暴露；各家模式尚未进 baton 配置面 |
 | 自动审批 / 委托 | 跟随 harness 默认 + 权威回执 | 无逐条 reviewer；acceptEdits / bypass 是另一形态的委托（模式而非 reviewer） | `thread/start.approvalsReviewer` + `item/autoApprovalReview/*` | Codex 自身默认 `user`；事件 UNSTABLE |
@@ -48,13 +48,13 @@ payload 和 resolution。ApprovalReview 则是**未打开 Interaction 时**观�
 ### 2.1 交互审批
 
 Adapter 向 `InteractionHandler` 提交 permission draft → Controller 签发 `interactionId`、登记
-waiter 并 append `interaction.opened` → reducer 派生 `requires_action`，chat-tui 在
+waiter 并 append `interaction.requested` → reducer 派生 `requires_action`，chat-tui 在
 InteractionDock 渲染审批卡 → 用户经 `resolveInteraction` 调用
-`Controller.resolveInteraction` → Controller append
-`interaction.resolved(source:user)` 并解开 Adapter await → Adapter 将选择映射回 Harness。
+`Controller.completeInteraction` → Controller append
+`interaction.answered(source:user)` 并解开 Adapter await → Adapter 将选择映射回 Harness。
 
 Interaction 的 durable 真相源是事件流；Controller 的 waiter 只是 live 回执通道。重启时没有
-live waiter，recovery 会将 dangling Interaction 明确 resolve 为 cancelled，而不是复活一张
+live waiter，recovery 会将 dangling Interaction 明确记为 cancelled，而不是复活一张
 无法作答的卡。
 
 ### 2.2 审批人跟随 codex，不由 baton 定默认
@@ -80,7 +80,7 @@ live waiter，recovery 会将 dangling Interaction 明确 resolve 为 cancelled�
 ### 3.1 目标与语义边界
 
 - **目标**：把 auto-review 从“静默”变“留痕”——approve 与 deny **都**产生权威回执，携带目标操作、风险等级、授权等级与理由。
-- **取代而非共存**：Codex 的 `review.status ∈ {inProgress, approved, denied, aborted}`，**没有“升级给用户”这一档**（`userAuthorization` 是 reviewer 评估的授权等级，不是回退给用户）。因此开 auto-review = 该 turn 的 permission Interaction **完全不打开**，baton 只观测回执；不伪造不存在的 opened/resolved 生命周期。依据：app-server README 的 `approvalsReviewer` 与 `item/autoApprovalReview/*` 段（均标 **UNSTABLE**）。
+- **取代而非共存**：Codex 的 `review.status ∈ {inProgress, approved, denied, aborted}`，**没有“升级给用户”这一档**（`userAuthorization` 是 reviewer 评估的授权等级，不是回退给用户）。因此开 auto-review = 该 turn 的 permission Interaction **完全不打开**，baton 只观测回执；不伪造不存在的 requested/answered 生命周期。依据：app-server README 的 `approvalsReviewer` 与 `item/autoApprovalReview/*` 段（均标 **UNSTABLE**）。
 - **委托是 opt-in、可撤回**：缺省跟随 codex（其自身默认 `user`）；`codexApprovalReviewer: auto_review` 显式委托，改回 `user` 或删掉该项即撤回。
 
 ### 3.2 事件归一
@@ -117,10 +117,10 @@ codex 报告生效 reviewer 为委托时，Target Status 常驻 `approvals:auto-
 ## 5. 代码与测试锚点
 
 - `src/harness/codex/adapter.ts`：reviewer 下发与生效值回吐（`approvalRoute`）、`autoApprovalReview/*` 消费、归一与 §2.3 启发式 notice 收敛。
-- `src/interaction/types.ts`：permission draft / resolution 与统一 Interaction identity/requester。
+- `src/interaction/types.ts`：permission draft / answer / cancellation 与统一 Interaction identity/requester。
 - `src/harness/adapter.ts`：`InteractionHandler` 宿主交互契约。
-- `src/controller/interaction.ts`：Interaction identity、opened/resolved 与 waiter 生命周期。
-- `src/event/types.ts`：`interaction.opened` / `interaction.resolved` / `approval_review_update`。
+- `src/controller/interaction.ts`：Interaction identity、requested/answered/cancelled 与 waiter 生命周期。
+- `src/event/types.ts`：`interaction.requested` / `interaction.answered` / `interaction.cancelled` / `approval_review_update`。
 - `src/tui/protocol/`：审批卡、review 回执与 Target Status 委托提示投影。
 - chat-tui 公开的 `TranscriptBlockStatus`、block `tone` 与 Timeline 展示规则。
 - `tests/approval-contract.test.ts` 等：审批契约与回执归一。

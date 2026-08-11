@@ -1439,15 +1439,15 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(meta.toolUseID ? { toolCallId: meta.toolUseID } : {}),
       options: claudeApprovalOptions(suggestions.length > 0),
     };
-    const resolution = await this.options.interactionHandler(interaction, {
+    const result = await this.options.interactionHandler(interaction, {
       turnId: turnId(),
       raw: { toolName, input, meta },
     });
-    if (resolution.kind === "cancelled") {
+    if (result.kind === "cancelled") {
       return { behavior: "deny", message: "turn interrupted before approval" };
     }
-    // resolution 按 interactionId 路由回来，kind 必配对 permission；意外不配一律保守拒绝。
-    const optionId = resolution.kind === "permission" ? resolution.optionId : "";
+    // result 按 interactionId 路由回来，kind 必配对 permission；意外不配一律保守拒绝。
+    const optionId = result.kind === "permission" ? result.optionId : "";
     if (optionId === "allow") return { behavior: "allow", updatedInput: input };
     if (optionId === "allowAlways") {
       // SDK 契约：把 canUseTool 收到的整组 suggestions 原样作为 updatedPermissions
@@ -1489,14 +1489,14 @@ export class ClaudeAdapter implements HarnessAdapter {
       ...(toolCallId ? { toolCallId } : {}),
       questions,
     };
-    const resolution = await this.options.interactionHandler(interaction, {
+    const result = await this.options.interactionHandler(interaction, {
       turnId: turnId(),
       raw: input,
     });
-    if (resolution.kind === "cancelled") {
+    if (result.kind === "cancelled") {
       return { behavior: "deny", message: "turn interrupted before answer" };
     }
-    const decisionAnswers = resolution.kind === "question" ? resolution.answers : {};
+    const decisionAnswers = result.kind === "question" ? result.answers : {};
     const answers = Object.fromEntries(
       questions.map((question) => [question.question, (decisionAnswers[question.questionId] ?? []).join(", ")]),
     );

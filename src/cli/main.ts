@@ -17,7 +17,7 @@ import {
 import { bundledTextgenTargets } from "../session/title.ts";
 import type {
   Interaction,
-  InteractionResolution,
+  InteractionResult,
 } from "../interaction/types.ts";
 import { SessionStore, sessionDisplayTitle } from "../store/store.ts";
 
@@ -28,8 +28,8 @@ function argValue(flag: string): string | undefined {
 
 const rl = createInterface({ input: stdin, output: stdout });
 
-// headless REPL 的 Interaction resolution：按 kind 渲染并返回严格配对的结果。
-async function resolveInteraction(interaction: Interaction): Promise<InteractionResolution> {
+// headless REPL 按 kind 收集严格配对的 Interaction 结果。
+async function collectInteractionResult(interaction: Interaction): Promise<InteractionResult> {
   if (interaction.kind === "permission") {
     stdout.write(`\n⚠ ${interaction.title}\n`);
     interaction.options.forEach((o, i) => stdout.write(`  ${i + 1}. ${o.name} [${o.optionId}]\n`));
@@ -130,11 +130,11 @@ async function main(): Promise<void> {
     } else if (event.kind === "_baton_error_update") {
       stdout.write(`\nerror: ${event.payload.message}\n`);
     }
-    if (event.kind === "interaction.opened") {
+    if (event.kind === "interaction.requested") {
       interactionChain = interactionChain
         .then(async () => {
-          const resolution = await resolveInteraction(event.payload);
-          if (!controller.resolveInteraction(event.payload.interactionId, resolution)) {
+          const result = await collectInteractionResult(event.payload);
+          if (!controller.completeInteraction(event.payload.interactionId, result)) {
             stdout.write(`\ninteraction ${event.payload.interactionId} is no longer pending\n`);
           }
         })

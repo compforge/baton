@@ -52,7 +52,7 @@ describe("plugin Interaction Store", () => {
     expect(store.ask(context, input)).toEqual({ state: "waiting" });
     const interaction = [...handle.loadState().interactions.values()][0]
       ?.interaction;
-    expect(store.resolve(interaction!.interactionId, {
+    expect(store.complete(interaction!.interactionId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["req_1"] },
@@ -78,7 +78,7 @@ describe("plugin Interaction Store", () => {
       .find(({ interaction: candidate }) =>
         candidate.interactionId !== interaction?.interactionId
       )?.interaction;
-    store.resolve(confirmation!.interactionId, {
+    store.complete(confirmation!.interactionId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["grant"] },

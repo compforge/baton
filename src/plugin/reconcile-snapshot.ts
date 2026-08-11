@@ -125,7 +125,7 @@ export function createReconcileSnapshot(options: CreateReconcileSnapshotOptions)
       ...(target.label === undefined ? {} : { label: target.label }),
     })),
     pendingInteractions: [...options.state.interactions.values()]
-      .filter((entry) => entry.resolution === undefined)
+      .filter((entry) => entry.result === undefined)
       .map((entry) => ({
         interactionId: entry.interaction.interactionId,
         kind: entry.interaction.kind,

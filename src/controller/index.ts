@@ -38,7 +38,7 @@ import type { TextgenCandidate } from "../harness/textgen.ts";
 import { maybeGenerateSessionTitle } from "../session/title.ts";
 import type {
   InteractionDraft,
-  InteractionResolution,
+  InteractionResult,
 } from "../interaction/types.ts";
 import { MAIN_LANE_ID, type SessionHandle } from "../store/store.ts";
 import { DeliveryAttempts } from "./attempt.ts";
@@ -87,7 +87,7 @@ function eventSourceOf(source: InputSource): EventSource {
 }
 
 /**
- * Control：与 Input / Interaction resolution 并列的第三种用户信号
+ * Control：与 Input / Interaction result 并列的第三种用户信号
  * （见 docs/workflow.md“Input 到 Harness”）。
  * 不携带内容、不到达 model——是对 turn **生命周期**的命令，必须 out-of-band 够到正在跑的
  * turn（不进 queue，否则会排在它要打断的 turn 后面而死锁）。当前唯一 kind 是 `interrupt`
@@ -215,11 +215,11 @@ export class Controller {
   }
 
   /**
-   * 用户解决一个未决 Interaction。先把用户事实持久化，再唤醒 Harness；没有活跃 continuation
+   * 用户完成一个未决 Interaction。先把用户事实持久化，再唤醒 Harness；没有活跃 continuation
    * 时返回 false，UI 据此提示 stale，而不是把响应写进一个无人消费的内存通道。
    */
-  resolveInteraction(interactionId: string, resolution: InteractionResolution): boolean {
-    return this.interactions.resolve(interactionId, resolution);
+  completeInteraction(interactionId: string, result: InteractionResult): boolean {
+    return this.interactions.complete(interactionId, result);
   }
 
   private openHarnessInteraction(
@@ -227,7 +227,7 @@ export class Controller {
     harnessTargetId: string,
     draft: InteractionDraft,
     context?: InteractionContext,
-  ): Promise<InteractionResolution> {
+  ): Promise<InteractionResult> {
     const binding = this.bindings.get(this.bindingKey(laneId, harnessTargetId));
     if (!binding) return Promise.reject(new Error(`unknown Lane binding for interaction: ${laneId} × ${harnessTargetId}`));
     const active = this.turns.activeDriven(laneId);
@@ -633,7 +633,7 @@ export class Controller {
   }
 
   /**
-   * 施加一个 Control 信号（Input / Interaction resolution 之外的第三种用户信号，见
+   * 施加一个 Control 信号（Input / Interaction result 之外的第三种用户信号，见
    * `Control`）。当前唯一
    * kind 是 `interrupt`（Esc）——打断当前 driven turn。新增 kind 时在此按 kind 分派。
    */
@@ -1087,7 +1087,7 @@ export class Controller {
     if (!record) return;
 
     // cancel-cascade：本 turn 仍挂起的 Interaction 随收口一并了结，绝不留悬挂 continuation。
-    // Controller 先持久化 cancelled resolution，再唤醒 Adapter；参考 codex
+    // Controller 先持久化 interaction.cancelled，再唤醒 Adapter；参考 codex
     // clear_pending_waiters→Abort、opencode interrupt 的 ensuring(pending.delete)。
     // 顺序天然对：finalize 发生在 adapter.cancel 之后（先中断 turn，再收 pending），不会让取消以
     // model 可见的 tool rejection 抢在 turn 中断之前冒出来。

@@ -1030,11 +1030,11 @@ export class CodexAdapter implements HarnessAdapter {
             harnessName: "Codex",
             hooks: hooksNeedingUserTrust,
           };
-          const resolution = await this.options.interactionHandler(interaction, { raw: hooksResult });
-          if (resolution.kind === "cancelled") {
+          const result = await this.options.interactionHandler(interaction, { raw: hooksResult });
+          if (result.kind === "cancelled") {
             throw new Error("Codex hook trust request was cancelled");
           }
-          const trust = resolution.kind === "hook_trust" && resolution.outcome === "trusted";
+          const trust = result.kind === "hook_trust" && result.outcome === "trusted";
           if (trust) {
             this.hookTrustStore.trust(hooksNeedingUserTrust);
           }
@@ -1818,15 +1818,15 @@ export class CodexAdapter implements HarnessAdapter {
           options: choices.map((choice) => choice.option),
         };
         if (rt.activeTurn) rt.activeTurn.sawOutput = true;
-        const resolution = await this.options.interactionHandler(interaction, {
+        const result = await this.options.interactionHandler(interaction, {
           ...(rt.activeTurn?.turnId ? { turnId: rt.activeTurn.turnId } : {}),
           raw: params,
         });
-        if (resolution.kind === "cancelled") {
+        if (result.kind === "cancelled") {
           return { decision: "cancel" };
         }
-        // resolution 按 interactionId 路由回来，kind 必配对 permission；意外不配保守拒绝。
-        const optionId = resolution.kind === "permission" ? resolution.optionId : "";
+        // result 按 interactionId 路由回来，kind 必配对 permission；意外不配保守拒绝。
+        const optionId = result.kind === "permission" ? result.optionId : "";
         // 选不中就回 decline，不把 optionId 原样透传：结构化候选的 optionId 是 baton 铸的
         // 合成 id（acceptWithExecpolicyAmendment:1），不是 codex wire 值；空串更不是"拒绝"，
         // 而是个非法 wire 值——曾经这里以为透传就等于 fail-closed，其实没有。
@@ -1857,14 +1857,14 @@ export class CodexAdapter implements HarnessAdapter {
           questions,
         };
         if (rt.activeTurn) rt.activeTurn.sawOutput = true;
-        const resolution = await this.options.interactionHandler(interaction, {
+        const result = await this.options.interactionHandler(interaction, {
           ...(rt.activeTurn?.turnId ? { turnId: rt.activeTurn.turnId } : {}),
           raw: params,
         });
-        if (resolution.kind === "cancelled") {
+        if (result.kind === "cancelled") {
           return { answers: {} };
         }
-        const decisionAnswers = resolution.kind === "question" ? resolution.answers : {};
+        const decisionAnswers = result.kind === "question" ? result.answers : {};
         return {
           answers: Object.fromEntries(
             Object.entries(decisionAnswers).map(([questionId, answers]) => [questionId, { answers }]),

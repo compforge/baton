@@ -25,7 +25,7 @@ import type {
 } from "../event/types.ts";
 import type {
   Interaction,
-  InteractionResolution,
+  InteractionResult,
 } from "../interaction/types.ts";
 
 export interface MessageState {
@@ -167,11 +167,11 @@ export interface ActiveTurnState {
 
 export interface InteractionState {
   interaction: Interaction;
-  /** 打开交互的 Event 执行坐标；用于 per-turn requires_action 与 cancel-cascade 投影。 */
+  /** 请求交互的 Event 执行坐标；用于 per-turn requires_action 与 cancel-cascade 投影。 */
   turnId?: string;
   laneId?: string;
   /** 缺省即 pending；终结结果存在后不再要求用户动作。 */
-  resolution?: InteractionResolution;
+  result?: InteractionResult;
 }
 
 export interface SessionState {
@@ -193,7 +193,7 @@ export interface SessionState {
   proposedPlans: Map<string, ProposedPlanState>;
   /** Harness 已启动的异步任务 / subagent，按 provider task id upsert。 */
   tasks: Map<string, HarnessTaskState>;
-  /** Interaction 是统一持久对象；是否 pending 由 resolution 是否存在派生。 */
+  /** Interaction 是统一持久对象；是否 pending 由 result 是否存在派生。 */
   interactions: Map<string, InteractionState>;
   /**
    * auto-review 回执，按回执自身的 `reviewId` 归档（见 docs/approval-lifecycle.md）。与 Interaction
@@ -394,7 +394,7 @@ function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_u
 /** 该 turn 是否还有未决 Interaction——per-turn requires_action 的派生依据。 */
 function hasPendingBlocking(state: SessionState, turnId: string): boolean {
   for (const interaction of state.interactions.values()) {
-    if (interaction.turnId === turnId && !interaction.resolution) return true;
+    if (interaction.turnId === turnId && !interaction.result) return true;
   }
   return false;
 }
@@ -405,7 +405,7 @@ function hasPendingBlocking(state: SessionState, turnId: string): boolean {
  * "没有用户动作会话无法完整推进"；未归属 turn 的 setup Interaction 也不能漏。
  */
 function deriveRunState(state: SessionState): SessionRunState {
-  if ([...state.interactions.values()].some((interaction) => !interaction.resolution)) return "requires_action";
+  if ([...state.interactions.values()].some((interaction) => !interaction.result)) return "requires_action";
   if (state.activeTurns.size === 0) return "idle";
   return [...state.activeTurns.values()].some((turn) => turn.state === "requires_action")
     ? "requires_action"
@@ -538,14 +538,14 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       state.tasks.set(p.taskId, next);
       break;
     }
-    // Interaction opened/resolved 驱动 per-turn requires_action ↔ running：不变量收在 reducer，
+    // Interaction requested/answered/cancelled 驱动 per-turn requires_action ↔ running：不变量收在 reducer，
     // 不要求 adapter 自觉配对 state_update（事件流是唯一真相源；见 docs/kernel.md）。
     // 原生 state_update(requires_action) 仍然有效——覆盖登录、设备确认等没有结构化
     // Interaction 的场景（workflow：反向不强制成立）。
-    case "interaction.opened": {
+    case "interaction.requested": {
       const interaction = ev.payload;
       const existing = state.interactions.get(interaction.interactionId);
-      // lifecycle 事实只认第一次：重复 opened 不能重写 requester/payload，更不能复活已 resolved 对象。
+      // lifecycle 事实只认第一次：重复 request 不能重写 requester/payload，更不能复活已终结对象。
       if (existing) break;
       state.interactions.set(interaction.interactionId, {
         interaction,
@@ -555,11 +555,18 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       flagRequiresAction(state, ev.turnId);
       break;
     }
-    case "interaction.resolved": {
+    case "interaction.answered": {
       const existing = state.interactions.get(ev.payload.interactionId);
-      // terminal 只收一次；迟到/重复 resolution 不得改写已经交付给 requester 的决定。
-      if (!existing || existing.resolution) break;
-      existing.resolution = ev.payload.resolution;
+      // terminal 只收一次；迟到/重复 answer 不得改写已经交付给 requester 的结果。
+      if (!existing || existing.result) break;
+      existing.result = ev.payload.answer;
+      unflagRequiresAction(state, existing.turnId);
+      break;
+    }
+    case "interaction.cancelled": {
+      const existing = state.interactions.get(ev.payload.interactionId);
+      if (!existing || existing.result) break;
+      existing.result = { kind: "cancelled", reason: ev.payload.reason };
       unflagRequiresAction(state, existing.turnId);
       break;
     }
