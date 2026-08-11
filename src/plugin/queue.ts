@@ -85,8 +85,11 @@ export class ReconcileCapacity {
   }
 }
 
+/**
+ * @spec Suspending a reconcile releases its capacity slot for the full external wait and reacquires a slot before the original continuation resumes.
+ * @rule A Plugin verb wait must suspend both the Controller-local and Manager-global leases so one human wait cannot block unrelated Resources at either limit.
+ */
 export interface ReconcileCapacityLease {
-  /** Release this execution's slot while wait is pending, then reacquire it. */
   suspend<T>(wait: Promise<T>): Promise<T>;
 }
 

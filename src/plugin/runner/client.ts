@@ -72,6 +72,8 @@ export interface PluginRunnerClientOptions extends PluginRunnerCallbacks {
 /**
  * One PluginBinding's child-process client. Third-party code and synchronous
  * subprocess calls cannot occupy Baton's event loop.
+ *
+ * @rule Exclude a pending host-side reconcile verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply.
  */
 export class PluginRunnerClient {
   private readonly child: Bun.Subprocess<"ignore", "pipe", "pipe">;

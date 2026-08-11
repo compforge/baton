@@ -4,10 +4,8 @@ import type { ReconcileSnapshot, TurnSummary } from "./snapshot.ts";
 export const MAIN_LANE_ID = "main" as const;
 
 /**
- * Terminal outcome of a Plugin verb.
- *
- * `dismissed` is reserved for an explicit user escape/close. A negative answer
- * such as declining a confirmation is still a successful business value.
+ * @spec Every Plugin verb has exactly four terminal outcomes: success with a business value, explicit user dismissal, deadline timeout, or execution failure.
+ * @rule Treat deliberate negative answers as successful business values; reserve dismissed for Esc/close and failure for infrastructure or execution errors.
  */
 export type VerbResult<T> =
   | { readonly state: "success"; readonly value: T }
@@ -99,9 +97,10 @@ export type HarnessResult = VerbResult<HarnessValue>;
 export type DraftResult = VerbResult<CompletedHarnessValue>;
 
 /**
- * One live Plugin execution's host view and capabilities. Every verb opens an
- * Interaction and suspends this async continuation until a terminal result is
- * available. Waiting yields scheduler capacity; it does not requeue a Resource.
+ * @spec Every Plugin verb first persists a Core-owned Interaction and suspends the same live Plugin execution until a terminal result; Baton never re-enqueues a Resource merely to deliver that result.
+ * @rule Correlate verb continuation with the Core-issued execution identity, never with Resource identity or a caller-provided key; a crashed execution fails instead of replaying its call stack.
+ * @rule Require one total timeout for every verb; draft and harness deadlines cover their Interaction gate and the resulting HarnessInvocation through terminal Turn.
+ * @see {@link docs/plugin.md}
  */
 export interface ReconcileContext {
   readonly snapshot: ReconcileSnapshot;

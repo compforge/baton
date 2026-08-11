@@ -9,5 +9,63 @@
         "spec": "Closed-choice asks preserve their choice value union, while any ask that permits free text returns string because the answer may be outside those choices."
       }
     ]
+  },
+  "packages/plugin/src/reconcile-context.ts::ReconcileContext": {
+    "specs": [
+      {
+        "cases": [],
+        "links": [
+          "docs/plugin.md"
+        ],
+        "rules": [
+          "Correlate verb continuation with the Core-issued execution identity, never with Resource identity or a caller-provided key; a crashed execution fails instead of replaying its call stack.",
+          "Require one total timeout for every verb; draft and harness deadlines cover their Interaction gate and the resulting HarnessInvocation through terminal Turn."
+        ],
+        "spec": "Every Plugin verb first persists a Core-owned Interaction and suspends the same live Plugin execution until a terminal result; Baton never re-enqueues a Resource merely to deliver that result."
+      }
+    ]
+  },
+  "packages/plugin/src/reconcile-context.ts::VerbResult": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Treat deliberate negative answers as successful business values; reserve dismissed for Esc/close and failure for infrastructure or execution errors."
+        ],
+        "spec": "Every Plugin verb has exactly four terminal outcomes: success with a business value, explicit user dismissal, deadline timeout, or execution failure."
+      }
+    ]
+  },
+  "src/interaction/reconcile.ts::ReconcileInteractionStore": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Keep the Event Ledger as the durable fact store, not a continuation store: recovery must fail orphaned Plugin Interactions instead of reviving an old call stack."
+        ],
+        "spec": "A Plugin Interaction appends its first terminal fact to the Event Ledger before resolving any suspended continuation; later terminal attempts cannot replace it."
+      }
+    ]
+  },
+  "src/plugin/queue.ts::ReconcileCapacityLease": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "A Plugin verb wait must suspend both the Controller-local and Manager-global leases so one human wait cannot block unrelated Resources at either limit."
+        ],
+        "spec": "Suspending a reconcile releases its capacity slot for the full external wait and reacquires a slot before the original continuation resumes."
+      }
+    ]
+  },
+  "src/plugin/runner/client.ts::PluginRunnerClient": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Exclude a pending host-side reconcile verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply."
+        ]
+      }
+    ]
   }
 }

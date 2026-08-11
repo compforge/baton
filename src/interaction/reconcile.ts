@@ -205,9 +205,8 @@ function cancelledResult<T>(
 }
 
 /**
- * Event-backed Interaction owner for live Plugin verbs. It persists the result
- * before resolving the suspended continuation; Resource reconciliation is not
- * used as a continuation mechanism.
+ * @spec A Plugin Interaction appends its first terminal fact to the Event Ledger before resolving any suspended continuation; later terminal attempts cannot replace it.
+ * @rule Keep the Event Ledger as the durable fact store, not a continuation store: recovery must fail orphaned Plugin Interactions instead of reviving an old call stack.
  */
 export class ReconcileInteractionStore {
   private readonly entries = new Map<string, Entry>();
