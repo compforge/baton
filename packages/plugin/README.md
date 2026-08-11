@@ -275,6 +275,9 @@ Each choice `value` is the stable answer value persisted by Baton and returned
 as `decision.value`; `label` and `description` are presentation only. Operation
 keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and
 `confirm({ key: "ship" })` are distinct durable operations.
+The verb and key must be reconstructed deterministically on every reconcile
+from durable Resource state or stable, re-observable facts. Process memory,
+random values, and current time cannot own continuation identity.
 
 If the domain no longer needs an unresolved decision, withdraw it by the same
 operation ref:
