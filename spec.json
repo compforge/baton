@@ -1,0 +1,24 @@
+{
+  "src/interaction/reconcile.ts::ReconcileInteractionStore.ask": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Keep verb and key separate; do not reconstruct operation identity with string prefixes."
+        ],
+        "spec": "A Plugin decision key is domain identity, independent of the reconcile verb. Ask choices preserve Plugin-authored values end-to-end so results need no Store-specific translation."
+      }
+    ]
+  },
+  "src/interaction/reconcile.ts::ReconcileInteractionStore.confirm": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Keep verb and key separate; do not reconstruct operation identity with string prefixes."
+        ],
+        "spec": "Confirm is a constrained decision over the same operation identity model: the verb distinguishes it from ask, while accept and decline remain stable domain outcomes."
+      }
+    ]
+  }
+}

@@ -254,6 +254,10 @@ export class ReconcileInteractionStore {
     this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
 
+  /**
+   * @spec A Plugin decision key is domain identity, independent of the reconcile verb. Ask choices preserve Plugin-authored values end-to-end so results need no Store-specific translation.
+   * @rule Keep verb and key separate; do not reconstruct operation identity with string prefixes.
+   */
   ask<TValue extends string>(
     context: ReconcileVerbScope,
     input: AskInput<TValue>,
@@ -265,6 +269,10 @@ export class ReconcileInteractionStore {
     );
   }
 
+  /**
+   * @spec Confirm is a constrained decision over the same operation identity model: the verb distinguishes it from ask, while accept and decline remain stable domain outcomes.
+   * @rule Keep verb and key separate; do not reconstruct operation identity with string prefixes.
+   */
   confirm(
     context: ReconcileVerbScope,
     input: ConfirmInput,
