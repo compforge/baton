@@ -10,6 +10,8 @@ import type {
   ErrorUpdate,
   EventEnvelope,
   EventSource,
+  HarnessInvocationCancelled,
+  HarnessInvocationFailed,
   HarnessInvocationRecorded,
   HarnessTaskUpdate,
   MessageRole,
@@ -131,7 +133,8 @@ export interface HarnessInvocationState {
     | "running"
     | "uncertain"
     | "completed"
-    | "cancelled";
+    | "cancelled"
+    | "failed";
   harnessTargetId?: string;
   requestedLaneId: string;
   newLane: boolean;
@@ -140,6 +143,8 @@ export interface HarnessInvocationState {
   turnId?: string;
   attemptId?: string;
   result?: TurnSummaryState;
+  cancellation?: HarnessInvocationCancelled;
+  failure?: HarnessInvocationFailed;
 }
 
 export interface UsageTotal {
@@ -629,7 +634,10 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         title: ev.payload.title,
         pluginInstanceId:
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
-        phase: ev.payload.operation.verb === "draft" ? "awaiting_input" : "queued",
+        phase: ev.payload.operation.verb === "draft" &&
+            ev.payload.blocks === undefined
+          ? "awaiting_input"
+          : "queued",
         requestedLaneId: ev.payload.laneId,
         newLane: ev.payload.newLane,
         harnessTargetId: ev.payload.harnessTargetId,
@@ -660,7 +668,22 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     }
     case "_baton_harness_invocation_cancelled": {
       const request = state.harnessInvocations.get(ev.payload.invocationId);
-      if (request && request.phase !== "completed") request.phase = "cancelled";
+      if (
+        request && request.phase !== "completed" && request.phase !== "failed"
+      ) {
+        request.phase = "cancelled";
+        request.cancellation = { ...ev.payload };
+      }
+      break;
+    }
+    case "_baton_harness_invocation_failed": {
+      const request = state.harnessInvocations.get(ev.payload.invocationId);
+      if (
+        request && request.phase !== "completed" && request.phase !== "cancelled"
+      ) {
+        request.phase = "failed";
+        request.failure = { ...ev.payload };
+      }
       break;
     }
     case "_baton_error_update": {
@@ -703,7 +726,9 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       const request = [...state.harnessInvocations.values()].find(
         (candidate) => candidate.turnId === ev.payload.turnId,
       );
-      if (request) {
+      if (
+        request && request.phase !== "cancelled" && request.phase !== "failed"
+      ) {
         request.phase = "completed";
         request.result = summary;
       }

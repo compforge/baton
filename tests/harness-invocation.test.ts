@@ -116,29 +116,22 @@ describe("HarnessInvocation Store", () => {
     });
   });
 
-  test("holds a draft until the user submits edited Input", () => {
+  test("requires submitted Interaction blocks before recording a draft", () => {
     const handle = session();
     const store = new HarnessInvocationStore(handle);
+    expect(() => store.record(invocation(handle.id, {
+      operation: { verb: "draft", key: "edit-first" },
+    }))).toThrow(
+      "draft HarnessInvocation requires blocks from a submitted Interaction",
+    );
+
     const pending = store.record(invocation(handle.id, {
       operation: { verb: "draft", key: "edit-first" },
-      harnessTargetId: undefined,
-    }));
-
-    expect(pending.phase).toBe("awaiting_input");
-    expect(store.scheduled(pending.invocationId)).toBeUndefined();
-    expect(store.pendingDraftInputs()).toEqual([{
-      invocationId: pending.invocationId,
-      pluginInstanceId: "reqloop_default",
-      title: "Implement requirement",
-      prompt: "Implement REQ-1 and run its focused tests.",
-    }]);
-
-    const resolved = store.resolveDraftInput(pending.invocationId, {
-      kind: "submitted",
-      blocks: [{ type: "text", text: "Implement only the focused fix." }],
       harnessTargetId: "claude",
-    });
-    expect(resolved?.scheduled).toMatchObject({
+      blocks: [{ type: "text", text: "Implement only the focused fix." }],
+    }));
+    expect(pending.phase).toBe("queued");
+    expect(store.scheduled(pending.invocationId)).toMatchObject({
       invocationId: pending.invocationId,
       harnessTargetId: "claude",
       source: "user",
@@ -146,12 +139,6 @@ describe("HarnessInvocation Store", () => {
       laneId: MAIN_LANE_ID,
       blocks: [{ type: "text", text: "Implement only the focused fix." }],
     });
-    expect(handle.readEvents().find((event) =>
-      event.kind === "_baton_harness_invocation_input_submitted"
-    )).toMatchObject({
-      payload: { harnessTargetId: "claude" },
-    });
-    expect(store.pendingDraftInputs()).toEqual([]);
   });
 
   test("allocates a side Lane from an existing Lane and can continue it", () => {
@@ -221,6 +208,7 @@ describe("HarnessInvocation Store", () => {
     const direct = store.record(invocation(handle.id));
     const draft = store.record(invocation(handle.id, {
       operation: { verb: "draft", key: "implement" },
+      blocks: [{ type: "text", text: "Implement requirement" }],
     }));
 
     expect(draft.invocationId).not.toBe(direct.invocationId);
@@ -244,8 +232,38 @@ describe("HarnessInvocation Store", () => {
     )).toHaveLength(1);
     expect(restored.cancelBeforeAdmission(pending.invocationId, "user"))
       .toBeDefined();
-    expect(restored.list()[0]?.phase).toBe("cancelled");
+    expect(restored.list()[0]).toMatchObject({
+      phase: "cancelled",
+      cancellation: { reason: "user" },
+    });
     expect(restored.cancelBeforeAdmission(pending.invocationId, "user"))
       .toBeUndefined();
+  });
+
+  test("persists dispatch failure as a typed terminal outcome", () => {
+    const handle = session();
+    const store = new HarnessInvocationStore(handle);
+    const direct = store.record(invocation(handle.id, {
+      operation: { verb: "harness", key: "dispatch-failure" },
+    }));
+
+    expect(
+      store.failBeforeAdmission(
+        direct.invocationId,
+        "dispatch",
+        "dispatcher unavailable",
+      ),
+    ).toBeDefined();
+    expect(store.list()).toMatchObject([{
+      phase: "failed",
+      failure: { reason: "dispatch", detail: "dispatcher unavailable" },
+    }]);
+    store.close();
+
+    const restored = new HarnessInvocationStore(handle);
+    expect(restored.restore()).toEqual([]);
+    expect(restored.list()).toMatchObject([
+      { failure: { reason: "dispatch", detail: "dispatcher unavailable" } },
+    ]);
   });
 });

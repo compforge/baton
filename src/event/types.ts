@@ -8,11 +8,29 @@ import type {
   ContextSnapshot,
 } from "../context/delivery.ts";
 import type {
+  AudioBlock,
+  EmbeddedResourceBlock,
+  ImageBlock,
+  PromptBlock,
+  ResourceLinkBlock,
+  TextBlock,
+} from "../input/blocks.ts";
+export type {
+  AudioBlock,
+  EmbeddedResourceBlock,
+  ImageBlock,
+  PromptBlock,
+  ResourceLinkBlock,
+  TextBlock,
+} from "../input/blocks.ts";
+import type {
   Interaction,
   InteractionAnswered,
   InteractionCancelled,
 } from "../interaction/types.ts";
 import type {
+  HarnessCancellationReason,
+  HarnessFailureReason,
   ReconcileOperationRef,
   ResourceRef,
 } from "@compforge/baton-plugin";
@@ -40,19 +58,6 @@ export type SessionRunState = "running" | "idle" | "requires_action";
 
 // (string & {}) 让联合保持开放：未知值不破坏解析（ACP v2 的 forward-compat 约定）
 export type StopReason = "end_turn" | "max_tokens" | "refusal" | "cancelled" | (string & {});
-
-export interface TextBlock {
-  type: "text";
-  text: string;
-}
-
-export interface ImageBlock {
-  type: "image";
-  mimeType: string;
-  /** base64 数据与本地路径二选一 */
-  data?: string;
-  path?: string;
-}
 
 export interface DiffChange {
   operation: "add" | "delete" | "modify" | "move" | (string & {});
@@ -82,32 +87,6 @@ export type ContentBlock = TextBlock | ImageBlock | DiffBlock | { type: string; 
 // prompt 是 adapter 的入参契约，必须是可显式 admission 的闭合集合——不支持某 block 时
 // 报带类型的错误，而不是被 textOf() 之类静默降级；输出侧保持开放联合以容纳 harness 差异。
 // 词汇对齐 ACP/MCP content（text/image/audio/resource/resource_link）。
-
-// 以下三个用 type alias 而不是 interface：object literal type 有隐式 index signature，
-// 才能让 PromptBlock[] 赋给开放的 ContentBlock[]（user_message payload 持久化输入原文）。
-export type AudioBlock = {
-  type: "audio";
-  mimeType: string;
-  /** base64 音频数据 */
-  data: string;
-};
-
-/** 内容已内联的资源（对齐 MCP embedded resource）：text 与 blob 二选一 */
-export type EmbeddedResourceBlock = {
-  type: "resource";
-  resource: { uri: string; mimeType?: string; text?: string; blob?: string };
-};
-
-/** 只带引用、不内联内容的资源链接 */
-export type ResourceLinkBlock = {
-  type: "resource_link";
-  uri: string;
-  name: string;
-  mimeType?: string;
-  description?: string;
-};
-
-export type PromptBlock = TextBlock | ImageBlock | AudioBlock | EmbeddedResourceBlock | ResourceLinkBlock;
 
 export type MessageRole = "user" | "agent" | "thought";
 
@@ -388,6 +367,8 @@ export interface HarnessInvocationRecorded {
   resource: ResourceRef;
   title: string;
   prompt: string;
+  /** User-edited Input captured by a preceding suggested-input Interaction. */
+  blocks?: PromptBlock[];
   /** Existing Lane used as the execution Lane or as the parent of a new Lane. */
   laneId: string;
   newLane: boolean;
@@ -413,8 +394,15 @@ export interface HarnessInvocationScheduled {
 
 export interface HarnessInvocationCancelled {
   invocationId: string;
-  reason: "user" | "resource" | "recovery";
+  /** dismissed only replays Sessions created before draft input moved to Interaction. */
+  reason: HarnessCancellationReason | "dismissed";
   detail?: string;
+}
+
+export interface HarnessInvocationFailed {
+  invocationId: string;
+  reason: HarnessFailureReason;
+  detail: string;
 }
 
 export type EventPayloadMap = {
@@ -450,6 +438,7 @@ export type EventPayloadMap = {
   _baton_harness_invocation_input_submitted: HarnessInvocationInputSubmitted;
   _baton_harness_invocation_scheduled: HarnessInvocationScheduled;
   _baton_harness_invocation_cancelled: HarnessInvocationCancelled;
+  _baton_harness_invocation_failed: HarnessInvocationFailed;
 };
 
 export type EventKind = keyof EventPayloadMap;

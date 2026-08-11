@@ -266,10 +266,14 @@ persists it with the Interaction, records `cancelled` with reason `timeout` when
 it expires, and re-enqueues the Resource. The Plugin decides whether that means
 decline, skip, escalation, or another domain outcome.
 
-`ReconcileContext` methods are typed Core verbs rather than generic messages:
-`ask` and `confirm` can only materialize Core-owned Interactions, while `draft`
-and `harness` can only materialize HarnessInvocations. Plugins cannot select a
-topic, provide a routing callback, or pass a Harness-native DTO through Core.
+`ReconcileContext` methods are typed Core verbs rather than generic messages.
+Every operation-producing verb first materializes a Core-owned Interaction;
+`withdraw` only settles an existing one. `draft` continues only
+after its suggested input is submitted; `harness` continues only after its
+mandatory gate is approved. A host policy may auto-approve that gate, but Baton
+still persists the requested and answered Interaction facts before creating a
+HarnessInvocation. Plugins cannot select a topic, provide a routing callback,
+or pass a Harness-native DTO through Core.
 
 Each choice `value` is the stable answer value persisted by Baton and returned
 as `decision.value`; `label` and `description` are presentation only. Operation
@@ -290,9 +294,11 @@ Withdrawal records cancellation with reason `requester`. It returns
 `not-pending` when an answer or another terminal result already won the race.
 Deleting the owning Resource also withdraws its unresolved Interactions.
 
-A Controller uses `ctx.draft` to let the user edit a prompt, or
-`ctx.harness` to originate a driven Turn directly. The Plugin explicitly
-declares the Lane for direct execution:
+A Controller uses `ctx.draft` to let the user edit a prompt, or `ctx.harness`
+to request a driven Turn with a ready prompt. Both pass through Interaction;
+only an approved/submitted result creates the HarnessInvocation. `harness`
+returns `waiting` while a manual gate is pending and `declined` when it is
+rejected. The Plugin explicitly declares the Lane for execution:
 
 - `laneId` names an existing Lane to continue. `main` is the reserved main Lane ID.
 - `newLane: true` allocates a new asynchronous Lane from `laneId`; omitted or
@@ -323,3 +329,10 @@ The result `laneId` is the actual execution Lane and can be passed to a later
 call to continue the same side task. The key and parameters are immutable for
 one logical operation; use a new key to request another question, draft, or
 Turn. `completed` means the Turn closed, not that domain acceptance succeeded.
+Closing an unsubmitted draft returns `dismissed` from its Interaction and never
+creates a HarnessInvocation. A manual Harness gate can return `waiting` or
+`declined`. Deliberate invocation termination returns `cancelled` with a closed
+`user | resource | recovery` reason, while a pre-admission dispatch error
+returns `failed` with reason `dispatch`. Treat
+`detail` as diagnostics; branch on `state` and `reason`, and use a new key to
+retry a terminal invocation.

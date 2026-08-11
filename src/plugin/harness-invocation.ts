@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type {
+  HarnessCancellationReason,
+  HarnessFailureReason,
   ReconcileOperationRef,
   ResourceRef,
   TurnSummary,
@@ -10,6 +12,8 @@ import { newId } from "../event/ids.ts";
 import type {
   AnyEventEnvelope,
   EventEnvelope,
+  HarnessInvocationCancelled,
+  HarnessInvocationFailed,
   HarnessInvocationRecorded,
   HarnessInvocationScheduled,
   PromptBlock,
@@ -30,7 +34,8 @@ export type HarnessInvocationPhase =
   | "running"
   | "uncertain"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "failed";
 
 export interface HarnessInvocationSnapshot {
   readonly invocationId: string;
@@ -42,6 +47,8 @@ export interface HarnessInvocationSnapshot {
   readonly laneId?: string;
   readonly turnId?: string;
   readonly result?: TurnSummary;
+  readonly cancellation?: Readonly<HarnessInvocationCancelled>;
+  readonly failure?: Readonly<HarnessInvocationFailed>;
 }
 
 export interface ReconcileHarnessInvocation {
@@ -54,6 +61,7 @@ export interface ReconcileHarnessInvocation {
     readonly operation: HarnessOperationRef;
     readonly title: string;
     readonly prompt: string;
+    readonly blocks?: readonly PromptBlock[];
     readonly laneId: string;
     readonly newLane: boolean;
     /** Required for harness(); omitted draft() Targets resolve when the user submits. */
@@ -98,6 +106,7 @@ interface InvocationState {
   inputSubmission?: EventEnvelope<"_baton_harness_invocation_input_submitted">;
   scheduled?: EventEnvelope<"_baton_harness_invocation_scheduled">;
   cancelled?: EventEnvelope<"_baton_harness_invocation_cancelled">;
+  failed?: EventEnvelope<"_baton_harness_invocation_failed">;
   admitted: boolean;
   uncertain: boolean;
   result?: TurnSummary;
@@ -136,12 +145,16 @@ function sameEnvelope(
   draft: ReconcileHarnessInvocation,
 ): boolean {
   const invocation = draft.invocation;
+  const sameBlocks = (current.operation.verb === "draft" &&
+      invocation.blocks === undefined) ||
+    JSON.stringify(current.blocks) === JSON.stringify(invocation.blocks);
   return current.operation.verb === invocation.operation.verb &&
     current.operation.key === invocation.operation.key &&
     current.resourceOwner === reconcileResourceOwner(draft.key) &&
     sameResource(current.resource, draft.resource) &&
     current.title === invocation.title &&
     current.prompt === invocation.prompt &&
+    sameBlocks &&
     current.laneId === invocation.laneId &&
     current.newLane === invocation.newLane &&
     current.harnessTargetId === invocation.harnessTargetId;
@@ -179,13 +192,35 @@ function pluginInstanceIdOf(state: InvocationState): string {
 
 function phaseOf(state: InvocationState): HarnessInvocationPhase {
   if (state.result) return "completed";
+  if (state.failed) return "failed";
   if (state.cancelled) return "cancelled";
   if (state.uncertain) return "uncertain";
   if (state.admitted) return "running";
   if (state.scheduled) return "queued";
-  return state.recorded.payload.operation.verb === "draft"
+  return state.recorded.payload.operation.verb === "draft" &&
+      state.recorded.payload.blocks === undefined
     ? "awaiting_input"
     : "queued";
+}
+
+function cancellationOf(
+  state: InvocationState,
+): Readonly<HarnessInvocationCancelled> | undefined {
+  const cancellation = state.cancelled?.payload;
+  if (!cancellation) return;
+  // Normalize the original persisted representation so existing Sessions keep
+  // the same public draft-dismissal semantics after the outcome became typed.
+  if (
+    state.recorded.payload.operation.verb === "draft" &&
+    cancellation.reason === "user" &&
+    cancellation.detail === "draft input dismissed"
+  ) {
+    return Object.freeze({
+      invocationId: cancellation.invocationId,
+      reason: "dismissed",
+    });
+  }
+  return Object.freeze({ ...cancellation });
 }
 
 function frozenSummary(summary: TurnSummary): TurnSummary {
@@ -220,12 +255,19 @@ function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
     ...(state.result === undefined
       ? {}
       : { result: frozenSummary(state.result) }),
+    ...(state.cancelled === undefined
+      ? {}
+      : { cancellation: cancellationOf(state) }),
+    ...(state.failed === undefined
+      ? {}
+      : { failure: Object.freeze({ ...state.failed.payload }) }),
   });
 }
 
 function scheduledOf(
   state: InvocationState,
 ): ScheduledHarnessInvocation | undefined {
+  if (state.result || state.cancelled || state.failed) return;
   const scheduled = state.scheduled?.payload;
   if (!scheduled) return;
   const recorded = state.recorded.payload;
@@ -239,7 +281,7 @@ function scheduledOf(
     source: recorded.operation.verb === "draft" ? "user" : "plugin",
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
-    blocks: state.inputSubmission?.payload.blocks ?? [
+    blocks: recorded.blocks ?? state.inputSubmission?.payload.blocks ?? [
       { type: "text", text: recorded.prompt } satisfies PromptBlock,
     ],
   });
@@ -286,6 +328,15 @@ export class HarnessInvocationStore {
       this.ensureScheduled(existing);
       return snapshotOf(existing);
     }
+    if (
+      draft.invocation.operation.verb === "draft" &&
+      (draft.invocation.blocks === undefined ||
+        draft.invocation.blocks.length === 0)
+    ) {
+      throw new Error(
+        "draft HarnessInvocation requires blocks from a submitted Interaction",
+      );
+    }
 
     const invocation = draft.invocation;
     // Lane selection is part of the durable request envelope. Reject a stale or
@@ -304,6 +355,9 @@ export class HarnessInvocationStore {
         resource: { ...draft.resource },
         title: invocation.title,
         prompt: invocation.prompt,
+        ...(invocation.blocks === undefined
+          ? {}
+          : { blocks: invocation.blocks.map((block) => ({ ...block })) }),
         laneId: invocation.laneId,
         newLane: invocation.newLane,
         ...(invocation.harnessTargetId === undefined
@@ -331,6 +385,8 @@ export class HarnessInvocationStore {
   }
 
   pendingDraftInputs(): readonly DraftHarnessInvocationInput[] {
+    // Compatibility projection for Sessions written before draft input moved
+    // to Core Interaction. New record() calls cannot create this state.
     return Object.freeze(
       [...this.states.values()]
         .filter((state) => phaseOf(state) === "awaiting_input")
@@ -357,6 +413,7 @@ export class HarnessInvocationStore {
         }
       | { readonly kind: "dismissed" },
   ): ResolvedHarnessInvocation | undefined {
+    // Compatibility resolver for pre-Interaction draft invocations.
     const state = this.states.get(invocationId);
     if (
       !state ||
@@ -366,7 +423,7 @@ export class HarnessInvocationStore {
       return;
     }
     if (outcome.kind === "dismissed") {
-      this.appendCancellation(state, "user", "draft input dismissed");
+      this.appendCancellation(state, "dismissed");
       return Object.freeze({ key: keyOf(state) });
     }
     if (outcome.blocks.length === 0) {
@@ -406,6 +463,7 @@ export class HarnessInvocationStore {
       .filter((state) => {
         const phase = phaseOf(state);
         return phase !== "completed" && phase !== "cancelled" &&
+          phase !== "failed" &&
           (identifier === undefined ||
             state.recorded.payload.invocationId === identifier);
       })
@@ -419,12 +477,27 @@ export class HarnessInvocationStore {
 
   cancelBeforeAdmission(
     invocationId: string,
-    reason: "user" | "resource" | "recovery",
+    reason: HarnessCancellationReason,
     detail?: string,
   ): ReconcileKey | undefined {
     const state = this.states.get(invocationId);
-    if (!state || state.admitted || state.result || state.cancelled) return;
+    if (
+      !state || state.admitted || state.result || state.cancelled || state.failed
+    ) return;
     this.appendCancellation(state, reason, detail);
+    return keyOf(state);
+  }
+
+  failBeforeAdmission(
+    invocationId: string,
+    reason: HarnessFailureReason,
+    detail: string,
+  ): ReconcileKey | undefined {
+    const state = this.states.get(invocationId);
+    if (
+      !state || state.admitted || state.result || state.cancelled || state.failed
+    ) return;
+    this.appendFailure(state, reason, detail);
     return keyOf(state);
   }
 
@@ -435,7 +508,8 @@ export class HarnessInvocationStore {
         !sameResource(state.recorded.payload.resource, resource) ||
         state.admitted ||
         state.result ||
-        state.cancelled
+        state.cancelled ||
+        state.failed
       ) {
         continue;
       }
@@ -450,9 +524,10 @@ export class HarnessInvocationStore {
   restore(): readonly ScheduledHarnessInvocation[] {
     const pending: ScheduledHarnessInvocation[] = [];
     for (const state of this.states.values()) {
-      if (state.result || state.cancelled) continue;
+      if (state.result || state.cancelled || state.failed) continue;
       if (
         state.recorded.payload.operation.verb === "draft" &&
+        state.recorded.payload.blocks === undefined &&
         !state.inputSubmission
       ) {
         continue;
@@ -466,6 +541,7 @@ export class HarnessInvocationStore {
         !current.admitted &&
         !current.uncertain &&
         !current.cancelled &&
+        !current.failed &&
         !current.result
       ) {
         pending.push(scheduled);
@@ -484,8 +560,11 @@ export class HarnessInvocationStore {
     if (state.scheduled) return scheduledOf(state);
     const recorded = state.recorded.payload;
     if (
-      (recorded.operation.verb === "draft" && !state.inputSubmission) ||
+      (recorded.operation.verb === "draft" &&
+        recorded.blocks === undefined &&
+        !state.inputSubmission) ||
       state.cancelled ||
+      state.failed ||
       state.result
     ) {
       return;
@@ -519,17 +598,36 @@ export class HarnessInvocationStore {
 
   private appendCancellation(
     state: InvocationState,
-    reason: "user" | "resource" | "recovery",
+    reason: HarnessCancellationReason | "dismissed",
     detail?: string,
   ): void {
     this.session.append({
       kind: "_baton_harness_invocation_cancelled",
-      source: reason === "user" ? { type: "user" } : { type: "baton" },
+      source: reason === "user" || reason === "dismissed"
+        ? { type: "user" }
+        : { type: "baton" },
       parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
       payload: {
         invocationId: state.recorded.payload.invocationId,
         reason,
         ...(detail === undefined ? {} : { detail }),
+      },
+    });
+  }
+
+  private appendFailure(
+    state: InvocationState,
+    reason: HarnessFailureReason,
+    detail: string,
+  ): void {
+    this.session.append({
+      kind: "_baton_harness_invocation_failed",
+      source: { type: "baton" },
+      parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
+      payload: {
+        invocationId: state.recorded.payload.invocationId,
+        reason,
+        detail,
       },
     });
   }
@@ -594,7 +692,7 @@ export class HarnessInvocationStore {
       case "_baton_turn_summary": {
         const id = this.invocationIdByTurn.get(event.payload.turnId);
         const state = id ? this.states.get(id) : undefined;
-        if (!state || state.result) return;
+        if (!state || state.result || state.cancelled || state.failed) return;
         state.result = event.payload;
         state.uncertain = false;
         changed = state;
@@ -602,8 +700,15 @@ export class HarnessInvocationStore {
       }
       case "_baton_harness_invocation_cancelled": {
         const state = this.states.get(event.payload.invocationId);
-        if (!state || state.cancelled || state.result) return;
+        if (!state || state.cancelled || state.failed || state.result) return;
         state.cancelled = event;
+        changed = state;
+        break;
+      }
+      case "_baton_harness_invocation_failed": {
+        const state = this.states.get(event.payload.invocationId);
+        if (!state || state.failed || state.cancelled || state.result) return;
+        state.failed = event;
         changed = state;
         break;
       }

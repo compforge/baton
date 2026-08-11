@@ -5,6 +5,8 @@ import type {
   CancellationReason,
   ConfirmInput,
   ConfirmResult,
+  DraftInput,
+  HarnessInput,
   ReconcileOperationRef,
   ResourceRef,
   WithdrawInput,
@@ -23,6 +25,7 @@ import type {
   ReconcileInteractionContext,
   QuestionChoice,
 } from "./types.ts";
+import type { PromptBlock } from "../input/blocks.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { ReconcileKey } from "../plugin/controller.ts";
 import {
@@ -52,25 +55,58 @@ interface PluginQuestionInput<TValue extends string = string> {
   readonly expiresAt?: string;
 }
 
-interface ReconcileQuestion {
+interface ReconcileInteractionRequest {
   readonly key: ReconcileKey;
   readonly resource: ResourceRef;
   readonly basedOnGeneration?: number;
   readonly basedOnResourceVersion?: string;
   readonly basedOnRevision?: number;
-  readonly request: {
-    readonly operation: ReconcileOperationRef<"ask" | "confirm">;
-    readonly title: string;
-    readonly prompt: string;
-    readonly choices?: readonly AskChoice[];
-    readonly allowOther?: boolean;
-    readonly expiresAt?: string;
-  };
+  readonly request:
+    | {
+        readonly kind: "question";
+        readonly operation: ReconcileOperationRef<"ask" | "confirm">;
+        readonly title: string;
+        readonly prompt: string;
+        readonly choices?: readonly AskChoice[];
+        readonly allowOther?: boolean;
+        readonly expiresAt?: string;
+      }
+    | {
+        readonly kind: "suggested_input";
+        readonly operation: ReconcileOperationRef<"draft">;
+        readonly title: string;
+        readonly prompt: string;
+        readonly harnessTargetId?: string;
+      }
+    | {
+        readonly kind: "harness_invocation";
+        readonly operation: ReconcileOperationRef<"harness">;
+        readonly title: string;
+        readonly prompt: string;
+        readonly laneId: string;
+        readonly newLane: boolean;
+        readonly harnessTargetId?: string;
+      };
 }
+
+export type ReconcileDraftInteractionResult =
+  | { readonly state: "editing" }
+  | { readonly state: "dismissed" }
+  | { readonly state: "cancelled"; readonly reason: CancellationReason }
+  | { readonly state: "submitted"; readonly blocks: readonly PromptBlock[] };
+
+export type ReconcileHarnessGateResult =
+  | { readonly state: "waiting" }
+  | { readonly state: "approved" }
+  | { readonly state: "declined" }
+  | { readonly state: "cancelled"; readonly reason: CancellationReason };
 
 export interface ReconcileInteractionStoreOptions {
   now?: () => Date;
   onTimeout?(key: ReconcileKey): void;
+  harnessInvocationGate?(
+    interaction: Extract<Interaction, { kind: "harness_invocation" }>,
+  ): "auto_approve" | "require_user";
 }
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -90,7 +126,7 @@ function interactionIdentity(
 
 function interactionContext(
   draft: ReconcileVerbScope,
-  operation: ReconcileOperationRef<"ask" | "confirm">,
+  operation: ReconcileOperationRef<"ask" | "confirm" | "draft" | "harness">,
 ): ReconcileInteractionContext {
   return Object.freeze({
     operation: Object.freeze({ ...operation }),
@@ -109,17 +145,44 @@ function interactionContext(
 }
 
 function pluginInteraction(
-  draft: ReconcileQuestion,
+  draft: ReconcileInteractionRequest,
 ): Interaction {
   const request = draft.request;
-  return Object.freeze({
-    kind: "question",
+  const base = {
     interactionId: newId("ix"),
     requester: {
       type: "plugin" as const,
       pluginInstanceId: draft.key.pluginInstanceId,
     },
     pluginContext: interactionContext(draft, request.operation),
+  };
+  if (request.kind === "suggested_input") {
+    return Object.freeze({
+      ...base,
+      kind: "suggested_input",
+      title: request.title,
+      text: request.prompt,
+      ...(request.harnessTargetId === undefined
+        ? {}
+        : { harnessTargetId: request.harnessTargetId }),
+    });
+  }
+  if (request.kind === "harness_invocation") {
+    return Object.freeze({
+      ...base,
+      kind: "harness_invocation",
+      title: request.title,
+      prompt: request.prompt,
+      laneId: request.laneId,
+      newLane: request.newLane,
+      ...(request.harnessTargetId === undefined
+        ? {}
+        : { harnessTargetId: request.harnessTargetId }),
+    });
+  }
+  return Object.freeze({
+    kind: "question",
+    ...base,
     ...(request.expiresAt === undefined
       ? {}
       : { expiresAt: request.expiresAt }),
@@ -211,6 +274,18 @@ function validResult(
   result: InteractionResult,
 ): boolean {
   if (result.kind === "cancelled") return true;
+  if (
+    interaction.kind === "suggested_input" &&
+    result.kind === "suggested_input"
+  ) {
+    return result.outcome === "dismissed" || result.blocks.length > 0;
+  }
+  if (
+    interaction.kind === "harness_invocation" &&
+    result.kind === "harness_invocation"
+  ) {
+    return true;
+  }
   if (interaction.kind !== "question" || result.kind !== "question") {
     return false;
   }
@@ -239,6 +314,9 @@ export class ReconcileInteractionStore {
   private readonly unsubscribe: () => void;
   private readonly now: () => Date;
   private readonly onTimeout: ReconcileInteractionStoreOptions["onTimeout"];
+  private readonly harnessInvocationGate: NonNullable<
+    ReconcileInteractionStoreOptions["harnessInvocationGate"]
+  >;
   private timer?: ReturnType<typeof setTimeout>;
   private replaying = true;
 
@@ -248,6 +326,8 @@ export class ReconcileInteractionStore {
   ) {
     this.now = options.now ?? (() => new Date());
     this.onTimeout = options.onTimeout;
+    this.harnessInvocationGate = options.harnessInvocationGate ??
+      (() => "auto_approve");
     for (const event of session.readEvents()) this.apply(event);
     this.replaying = false;
     this.arm();
@@ -303,6 +383,80 @@ export class ReconcileInteractionStore {
     return Object.freeze({
       state: result.value === "accept" ? "accepted" : "declined",
     });
+  }
+
+  draft(
+    context: ReconcileVerbScope,
+    input: DraftInput,
+  ): ReconcileDraftInteractionResult {
+    const interaction = this.open({
+      ...context,
+      request: {
+        kind: "suggested_input",
+        operation: { verb: "draft", key: input.key },
+        title: input.key,
+        prompt: input.prompt,
+        ...(input.harnessTargetId === undefined
+          ? {}
+          : { harnessTargetId: input.harnessTargetId }),
+      },
+    });
+    const result = this.entries.get(interaction.interactionId)?.result;
+    if (!result) return Object.freeze({ state: "editing" });
+    if (result.kind === "cancelled") {
+      return Object.freeze({ state: "cancelled", reason: result.reason });
+    }
+    if (result.kind !== "suggested_input") {
+      throw new Error(`draft() ${input.key} has an invalid Interaction result`);
+    }
+    if (result.outcome === "dismissed") {
+      return Object.freeze({ state: "dismissed" });
+    }
+    return Object.freeze({
+      state: "submitted",
+      blocks: Object.freeze(result.blocks.map((block) => Object.freeze({ ...block }))),
+    });
+  }
+
+  harness(
+    context: ReconcileVerbScope,
+    input: HarnessInput,
+  ): ReconcileHarnessGateResult {
+    const interaction = this.open({
+      ...context,
+      request: {
+        kind: "harness_invocation",
+        operation: { verb: "harness", key: input.key },
+        title: input.key,
+        prompt: input.prompt,
+        laneId: input.laneId,
+        newLane: input.newLane ?? false,
+        ...(input.harnessTargetId === undefined
+          ? {}
+          : { harnessTargetId: input.harnessTargetId }),
+      },
+    });
+    let entry = this.entries.get(interaction.interactionId);
+    if (
+      entry && !entry.result && interaction.kind === "harness_invocation" &&
+      this.harnessInvocationGate(interaction) === "auto_approve"
+    ) {
+      this.settle(
+        interaction.interactionId,
+        { kind: "harness_invocation", outcome: "approved" },
+        { type: "baton" },
+      );
+      entry = this.entries.get(interaction.interactionId);
+    }
+    const result = entry?.result;
+    if (!result) return Object.freeze({ state: "waiting" });
+    if (result.kind === "cancelled") {
+      return Object.freeze({ state: "cancelled", reason: result.reason });
+    }
+    if (result.kind !== "harness_invocation") {
+      throw new Error(`harness() ${input.key} has an invalid Interaction result`);
+    }
+    return Object.freeze({ state: result.outcome });
   }
 
   withdraw(
@@ -362,6 +516,7 @@ export class ReconcileInteractionStore {
     const interaction = this.open({
       ...context,
       request: {
+        kind: "question",
         operation,
         title: input.title,
         prompt: input.prompt,
@@ -401,7 +556,7 @@ export class ReconcileInteractionStore {
     });
   }
 
-  private open(draft: ReconcileQuestion): Interaction {
+  private open(draft: ReconcileInteractionRequest): Interaction {
     if (draft.key.batonSessionId !== this.session.id) {
       throw new Error(
         `plugin Interaction batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,

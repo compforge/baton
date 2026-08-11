@@ -42,7 +42,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 Human  ── Input ────────────────────────────────> Harness
 Human  <─ Interaction <── Core <── request ───── Harness
 Human  <─ Interaction <── Core <── ask/confirm ─ Plugin
-Plugin ── draft/harness ─> HarnessInvocation ──> Harness
+Plugin ── draft/harness ─> Interaction gate ──> HarnessInvocation ──> Harness
 Harness ── Event ────────> Core Projection ────> Human / Plugin
 ```
 
@@ -61,11 +61,11 @@ Core 直接改变另一方状态。
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
 | **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
-| **HarnessInvocation** | `draft` / `harness` 调用的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
+| **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
-| **Interaction** | Harness 或 Plugin requester 等待人返回结果的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复 Harness continuation 或 Resource reconcile |
+| **Interaction** | Harness 或 Plugin requester 等待 typed decision 的持久协作对象；人或宿主 policy 可以给出结果，Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复 Harness continuation 或 Resource reconcile |
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 
@@ -150,7 +150,8 @@ src/harness/ids.ts
 ### 4.4 事实先于副作用和投影
 
 获准执行的 prompt Input 先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
-再调用 Adapter。`ReconcileContext` 调用对应的 Interaction 或 HarnessInvocation 先持久化，
+再调用 Adapter。`ask/confirm/draft/harness` 都先持久化 Interaction；只有 `draft/harness` 的 gate
+通过后才持久化 HarnessInvocation，
 再产生 UI 或执行副作用。Context Snapshot 只说明准备送什么，只有
 DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发生时保留 `uncertain`，不盲目
 重投。
@@ -159,9 +160,10 @@ DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发�
 
 Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
 Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 用 `ask` /
-`confirm` 组织 human-in-the-loop，用 `draft` 交给用户修改，用 `harness` 直接执行。Core 把这些
-能力调用物化为持久 Interaction 或 HarnessInvocation，并让最终 Input 继续走统一的 Context、
-Permission、Attempt 和 Harness routing 主路径。Plugin 决定业务步骤，Core 始终拥有授权与执行。
+`confirm` 组织 human-in-the-loop，用 `draft` 交给用户修改，用 `harness` 请求执行。Core 把所有
+能力调用先物化为持久 Interaction；policy 可以自动批准 Harness gate，但不能跳过这条事实边界。
+gate 通过后再创建 HarnessInvocation，并让最终 Input 继续走统一的 Context、Permission、Attempt
+和 Harness routing 主路径。Plugin 决定业务步骤，Core 始终拥有授权与执行。
 
 ### 4.6 单 Ledger、多 Lane
 

@@ -8,11 +8,18 @@ Plugin Controller 每次 reconcile 都会收到一个 `ReconcileContext`。其�
 授权、执行调度、Event Ledger、幂等、恢复和结果回传。Plugin 因而能表达完整
 loop，但不能持有 Harness Adapter、进程、SDK 句柄或跨 reconcile 的内存 continuation。
 
-这些能力分成人机决议和 Harness 执行两组：
+`ask/confirm/draft/harness` 都先经过 Core-owned Interaction，只是决议方式不同：
 
 - `ask`、`confirm` 请求人的决定，并把问题、deadline 与结果持久化为 Interaction；`withdraw`
   在领域流程不再需要某次决定时撤回未决 Interaction；
-- `draft`、`harness` 请求一个 Harness Turn。前者先让用户编辑，后者直接执行。
+- `draft` 先打开 suggested-input Interaction，由用户编辑或关闭；
+- `harness` 先打开 Harness gate Interaction。策略可以自动批准，也可以要求用户确认。
+
+只有 suggested input 已提交或 Harness gate 已批准，Core 才创建代表实际执行的
+`HarnessInvocation`。即使当前策略自动批准，requested/answered 事实也必须先落 ledger，不能绕过
+Interaction；这条边界为后续权限、风控和宿主拦截保留稳定接入点。
+Harness gate 会固化最终选择的 HarnessTarget、`laneId` 与 `newLane`；同一 operation ref 不能在
+等待或批准后悄悄切换执行坐标。
 
 一次调用立即返回当前持久状态。未决 `ask` 返回 `waiting`，未完成执行返回 `editing` 或
 `pending`；Core 在对应 ledger 事实变化后重新 enqueue 原 Resource，下一次 reconcile 用同一个
@@ -69,9 +76,9 @@ await ctx.withdraw({ verb: "ask", key: operationKey });
 撤回只结束仍未决的 Interaction，并持久化 `cancelled(requester)`；若用户答案或其它终态已经先到，
 返回 `not-pending`，原 `ask` / `confirm` 仍可用同一 key 读取已经成立的结果。
 
-需要人的动作显式组合 `ask` 或 `confirm`。无需编辑或授权的 Core 辅助工作可以直接调用
-`harness`；需要用户调整的内容直接调用 `draft`。Baton 不从 Plugin 名称、业务类型或
-“前台/后台”标签猜执行方式。
+需要领域选择时显式组合 `ask` 或 `confirm`；需要用户调整内容时调用 `draft`；已有完整 prompt
+时调用 `harness`。三者都不绕过 Interaction。`harness` 的 gate 是否由策略自动批准或交给用户，
+由宿主策略决定，而不是 Plugin 名称、业务类型或“前台/后台”标签决定。
 
 ## Lane、source 与执行记录
 
@@ -84,14 +91,14 @@ Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harne
 是 user，`harness` 产生的 Input source 是 Plugin；source 与 Lane 是两条正交轴。结果中的 `laneId`
 始终是实际执行 Lane，可传给后续 `harness` 调用以继续同一支线。
 
-`draft` 显式携带 `harnessTargetId` 时，Plugin 固定执行目标，草稿卡片展示该 Target；省略时不在创建
-草稿时读取默认值，而是在用户提交编辑结果时读取宿主的当前选择。最终 Target 先随 submitted Input
-事实落盘，再进入调度，因此提交后的恢复不会重新选择。`harness` 没有编辑等待阶段，省略 Target 时
-继续在调用时立即解析宿主当前选择。
+`draft` 显式携带 `harnessTargetId` 时，suggested-input Interaction 固化并展示该 Target；省略时不在
+创建 Interaction 时读取默认值，而是在用户提交编辑结果后读取宿主的当前选择。`harness` 没有编辑
+等待阶段，省略 Target 时在创建 gate Interaction 前立即解析并固化宿主当前选择。
 
-Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
-API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、显式 Target 意图、
-请求的 `laneId + newLane`，随后关联提交时确定的最终 Target、实际 Lane、Input、Delivery Attempt、Turn 和
+Core 在 `draft` 的 suggested input 已提交、或 `harness` 的 gate 已批准后，才持久化
+`HarnessInvocation`。它是实际执行记录，不是 Plugin API，也不承担人机授权语义。记录绑定
+Plugin、Resource UID、operation ref、最终 prompt、最终 Target、请求的 `laneId + newLane`，随后关联
+实际 Lane、Input、Delivery Attempt、Turn 和
 TurnSummary。新 Lane 的 `createdFor` 与 `parentLaneId` 只记录创建事实，不是后续调用的所有权约束。
 
 ## 身份、恢复与取消
@@ -106,10 +113,18 @@ operation ref 的参数不可变，不同 verb 可以复用同一个 caller key�
 
 - `ask/confirm` 重放同一 Interaction，答案落盘后再唤醒 Resource；
 - `expiresAt` 到期和 `withdraw` 都先落取消事实，再唤醒或继续当前 Resource；
-- `draft` 在用户提交最终 Prompt blocks 前不创建 Input；
-- `harness` 只调度一次稳定的 message、turn 和 lane identity；
+- `draft` 在用户提交最终 Prompt blocks 前不创建 HarnessInvocation 或 Input；
+- `harness` 无论自动批准还是等待用户，都先持久化 Interaction；批准后只创建并调度一次稳定的
+  HarnessInvocation、message、turn 和 lane identity；
 - 已 accepted 但结果不明的投递保持 `uncertain`，恢复时先对账而非盲目重投；
-- TurnSummary 到达后，下一次 reconcile 得到 `completed` 及完整 summary。
+- TurnSummary 到达后，下一次 reconcile 得到 `completed` 及完整 summary；
+- 用户关闭尚未提交的 draft Interaction 才返回 `dismissed`，且不会产生 HarnessInvocation；
+  Harness gate 等待时返回 `waiting`，拒绝时返回 `declined`；主动取消返回带封闭原因的 `cancelled`，
+  admission 前的调度异常返回 `failed(dispatch)`，诊断文本只放在 `detail`。
+
+HarnessInvocation 的终态会永久绑定当前 operation ref。Plugin 应按 `cancelled.reason` 或
+`failed.reason` 决定领域策略；需要在失败后重新执行时使用新 key，不能解析 `detail` 或用同一 key
+覆盖既有终态。
 
 Interaction 的回答、超时和撤回遵守 first-terminal-wins；Resource 物理删除时，仍未决的关联
 Interaction 以 `requester` 原因收口。Harness 执行取消则按 HarnessInvocation identity 定向处理自己的

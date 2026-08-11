@@ -1,8 +1,10 @@
 /**
  * Baton 持有的、需要外部参与者给出结果后才能继续的持久协作对象。
  *
- * Harness 与 Plugin 都通过 typed request 打开 Interaction，人通过同一 Core 生命周期作答。
- * 它不是承载任意 payload 的消息信封；permission、question、hook trust 是封闭 kind。
+ * Harness 与 Plugin 都通过 typed request 打开 Interaction，人或宿主 policy 通过同一 Core
+ * 生命周期作答。
+ * 它不是承载任意 payload 的消息信封；permission、question、suggested input、
+ * HarnessInvocation gate、hook trust 是封闭 kind。
  * Event source 表示谁报告生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
@@ -10,6 +12,7 @@ import type {
   ReconcileOperationRef,
   ResourceRef,
 } from "@compforge/baton-plugin";
+import type { PromptBlock } from "../input/blocks.ts";
 
 export type InteractionRequester =
   | { type: "harness"; harnessTargetId: string; laneId?: string }
@@ -64,6 +67,24 @@ export interface QuestionInteraction {
   questions: QuestionPrompt[];
 }
 
+/** User-editable Input proposed by a Plugin before any HarnessInvocation exists. */
+export interface SuggestedInputInteraction {
+  kind: "suggested_input";
+  title: string;
+  text: string;
+  harnessTargetId?: string;
+}
+
+/** Policy gate that must settle before a Plugin can create a HarnessInvocation. */
+export interface HarnessInvocationInteraction {
+  kind: "harness_invocation";
+  title: string;
+  prompt: string;
+  laneId: string;
+  newLane: boolean;
+  harnessTargetId?: string;
+}
+
 export interface HookTrustCandidate {
   key: string;
   source: string;
@@ -89,14 +110,19 @@ export interface HookTrustInteraction {
 }
 
 /** Producer 提交的 kind-specific 内容；Controller 在可信边界补 identity 与 requester。 */
-export type InteractionDraft = PermissionInteraction | QuestionInteraction | HookTrustInteraction;
+export type InteractionDraft =
+  | PermissionInteraction
+  | QuestionInteraction
+  | SuggestedInputInteraction
+  | HarnessInvocationInteraction
+  | HookTrustInteraction;
 
 /**
  * Durable routing owned by Baton for an Interaction emitted from Resource reconcile.
  * The structured operation is part of identity; the basis is provenance, not callback state.
  */
 export interface ReconcileInteractionContext {
-  operation: ReconcileOperationRef<"ask" | "confirm">;
+  operation: ReconcileOperationRef<"ask" | "confirm" | "draft" | "harness">;
   resource: ResourceRef;
   resourceOwner: "plugin" | "baton";
   basedOnGeneration?: number;
@@ -122,6 +148,13 @@ export type InteractionAnswer =
       /** Selected QuestionChoice.value entries or requester-owned free text. */
       answers: Record<string, string[]>;
     }
+  | {
+      kind: "suggested_input";
+      outcome: "submitted";
+      blocks: PromptBlock[];
+    }
+  | { kind: "suggested_input"; outcome: "dismissed" }
+  | { kind: "harness_invocation"; outcome: "approved" | "declined" }
   | { kind: "hook_trust"; outcome: "trusted" | "skipped" };
 
 export type InteractionCancellationReason =

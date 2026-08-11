@@ -75,8 +75,9 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关，人、Harness 和 Baton Plugin
    通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
-   `draft` 交给用户修改，`harness` 直接执行并选择主 Lane 或新 Lane。Core 把调用持久化为
-   Interaction 或 HarnessInvocation，最终 Input 统一走 Context、Permission、Attempt 与 routing。
+   `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。所有发起新动作的 verb 都先持久化为
+   Interaction；策略可以自动批准，但不能绕过 gate。通过后才创建 HarnessInvocation，最终 Input
+   统一走 Context、Permission、Attempt 与 routing。
    Plugin 只能依赖
    `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
    Marketplace Plugin 按活动 Binding 进入独立 Runner；线程 / 进程编排由 Baton 持有，

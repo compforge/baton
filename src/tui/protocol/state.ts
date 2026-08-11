@@ -165,6 +165,47 @@ function interactionView(
       },
     };
   }
+  if (interaction.kind === "suggested_input") {
+    return {
+      id: interaction.interactionId,
+      kind: "suggested_input",
+      blocking: false,
+      requester,
+      title: interaction.harnessTargetId === undefined
+        ? interaction.title
+        : `${interaction.title} · Target ${interaction.harnessTargetId}`,
+      text: interaction.text,
+      cancelResponse: {
+        kind: "suggested_input",
+        outcome: "dismissed",
+      },
+    };
+  }
+  if (interaction.kind === "harness_invocation") {
+    return {
+      id: interaction.interactionId,
+      kind: "approval",
+      blocking: true,
+      requester,
+      cancelResponse: { kind: "approval", optionId: "decline" },
+      approval: {
+        title: interaction.title,
+        description: interaction.prompt,
+        options: [
+          {
+            optionId: "approve",
+            name: "Run",
+            kind: "allow_once",
+          },
+          {
+            optionId: "decline",
+            name: "Cancel",
+            kind: "reject_once",
+          },
+        ],
+      },
+    };
+  }
   return {
     id: interaction.interactionId,
     kind: "approval",
