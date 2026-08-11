@@ -78,7 +78,8 @@ Baton host process
 ```
 
 **Manager** 是 Plugin 侧唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource、
-把 reconcile verbs lowering 到 Core-owned Interaction/HarnessInvocation、控制 reconcile 容量和维护 Board cache。
+把 reconcile verbs 先 lowering 到 Core-owned Interaction、再把批准的执行 gate lowering 到
+HarnessInvocation，并控制 reconcile 容量和维护 Board cache。
 
 **Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
 
@@ -157,21 +158,31 @@ Plugin-facing typed Core verbs：
 - `ask`：请求一个选项或自由文本答案，可声明持久的绝对 deadline；
 - `confirm`：请求 accept / decline 决定，可声明持久的绝对 deadline；
 - `withdraw`：领域流程不再需要答案时，以稳定 `verb + key` operation ref 撤回未决 Interaction；
-- `draft`：把 prompt 交给用户编辑，提交后在主 Lane 形成 user-source Input；
-- `harness`：直接形成 plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
+- `draft`：打开 suggested-input Interaction；用户提交后才创建 HarnessInvocation，并在主 Lane
+  形成 user-source Input；
+- `harness`：打开 Harness gate Interaction；策略批准后才创建 HarnessInvocation 和
+  plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
 
-这些方法不是通用 `send(type, payload)`：`ask/confirm` 只能物化为 Interaction，`draft/harness`
-只能物化为 HarnessInvocation，identity、准入和终态由 Core 决定。Plugin 不能提供 topic、路由 callback
-或 Harness 原生 DTO。
+这些方法不是通用 `send(type, payload)`：`ask/confirm/draft/harness` 都先物化为 Interaction；
+`withdraw` 只终结已有 Interaction；`draft/harness` 只有在
+对应 Interaction 提交或批准后才能继续物化为 HarnessInvocation。即使宿主策略自动批准 `harness`，
+也必须先持久化 Interaction 的 requested/answered 事实。identity、准入和终态由 Core 决定；Plugin
+不能提供 topic、路由 callback 或 Harness 原生 DTO。
 
-能力调用立即返回当前 durable state，不在 Runner 中跨人的等待持有 Promise。未决 Interaction 的
+能力调用立即返回当前 durable state，不在 Runner 中跨外部 decision 持有 Promise。未决 Interaction 的
 回答、超时或 requester 撤回、
 草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
 Plugin 用同一个 operation ref 读取答案或执行结果。`key` 在 verb 内唯一；同一 Resource 下不同
 verb 可以复用同一个 caller key。`requeueAfterMs` 仍只负责时间调度。
 
-Plugin 可以自由组合这些 primitives：有的辅助动作直接异步执行，有的先询问用户，再按选择进入
-draft、主 Lane 或新 Lane。这个策略属于领域编排，不由 Core 从 Plugin 类型推断。Core 始终拥有
+用户关闭未提交的 draft 是 Interaction 的 `dismissed`，拒绝 Harness gate 是 `declined`，二者都
+不会创建 HarnessInvocation。已经创建的 HarnessInvocation 使用封闭终态：主动终止是带稳定原因的
+`cancelled`；admission 前调度失败是 `failed(dispatch)`。`detail` 只用于诊断，Plugin 控制流只依赖
+`state/reason`，并在需要重试一个已终结 operation 时换用新 key。
+
+Plugin 可以自由组合这些 primitives：有的 gate 由策略自动批准，有的等待用户，再按结果进入
+draft、主 Lane 或新 Lane。这个策略属于领域编排和宿主 policy，不由 Core 从 Plugin 类型推断。
+Core 始终拥有
 Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
 [Reconcile Context](./reconcile-context.md)。
 

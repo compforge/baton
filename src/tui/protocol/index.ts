@@ -719,28 +719,20 @@ export class BatonChatProtocol implements ChatProtocol {
     id: string,
     response: InteractionResponse,
   ): Promise<void> {
-    if (response.kind === "suggested_input") {
-      const harnessInvocation = this.plugins
-        .listPendingHarnessInvocationInputs()
-        .find((request) => request.invocationId === id);
-      if (!harnessInvocation) {
-        this.toast = { text: "plugin suggestion is no longer pending", tone: "info" };
-        this.changed();
-        return;
-      }
-      if (response.outcome === "submitted") {
-        const blocks = await this.prepareComposerInput(response.text);
-        this.plugins.resolveHarnessInvocationInput(id, { kind: "submitted", blocks });
-      } else {
-        this.plugins.resolveHarnessInvocationInput(id, { kind: "dismissed" });
-      }
-      this.changed();
-      return;
-    }
-
     const interaction = this.state.interactions.get(id)?.interaction;
     let result: InteractionResult | undefined;
-    if (response.kind === "cancelled" && interaction) {
+    if (
+      response.kind === "suggested_input" &&
+      interaction?.kind === "suggested_input"
+    ) {
+      result = response.outcome === "submitted"
+        ? {
+            kind: "suggested_input",
+            outcome: "submitted",
+            blocks: await this.prepareComposerInput(response.text),
+          }
+        : { kind: "suggested_input", outcome: "dismissed" };
+    } else if (response.kind === "cancelled" && interaction) {
       result = { kind: "cancelled", reason: "user" };
     } else if (response.kind === "approval" && interaction?.kind === "permission") {
       result = { kind: "permission", outcome: "selected", optionId: response.optionId };
@@ -748,6 +740,14 @@ export class BatonChatProtocol implements ChatProtocol {
       result = {
         kind: "hook_trust",
         outcome: response.optionId === "trust" ? "trusted" : "skipped",
+      };
+    } else if (
+      response.kind === "approval" &&
+      interaction?.kind === "harness_invocation"
+    ) {
+      result = {
+        kind: "harness_invocation",
+        outcome: response.optionId === "approve" ? "approved" : "declined",
       };
     } else if (response.kind === "question" && interaction?.kind === "question") {
       const answers = Object.fromEntries(
@@ -1379,7 +1379,6 @@ export class BatonChatProtocol implements ChatProtocol {
     return projectChatState({
       state: this.state,
       controller: this.controller,
-      pendingHarnessInvocationInputs: this.plugins.listPendingHarnessInvocationInputs(),
       session: this.session,
       config: this.config,
       harnessTargetId: this.harnessTargetId,

@@ -22,7 +22,6 @@ import type {
   PermissionOption,
 } from "../../interaction/types.ts";
 import type { BoardItem } from "../../plugin/board.ts";
-import type { Manager } from "../../plugin/manager.ts";
 import type { ToastMessage } from "../../plugin/package.ts";
 import {
   laneTargetStateKey,
@@ -54,7 +53,6 @@ export interface PickerViewProjection {
 export interface ChatStateProjectionInput {
   state: SessionState;
   controller: Controller;
-  pendingHarnessInvocationInputs: ReturnType<Manager["listPendingHarnessInvocationInputs"]>;
   session: SessionHandle;
   config: Pick<BatonConfig, "showThoughts">;
   harnessTargetId: string;
@@ -162,6 +160,47 @@ function interactionView(
           allowOther: prompt.allowOther,
           secret: prompt.secret,
         })),
+      },
+    };
+  }
+  if (interaction.kind === "suggested_input") {
+    return {
+      id: interaction.interactionId,
+      kind: "suggested_input",
+      blocking: false,
+      requester,
+      title: interaction.harnessTargetId === undefined
+        ? interaction.title
+        : `${interaction.title} · Target ${interaction.harnessTargetId}`,
+      text: interaction.text,
+      cancelResponse: {
+        kind: "suggested_input",
+        outcome: "dismissed",
+      },
+    };
+  }
+  if (interaction.kind === "harness_invocation") {
+    return {
+      id: interaction.interactionId,
+      kind: "approval",
+      blocking: true,
+      requester,
+      cancelResponse: { kind: "approval", optionId: "decline" },
+      approval: {
+        title: interaction.title,
+        description: interaction.prompt,
+        options: [
+          {
+            optionId: "approve",
+            name: "Run",
+            kind: "allow_once",
+          },
+          {
+            optionId: "decline",
+            name: "Cancel",
+            kind: "reject_once",
+          },
+        ],
       },
     };
   }
@@ -335,32 +374,15 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller,
     session,
     harnessTargetId,
-    pendingHarnessInvocationInputs,
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
   const hasRecallableQueuedInput = controller.queuedTurns.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
-  const interactions: InteractionView[] = [
-    ...[...state.interactions.values()]
-      .filter((item) => !item.result)
-      .map((item) => interactionView(item.interaction)),
-    ...pendingHarnessInvocationInputs.map((request) => ({
-      id: request.invocationId,
-      kind: "suggested_input" as const,
-      blocking: false,
-      requester: request.pluginInstanceId,
-      title: request.harnessTargetId === undefined
-        ? request.title
-        : `${request.title} · Target ${request.harnessTargetId}`,
-      text: request.prompt,
-      cancelResponse: {
-        kind: "suggested_input" as const,
-        outcome: "dismissed" as const,
-      },
-    })),
-  ];
+  const interactions: InteractionView[] = [...state.interactions.values()]
+    .filter((item) => !item.result)
+    .map((item) => interactionView(item.interaction));
   const observedRuns = [...state.activeTurns.values()].filter(
     (turn) =>
       turn.role === "observed" &&

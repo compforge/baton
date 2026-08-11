@@ -73,7 +73,10 @@ import {
 import type { SessionHandle } from "../store/store.ts";
 import type { PromptBlock } from "../event/types.ts";
 import type { InteractionResult } from "../interaction/types.ts";
-import { ReconcileInteractionStore } from "../interaction/reconcile.ts";
+import {
+  ReconcileInteractionStore,
+  type ReconcileInteractionStoreOptions,
+} from "../interaction/reconcile.ts";
 import {
   emptyReconcileSnapshot,
   type ReconcileSnapshot,
@@ -169,6 +172,8 @@ export interface ManagerOptions {
   snapshot?: () => ReconcileSnapshot;
   /** Current host selection used by an implicit harness() or a submitted draft(). */
   selectedHarnessTargetId?: () => string | undefined;
+  /** Policy decision for the mandatory Interaction before a Plugin Harness invocation. */
+  harnessInvocationGate?: ReconcileInteractionStoreOptions["harnessInvocationGate"];
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
   loadPackage?(
     pluginId: string,
@@ -398,6 +403,7 @@ export class Manager {
     if (options.session) {
       this.reconcileInteractions = new ReconcileInteractionStore(options.session, {
         now: this.now,
+        harnessInvocationGate: options.harnessInvocationGate,
         onTimeout: (key) => {
           void this.enqueue(key).catch(() => {
             // The durable result remains available to initial reconcile or retry.
@@ -911,10 +917,6 @@ export class Manager {
     return this.harnessInvocations?.list() ?? [];
   }
 
-  listPendingHarnessInvocationInputs() {
-    return this.harnessInvocations?.pendingDraftInputs() ?? [];
-  }
-
   listBoardItems(): readonly BoardItem[] {
     return this.boardItemsCache ?? [];
   }
@@ -966,57 +968,6 @@ export class Manager {
     return key !== undefined;
   }
 
-  resolveHarnessInvocationInput(
-    invocationId: string,
-    outcome:
-      | {
-          readonly kind: "submitted";
-          readonly blocks: readonly PromptBlock[];
-        }
-      | { readonly kind: "dismissed" },
-  ): boolean {
-    if (!this.harnessInvocations) return false;
-    let resolvedOutcome:
-      | {
-          readonly kind: "submitted";
-          readonly blocks: readonly PromptBlock[];
-          readonly harnessTargetId: string;
-        }
-      | { readonly kind: "dismissed" };
-    if (outcome.kind === "dismissed") {
-      resolvedOutcome = outcome;
-    } else {
-      const pending = this.harnessInvocations.pendingDraftInputs().find(
-        (request) => request.invocationId === invocationId,
-      );
-      if (!pending) return false;
-      // Persist the effective Target with submission so recovery cannot re-read
-      // a later host selection before scheduling.
-      const harnessTargetId = pending.harnessTargetId ??
-        this.selectedHarnessTargetId?.();
-      if (!harnessTargetId) {
-        throw new Error(
-          `draft() ${invocationId} requires a HarnessTarget selection on submission`,
-        );
-      }
-      if (
-        !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
-      ) {
-        throw new Error(
-          `draft() ${invocationId} references unknown HarnessTarget on submission: ${harnessTargetId}`,
-        );
-      }
-      resolvedOutcome = { ...outcome, harnessTargetId };
-    }
-    const resolved = this.harnessInvocations.resolveDraftInput(
-      invocationId,
-      resolvedOutcome,
-    );
-    if (!resolved) return false;
-    if (resolved.scheduled) this.dispatchHarnessInvocation(resolved.scheduled);
-    return true;
-  }
-
   getBatonResource<K extends BuiltinResourceKind>(
     kind: K,
     resourceId: string,
@@ -1052,24 +1003,61 @@ export class Manager {
     if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
       throw new Error("plugin Manager host does not support harness()");
     }
+    if (!this.reconcileInteractions) {
+      throw new Error(
+        `plugin Manager requires a SessionHandle for ${request.verb}()`,
+      );
+    }
     const operation = Object.freeze({
       verb: request.verb,
       key: request.input.key,
     });
     const existing = this.harnessInvocations.current(context, operation);
-    // draft() omission is a submission-time choice; harness() schedules now.
-    const harnessTargetId = request.verb === "draft"
-      ? request.input.harnessTargetId
-      : request.input.harnessTargetId ??
-        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
-    if (request.verb === "harness" && !harnessTargetId) {
-      throw new Error(
-        `${request.verb}() ${request.input.key} requires a HarnessTarget selection`,
+    let harnessTargetId: string;
+    let draftBlocks: readonly PromptBlock[] | undefined;
+    if (request.verb === "draft") {
+      if (
+        !existing &&
+        request.input.harnessTargetId !== undefined &&
+        !this.snapshot().harnessTargets.some(
+          (target) => target.id === request.input.harnessTargetId,
+        )
+      ) {
+        throw new Error(
+          `draft() ${request.input.key} references unknown HarnessTarget: ${request.input.harnessTargetId}`,
+        );
+      }
+      const interaction = this.reconcileInteractions.draft(
+        context,
+        request.input,
       );
+      if (interaction.state !== "submitted") return interaction;
+      draftBlocks = interaction.blocks;
+      const target = request.input.harnessTargetId ??
+        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+      if (!target) {
+        throw new Error(
+          `draft() ${request.input.key} requires a HarnessTarget selection on submission`,
+        );
+      }
+      harnessTargetId = target;
+    } else {
+      const target = request.input.harnessTargetId ??
+        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+      if (!target) {
+        throw new Error(
+          `harness() ${request.input.key} requires a HarnessTarget selection`,
+        );
+      }
+      harnessTargetId = target;
+      const interaction = this.reconcileInteractions.harness(
+        context,
+        { ...request.input, harnessTargetId },
+      );
+      if (interaction.state !== "approved") return interaction;
     }
     if (
       !existing &&
-      harnessTargetId !== undefined &&
       !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
     ) {
       throw new Error(
@@ -1082,6 +1070,7 @@ export class Manager {
         operation,
         title: request.input.key,
         prompt: request.input.prompt,
+        ...(draftBlocks === undefined ? {} : { blocks: draftBlocks }),
         laneId: request.verb === "draft" ? MAIN_LANE_ID : request.input.laneId,
         newLane: request.verb === "draft" ? false : (request.input.newLane ?? false),
         harnessTargetId,
@@ -1089,9 +1078,6 @@ export class Manager {
     });
     const scheduled = this.harnessInvocations.scheduled(snapshot.invocationId);
     if (scheduled) this.dispatchHarnessInvocation(scheduled);
-    if (request.verb === "draft" && snapshot.phase === "awaiting_input") {
-      return Object.freeze({ state: "editing" });
-    }
     if (snapshot.phase === "completed" && snapshot.result && snapshot.laneId) {
       return Object.freeze({
         state: "completed",
@@ -1100,9 +1086,32 @@ export class Manager {
       });
     }
     if (snapshot.phase === "cancelled") {
-      return request.verb === "draft"
-        ? Object.freeze({ state: "dismissed" })
-        : Object.freeze({ state: "cancelled" });
+      const cancellation = snapshot.cancellation;
+      if (!cancellation) {
+        throw new Error(
+          `${request.verb}() ${request.input.key} has no cancellation outcome`,
+        );
+      }
+      return Object.freeze({
+        state: "cancelled",
+        reason: cancellation.reason,
+        ...(cancellation.detail === undefined
+          ? {}
+          : { detail: cancellation.detail }),
+      });
+    }
+    if (snapshot.phase === "failed") {
+      const failure = snapshot.failure;
+      if (!failure) {
+        throw new Error(
+          `${request.verb}() ${request.input.key} has no failure outcome`,
+        );
+      }
+      return Object.freeze({
+        state: "failed",
+        reason: failure.reason,
+        detail: failure.detail,
+      });
     }
     if (
       snapshot.phase !== "queued" &&
@@ -1142,9 +1151,9 @@ export class Manager {
     void Promise.resolve()
       .then(() => this.enqueueHarnessInvocation!(request))
       .catch((error) => {
-        this.harnessInvocations?.cancelBeforeAdmission(
+        this.harnessInvocations?.failBeforeAdmission(
           request.invocationId,
-          "recovery",
+          "dispatch",
           error instanceof Error ? error.message : String(error),
         );
         this.log?.({

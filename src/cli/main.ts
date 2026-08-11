@@ -59,6 +59,23 @@ async function collectInteractionResult(interaction: Interaction): Promise<Inter
       }
     }
   }
+  if (interaction.kind === "suggested_input") {
+    stdout.write(`\n? ${interaction.title}\n`);
+    const answer = await rl.question(`input [${interaction.text}]> `);
+    return {
+      kind: "suggested_input",
+      outcome: "submitted",
+      blocks: [{ type: "text", text: answer.trim() || interaction.text }],
+    };
+  }
+  if (interaction.kind === "harness_invocation") {
+    stdout.write(`\n⚠ ${interaction.title}\n${interaction.prompt}\n`);
+    const answer = (await rl.question("run? [Y/n] ")).trim().toLowerCase();
+    return {
+      kind: "harness_invocation",
+      outcome: answer === "n" || answer === "no" ? "declined" : "approved",
+    };
+  }
   const answers: Record<string, string[]> = {};
   for (const question of interaction.questions) {
     stdout.write(`\n? ${question.header}: ${question.question}\n`);

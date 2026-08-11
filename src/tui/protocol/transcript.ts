@@ -397,14 +397,17 @@ export function buildTranscript(
             : "completed"
           : request.phase === "cancelled"
             ? "declined"
-            : request.phase === "running" || request.phase === "uncertain"
-              ? "in_progress"
-              : "pending";
+            : request.phase === "failed"
+              ? "failed"
+              : request.phase === "running" || request.phase === "uncertain"
+                ? "in_progress"
+                : "pending";
       const details = [
         request.pluginInstanceId ? `Requested by ${request.pluginInstanceId}` : undefined,
         request.harnessTargetId ? `Target: ${request.harnessTargetId}` : undefined,
         request.laneId ? `Lane: ${request.laneId}` : undefined,
         request.result?.agentText,
+        request.failure?.detail,
         request.phase === "uncertain" ? "Delivery outcome is uncertain" : undefined,
       ].filter((value): value is string => Boolean(value));
       items.push({

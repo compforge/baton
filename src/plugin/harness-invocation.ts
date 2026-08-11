@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type {
+  HarnessCancellationReason,
+  HarnessFailureReason,
   ReconcileOperationRef,
   ResourceRef,
   TurnSummary,
@@ -10,6 +12,8 @@ import { newId } from "../event/ids.ts";
 import type {
   AnyEventEnvelope,
   EventEnvelope,
+  HarnessInvocationCancelled,
+  HarnessInvocationFailed,
   HarnessInvocationRecorded,
   HarnessInvocationScheduled,
   PromptBlock,
@@ -25,12 +29,12 @@ import { reconcileResourceOwner } from "./reconcile-scope.ts";
 type HarnessOperationRef = ReconcileOperationRef<"draft" | "harness">;
 
 export type HarnessInvocationPhase =
-  | "awaiting_input"
   | "queued"
   | "running"
   | "uncertain"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "failed";
 
 export interface HarnessInvocationSnapshot {
   readonly invocationId: string;
@@ -38,10 +42,12 @@ export interface HarnessInvocationSnapshot {
   readonly resource: ResourceRef;
   readonly phase: HarnessInvocationPhase;
   readonly newLane: boolean;
-  readonly harnessTargetId?: string;
+  readonly harnessTargetId: string;
   readonly laneId?: string;
   readonly turnId?: string;
   readonly result?: TurnSummary;
+  readonly cancellation?: Readonly<HarnessInvocationCancelled>;
+  readonly failure?: Readonly<HarnessInvocationFailed>;
 }
 
 export interface ReconcileHarnessInvocation {
@@ -54,10 +60,10 @@ export interface ReconcileHarnessInvocation {
     readonly operation: HarnessOperationRef;
     readonly title: string;
     readonly prompt: string;
+    readonly blocks?: readonly PromptBlock[];
     readonly laneId: string;
     readonly newLane: boolean;
-    /** Required for harness(); omitted draft() Targets resolve when the user submits. */
-    readonly harnessTargetId?: string;
+    readonly harnessTargetId: string;
   };
 }
 
@@ -79,25 +85,11 @@ export interface ScheduledHarnessInvocation {
   readonly blocks: readonly PromptBlock[];
 }
 
-export interface DraftHarnessInvocationInput {
-  readonly invocationId: string;
-  readonly pluginInstanceId: string;
-  readonly title: string;
-  readonly prompt: string;
-  /** Plugin-fixed Target; omit to use the host selection when the user submits. */
-  readonly harnessTargetId?: string;
-}
-
-export interface ResolvedHarnessInvocation {
-  readonly key: ReconcileKey;
-  readonly scheduled?: ScheduledHarnessInvocation;
-}
-
 interface InvocationState {
   readonly recorded: EventEnvelope<"_baton_harness_invocation_recorded">;
-  inputSubmission?: EventEnvelope<"_baton_harness_invocation_input_submitted">;
   scheduled?: EventEnvelope<"_baton_harness_invocation_scheduled">;
   cancelled?: EventEnvelope<"_baton_harness_invocation_cancelled">;
+  failed?: EventEnvelope<"_baton_harness_invocation_failed">;
   admitted: boolean;
   uncertain: boolean;
   result?: TurnSummary;
@@ -142,6 +134,7 @@ function sameEnvelope(
     sameResource(current.resource, draft.resource) &&
     current.title === invocation.title &&
     current.prompt === invocation.prompt &&
+    JSON.stringify(current.blocks) === JSON.stringify(invocation.blocks) &&
     current.laneId === invocation.laneId &&
     current.newLane === invocation.newLane &&
     current.harnessTargetId === invocation.harnessTargetId;
@@ -179,13 +172,12 @@ function pluginInstanceIdOf(state: InvocationState): string {
 
 function phaseOf(state: InvocationState): HarnessInvocationPhase {
   if (state.result) return "completed";
+  if (state.failed) return "failed";
   if (state.cancelled) return "cancelled";
   if (state.uncertain) return "uncertain";
   if (state.admitted) return "running";
   if (state.scheduled) return "queued";
-  return state.recorded.payload.operation.verb === "draft"
-    ? "awaiting_input"
-    : "queued";
+  return "queued";
 }
 
 function frozenSummary(summary: TurnSummary): TurnSummary {
@@ -202,15 +194,13 @@ function frozenSummary(summary: TurnSummary): TurnSummary {
 
 function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
   const recorded = state.recorded.payload;
-  const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
-    recorded.harnessTargetId;
   return Object.freeze({
     invocationId: recorded.invocationId,
     operation: Object.freeze({ ...recorded.operation }),
     resource: Object.freeze({ ...recorded.resource }),
     phase: phaseOf(state),
     newLane: recorded.newLane,
-    ...(harnessTargetId === undefined ? {} : { harnessTargetId }),
+    harnessTargetId: recorded.harnessTargetId,
     ...(state.scheduled === undefined
       ? {}
       : {
@@ -220,12 +210,19 @@ function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
     ...(state.result === undefined
       ? {}
       : { result: frozenSummary(state.result) }),
+    ...(state.cancelled === undefined
+      ? {}
+      : { cancellation: Object.freeze({ ...state.cancelled.payload }) }),
+    ...(state.failed === undefined
+      ? {}
+      : { failure: Object.freeze({ ...state.failed.payload }) }),
   });
 }
 
 function scheduledOf(
   state: InvocationState,
 ): ScheduledHarnessInvocation | undefined {
+  if (state.result || state.cancelled || state.failed) return;
   const scheduled = state.scheduled?.payload;
   if (!scheduled) return;
   const recorded = state.recorded.payload;
@@ -239,10 +236,21 @@ function scheduledOf(
     source: recorded.operation.verb === "draft" ? "user" : "plugin",
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
-    blocks: state.inputSubmission?.payload.blocks ?? [
-      { type: "text", text: recorded.prompt } satisfies PromptBlock,
-    ],
+    blocks: invocationBlocks(state),
   });
+}
+
+function invocationBlocks(state: InvocationState): readonly PromptBlock[] {
+  const recorded = state.recorded.payload;
+  if (recorded.operation.verb !== "draft") {
+    return [{ type: "text", text: recorded.prompt } satisfies PromptBlock];
+  }
+  if (!recorded.blocks?.length) {
+    throw new Error(
+      `draft HarnessInvocation ${recorded.invocationId} has no submitted Interaction blocks`,
+    );
+  }
+  return recorded.blocks;
 }
 
 /** Event-backed owner for one durable harness() or draft() execution. */
@@ -275,6 +283,15 @@ export class HarnessInvocationStore {
         `HarnessInvocation batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
       );
     }
+    if (
+      draft.invocation.operation.verb === "draft" &&
+      (draft.invocation.blocks === undefined ||
+        draft.invocation.blocks.length === 0)
+    ) {
+      throw new Error(
+        "draft HarnessInvocation requires blocks from a submitted Interaction",
+      );
+    }
     const id = invocationId(draft, draft.invocation.operation);
     const existing = this.states.get(id);
     if (existing) {
@@ -304,11 +321,12 @@ export class HarnessInvocationStore {
         resource: { ...draft.resource },
         title: invocation.title,
         prompt: invocation.prompt,
+        ...(invocation.blocks === undefined
+          ? {}
+          : { blocks: invocation.blocks.map((block) => ({ ...block })) }),
         laneId: invocation.laneId,
         newLane: invocation.newLane,
-        ...(invocation.harnessTargetId === undefined
-          ? {}
-          : { harnessTargetId: invocation.harnessTargetId }),
+        harnessTargetId: invocation.harnessTargetId,
       },
     });
     const state = this.states.get(id);
@@ -330,82 +348,12 @@ export class HarnessInvocationStore {
     );
   }
 
-  pendingDraftInputs(): readonly DraftHarnessInvocationInput[] {
-    return Object.freeze(
-      [...this.states.values()]
-        .filter((state) => phaseOf(state) === "awaiting_input")
-        .sort((left, right) => left.recorded.seq - right.recorded.seq)
-        .map((state) => Object.freeze({
-          invocationId: state.recorded.payload.invocationId,
-          pluginInstanceId: pluginInstanceIdOf(state),
-          title: state.recorded.payload.title,
-          prompt: state.recorded.payload.prompt,
-          ...(state.recorded.payload.harnessTargetId === undefined
-            ? {}
-            : { harnessTargetId: state.recorded.payload.harnessTargetId }),
-        })),
-    );
-  }
-
-  resolveDraftInput(
-    invocationId: string,
-    outcome:
-      | {
-          readonly kind: "submitted";
-          readonly blocks: readonly PromptBlock[];
-          readonly harnessTargetId: string;
-        }
-      | { readonly kind: "dismissed" },
-  ): ResolvedHarnessInvocation | undefined {
-    const state = this.states.get(invocationId);
-    if (
-      !state ||
-      phaseOf(state) !== "awaiting_input" ||
-      state.recorded.payload.operation.verb !== "draft"
-    ) {
-      return;
-    }
-    if (outcome.kind === "dismissed") {
-      this.appendCancellation(state, "user", "draft input dismissed");
-      return Object.freeze({ key: keyOf(state) });
-    }
-    if (outcome.blocks.length === 0) {
-      throw new Error(
-        `HarnessInvocation ${invocationId} draft input must not be empty`,
-      );
-    }
-    const fixedHarnessTargetId = state.recorded.payload.harnessTargetId;
-    if (
-      fixedHarnessTargetId !== undefined &&
-      outcome.harnessTargetId !== fixedHarnessTargetId
-    ) {
-      throw new Error(
-        `HarnessInvocation ${invocationId} must use its fixed HarnessTarget: ${fixedHarnessTargetId}`,
-      );
-    }
-    this.session.append({
-      kind: "_baton_harness_invocation_input_submitted",
-      source: { type: "user" },
-      parentEventId: state.recorded.eventId,
-      payload: {
-        invocationId,
-        blocks: [...outcome.blocks],
-        harnessTargetId: outcome.harnessTargetId,
-      },
-    });
-    const current = this.states.get(invocationId) as InvocationState;
-    const scheduled = this.ensureScheduled(current);
-    return Object.freeze({
-      key: keyOf(current),
-      ...(scheduled === undefined ? {} : { scheduled }),
-    });
-  }
-
   latestCancellable(identifier?: string): HarnessInvocationSnapshot | undefined {
     const states = [...this.states.values()]
       .filter((state) => {
         const phase = phaseOf(state);
         return phase !== "completed" && phase !== "cancelled" &&
+          phase !== "failed" &&
           (identifier === undefined ||
             state.recorded.payload.invocationId === identifier);
       })
@@ -419,12 +367,27 @@ export class HarnessInvocationStore {
 
   cancelBeforeAdmission(
     invocationId: string,
-    reason: "user" | "resource" | "recovery",
+    reason: HarnessCancellationReason,
     detail?: string,
   ): ReconcileKey | undefined {
     const state = this.states.get(invocationId);
-    if (!state || state.admitted || state.result || state.cancelled) return;
+    if (
+      !state || state.admitted || state.result || state.cancelled || state.failed
+    ) return;
     this.appendCancellation(state, reason, detail);
+    return keyOf(state);
+  }
+
+  failBeforeAdmission(
+    invocationId: string,
+    reason: HarnessFailureReason,
+    detail: string,
+  ): ReconcileKey | undefined {
+    const state = this.states.get(invocationId);
+    if (
+      !state || state.admitted || state.result || state.cancelled || state.failed
+    ) return;
+    this.appendFailure(state, reason, detail);
     return keyOf(state);
   }
 
@@ -435,7 +398,8 @@ export class HarnessInvocationStore {
         !sameResource(state.recorded.payload.resource, resource) ||
         state.admitted ||
         state.result ||
-        state.cancelled
+        state.cancelled ||
+        state.failed
       ) {
         continue;
       }
@@ -450,13 +414,7 @@ export class HarnessInvocationStore {
   restore(): readonly ScheduledHarnessInvocation[] {
     const pending: ScheduledHarnessInvocation[] = [];
     for (const state of this.states.values()) {
-      if (state.result || state.cancelled) continue;
-      if (
-        state.recorded.payload.operation.verb === "draft" &&
-        !state.inputSubmission
-      ) {
-        continue;
-      }
+      if (state.result || state.cancelled || state.failed) continue;
       const scheduled = this.ensureScheduled(state);
       const current = this.states.get(
         state.recorded.payload.invocationId,
@@ -466,6 +424,7 @@ export class HarnessInvocationStore {
         !current.admitted &&
         !current.uncertain &&
         !current.cancelled &&
+        !current.failed &&
         !current.result
       ) {
         pending.push(scheduled);
@@ -484,32 +443,25 @@ export class HarnessInvocationStore {
     if (state.scheduled) return scheduledOf(state);
     const recorded = state.recorded.payload;
     if (
-      (recorded.operation.verb === "draft" && !state.inputSubmission) ||
       state.cancelled ||
+      state.failed ||
       state.result
     ) {
       return;
     }
-    const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
-      recorded.harnessTargetId;
-    if (!harnessTargetId) {
-      throw new Error(
-        `HarnessInvocation ${recorded.invocationId} requires a HarnessTarget before scheduling`,
-      );
-    }
+    invocationBlocks(state);
     this.session.requireLane(recorded.laneId);
     const scheduled: HarnessInvocationScheduled = {
       invocationId: recorded.invocationId,
       messageId: newId("m"),
       turnId: newId("t"),
-      harnessTargetId,
+      harnessTargetId: recorded.harnessTargetId,
       laneId: recorded.newLane ? newId("hl") : recorded.laneId,
     };
     this.session.append({
       kind: "_baton_harness_invocation_scheduled",
       source: { type: "baton" },
-      parentEventId:
-        state.inputSubmission?.eventId ?? state.recorded.eventId,
+      parentEventId: state.recorded.eventId,
       payload: scheduled,
     });
     return scheduledOf(
@@ -519,7 +471,7 @@ export class HarnessInvocationStore {
 
   private appendCancellation(
     state: InvocationState,
-    reason: "user" | "resource" | "recovery",
+    reason: HarnessCancellationReason,
     detail?: string,
   ): void {
     this.session.append({
@@ -530,6 +482,23 @@ export class HarnessInvocationStore {
         invocationId: state.recorded.payload.invocationId,
         reason,
         ...(detail === undefined ? {} : { detail }),
+      },
+    });
+  }
+
+  private appendFailure(
+    state: InvocationState,
+    reason: HarnessFailureReason,
+    detail: string,
+  ): void {
+    this.session.append({
+      kind: "_baton_harness_invocation_failed",
+      source: { type: "baton" },
+      parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
+      payload: {
+        invocationId: state.recorded.payload.invocationId,
+        reason,
+        detail,
       },
     });
   }
@@ -545,13 +514,6 @@ export class HarnessInvocationStore {
           uncertain: false,
         });
         return;
-      }
-      case "_baton_harness_invocation_input_submitted": {
-        const state = this.states.get(event.payload.invocationId);
-        if (!state || state.inputSubmission) return;
-        state.inputSubmission = event;
-        changed = state;
-        break;
       }
       case "_baton_harness_invocation_scheduled": {
         const state = this.states.get(event.payload.invocationId);
@@ -594,7 +556,7 @@ export class HarnessInvocationStore {
       case "_baton_turn_summary": {
         const id = this.invocationIdByTurn.get(event.payload.turnId);
         const state = id ? this.states.get(id) : undefined;
-        if (!state || state.result) return;
+        if (!state || state.result || state.cancelled || state.failed) return;
         state.result = event.payload;
         state.uncertain = false;
         changed = state;
@@ -602,8 +564,15 @@ export class HarnessInvocationStore {
       }
       case "_baton_harness_invocation_cancelled": {
         const state = this.states.get(event.payload.invocationId);
-        if (!state || state.cancelled || state.result) return;
+        if (!state || state.cancelled || state.failed || state.result) return;
         state.cancelled = event;
+        changed = state;
+        break;
+      }
+      case "_baton_harness_invocation_failed": {
+        const state = this.states.get(event.payload.invocationId);
+        if (!state || state.failed || state.cancelled || state.result) return;
+        state.failed = event;
         changed = state;
         break;
       }

@@ -128,7 +128,14 @@ export interface DraftInput {
   readonly harnessTargetId?: string;
 }
 
-export type HarnessResult =
+/** Stable reasons a gated Harness request or HarnessInvocation can be cancelled. */
+export type HarnessCancellationReason = CancellationReason | "resource";
+
+/** Stable failure classes; detail is diagnostic and must not drive Plugin control flow. */
+export type HarnessFailureReason = "dispatch";
+
+/** Result after an Interaction gate has allowed creation of a HarnessInvocation. */
+export type HarnessInvocationResult =
   | {
       /** A durable HarnessInvocation exists without a terminal result; phase tracks its progress. */
       readonly state: "pending";
@@ -143,16 +150,36 @@ export type HarnessResult =
     }
   | {
       readonly state: "cancelled";
-      readonly reason?: string;
+      readonly reason: HarnessCancellationReason;
+      readonly detail?: string;
+    }
+  | {
+      readonly state: "failed";
+      readonly reason: HarnessFailureReason;
+      readonly detail: string;
     };
+
+export type HarnessResult =
+  | {
+      /** Its mandatory Interaction gate is still waiting for a decision. */
+      readonly state: "waiting";
+    }
+  | {
+      /** Its Interaction gate declined execution; no HarnessInvocation was created. */
+      readonly state: "declined";
+    }
+  | HarnessInvocationResult;
 
 export type DraftResult =
   | {
       /** Waiting for edited input; no Harness Input has been submitted. */
       readonly state: "editing";
     }
-  | { readonly state: "dismissed" }
-  | HarnessResult;
+  | {
+      /** The user closed this draft before submitting a Harness Input. */
+      readonly state: "dismissed";
+    }
+  | HarnessInvocationResult;
 
 /**
  * Reconcile-scoped host view and capabilities. Calls are durable and

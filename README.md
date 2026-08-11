@@ -40,7 +40,7 @@ Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carr
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-v2 keeps that pipeline and makes baton a durable coordination kernel among humans, Harnesses, and Baton Plugins. Each participant keeps its own semantics and enters Core through typed ports: human intent becomes Input or an Interaction result, Harness-native verbs become Interaction drafts through Adapters, and Plugin reconcile verbs become Interaction or HarnessInvocation records through the host. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
+v2 keeps that pipeline and makes baton a durable coordination kernel among humans, Harnesses, and Baton Plugins. Each participant keeps its own semantics and enters Core through typed ports: human intent becomes Input or an Interaction result, Harness-native verbs become Interaction drafts through Adapters, and every operation-producing Plugin reconcile verb first becomes an Interaction through the host. An approved execution gate then becomes a HarnessInvocation. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
 
 ![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
 

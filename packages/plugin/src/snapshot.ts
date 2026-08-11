@@ -87,7 +87,12 @@ export interface HarnessTargetSnapshot {
 
 export interface PendingInteractionSnapshot {
   readonly interactionId: string;
-  readonly kind: "permission" | "question" | "hook_trust";
+  readonly kind:
+    | "permission"
+    | "question"
+    | "suggested_input"
+    | "harness_invocation"
+    | "hook_trust";
   readonly requester: InteractionRequester;
   readonly turnId?: string;
 }

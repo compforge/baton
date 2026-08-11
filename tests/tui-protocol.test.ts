@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
+import type { InteractionResult } from "../src/interaction/types.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { MAIN_LANE_ID, sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
@@ -1929,7 +1930,7 @@ describe("interaction eventization: pending projects from the event stream", () 
 });
 
 describe("Plugin draft projection", () => {
-  test("a HarnessInvocation draft stays editable before scheduling", async () => {
+  test("a suggested-input Interaction stays editable before invocation", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-invocation-input-"));
     try {
       const store = new SessionStore(root);
@@ -1940,44 +1941,78 @@ describe("Plugin draft projection", () => {
         { session, resumed: false },
         () => undefined,
       );
-      let pending = [{
-        invocationId: "hinv_edit",
-        pluginInstanceId: "reqloop_default",
-        title: "Handle review",
-        prompt: "Handle every review comment.",
-        harnessTargetId: "codex",
-      }];
       let submitted: unknown;
       const internals = protocol as unknown as {
-        changed(): void;
         plugins: {
-          listPendingHarnessInvocationInputs(): typeof pending;
-          resolveHarnessInvocationInput(invocationId: string, outcome: unknown): boolean;
+          completeInteraction(
+            id: string,
+            result: InteractionResult,
+          ): Promise<boolean>;
         };
       };
-      internals.plugins.listPendingHarnessInvocationInputs = () => pending;
-      internals.plugins.resolveHarnessInvocationInput = (invocationId, outcome) => {
-        submitted = { invocationId, outcome };
-        pending = [];
+      internals.plugins.completeInteraction = async (id, result) => {
+        submitted = { id, result };
+        if (result.kind === "cancelled") {
+          session.append({
+            kind: "interaction.cancelled",
+            source: { type: "user" },
+            payload: { interactionId: id, reason: result.reason },
+          });
+        } else {
+          session.append({
+            kind: "interaction.answered",
+            source: { type: "user" },
+            payload: { interactionId: id, answer: result },
+          });
+        }
         return true;
       };
-      internals.changed();
+      session.append({
+        kind: "interaction.requested",
+        source: {
+          type: "plugin",
+          pluginInstanceId: "reqloop_default",
+        },
+        payload: {
+          interactionId: "ix_edit",
+          kind: "suggested_input",
+          requester: {
+            type: "plugin",
+            pluginInstanceId: "reqloop_default",
+          },
+          pluginContext: {
+            operation: { verb: "draft", key: "handle-review" },
+            resourceOwner: "plugin",
+            resource: {
+              apiVersion: "reqloop.baton.dev/v1alpha1",
+              kind: "Review",
+              namespace: "reqloop_default",
+              name: "review_1",
+              uid: "review_1_uid",
+            },
+          },
+          title: "Handle review",
+          text: "Handle every review comment.",
+          harnessTargetId: "codex",
+        },
+      });
       expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
-        id: "hinv_edit",
+        id: "ix_edit",
         kind: "suggested_input",
         title: "Handle review · Target codex",
         text: "Handle every review comment.",
       }]);
 
-      await protocol.resolveInteraction("hinv_edit", {
+      await protocol.resolveInteraction("ix_edit", {
         kind: "suggested_input",
         outcome: "submitted",
         text: "Handle only the valid review comments.",
       });
       expect(submitted).toEqual({
-        invocationId: "hinv_edit",
-        outcome: {
-          kind: "submitted",
+        id: "ix_edit",
+        result: {
+          kind: "suggested_input",
+          outcome: "submitted",
           blocks: [{
             type: "text",
             text: "Handle only the valid review comments.",
@@ -1986,6 +2021,88 @@ describe("Plugin draft projection", () => {
       });
       expect(session.meta.preview).toBe("Handle only the valid review comments.");
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a manual Harness gate uses approval and keeps its answer kind", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-gate-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      let completed: unknown;
+      const internals = protocol as unknown as {
+        plugins: {
+          completeInteraction(
+            id: string,
+            result: InteractionResult,
+          ): Promise<boolean>;
+        };
+      };
+      internals.plugins.completeInteraction = async (id, result) => {
+        completed = { id, result };
+        return true;
+      };
+      session.append({
+        kind: "interaction.requested",
+        source: {
+          type: "plugin",
+          pluginInstanceId: "reqloop_default",
+        },
+        payload: {
+          interactionId: "ix_run",
+          kind: "harness_invocation",
+          requester: {
+            type: "plugin",
+            pluginInstanceId: "reqloop_default",
+          },
+          pluginContext: {
+            operation: { verb: "harness", key: "implement" },
+            resourceOwner: "plugin",
+            resource: {
+              apiVersion: "reqloop.baton.dev/v1alpha1",
+              kind: "Requirement",
+              namespace: "reqloop_default",
+              name: "req_1",
+              uid: "req_1_uid",
+            },
+          },
+          title: "Implement",
+          prompt: "Implement req_1.",
+          laneId: "main",
+          newLane: false,
+        },
+      });
+      expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
+        id: "ix_run",
+        kind: "approval",
+        blocking: true,
+        approval: {
+          title: "Implement",
+          description: "Implement req_1.",
+          options: [
+            { optionId: "approve" },
+            { optionId: "decline" },
+          ],
+        },
+      }]);
+
+      await protocol.resolveInteraction("ix_run", {
+        kind: "approval",
+        optionId: "approve",
+      });
+      expect(completed).toEqual({
+        id: "ix_run",
+        result: { kind: "harness_invocation", outcome: "approved" },
+      });
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });

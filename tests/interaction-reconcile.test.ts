@@ -220,6 +220,80 @@ describe("ReconcileInteractionStore", () => {
     store.close();
   });
 
+  test("keeps draft input in Interaction until the user submits it", () => {
+    const handle = session();
+    const store = new ReconcileInteractionStore(handle);
+    const context = scope(handle.id);
+    const input = {
+      key: "implement",
+      prompt: "Implement run_1.",
+    } as const;
+
+    expect(store.draft(context, input)).toEqual({ state: "editing" });
+    const interaction = [...handle.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(interaction).toMatchObject({
+      kind: "suggested_input",
+      text: input.prompt,
+    });
+    expect(store.complete(interaction!.interactionId, {
+      kind: "suggested_input",
+      outcome: "submitted",
+      blocks: [{ type: "text", text: "Implement only the focused fix." }],
+    })).toEqual(context.key);
+    expect(store.draft(context, input)).toEqual({
+      state: "submitted",
+      blocks: [{ type: "text", text: "Implement only the focused fix." }],
+    });
+    store.close();
+  });
+
+  test("always records the Harness gate and lets policy decide how it settles", () => {
+    const autoHandle = session();
+    const autoStore = new ReconcileInteractionStore(autoHandle);
+    const autoContext = scope(autoHandle.id);
+    const input = {
+      key: "implement",
+      prompt: "Implement run_1.",
+      laneId: "main",
+    } as const;
+
+    expect(autoStore.harness(autoContext, input)).toEqual({ state: "approved" });
+    expect(autoHandle.readEvents().filter((event) =>
+      event.kind === "interaction.requested" ||
+      event.kind === "interaction.answered"
+    ).map((event) => event.kind)).toEqual([
+      "interaction.requested",
+      "interaction.answered",
+    ]);
+    expect([...autoHandle.loadState().interactions.values()][0]).toMatchObject({
+      interaction: { kind: "harness_invocation" },
+      result: { kind: "harness_invocation", outcome: "approved" },
+    });
+    autoStore.close();
+
+    const manualHandle = session();
+    const manualStore = new ReconcileInteractionStore(manualHandle, {
+      harnessInvocationGate: () => "require_user",
+    });
+    const manualContext = scope(manualHandle.id);
+    expect(manualStore.harness(manualContext, input)).toEqual({ state: "waiting" });
+    expect(() => manualStore.harness(manualContext, {
+      ...input,
+      laneId: "another-lane",
+    })).toThrow("plugin Interaction identity conflict");
+    const interaction = [...manualHandle.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(manualStore.complete(interaction!.interactionId, {
+      kind: "harness_invocation",
+      outcome: "declined",
+    })).toEqual(manualContext.key);
+    expect(manualStore.harness(manualContext, input)).toEqual({
+      state: "declined",
+    });
+    manualStore.close();
+  });
+
   test("cancels pending Interactions when their Resource incarnation is deleted", () => {
     const handle = session();
     const store = new ReconcileInteractionStore(handle);

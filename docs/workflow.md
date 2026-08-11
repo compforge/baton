@@ -11,17 +11,18 @@ verb 如何在 Core 汇合，Input/HarnessInvocation 如何到达 Harness，Harn
 Human  ─ submit ────────────────────────────────→ Input ───────────────→ Harness
 Harness ─ native permission/question verb ─────→ Adapter lowering ─┐
 Plugin  ─ ask/confirm reconcile verb ──────────→ Host lowering ────┴─→ Interaction ─→ Human
-Plugin  ─ draft/harness reconcile verb ────────→ HarnessInvocation ───→ Input ───────→ Harness
+Plugin  ─ draft/harness reconcile verb ─→ Interaction gate ─→ HarnessInvocation ─→ Input ─→ Harness
 Harness ─ native output ─→ Adapter normalize ─→ Event / Projection ───→ Human / Plugin
 ```
 
 Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core
-对象。Core 不接收任意 message：Interaction 只承载需要人返回结果的协作，HarnessInvocation 只
-承载受控执行，Input 只承载已准备向 Harness 投递的工作。
+对象。Core 不接收任意 message：Interaction 承载 typed decision gate，决议者可以是人，也可以是
+宿主 policy；HarnessInvocation 只承载 gate 通过后的受控执行，Input 只承载已准备向 Harness 投递的工作。
 
 Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；需要用户修改 prompt 时调用
-`draft`；无需编辑时调用 `harness`。Core 将调用物化并返回当前状态，ledger 变化后重新 reconcile
-Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
+`draft`；已有完整 prompt 时调用 `harness`。所有发起新动作的 Plugin verb 都先物化为 Interaction；`harness`
+即使被策略自动批准，也必须先落 requested/answered，再创建 HarnessInvocation。ledger 变化后 Core
+重新 reconcile Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
 
 ## 2. Input 到 Harness
 
@@ -60,7 +61,7 @@ Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代�
 每个 Lane 同时最多一个 driven Turn，不同 Lane 可并行。Harness 自发产生的 observed Turn 不进 Input 队列。
 
 prompt Input 另有一条与状态和 Lane 正交的 source 轴：composer、ProposedPlan 实施和用户编辑提交的
-HarnessInvocation draft 是 `user`；`harness()` 直接运行的 HarnessInvocation 是
+HarnessInvocation draft 是 `user`；`harness()` gate 批准后运行的 HarnessInvocation 是
 `{ type: "plugin", pluginInstanceId }`。Input 顶层 `harnessInvocationId` 单独保存因果，
 不混入 source。HarnessInvocation 是 Core 的持久执行记录，不是 Plugin 侧的 Harness 句柄；cron、Watch 和
 Source 只负责唤醒 reconcile，不是 Input source。带 `harnessInvocationId` 的 queued Input 由
@@ -187,8 +188,12 @@ HarnessInvocation 只用 invocation identity 定向取消自己的 queued Input 
 
 ## 5. Interaction 闭环
 
-Interaction 表示“某个 requester 正在等待人给出结果”，当前 kind 包含 permission、question 和
-hook trust。它是 Core-owned rendezvous，不是 Harness 与 Plugin 互传任意 payload 的消息信封。
+Interaction 表示“某个 requester 正在等待 typed decision”，当前 kind 包含 permission、question、
+suggested input、HarnessInvocation gate 和 hook trust。它是 Core-owned rendezvous，不是 Harness
+与 Plugin 互传任意 payload 的消息信封。decision 可以由人提交，也可以由宿主 policy 自动给出；
+自动决议同样必须留下 requested/answered 事实。
+HarnessInvocation gate 同时固化 prompt、HarnessTarget 和 Lane policy，确保 policy 或用户批准的是
+随后实际执行的同一份请求。
 完整闭环是：
 
 ```text
@@ -196,15 +201,16 @@ Harness native verb → Adapter lowering ┐
 Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
   → Core signs interactionId + requester
   → interaction.requested persisted
-  → chat-tui presents to user
-  → user answers or request is cancelled
+  → chat-tui presents to user, or host policy resolves it
+  → user/policy answers, or request is cancelled
   → interaction.answered / interaction.cancelled persisted
   → waiting Adapter or Resource reconcile continues
 ```
 
 Harness Adapter 负责把原生 request approval / request user input 等 verb 归一成 `InteractionDraft`，
-但不自签 interaction ID，也不自行伪造 requested/answered/cancelled。Plugin host 则把 `ask/confirm`
-reconcile verb 归一到相同的 Interaction kind。result 就地解开等待方，不进入 prompt queue。
+但不自签 interaction ID，也不自行伪造 requested/answered/cancelled。Plugin host 则把全部 reconcile
+verb 归一到封闭的 Interaction kind。`draft` 的 submitted 和 `harness` 的 approved 结果才允许 Core
+创建 HarnessInvocation；dismissed/declined 不产生执行记录。result 本身不进入 prompt queue。
 
 两类 requester 共享 identity、持久化、展示与终态规则，只在 continuation 上不同：Harness result
 返回当前 Adapter continuation；Plugin result 先落盘，再按 Resource identity 重新 reconcile。

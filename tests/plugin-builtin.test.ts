@@ -158,16 +158,27 @@ describe("Baton Resource index", () => {
     });
 
     await manager.start();
-    await waitFor(() => manager.listPendingHarnessInvocationInputs().length === 1);
-    expect(manager.listPendingHarnessInvocationInputs()[0]).toMatchObject({
-      pluginInstanceId: "router_default",
-      prompt: "Route: which harness?",
+    const pendingDrafts = () => [...session.loadState().interactions.values()]
+      .filter(({ interaction, result }) =>
+        interaction.kind === "suggested_input" && !result
+      )
+      .map(({ interaction }) => interaction);
+    await waitFor(() => pendingDrafts().length === 1);
+    expect(pendingDrafts()[0]).toMatchObject({
+      requester: {
+        type: "plugin",
+        pluginInstanceId: "router_default",
+      },
+      text: "Route: which harness?",
     });
+    expect(manager.listHarnessInvocations()).toEqual([]);
 
     appendTurn(session, "t_live", "continue with codex");
-    await waitFor(() => manager.listPendingHarnessInvocationInputs().length === 2);
+    await waitFor(() => pendingDrafts().length === 2);
     expect(reconciled).toEqual(["t_existing", "t_live"]);
-    expect(manager.listPendingHarnessInvocationInputs().map((item) => item.prompt)).toEqual([
+    expect(pendingDrafts().map((interaction) =>
+      interaction.kind === "suggested_input" ? interaction.text : ""
+    )).toEqual([
       "Route: which harness?",
       "Route: continue with codex",
     ]);

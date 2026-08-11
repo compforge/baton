@@ -285,7 +285,26 @@ describe("plugin Manager", () => {
       parentLaneId: "main",
     });
     expect(scheduled[0]?.laneId).not.toBe(MAIN_LANE_ID);
-    expect([...session.loadState().interactions.values()]).toEqual([]);
+    expect([...session.loadState().interactions.values()]).toMatchObject([{
+      interaction: {
+        kind: "harness_invocation",
+        harnessTargetId: "claude",
+        laneId: MAIN_LANE_ID,
+        newLane: true,
+      },
+      result: { kind: "harness_invocation", outcome: "approved" },
+    }]);
+    expect(session.readEvents().filter((event) =>
+      event.kind === "interaction.requested" ||
+      event.kind === "interaction.answered" ||
+      event.kind === "_baton_harness_invocation_recorded" ||
+      event.kind === "_baton_harness_invocation_scheduled"
+    ).map((event) => event.kind)).toEqual([
+      "interaction.requested",
+      "interaction.answered",
+      "_baton_harness_invocation_recorded",
+      "_baton_harness_invocation_scheduled",
+    ]);
     expect(states).toEqual(["pending:queued"]);
     await manager.start();
     expect(scheduled).toHaveLength(1);
@@ -384,22 +403,29 @@ describe("plugin Manager", () => {
       resourceId: "run_1",
     });
     expect(scheduled).toEqual([]);
-    expect(manager.listPendingHarnessInvocationInputs()).toMatchObject([{
+    expect(manager.listHarnessInvocations()).toEqual([]);
+    const interaction = [...session.loadState().interactions.values()]
+      .find(({ interaction: candidate }) =>
+        candidate.kind === "suggested_input"
+      )?.interaction;
+    expect(interaction).toMatchObject({
+      kind: "suggested_input",
       title: "implement",
-      prompt: "Implement run_1.",
-    }]);
-    expect(manager.listPendingHarnessInvocationInputs()[0]?.harnessTargetId).toBeUndefined();
+      text: "Implement run_1.",
+    });
+    expect(interaction).not.toHaveProperty("harnessTargetId");
 
-    const invocationId = manager.listPendingHarnessInvocationInputs()[0]!.invocationId;
     selectedHarnessTargetId = "claude";
-    expect(manager.resolveHarnessInvocationInput(invocationId, {
-      kind: "submitted",
+    expect(await manager.completeInteraction(interaction!.interactionId, {
+      kind: "suggested_input",
+      outcome: "submitted",
       blocks: [{
         type: "text",
         text: "Implement run_1 with the focused test only.",
       }],
     })).toBe(true);
     await waitFor(() => scheduled.length === 1);
+    const invocationId = scheduled[0]!.invocationId;
     expect(scheduled[0]).toMatchObject({
       invocationId,
       harnessTargetId: "claude",
@@ -411,12 +437,6 @@ describe("plugin Manager", () => {
       newLane: false,
       laneId: MAIN_LANE_ID,
     });
-    expect(session.readEvents().find((event) =>
-      event.kind === "_baton_harness_invocation_input_submitted" &&
-      event.payload.invocationId === invocationId
-    )).toMatchObject({ payload: { harnessTargetId: "claude" } });
-    expect(manager.listPendingHarnessInvocationInputs()).toEqual([]);
-
     await manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
@@ -424,21 +444,272 @@ describe("plugin Manager", () => {
       resourceKind: "Requirement",
       resourceId: "run_2",
     });
-    const fixed = manager.listPendingHarnessInvocationInputs()[0];
+    const fixed = [...session.loadState().interactions.values()]
+      .find(({ interaction: candidate }) =>
+        candidate.kind === "suggested_input" &&
+        candidate.pluginContext?.resource.name === "run_2"
+      )?.interaction;
     expect(fixed).toMatchObject({
+      kind: "suggested_input",
       title: "implement",
-      prompt: "Implement run_2.",
+      text: "Implement run_2.",
       harnessTargetId: "codex",
     });
-    expect(manager.resolveHarnessInvocationInput(fixed!.invocationId, {
-      kind: "submitted",
+    expect(await manager.completeInteraction(fixed!.interactionId, {
+      kind: "suggested_input",
+      outcome: "submitted",
       blocks: [{ type: "text", text: "Implement run_2." }],
     })).toBe(true);
     await waitFor(() => scheduled.length === 2);
     expect(scheduled[1]).toMatchObject({
-      invocationId: fixed!.invocationId,
       harnessTargetId: "codex",
     });
+    await manager.close();
+  });
+
+  test("waits for a manual Interaction gate and never invokes a declined request", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    for (const name of ["approve", "decline"]) {
+      resources.create<Spec>({
+        type: resourceType("Requirement"),
+        name,
+        spec: { value: name },
+      });
+    }
+    const scheduled: ScheduledHarnessInvocation[] = [];
+    const states = new Map<string, string[]>();
+    const manager = new Manager({
+      session,
+      instances: new PluginInstanceStore({ session }),
+      snapshot: () => ({
+        ...emptyReconcileSnapshot(session.id),
+        harnessTargets: [{ id: "codex", harness: "codex" }],
+      }),
+      selectedHarnessTargetId: () => "codex",
+      harnessInvocationGate: () => "require_user",
+      enqueueHarnessInvocation(request) {
+        scheduled.push(request);
+      },
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(ctx, resource) {
+        const result = await ctx.harness({
+          key: "implement",
+          prompt: `Implement ${resource.metadata.name}.`,
+          laneId: MAIN_LANE_ID,
+        });
+        const observed = states.get(resource.metadata.name) ?? [];
+        observed.push(
+          result.state === "pending"
+            ? `${result.state}:${result.phase}`
+            : result.state,
+        );
+        states.set(resource.metadata.name, observed);
+      },
+    });
+    const reconcileKey = (resourceId: string) => ({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId,
+    });
+
+    await manager.enqueue(reconcileKey("approve"));
+    await manager.enqueue(reconcileKey("decline"));
+    expect(manager.listHarnessInvocations()).toEqual([]);
+    expect(states).toEqual(new Map([
+      ["approve", ["waiting"]],
+      ["decline", ["waiting"]],
+    ]));
+    const interactions = [...session.loadState().interactions.values()]
+      .map(({ interaction }) => interaction)
+      .filter((interaction) => interaction.kind === "harness_invocation");
+    const approved = interactions.find((interaction) =>
+      interaction.kind === "harness_invocation" &&
+      interaction.prompt === "Implement approve."
+    );
+    const declined = interactions.find((interaction) =>
+      interaction.kind === "harness_invocation" &&
+      interaction.prompt === "Implement decline."
+    );
+
+    expect(await manager.completeInteraction(approved!.interactionId, {
+      kind: "harness_invocation",
+      outcome: "approved",
+    })).toBe(true);
+    expect(await manager.completeInteraction(declined!.interactionId, {
+      kind: "harness_invocation",
+      outcome: "declined",
+    })).toBe(true);
+    await waitFor(() =>
+      states.get("approve")?.includes("pending:queued") === true &&
+      states.get("decline")?.includes("declined") === true
+    );
+    expect(scheduled).toHaveLength(1);
+    expect(manager.listHarnessInvocations()).toHaveLength(1);
+    expect(scheduled[0]?.blocks).toEqual([
+      { type: "text", text: "Implement approve." },
+    ]);
+    await manager.close();
+  });
+
+  test("returns typed cancellation from ctx.harness", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const states: string[] = [];
+    const manager = new Manager({
+      session,
+      instances: new PluginInstanceStore({ session }),
+      snapshot: () => ({
+        ...emptyReconcileSnapshot(session.id),
+        harnessTargets: [{ id: "codex", harness: "codex" }],
+      }),
+      selectedHarnessTargetId: () => "codex",
+      enqueueHarnessInvocation() {},
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(ctx) {
+        const result = await ctx.harness({
+          key: "implement",
+          prompt: "Implement run_1.",
+          laneId: "main",
+        });
+        states.push(
+          result.state === "cancelled"
+            ? `${result.state}:${result.reason}`
+            : result.state,
+        );
+      },
+    });
+
+    const reconcileKey = {
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    };
+    await manager.enqueue(reconcileKey);
+    await Bun.sleep(5);
+    const invocationId = manager.listHarnessInvocations()[0]!.invocationId;
+    expect(await manager.cancelHarnessInvocation(invocationId)).toBe(true);
+    expect(manager.listHarnessInvocations()[0]).toMatchObject({
+      phase: "cancelled",
+      cancellation: { reason: "user" },
+    });
+    await waitFor(() => states.includes("cancelled:user"), 2_000);
+    expect(states[0]).toBe("pending");
+    expect(states.at(-1)).toBe("cancelled:user");
+    await manager.close();
+  });
+
+  test("keeps draft dismissal separate from dispatch failure", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    for (const name of ["dismiss", "fail"]) {
+      resources.create<Spec>({
+        type: resourceType("Requirement"),
+        name,
+        spec: { value: name },
+      });
+    }
+    const states = new Map<string, string[]>();
+    const manager = new Manager({
+      session,
+      instances: new PluginInstanceStore({ session }),
+      snapshot: () => ({
+        ...emptyReconcileSnapshot(session.id),
+        harnessTargets: [{ id: "codex", harness: "codex" }],
+      }),
+      selectedHarnessTargetId: () => "codex",
+      enqueueHarnessInvocation() {
+        throw new Error("dispatcher unavailable");
+      },
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(ctx, resource) {
+        const result = await ctx.draft({
+          key: "implement",
+          prompt: `Implement ${resource.metadata.name}.`,
+        });
+        const observed = states.get(resource.metadata.name) ?? [];
+        observed.push(
+          result.state === "failed"
+            ? `${result.state}:${result.reason}:${result.detail}`
+            : result.state,
+        );
+        states.set(resource.metadata.name, observed);
+      },
+    });
+    const reconcileKey = (resourceId: string) => ({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId,
+    });
+
+    await manager.enqueue(reconcileKey("dismiss"));
+    await manager.enqueue(reconcileKey("fail"));
+    expect(manager.listHarnessInvocations()).toEqual([]);
+    const interactions = [...session.loadState().interactions.values()]
+      .map(({ interaction }) => interaction)
+      .filter((interaction) => interaction.kind === "suggested_input");
+    const dismissed = interactions.find((interaction) =>
+      interaction.kind === "suggested_input" &&
+      interaction.text === "Implement dismiss."
+    );
+    const failed = interactions.find((interaction) =>
+      interaction.kind === "suggested_input" &&
+      interaction.text === "Implement fail."
+    );
+    expect(await manager.completeInteraction(dismissed!.interactionId, {
+      kind: "suggested_input",
+      outcome: "dismissed",
+    })).toBe(true);
+    expect(await manager.completeInteraction(failed!.interactionId, {
+      kind: "suggested_input",
+      outcome: "submitted",
+      blocks: [{ type: "text", text: "Implement fail." }],
+    })).toBe(true);
+
+    await waitFor(() =>
+      states.get("dismiss")?.includes("dismissed") === true &&
+      states.get("fail")?.includes(
+          "failed:dispatch:dispatcher unavailable",
+        ) === true
+    );
+    expect(states.get("dismiss")?.[0]).toBe("editing");
+    expect(states.get("dismiss")?.at(-1)).toBe("dismissed");
+    expect(states.get("fail")?.[0]).toBe("editing");
+    expect(states.get("fail")?.at(-1)).toBe(
+      "failed:dispatch:dispatcher unavailable",
+    );
     await manager.close();
   });
 

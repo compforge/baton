@@ -25,8 +25,9 @@ export interface ReconcileVerbScope {
 }
 
 /**
- * Plugin-facing typed Core verbs. The host lowers ask/confirm into Interaction
- * and draft/harness into HarnessInvocation; Runner never sends an opaque message.
+ * Plugin-facing typed Core verbs. Every operation-producing verb first becomes
+ * an Interaction; draft/harness create a HarnessInvocation only after that gate
+ * settles positively. Runner never sends an opaque message.
  */
 export type ReconcileVerbRequest =
   | {
