@@ -11,9 +11,9 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import type {
-  ReconcileVerbScope,
-  ReconcileVerbRequest,
-} from "../verbs.ts";
+  ExecutionScope,
+  VerbRequest,
+} from "../verb.ts";
 
 export interface PluginPackageEntry {
   readonly pluginId: string;
@@ -108,9 +108,9 @@ export type RunnerRequest =
 
 export type HostRequest =
   | {
-      readonly method: "reconcile.invoke";
-      readonly context: ReconcileVerbScope;
-      readonly request: ReconcileVerbRequest;
+      readonly method: "verb.invoke";
+      readonly context: ExecutionScope;
+      readonly request: VerbRequest;
     }
   | {
       readonly method: "resource.get";

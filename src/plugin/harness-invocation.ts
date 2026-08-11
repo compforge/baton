@@ -10,7 +10,7 @@ import type {
   PromptBlock,
 } from "../event/types.ts";
 import type { SessionHandle } from "../store/store.ts";
-import type { ReconcileVerbScope } from "./verbs.ts";
+import type { ExecutionScope } from "./verb.ts";
 
 export type HarnessInvocationPhase =
   | "queued"
@@ -35,7 +35,7 @@ export interface HarnessInvocationSnapshot {
 }
 
 export interface ReconcileHarnessInvocation {
-  readonly scope: ReconcileVerbScope;
+  readonly scope: ExecutionScope;
   readonly invocation: {
     readonly verb: "draft" | "harness";
     readonly title: string;

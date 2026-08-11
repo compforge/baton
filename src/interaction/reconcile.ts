@@ -16,7 +16,7 @@ import type {
   EventSource,
 } from "../event/types.ts";
 import type { PromptBlock } from "../input/blocks.ts";
-import type { ReconcileVerbScope } from "../plugin/verbs.ts";
+import type { ExecutionScope } from "../plugin/verb.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type {
   Interaction,
@@ -90,7 +90,7 @@ export interface ReconcileInteractionStoreOptions {
 }
 
 function pluginInteraction(
-  scope: ReconcileVerbScope,
+  scope: ExecutionScope,
   request: PluginInteractionRequest,
   expiresAt: string,
 ): Interaction {
@@ -236,7 +236,7 @@ export class ReconcileInteractionStore {
   }
 
   async ask(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     input: AskInput,
   ): Promise<AskResult> {
     return await this.question(scope, {
@@ -254,7 +254,7 @@ export class ReconcileInteractionStore {
   }
 
   async confirm(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     input: ConfirmInput,
   ): Promise<ConfirmResult> {
     const result = await this.question(scope, {
@@ -275,7 +275,7 @@ export class ReconcileInteractionStore {
   }
 
   async draft(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     input: DraftInput,
   ): Promise<ReconcileDraftInteractionResult> {
     const interaction = this.open(scope, {
@@ -312,7 +312,7 @@ export class ReconcileInteractionStore {
   }
 
   async harness(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     input: HarnessInput,
   ): Promise<ReconcileHarnessGateResult> {
     const interaction = this.open(scope, {
@@ -397,7 +397,7 @@ export class ReconcileInteractionStore {
   }
 
   private async question(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     input: PluginQuestionInput,
   ): Promise<AskResult> {
     const interaction = this.open(scope, {
@@ -421,7 +421,7 @@ export class ReconcileInteractionStore {
   }
 
   private open(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     request: PluginInteractionRequest,
   ): Interaction {
     if (scope.batonSessionId !== this.session.id) {

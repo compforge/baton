@@ -74,7 +74,7 @@
       {
         "cases": [],
         "rules": [
-          "Exclude a pending host-side reconcile verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply."
+          "Exclude a pending host-side Plugin verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply."
         ]
       }
     ]

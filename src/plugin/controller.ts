@@ -24,9 +24,9 @@ import { ControllerSources } from "./source.ts";
 import { validateWatches } from "./watch.ts";
 import {
   createReconcileContext,
-  type InvokeReconcileVerb,
-  type ReconcileVerbScope,
-} from "./verbs.ts";
+  type ExecutionScope,
+  type InvokeVerb,
+} from "./verb.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
 
@@ -64,12 +64,12 @@ export interface ControllerOptions<TSpec, TStatus> {
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
   snapshot?: (key: ReconcileKey, resource: ResourceRef) => ReconcileSnapshot;
-  invokeVerb?: InvokeReconcileVerb;
+  invokeVerb?: InvokeVerb;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
-  /** Manager-owned lifecycle and total capacity for one live reconcile execution. */
+  /** Core-owned lifecycle and total capacity for one live Plugin execution. */
   executeReconcile?: <T>(
-    scope: ReconcileVerbScope,
+    scope: ExecutionScope,
     localLease: ReconcileCapacityLease,
     execute: () => Promise<T>,
   ) => Promise<T>;
@@ -157,7 +157,7 @@ export class Controller<TSpec, TStatus> {
   private readonly executeWithCapacity: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
-  private readonly invokeVerb: InvokeReconcileVerb;
+  private readonly invokeVerb: InvokeVerb;
   private readonly executeReconcile: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeReconcile"]
   >;
@@ -307,7 +307,7 @@ export class Controller<TSpec, TStatus> {
 
   private async reconcile(
     key: ReconcileKey,
-    executionScope: ReconcileVerbScope,
+    executionScope: ExecutionScope,
   ): Promise<ReconcileExecution> {
     return await this.store.withReconcileLock(
       this.resourceType,

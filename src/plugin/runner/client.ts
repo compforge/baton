@@ -10,10 +10,10 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import type {
-  ReconcileVerbScope,
-  ReconcileVerbRequest,
-  ReconcileVerbResponse,
-} from "../verbs.ts";
+  ExecutionScope,
+  VerbRequest,
+  VerbResponse,
+} from "../verb.ts";
 
 import {
   type ActivationResult,
@@ -48,10 +48,10 @@ interface SourceCallbacks {
 
 export interface PluginRunnerCallbacks {
   readonly resources: ResourceClient;
-  readonly invokeReconcileVerb: (
-    context: ReconcileVerbScope,
-    request: ReconcileVerbRequest,
-  ) => Promise<ReconcileVerbResponse>;
+  readonly invokeVerb: (
+    context: ExecutionScope,
+    request: VerbRequest,
+  ) => Promise<VerbResponse>;
   readonly onToast: (message: ToastMessage) => void;
   readonly onLog: (record: PluginLogRecord) => void;
   readonly onOutput?: (
@@ -73,7 +73,7 @@ export interface PluginRunnerClientOptions extends PluginRunnerCallbacks {
  * One PluginBinding's child-process client. Third-party code and synchronous
  * subprocess calls cannot occupy Baton's event loop.
  *
- * @rule Exclude a pending host-side reconcile verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply.
+ * @rule Exclude a pending host-side Plugin verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply.
  */
 export class PluginRunnerClient {
   private readonly child: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -340,7 +340,7 @@ export class PluginRunnerClient {
   }
 
   private async handleChildCall(call: ChildCall): Promise<void> {
-    const resumeTimeout = call.request.method === "reconcile.invoke"
+    const resumeTimeout = call.request.method === "verb.invoke"
       ? this.pauseReconcileTimeout(call.request.context.executionId)
       : undefined;
     try {
@@ -378,8 +378,8 @@ export class PluginRunnerClient {
 
   private async handleHostRequest(request: HostRequest): Promise<unknown> {
     switch (request.method) {
-      case "reconcile.invoke":
-        return await this.callbacks.invokeReconcileVerb(
+      case "verb.invoke":
+        return await this.callbacks.invokeVerb(
           request.context,
           request.request,
         );
