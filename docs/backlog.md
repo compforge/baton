@@ -82,7 +82,7 @@ Board 展示一份 Resource，不代表目标 Harness 已经收到它的上下�
 ContextEpoch 送达 Harness；同一 BatonSession 可以同时存在多份活跃 Requirement，不能把 Board
 上的全部 Resource 无差别注入每个 Turn。
 
-后续需要同时补齐 per-turn ResourceRef / focus 选择，以及 Plugin Proposal 被用户采用后到
+后续需要同时补齐 per-turn ResourceRef / focus 选择，以及 Plugin draft 被用户提交后到
 Input/Turn 的 Resource provenance。Board presentation 继续只服务人类展示，不作为 Harness
 context 的文本事实源。
 

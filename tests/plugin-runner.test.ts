@@ -12,7 +12,6 @@ import { pathToFileURL } from "node:url";
 
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager, type PluginRunnerFailure } from "../src/plugin/manager.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginSupervisor } from "../src/plugin/runner/index.ts";
 import {
   restoredError,
@@ -57,7 +56,6 @@ function stores() {
   return {
     root,
     instances: new PluginInstanceStore({ session }),
-    proposals: new ProposalStore({ session }),
     session: sessionHandle,
     entry,
   };
@@ -96,7 +94,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("routes reconcile capabilities across the process boundary", async () => {
-    const { instances, proposals, session, entry } = stores();
+    const { instances, session, entry } = stores();
     session.append({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
@@ -118,7 +116,6 @@ describe("Plugin Runner process boundary", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       session,
       pluginSupervisor: new PluginSupervisor(),
       async loadPackageEntry(pluginId, version) {
@@ -128,7 +125,6 @@ describe("Plugin Runner process boundary", () => {
           entryUrl: pathToFileURL(entry).href,
         };
       },
-      onProposal() {},
     });
 
     await manager.start();
@@ -150,7 +146,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("keeps the host responsive and withdraws registrations after a crash", async () => {
-    const { root, instances, proposals, session, entry } = stores();
+    const { root, instances, session, entry } = stores();
     instances.create({
       pluginInstanceId: "process_default",
       pluginId: "tests/process-plugin",
@@ -161,7 +157,6 @@ describe("Plugin Runner process boundary", () => {
     const failures: PluginRunnerFailure[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       session,
       pluginSupervisor: new PluginSupervisor(),
       async loadPackageEntry(pluginId, version) {
@@ -171,7 +166,6 @@ describe("Plugin Runner process boundary", () => {
           entryUrl: pathToFileURL(entry).href,
         };
       },
-      onProposal() {},
       onActivationError(failure) {
         activationFailures.push(failure.error);
       },
@@ -255,7 +249,7 @@ describe("Plugin Runner process boundary", () => {
   });
 
   test("terminates a Runner whose handler exceeds its deadline", async () => {
-    const { instances, proposals, session, entry } = stores();
+    const { instances, session, entry } = stores();
     instances.create({
       pluginInstanceId: "process_timeout",
       pluginId: "tests/process-plugin",
@@ -265,7 +259,6 @@ describe("Plugin Runner process boundary", () => {
     const failures: PluginRunnerFailure[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       session,
       pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
       async loadPackageEntry(pluginId, version) {
@@ -275,7 +268,6 @@ describe("Plugin Runner process boundary", () => {
           entryUrl: pathToFileURL(entry).href,
         };
       },
-      onProposal() {},
       onRunnerFailure(failure) {
         failures.push(failure);
       },

@@ -111,7 +111,7 @@ function writeJsonAtomic(path: string, value: unknown): void {
 }
 
 /**
- * BatonSession 内 Plugin 配置身份的事实来源。Resource、Proposal 等运行数据仍由各自 Store 管理。
+ * BatonSession 内 Plugin 配置身份的事实来源。Resource 与执行事实仍由各自 owner 管理。
  */
 export class PluginInstanceStore implements PluginInstanceRepository {
   readonly batonSessionId: string;

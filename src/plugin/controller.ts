@@ -36,12 +36,6 @@ export interface ReconcileScope {
   readonly resourceOwner?: ReconcileResourceOwner;
 }
 
-export type {
-  BuiltinResourceReconcileProposal,
-  PluginResourceReconcileProposal,
-  ReconcileProposal,
-} from "./proposal.ts";
-
 export interface ReconcileKey extends ReconcileScope {
   readonly resourceId: string;
 }

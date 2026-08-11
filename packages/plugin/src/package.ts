@@ -26,7 +26,8 @@ export interface PluginSessionContext {
  * Host-created writable directories for Plugin-private files.
  *
  * Scope, rather than Package version, owns each path so upgrades can resume
- * existing state. Resource and Proposal facts still use their dedicated APIs.
+ * existing state. Resource, Interaction, and HarnessInvocation facts still use
+ * their host-owned APIs.
  */
 export interface PluginDataDirectories {
   /** Shared by this Plugin across all Baton Projects and Sessions. */

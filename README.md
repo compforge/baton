@@ -67,7 +67,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 - Use a headless REPL to debug agent integrations
 - Register local or Git Plugin Marketplaces and install immutable Plugin Packages
 - Run each active third-party Plugin Binding in its own supervised process
-- Run session-scoped Plugin Controllers over durable Resources, with Resource/cron Sources, requeue wakeups, Board projections, and user-approved Proposals
+- Run session-scoped Plugin Controllers over durable Resources, with Resource/cron Sources, requeue wakeups, Board projections, and reconcile-scoped user interactions
 
 ## Installation & configuration
 
@@ -193,11 +193,10 @@ baton stores its data in `~/.baton/` by default:
         └── plugins/
             ├── <encoded-plugin-id>/         # Plugin session data
             └── <plugin-instance-id>/
-                ├── resources/
-                └── proposals/
+                └── resources/
 ```
 
-Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Pasted images are immutable, content-addressed attachments shared by session histories and forks, while `session.jsonl` keeps only their paths. Plugins receive writable global, Project/workspace, Session, and Instance scope roots and decide their internal layout, while Resource and Proposal facts remain behind the host APIs. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. `session.log` is a private, rotated operational log shared by Baton components, Harness adapters, and Plugins; use `baton logs` to filter it by level, component, or Plugin. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
+Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Pasted images are immutable, content-addressed attachments shared by session histories and forks, while `session.jsonl` keeps only their paths. Plugins receive writable global, Project/workspace, Session, and Instance scope roots and decide their internal layout, while Resource, Interaction, and HarnessInvocation facts remain behind the host APIs. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. `session.log` is a private, rotated operational log shared by Baton components, Harness adapters, and Plugins; use `baton logs` to filter it by level, component, or Plugin. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
 
 ## License
 

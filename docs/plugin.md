@@ -67,14 +67,14 @@ PluginPackage（不可变交付物）
 ```text
 Baton host process
   └── Manager
-        ├── Instance / Resource / Proposal / Interaction / HarnessInvocation stores
+        ├── Instance / Resource / Interaction / HarnessInvocation stores
         ├── keyed reconcile queues / Sources / Watches / Board cache
         └── Supervisor
               └── Runner process × active Binding
                     └── third-party Package + Connector
 ```
 
-**Manager** 是唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource/Output、
+**Manager** 是唯一装配入口，负责恢复 Instance、创建 Binding、安装注册、持久化 Resource 与 reconcile 操作事实、
 控制 reconcile 容量和维护 Board cache。
 
 **Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
@@ -89,7 +89,7 @@ Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton 
 
 IPC 只传可结构化克隆的数据。激活完成后注册表封口，避免异步偷注册留下半个 Binding。调用
 timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、ContextProvider、Controller、
-Source 和 Board，但保留 Resource、Proposal、Interaction 和日志供恢复。当前不自动重启失败
+Source 和 Board，但保留 Resource、Interaction、HarnessInvocation 和日志供恢复。当前不自动重启失败
 Runner，因为外部副作用可能已经生效却没有回执。
 
 ## 4. Resource 与 reconcile 流程
@@ -226,13 +226,13 @@ import type { PluginPackage, Resource } from "@compforge/baton-plugin";
 | `instance` | 当前 PluginInstance 私有执行数据 |
 
 Plugin 只使用 `context.dataDirs`，不自行拼接 `~/.baton`。持久文件带 schema version 并原子替换；
-project scope 可能被多 Runner 并发写，需要跨进程锁。Event、Resource、Proposal、Interaction 和
+project scope 可能被多 Runner 并发写，需要跨进程锁。Event、Resource、Interaction 和
 HarnessInvocation 继续使用宿主 API，不能复制到私有 JSON 形成第二真相源。
 
 ## 7. 运行与恢复
 
 启动时，Manager 解析 enabled Instance 和不可变 Package entry，为每个活动 Binding 创建 Runner，
-完成 activate 后原子安装注册，再启动 Source、恢复待决 Output/due time 并 initial reconcile。
+完成 activate 后原子安装注册，再启动 Source、恢复待决 HarnessInvocation/due time 并 initial reconcile。
 
 关闭时先撤销宿主注册，再停止 Source/Runner；Runner 内先 abort Source，再逆序执行 onClose。
 禁用、reload 或版本切换不删除持久数据。升级先验证新 Package，关闭旧 Binding 后激活新版本；

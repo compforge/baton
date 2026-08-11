@@ -4,11 +4,8 @@ export * from "./interaction/types.ts";
 export * from "./plugin/reconcile-snapshot.ts";
 export {
   Controller as ResourceControllerRuntime,
-  type BuiltinResourceReconcileProposal,
   type ControllerOptions,
-  type PluginResourceReconcileProposal,
   type ReconcileKey,
-  type ReconcileProposal,
   type ReconcileResourceOwner,
   type ReconcileScope,
   type ScheduledReconcile,
@@ -18,7 +15,6 @@ export * from "./plugin/identity.ts";
 export * from "./plugin/manager.ts";
 export * from "./plugin/marketplace/index.ts";
 export * from "./plugin/package.ts";
-export * from "./plugin/proposal.ts";
 export * from "./plugin/resource.ts";
 export * from "./plugin/resource-client.ts";
 export * from "./plugin/settings.ts";
