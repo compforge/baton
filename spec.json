@@ -1,5 +1,5 @@
 {
-  "src/plugin/interaction.ts::Store.ask": {
+  "src/interaction/reconcile.ts::ReconcileInteractionStore.ask": {
     "specs": [
       {
         "cases": [],
@@ -10,7 +10,7 @@
       }
     ]
   },
-  "src/plugin/interaction.ts::Store.confirm": {
+  "src/interaction/reconcile.ts::ReconcileInteractionStore.confirm": {
     "specs": [
       {
         "cases": [],
