@@ -9,6 +9,7 @@ export type CommandName =
   | HarnessName
   | "model"
   | "effort"
+  | "fast"
   | "plan"
   | "compact"
   | "implement-plan"
@@ -45,6 +46,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     name: "effort",
     description: "Set the reasoning effort for the current harness's next turns",
+    scope: "harness",
+    runPolicy: "always",
+  },
+  {
+    name: "fast",
+    description: "Toggle Fast mode for the current harness session",
     scope: "harness",
     runPolicy: "always",
   },

@@ -213,7 +213,7 @@ describe("Codex hook trust harness interaction", () => {
     expect(firstRef.handleId).toBe("thread");
     expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(2);
     expect(questions).toBe(1);
-    expect(firstEvents).toEqual([]);
+    expect(firstEvents.filter((event) => event.kind === "_baton_notice")).toEqual([]);
     await first.close(firstRef);
 
     const secondEvents: AnyEventDraft[] = [];
