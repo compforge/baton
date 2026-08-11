@@ -22,7 +22,8 @@ Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 A
 Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；需要用户修改 prompt 时调用
 `draft`；已有完整 prompt 时调用 `harness`。所有发起新动作的 Plugin verb 都先物化为 Interaction；`harness`
 即使被策略自动批准，也必须先落 requested/answered，再创建 HarnessInvocation。ledger 变化后 Core
-重新 reconcile Resource。Interaction 不进入 prompt queue，而是按稳定 identity 就地解开等待方。
+恢复当前 Plugin execution continuation。Interaction 不进入 prompt queue，而是按稳定 identity
+就地解开等待方。
 
 ## 2. Input 到 Harness
 
@@ -71,7 +72,7 @@ HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
 Input 在 admission 前已经绑定实际 `laneId`。普通用户输入使用保留 ID `main`；
 HarnessInvocation 在最终 Input 准备调度时，按 `laneId + newLane` 继续既有 Lane 或签发新 Lane。
-同一 `verb + key` operation ref 重放时复用已签发的实际 Lane ID。Controller 出队时先 append：
+每次 live verb 只创建一个 HarnessInvocation，并复用它已签发的实际 Lane ID。Controller 出队时先 append：
 
 1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。
@@ -204,23 +205,24 @@ Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
   → chat-tui presents to user, or host policy resolves it
   → user/policy answers, or request is cancelled
   → interaction.answered / interaction.cancelled persisted
-  → waiting Adapter or Resource reconcile continues
+  → waiting Adapter or Plugin execution continuation resumes
 ```
 
 Harness Adapter 负责把原生 request approval / request user input 等 verb 归一成 `InteractionDraft`，
 但不自签 interaction ID，也不自行伪造 requested/answered/cancelled。Plugin host 则把全部 reconcile
 verb 归一到封闭的 Interaction kind。`draft` 的 submitted 和 `harness` 的 approved 结果才允许 Core
-创建 HarnessInvocation；dismissed/declined 不产生执行记录。result 本身不进入 prompt queue。
+创建 HarnessInvocation；gate 阶段的 dismissed/declined 不产生执行记录。result 本身不进入 prompt queue。
 
-两类 requester 共享 identity、持久化、展示与终态规则，只在 continuation 上不同：Harness result
-返回当前 Adapter continuation；Plugin result 先落盘，再按 Resource identity 重新 reconcile。
-Reconcile Interaction 的绝对 deadline 随 requested 事实持久化；到期、requester
-显式撤回或 Resource 删除都先记录 cancelled，再推进原 Resource。cancel、timeout、requester 带外结束
-和恢复清理都显式记录为 cancelled，所有终态遵守 first-terminal-wins。
+两类 requester 共享 identity、持久化、展示与终态规则，并都恢复当前等待 continuation：Harness
+result 返回 Adapter continuation，Plugin result 返回当前 Runner 或 in-process reconcile continuation。
+Plugin verb 的 deadline 由必填 `timeoutMs` 计算并随 Interaction 持久化；timeout、用户 Esc、执行失败
+和恢复清理都先记录终态，所有终态遵守 first-terminal-wins。
 
-Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await ctx.ask(...)`
-立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
-reconcile 用同一 operation ref 读取结果。
+`await ctx.ask(...)` 会真实等待人的结果。等待期间 Baton 保留当前 async continuation，但释放该
+Controller 的并发位和 Manager 总并发位，使其它 Resource 继续 reconcile；结果落盘后重新取得并发
+位并返回 `success / dismissed / timeout / failure`。Plugin execution 由 Core identity 关联，Resource
+不是 verb continuation key。Runner 或 Core 崩溃时进程内调用栈不重放，未完成 verb 作为
+`failure` 收口。
 
 自动 reviewer 没有向 Baton 打开 Interaction 时，审批回执是独立 `ApprovalReview` 审计事实，
 不能伪造一组 requested/answered；详见 [审批生命周期](./approval-lifecycle.md)。

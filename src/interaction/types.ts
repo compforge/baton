@@ -8,10 +8,6 @@
  * Event source 表示谁报告生命周期事实，requester 表示谁在等待结果，两者不能混用。
  */
 
-import type {
-  ReconcileOperationRef,
-  ResourceRef,
-} from "@compforge/baton-plugin";
 import type { PromptBlock } from "../input/blocks.ts";
 
 export type InteractionRequester =
@@ -117,23 +113,16 @@ export type InteractionDraft =
   | HarnessInvocationInteraction
   | HookTrustInteraction;
 
-/**
- * Durable routing owned by Baton for an Interaction emitted from Resource reconcile.
- * The structured operation is part of identity; the basis is provenance, not callback state.
- */
+/** Durable correlation for an Interaction emitted by one live Plugin execution. */
 export interface ReconcileInteractionContext {
-  operation: ReconcileOperationRef<"ask" | "confirm" | "draft" | "harness">;
-  resource: ResourceRef;
-  resourceOwner: "plugin" | "baton";
-  basedOnGeneration?: number;
-  basedOnResourceVersion?: string;
-  basedOnRevision?: number;
+  executionId: string;
+  verb: "ask" | "confirm" | "draft" | "harness";
 }
 
 export type Interaction = InteractionDraft & {
   interactionId: string;
   requester: InteractionRequester;
-  /** Plugin requester 恢复 Resource reconcile 所需的持久路由事实。 */
+  /** Correlates the answer with the suspended Plugin execution. */
   pluginContext?: ReconcileInteractionContext;
   /** Durable absolute deadline for host-owned timeout cancellation. */
   expiresAt?: string;
@@ -170,7 +159,11 @@ export type InteractionCancellationReason =
  */
 export type InteractionResult =
   | InteractionAnswer
-  | { kind: "cancelled"; reason: InteractionCancellationReason };
+  | {
+      kind: "cancelled";
+      reason: InteractionCancellationReason;
+      detail?: string;
+    };
 
 export interface InteractionAnswered {
   interactionId: string;
@@ -180,4 +173,5 @@ export interface InteractionAnswered {
 export interface InteractionCancelled {
   interactionId: string;
   reason: InteractionCancellationReason;
+  detail?: string;
 }

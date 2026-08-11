@@ -44,7 +44,7 @@ const plugin: PluginPackage = {
       },
       async reconcile(ctx, turn) {
         await ctx.ask({
-          key: `runner:${turn.metadata.name}`,
+          timeoutMs: 1_000,
           title: "Runner question",
           prompt: `Review ${turn.metadata.name}?`,
           allowOther: true,

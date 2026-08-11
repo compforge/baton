@@ -8,11 +8,13 @@ import type {
 } from "@compforge/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
+import { newId } from "../event/ids.ts";
 import {
   PluginResourceStore,
   validateResourceType,
 } from "./resource.ts";
 import { ReconcileQueue } from "./queue.ts";
+import type { ReconcileCapacityLease } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
   emptyReconcileSnapshot,
@@ -23,6 +25,7 @@ import { validateWatches } from "./watch.ts";
 import {
   createReconcileContext,
   type InvokeReconcileVerb,
+  type ReconcileVerbScope,
 } from "./verbs.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
@@ -64,6 +67,12 @@ export interface ControllerOptions<TSpec, TStatus> {
   invokeVerb?: InvokeReconcileVerb;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
+  /** Manager-owned lifecycle and total capacity for one live reconcile execution. */
+  executeReconcile?: <T>(
+    scope: ReconcileVerbScope,
+    localLease: ReconcileCapacityLease,
+    execute: () => Promise<T>,
+  ) => Promise<T>;
   /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
@@ -149,6 +158,9 @@ export class Controller<TSpec, TStatus> {
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
   private readonly invokeVerb: InvokeReconcileVerb;
+  private readonly executeReconcile: NonNullable<
+    ControllerOptions<TSpec, TStatus>["executeReconcile"]
+  >;
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private closed = false;
@@ -169,6 +181,8 @@ export class Controller<TSpec, TStatus> {
     this.invokeVerb = options.invokeVerb ?? (async () => {
       throw new Error("plugin Controller has no reconcile capability host");
     });
+    this.executeReconcile = options.executeReconcile ??
+      (async (_scope, _localLease, execute) => await execute());
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -176,15 +190,21 @@ export class Controller<TSpec, TStatus> {
       resourceKind: options.resourceType.kind,
     });
     this.queue = new ReconcileQueue({
-      execute: (key) =>
-        this.executeWithCapacity(async () => {
+      execute: (key, localLease) => {
+        const executionScope = Object.freeze({
+          batonSessionId: key.batonSessionId,
+          pluginInstanceId: key.pluginInstanceId,
+          executionId: newId("pex"),
+        });
+        return this.executeReconcile(executionScope, localLease, async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
-          const execution = await this.reconcile(key);
+          const execution = await this.reconcile(key, executionScope);
           if (execution.deletedResource) {
             options.onResourceDeleted?.(execution.deletedResource);
           }
           options.onReconcileSuccess?.(key, execution.nextReconcileAt);
-        }),
+        });
+      },
       maxConcurrency: options.maxConcurrency,
       onError: options.onReconcileError,
     });
@@ -285,7 +305,10 @@ export class Controller<TSpec, TStatus> {
     );
   }
 
-  private async reconcile(key: ReconcileKey): Promise<ReconcileExecution> {
+  private async reconcile(
+    key: ReconcileKey,
+    executionScope: ReconcileVerbScope,
+  ): Promise<ReconcileExecution> {
     return await this.store.withReconcileLock(
       this.resourceType,
       key.resourceId,
@@ -308,12 +331,7 @@ export class Controller<TSpec, TStatus> {
         }
         const context = createReconcileContext(
           snapshot,
-          {
-            key,
-            resource: resourceRef,
-            basedOnGeneration: resource.metadata.generation,
-            basedOnResourceVersion: resource.metadata.resourceVersion,
-          },
+          executionScope,
           this.invokeVerb,
         );
         const result = validatedResult(

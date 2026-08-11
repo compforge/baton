@@ -93,8 +93,10 @@ Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton 
 
 IPC 只传可结构化克隆的数据。激活完成后注册表封口，避免异步偷注册留下半个 Binding。调用
 timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、ContextProvider、Controller、
-Source 和 Board，但保留 Resource、Interaction、HarnessInvocation 和日志供恢复。当前不自动重启失败
-Runner，因为外部副作用可能已经生效却没有回执。
+Source 和 Board，并把该 Runner 尚未完成的 verb 以 `failure` 收口。Resource、Interaction、
+HarnessInvocation 和日志保留为事实，但进程内 continuation 不恢复。当前不自动重启失败 Runner，
+因为外部副作用可能已经生效却没有回执。Runner 的一般调用 watchdog 在 verb 等待期间暂停；该段
+等待由 verb 自己的必填 timeout 约束。
 
 ## 4. Resource 与 reconcile 流程
 
@@ -142,8 +144,8 @@ Resource change / startup / Source / Watch / cron / requeueAfter
 - **`requeueAfterMs`** 表示单个 Resource 动态决定的下一次复查；
 - 错误进入同一退避队列，reconcile 必须 level-based、幂等、可重放。
 
-外部写入使用稳定 operation key。无法确认是否生效时，先重新观察外部状态再决定重试，不能因
-Runner crash 无条件重复副作用。
+Plugin 对外部系统写入时仍应使用领域自己的幂等键。无法确认是否生效时，先重新观察外部状态再
+决定重试，不能因 Runner crash 无条件重复副作用；这个幂等键不进入 `ReconcileContext` verb identity。
 
 Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
 让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
@@ -155,39 +157,38 @@ Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/
 Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
 Plugin-facing typed Core verbs：
 
-- `ask`：请求一个选项或自由文本答案，可声明持久的绝对 deadline；
-- `confirm`：请求 accept / decline 决定，可声明持久的绝对 deadline；
-- `withdraw`：领域流程不再需要答案时，以稳定 `verb + key` operation ref 撤回未决 Interaction；
+- `ask`：请求一个选项或自由文本答案；
+- `confirm`：请求 accept / decline 决定；
 - `draft`：打开 suggested-input Interaction；用户提交后才创建 HarnessInvocation，并在主 Lane
   形成 user-source Input；
 - `harness`：打开 Harness gate Interaction；策略批准后才创建 HarnessInvocation 和
   plugin-source Input，并用 `laneId + newLane` 选择继续既有 Lane 或派生新 Lane。
 
 这些方法不是通用 `send(type, payload)`：`ask/confirm/draft/harness` 都先物化为 Interaction；
-`withdraw` 只终结已有 Interaction；`draft/harness` 只有在
+`draft/harness` 只有在
 对应 Interaction 提交或批准后才能继续物化为 HarnessInvocation。即使宿主策略自动批准 `harness`，
 也必须先持久化 Interaction 的 requested/answered 事实。identity、准入和终态由 Core 决定；Plugin
 不能提供 topic、路由 callback 或 Harness 原生 DTO。
 
-能力调用立即返回当前 durable state，不在 Runner 中跨外部 decision 持有 Promise。未决 Interaction 的
-回答、超时或 requester 撤回、
-草稿提交、Input admission、Delivery Attempt 或 TurnSummary 变化时，Core 重新 enqueue 原 Resource；
-Plugin 用同一个 operation ref 读取答案或执行结果。`key` 在 verb 内唯一；同一 Resource 下不同
-verb 可以复用同一个 caller key。`requeueAfterMs` 仍只负责时间调度。
+每次能力调用都必须带正整数 `timeoutMs`，并真实 await 到 `success / dismissed / timeout /
+failure`。Core 为当前 reconcile 签发 Plugin execution identity；Interaction 和 HarnessInvocation
+关联这个 execution，而不绑定触发 reconcile 的 Resource。等待时保留 async continuation，同时
+释放 Controller 并发位和 Manager 总并发位；结果先落 ledger，再取回并发位恢复原调用栈，不重新
+enqueue Resource。`requeueAfterMs` 仍只负责 Resource 的时间调度。
 
-用户关闭未提交的 draft 是 Interaction 的 `dismissed`，拒绝 Harness gate 是 `declined`，二者都
-不会创建 HarnessInvocation。已经创建的 HarnessInvocation 使用封闭终态：主动终止是带稳定原因的
-`cancelled`；admission 前调度失败是 `failed(dispatch)`。`detail` 只用于诊断，Plugin 控制流只依赖
-`state/reason`，并在需要重试一个已终结 operation 时换用新 key。
+`success` 携带业务值：confirm decline 和 Harness gate decline 都是成功回答。用户看到
+Interaction 后按 Esc 或关闭卡片返回 `dismissed`；总 deadline 到期返回 `timeout`；Runner/Core
+中断、dispatch error 等返回 `failure`，可选 `error` 只用于诊断。draft/harness 的 deadline 覆盖
+Interaction gate 与后续整个 HarnessInvocation，不在 gate 通过后重置。
 
 Plugin 可以自由组合这些 primitives：有的 gate 由策略自动批准，有的等待用户，再按结果进入
 draft、主 Lane 或新 Lane。这个策略属于领域编排和宿主 policy，不由 Core 从 Plugin 类型推断。
 Core 始终拥有
 Interaction、Harness routing、权限、并发、取消、Context、ledger 和恢复。完整契约见
-[Reconcile Context](./reconcile-context.md)。
+[`@compforge/baton-plugin` README](../packages/plugin/README.md)。
 
-deadline 只产生 `cancelled(timeout)` 事实；“超时是否等于拒绝”属于 Plugin 领域策略。Resource
-物理删除会以 `cancelled(requester)` 收口其未决 Interaction，避免已消失 requester 留下孤儿卡片。
+Resource 删除不会替 live Plugin execution 决定 verb 终态；当前调用仍由回答、Esc、timeout 或
+failure 收口。Runner/Core 崩溃后不重放进程内调用栈，未完成 verb 在恢复时记录为 failure。
 
 Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:true` 从指定 Lane 创建可并行
 支线；draft 提交是 user-source，直接 harness 是 plugin-source。Lane 是 BatonSession 原生串并行
@@ -266,6 +267,5 @@ HarnessInvocation 继续使用宿主 API，不能复制到私有 JSON 形成第�
 - [Resource 生命周期](./resource-lifecycle.md) — 创建、owner、metadata 与删除状态机
 - [Kernel](./kernel.md) — core、Harness 与 Plugin 的顶层边界
 - [工作流](./workflow.md) — Input/Interaction 如何进入统一执行路径
-- [Reconcile Context](./reconcile-context.md) — Plugin 编排决议、draft 与 Harness Turn
 - [日志体系](./logging.md) — Plugin 结构化诊断
 - reqloop 领域设计：<https://github.com/qiankunli/reqloop/blob/main/docs/reqloop.md>

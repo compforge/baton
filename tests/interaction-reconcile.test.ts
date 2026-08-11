@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReconcileInteractionStore } from "../src/interaction/reconcile.ts";
+import type { ReconcileVerbScope } from "../src/plugin/verbs.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
@@ -14,36 +15,16 @@ function session() {
   return new SessionStore(root).createSession({ cwd: "/repo" });
 }
 
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs: number = 500,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
-    await Bun.sleep(5);
-  }
+function scope(batonSessionId: string, executionId = "pex_1"): ReconcileVerbScope {
+  return {
+    batonSessionId,
+    pluginInstanceId: "reqloop_default",
+    executionId,
+  };
 }
 
-function scope(batonSessionId: string, resourceId = "run_1") {
-  return {
-    key: {
-      batonSessionId,
-      pluginInstanceId: "reqloop_default",
-      resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-      resourceKind: "Requirement",
-      resourceId,
-    },
-    resource: {
-      apiVersion: "reqloop.baton.dev/v1alpha1",
-      kind: "Requirement",
-      namespace: "reqloop_default",
-      name: resourceId,
-      uid: `${resourceId}_uid`,
-    },
-    basedOnGeneration: 1,
-    basedOnResourceVersion: "1",
-  };
+function latestInteraction(handle: ReturnType<typeof session>) {
+  return [...handle.loadState().interactions.values()].at(-1)!.interaction;
 }
 
 afterEach(() => {
@@ -53,244 +34,138 @@ afterEach(() => {
 });
 
 describe("ReconcileInteractionStore", () => {
-  test("returns level-based ask and confirm results", () => {
+  test("awaits an answer and correlates it with the live execution", async () => {
     const handle = session();
     const store = new ReconcileInteractionStore(handle);
     const context = scope(handle.id);
-    const input = {
-      key: "associate-pr",
+    const result = store.ask(context, {
       title: "Associate pull request",
       prompt: "Choose a requirement",
+      timeoutMs: 1_000,
       choices: [{ value: "req_1", label: "REQ-1" }],
-    } as const;
+    });
+    const interaction = latestInteraction(handle);
 
-    expect(store.ask(context, input)).toEqual({ state: "waiting" });
-    const interaction = [...handle.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(store.complete(interaction!.interactionId, {
+    expect(interaction.pluginContext).toEqual({
+      executionId: context.executionId,
+      verb: "ask",
+    });
+    expect(store.complete(interaction.interactionId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["req_1"] },
-    })).toEqual(context.key);
-    expect(store.ask({
-      ...context,
-      basedOnResourceVersion: "2",
-    }, input)).toEqual({
-      state: "answered",
+    })).toBe(true);
+    await expect(result).resolves.toEqual({
+      state: "success",
       value: "req_1",
     });
-    expect(() => store.ask(context, {
-      ...input,
-      prompt: "Choose a different requirement",
-    })).toThrow("plugin Interaction identity conflict");
-
-    expect(store.confirm(context, {
-      key: "associate-pr",
-      title: "Close requirement",
-      prompt: "Close it?",
-    })).toEqual({ state: "waiting" });
-    const confirmation = [...handle.loadState().interactions.values()]
-      .find(({ interaction: candidate }) =>
-        candidate.interactionId !== interaction?.interactionId
-      )?.interaction;
-    store.complete(confirmation!.interactionId, {
-      kind: "question",
-      outcome: "answered",
-      answers: { decision: ["accept"] },
-    });
-    expect(store.confirm(context, {
-      key: "associate-pr",
-      title: "Close requirement",
-      prompt: "Close it?",
-    })).toEqual({ state: "accepted" });
     store.close();
   });
 
-  test("returns arbitrary text when an ask allows answers outside its choices", () => {
+  test("distinguishes Esc dismissal, timeout, and execution failure", async () => {
     const handle = session();
     const store = new ReconcileInteractionStore(handle);
-    const context = scope(handle.id);
-    const input = {
-      key: "execution",
-      title: "Execution",
-      prompt: "How should this run?",
-      choices: [
-        { value: "run", label: "Run" },
-        { value: "edit", label: "Edit" },
-      ],
+
+    const dismissed = store.ask(scope(handle.id, "pex_dismiss"), {
+      title: "Approve",
+      prompt: "Continue?",
+      timeoutMs: 1_000,
       allowOther: true,
-    } as const;
-
-    expect(store.ask(context, input)).toEqual({ state: "waiting" });
-    const interaction = [...handle.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(store.complete(interaction!.interactionId, {
-      kind: "question",
-      outcome: "answered",
-      answers: { decision: ["run after the release"] },
-    })).toEqual(context.key);
-    expect(store.ask(context, input)).toEqual({
-      state: "answered",
-      value: "run after the release",
     });
-    store.close();
-  });
-
-  test("restores deadlines and durably times out an unanswered question", async () => {
-    const handle = session();
-    const context = scope(handle.id);
-    let now = new Date("2026-08-11T12:00:00.000Z");
-    let store = new ReconcileInteractionStore(handle, { now: () => now });
-    const input = {
-      key: "associate-pr",
-      title: "Associate pull request",
-      prompt: "Choose a requirement",
-      allowOther: true,
-      expiresAt: "2026-08-11T12:01:00.000Z",
-    } as const;
-
-    expect(store.ask(context, input)).toEqual({ state: "waiting" });
-    expect(() => store.ask(context, {
-      ...input,
-      expiresAt: "2026-08-11T12:03:00.000Z",
-    })).toThrow("plugin Interaction identity conflict");
-    const interactionId = [...handle.loadState().interactions.keys()][0]!;
-    store.close();
-
-    now = new Date("2026-08-11T12:02:00.000Z");
-    const timedOut: unknown[] = [];
-    store = new ReconcileInteractionStore(handle, {
-      now: () => now,
-      onTimeout: (key) => timedOut.push(key),
-    });
-    await waitFor(() => timedOut.length === 1);
-
-    expect(store.ask(context, input)).toEqual({
-      state: "cancelled",
-      reason: "timeout",
-    });
-    const cancellation = handle.readEvents().findLast((event) =>
-      event.kind === "interaction.cancelled"
-    );
-    expect(cancellation).toMatchObject({
-      source: { type: "baton" },
-      payload: { reason: "timeout" },
-    });
-    expect(timedOut).toEqual([context.key]);
-    expect(store.complete(interactionId, {
-      kind: "question",
-      outcome: "answered",
-      answers: { decision: ["late-answer"] },
-    })).toBeUndefined();
-    expect(handle.loadState().interactions.get(interactionId)?.result).toEqual({
+    expect(store.complete(latestInteraction(handle).interactionId, {
       kind: "cancelled",
-      reason: "timeout",
-    });
-    store.close();
-  });
+      reason: "user",
+    })).toBe(true);
+    await expect(dismissed).resolves.toEqual({ state: "dismissed" });
 
-  test("lets the requester withdraw while preserving first-terminal-wins", () => {
-    const handle = session();
-    const store = new ReconcileInteractionStore(handle);
-    const context = scope(handle.id);
-    const input = {
-      key: "associate-pr",
-      title: "Associate pull request",
-      prompt: "Choose a requirement",
+    const timedOut = store.ask(scope(handle.id, "pex_timeout"), {
+      title: "Approve",
+      prompt: "Continue?",
+      timeoutMs: 10,
       allowOther: true,
-    } as const;
-
-    expect(store.ask(context, input)).toEqual({ state: "waiting" });
-    expect(store.withdraw(context, {
-      verb: "ask",
-      key: input.key,
-    })).toEqual({ state: "cancelled", reason: "requester" });
-    expect(store.ask(context, input)).toEqual({
-      state: "cancelled",
-      reason: "requester",
     });
-    expect(store.withdraw(context, {
-      verb: "ask",
-      key: input.key,
-    })).toEqual({ state: "cancelled", reason: "requester" });
-
-    const confirmation = {
-      key: "close",
-      title: "Close requirement",
-      prompt: "Close it?",
-    } as const;
-    expect(store.confirm(context, confirmation)).toEqual({ state: "waiting" });
-    expect(store.withdraw(context, {
-      verb: "confirm",
-      key: confirmation.key,
-    })).toEqual({ state: "cancelled", reason: "requester" });
-    expect(store.confirm(context, confirmation)).toEqual({
-      state: "cancelled",
-      reason: "requester",
-    });
-
-    const answeredInput = { ...input, key: "answer-first" };
-    expect(store.ask(context, answeredInput)).toEqual({ state: "waiting" });
-    const answered = [...handle.loadState().interactions.values()]
-      .find(({ interaction }) =>
-        interaction.pluginContext?.operation.verb === "ask" &&
-        interaction.pluginContext.operation.key === "answer-first"
-      )?.interaction;
-    expect(store.complete(answered!.interactionId, {
+    const timedOutId = latestInteraction(handle).interactionId;
+    await expect(timedOut).resolves.toEqual({ state: "timeout" });
+    expect(store.complete(timedOutId, {
       kind: "question",
       outcome: "answered",
-      answers: { decision: ["req_1"] },
-    })).toEqual(context.key);
-    expect(store.withdraw(context, {
-      verb: "ask",
-      key: answeredInput.key,
-    })).toEqual({ state: "not-pending" });
-    expect(store.ask(context, answeredInput)).toEqual({
-      state: "answered",
-      value: "req_1",
+      answers: { decision: ["late"] },
+    })).toBe(false);
+
+    const failed = store.ask(scope(handle.id, "pex_failed"), {
+      title: "Approve",
+      prompt: "Continue?",
+      timeoutMs: 1_000,
+      allowOther: true,
+    });
+    store.failExecution("pex_failed", "runner exited");
+    await expect(failed).resolves.toEqual({
+      state: "failure",
+      error: "runner exited",
     });
     store.close();
   });
 
-  test("keeps draft input in Interaction until the user submits it", () => {
+  test("treats a negative confirmation as a successful business value", async () => {
     const handle = session();
     const store = new ReconcileInteractionStore(handle);
-    const context = scope(handle.id);
-    const input = {
-      key: "implement",
-      prompt: "Implement run_1.",
-    } as const;
-
-    expect(store.draft(context, input)).toEqual({ state: "editing" });
-    const interaction = [...handle.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(interaction).toMatchObject({
-      kind: "suggested_input",
-      text: input.prompt,
+    const result = store.confirm(scope(handle.id), {
+      title: "Close requirement",
+      prompt: "Close it?",
+      timeoutMs: 1_000,
     });
-    expect(store.complete(interaction!.interactionId, {
+    expect(store.complete(latestInteraction(handle).interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["decline"] },
+    })).toBe(true);
+    await expect(result).resolves.toEqual({
+      state: "success",
+      value: "declined",
+    });
+    store.close();
+  });
+
+  test("awaits draft submission and exposes an explicit draft dismissal", async () => {
+    const handle = session();
+    const store = new ReconcileInteractionStore(handle);
+    const submitted = store.draft(scope(handle.id, "pex_submit"), {
+      title: "Implement",
+      prompt: "Implement the focused fix.",
+      timeoutMs: 1_000,
+    });
+    expect(store.complete(latestInteraction(handle).interactionId, {
       kind: "suggested_input",
       outcome: "submitted",
-      blocks: [{ type: "text", text: "Implement only the focused fix." }],
-    })).toEqual(context.key);
-    expect(store.draft(context, input)).toEqual({
-      state: "submitted",
-      blocks: [{ type: "text", text: "Implement only the focused fix." }],
+      blocks: [{ type: "text", text: "Implement only src/a.ts." }],
+    })).toBe(true);
+    await expect(submitted).resolves.toEqual({
+      state: "success",
+      value: { blocks: [{ type: "text", text: "Implement only src/a.ts." }] },
     });
+
+    const dismissed = store.draft(scope(handle.id, "pex_dismiss"), {
+      title: "Implement",
+      prompt: "Implement the focused fix.",
+      timeoutMs: 1_000,
+    });
+    expect(store.complete(latestInteraction(handle).interactionId, {
+      kind: "suggested_input",
+      outcome: "dismissed",
+    })).toBe(true);
+    await expect(dismissed).resolves.toEqual({ state: "dismissed" });
     store.close();
   });
 
-  test("always records the Harness gate and lets policy decide how it settles", () => {
+  test("always records the harness gate before auto or user approval", async () => {
     const autoHandle = session();
     const autoStore = new ReconcileInteractionStore(autoHandle);
-    const autoContext = scope(autoHandle.id);
-    const input = {
-      key: "implement",
-      prompt: "Implement run_1.",
+    await expect(autoStore.harness(scope(autoHandle.id), {
+      title: "Implement",
+      prompt: "Implement the focused fix.",
+      timeoutMs: 1_000,
       laneId: "main",
-    } as const;
-
-    expect(autoStore.harness(autoContext, input)).toEqual({ state: "approved" });
+    })).resolves.toEqual({ state: "success", value: "approved" });
     expect(autoHandle.readEvents().filter((event) =>
       event.kind === "interaction.requested" ||
       event.kind === "interaction.answered"
@@ -298,54 +173,26 @@ describe("ReconcileInteractionStore", () => {
       "interaction.requested",
       "interaction.answered",
     ]);
-    expect([...autoHandle.loadState().interactions.values()][0]).toMatchObject({
-      interaction: { kind: "harness_invocation" },
-      result: { kind: "harness_invocation", outcome: "approved" },
-    });
     autoStore.close();
 
     const manualHandle = session();
     const manualStore = new ReconcileInteractionStore(manualHandle, {
       harnessInvocationGate: () => "require_user",
     });
-    const manualContext = scope(manualHandle.id);
-    expect(manualStore.harness(manualContext, input)).toEqual({ state: "waiting" });
-    expect(() => manualStore.harness(manualContext, {
-      ...input,
-      laneId: "another-lane",
-    })).toThrow("plugin Interaction identity conflict");
-    const interaction = [...manualHandle.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(manualStore.complete(interaction!.interactionId, {
+    const declined = manualStore.harness(scope(manualHandle.id), {
+      title: "Implement",
+      prompt: "Implement the focused fix.",
+      timeoutMs: 1_000,
+      laneId: "main",
+    });
+    expect(manualStore.complete(latestInteraction(manualHandle).interactionId, {
       kind: "harness_invocation",
       outcome: "declined",
-    })).toEqual(manualContext.key);
-    expect(manualStore.harness(manualContext, input)).toEqual({
-      state: "declined",
+    })).toBe(true);
+    await expect(declined).resolves.toEqual({
+      state: "success",
+      value: "declined",
     });
     manualStore.close();
-  });
-
-  test("cancels pending Interactions when their Resource incarnation is deleted", () => {
-    const handle = session();
-    const store = new ReconcileInteractionStore(handle);
-    const context = scope(handle.id);
-    const other = scope(handle.id, "run_2");
-    const input = {
-      key: "approve",
-      title: "Approve",
-      prompt: "Continue?",
-      allowOther: true,
-    } as const;
-
-    store.ask(context, input);
-    store.ask(other, input);
-    expect(store.cancelForResource(context.resource)).toHaveLength(1);
-    expect(store.ask(context, input)).toEqual({
-      state: "cancelled",
-      reason: "requester",
-    });
-    expect(store.ask(other, input)).toEqual({ state: "waiting" });
-    store.close();
   });
 });

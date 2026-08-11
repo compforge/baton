@@ -117,7 +117,7 @@ describe("Plugin Runner process boundary", () => {
     const manager = new Manager({
       instances,
       session,
-      pluginSupervisor: new PluginSupervisor(),
+      pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
       async loadPackageEntry(pluginId, version) {
         return {
           pluginId,
@@ -128,7 +128,7 @@ describe("Plugin Runner process boundary", () => {
     });
 
     await manager.start();
-    await waitFor(() => session.loadState().interactions.size === 1);
+    await waitFor(() => session.loadState().interactions.size === 1, 1_000);
     expect([...session.loadState().interactions.values()][0]).toMatchObject({
       interaction: {
         requester: {
@@ -141,12 +141,38 @@ describe("Plugin Runner process boundary", () => {
         }],
       },
     });
+    await Bun.sleep(300);
+    expect(manager.isInstanceActive("process_default")).toBe(true);
+    const interaction = [...session.loadState().interactions.values()][0]!
+      .interaction;
+    expect(await manager.completeInteraction(interaction.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["continue"] },
+    })).toBe(true);
+    await waitFor(() =>
+      session.loadState().interactions.get(interaction.interactionId)?.result !==
+        undefined
+    );
 
     await manager.close();
   });
 
-  test("keeps the host responsive and withdraws registrations after a crash", async () => {
+  test("withdraws registrations and settles a waiting verb after a crash", async () => {
     const { root, instances, session, entry } = stores();
+    session.append({
+      kind: "_baton_turn_summary",
+      source: { type: "baton" },
+      harness: "codex",
+      harnessTargetId: "codex_default",
+      turnId: "turn_crash",
+      payload: {
+        turnId: "turn_crash",
+        userText: "test crash while waiting",
+        agentText: "ready",
+        toolCalls: [],
+      },
+    });
     instances.create({
       pluginInstanceId: "process_default",
       pluginId: "tests/process-plugin",
@@ -175,6 +201,7 @@ describe("Plugin Runner process boundary", () => {
     });
 
     await manager.start();
+    await waitFor(() => session.loadState().interactions.size === 1);
     await session.flushLogs();
     expect(activationFailures).toEqual([]);
     expect(manager.isInstanceActive("process_default")).toBe(true);
@@ -244,6 +271,10 @@ describe("Plugin Runner process boundary", () => {
     await waitFor(() => !manager.isInstanceActive("process_default"));
     expect(manager.listCommands()).toEqual([]);
     expect(failures).toHaveLength(1);
+    expect([...session.loadState().interactions.values()][0]?.result).toMatchObject({
+      kind: "cancelled",
+      reason: "recovery",
+    });
 
     await manager.close();
   });

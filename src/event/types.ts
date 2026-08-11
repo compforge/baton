@@ -28,14 +28,8 @@ import type {
   InteractionAnswered,
   InteractionCancelled,
 } from "../interaction/types.ts";
-import type {
-  HarnessCancellationReason,
-  HarnessFailureReason,
-  ReconcileOperationRef,
-  ResourceRef,
-} from "@compforge/baton-plugin";
 
-export const ENVELOPE_VERSION = 5 as const;
+export const ENVELOPE_VERSION = 6 as const;
 
 /**
  * 事实来源：回答“谁对这条 Event 负责”，不是 payload 中行为主体的角色，也不承载执行坐标。
@@ -362,9 +356,8 @@ export interface TurnSummary {
 
 export interface HarnessInvocationRecorded {
   invocationId: string;
-  operation: ReconcileOperationRef<"draft" | "harness">;
-  resourceOwner: "plugin" | "baton";
-  resource: ResourceRef;
+  executionId: string;
+  verb: "draft" | "harness";
   title: string;
   prompt: string;
   /** User-edited Input captured by a preceding suggested-input Interaction. */
@@ -386,13 +379,13 @@ export interface HarnessInvocationScheduled {
 
 export interface HarnessInvocationCancelled {
   invocationId: string;
-  reason: HarnessCancellationReason;
+  reason: "user" | "timeout" | "recovery";
   detail?: string;
 }
 
 export interface HarnessInvocationFailed {
   invocationId: string;
-  reason: HarnessFailureReason;
+  reason: "dispatch" | "recovery";
   detail: string;
 }
 

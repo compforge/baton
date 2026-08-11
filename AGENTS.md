@@ -77,7 +77,10 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
    `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。所有发起新动作的 verb 都先持久化为
    Interaction；策略可以自动批准，但不能绕过 gate。通过后才创建 HarnessInvocation，最终 Input
-   统一走 Context、Permission、Attempt 与 routing。
+   统一走 Context、Permission、Attempt 与 routing。Plugin verb 属于 Core 签发的 live execution，
+   不以 Resource 或 caller key 作为 continuation identity；调用必须带 timeout，并真实 await
+   `success/dismissed/timeout/failure`。等待时释放 Controller 与 Manager 并发位，Runner/Core 崩溃
+   则以 failure 收口而不重放调用栈。
    Plugin 只能依赖
    `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
    Marketplace Plugin 按活动 Binding 进入独立 Runner；线程 / 进程编排由 Baton 持有，
@@ -101,7 +104,6 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 - `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
 - `docs/harness/codex.md`、`docs/harness/claude-code.md` — 首批内置 Harness 的协议适配
 - `docs/plugin.md` — Plugin Manager / Supervisor / Runner、Resource/Controller 与三方 authoring 契约
-- `docs/reconcile-context.md` — Plugin reconcile 视图与宿主控制能力的公共契约
 - `docs/resource-lifecycle.md` — Plugin Resource 准入、结构 owner、删除与恢复契约
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
 - `docs/logging.md` — Baton、Harness 与 Plugin 共用的结构化运维日志

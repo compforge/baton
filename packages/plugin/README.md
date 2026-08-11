@@ -235,21 +235,23 @@ routes Resources already stored by Baton; a Source discovers external state
 and materializes the primary Resource before it is reconciled.
 
 A Controller receives a `ReconcileContext`, reads current facts from
-`ctx.snapshot`, and calls `ctx.ask` when its Resource needs a durable user
-decision:
+`ctx.snapshot`, and can await a typed user decision directly:
 
 ```ts
 const decision = await ctx.ask({
-  key: "associate-pr",
   title: "Associate pull request",
   prompt: "Which requirement should own this pull request?",
+  timeoutMs: 10 * 60_000,
   choices: [
     { value: "req_1", label: "REQ-1" },
     { value: "standalone", label: "Do not associate" },
   ],
-  expiresAt: resource.spec.decisionExpiresAt,
 });
-if (decision.state !== "answered") return;
+if (decision.state !== "success") {
+  // dismissed, timeout, or failure: apply the domain's fallback policy.
+  return;
+}
+await associate(decision.value);
 ```
 
 A command can return `search.mode: "local"` to let chat-tui filter its current
@@ -258,17 +260,29 @@ options, or `"remote"` to receive later query text in
 responses superseded by a newer query. A remote result may contain no options;
 return the same remote-search picker shape so the field stays open.
 
-The call returns `waiting` until the answer is durable. Baton then re-enqueues
-the same Resource, and the same key returns `answered`. Plugins do not register
-callbacks or keep a Runner promise alive while waiting. An optional `expiresAt`
-must be a stable absolute ISO 8601 timestamp derived from durable state. Baton
-persists it with the Interaction, records `cancelled` with reason `timeout` when
-it expires, and re-enqueues the Resource. The Plugin decides whether that means
-decline, skip, escalation, or another domain outcome.
+The Promise stays pending until the user answers, dismisses the Interaction, or
+the required timeout expires. Baton preserves the current async continuation,
+but releases both the Controller concurrency slot and the Manager-wide slot
+while it waits, so other Resources can reconcile. The result is persisted before
+the original continuation resumes; Baton does not re-enqueue the Resource to
+deliver the answer.
+
+Every verb returns the same closed outer outcome:
+
+```ts
+type VerbResult<T> =
+  | { state: "success"; value: T }
+  | { state: "dismissed" }
+  | { state: "timeout" }
+  | { state: "failure"; error?: string };
+```
+
+`dismissed` means the user saw the Interaction and pressed Esc or closed it. A
+deliberate negative answer, such as declining a confirmation, is a successful
+business value. The Plugin decides how each non-success outcome degrades.
 
 `ReconcileContext` methods are typed Core verbs rather than generic messages.
-Every operation-producing verb first materializes a Core-owned Interaction;
-`withdraw` only settles an existing one. `draft` continues only
+Every verb first materializes a Core-owned Interaction. `draft` continues only
 after its suggested input is submitted; `harness` continues only after its
 mandatory gate is approved. A host policy may auto-approve that gate, but Baton
 still persists the requested and answered Interaction facts before creating a
@@ -280,29 +294,19 @@ as `decision.value`; `label` and `description` are presentation only. A closed
 choice ask preserves the literal union of those values. Setting
 `allowOther: true` permits arbitrary non-empty text and therefore widens the
 answer type to `string`; omit `choices` and set `allowOther: true` for a pure
-free-text ask. Operation
-keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and
-`confirm({ key: "ship" })` are distinct durable operations.
-The verb and key must be reconstructed deterministically on every reconcile
-from durable Resource state or stable, re-observable facts. Process memory,
-random values, and current time cannot own continuation identity.
+free-text ask.
 
-If the domain no longer needs an unresolved decision, withdraw it by the same
-operation ref:
-
-```ts
-await ctx.withdraw({ verb: "ask", key: "associate-pr" });
-```
-
-Withdrawal records cancellation with reason `requester`. It returns
-`not-pending` when an answer or another terminal result already won the race.
-Deleting the owning Resource also withdraws its unresolved Interactions.
+Baton gives each live reconcile a Core-issued Plugin execution identity. Verb
+continuation is correlated with that execution, not with the triggering
+Resource and not with a caller-provided operation key. Resource deletion does
+not implicitly dismiss an Interaction. If the Runner or Core crashes, the
+in-memory continuation is not replayed and its unfinished verb becomes
+`failure`.
 
 A Controller uses `ctx.draft` to let the user edit a prompt, or `ctx.harness`
 to request a driven Turn with a ready prompt. Both pass through Interaction;
-only an approved/submitted result creates the HarnessInvocation. `harness`
-returns `waiting` while a manual gate is pending and `declined` when it is
-rejected. The Plugin explicitly declares the Lane for execution:
+only an approved/submitted result creates the HarnessInvocation. The Plugin
+explicitly declares the Lane for execution:
 
 - `laneId` names an existing Lane to continue. `main` is the reserved main Lane ID.
 - `newLane: true` allocates a new asynchronous Lane from `laneId`; omitted or
@@ -320,23 +324,24 @@ execution has no editing phase.
 
 ```ts
 const execution = await ctx.harness({
-  key: "implement-v1",
+  title: "Implement",
   prompt: "Implement the example and run its focused tests.",
+  timeoutMs: 30 * 60_000,
   laneId: "main",
   newLane: true,
 });
-if (execution.state !== "completed") return;
-// Inspect execution.turn.stopReason and update Resource status.
+if (execution.state !== "success") return;
+if (execution.value.outcome === "declined") return;
+// Inspect execution.value.turn.stopReason and update Resource status.
 ```
 
-The result `laneId` is the actual execution Lane and can be passed to a later
-call to continue the same side task. The key and parameters are immutable for
-one logical operation; use a new key to request another question, draft, or
-Turn. `completed` means the Turn closed, not that domain acceptance succeeded.
-Closing an unsubmitted draft returns `dismissed` from its Interaction and never
-creates a HarnessInvocation. A manual Harness gate can return `waiting` or
-`declined`. Deliberate invocation termination returns `cancelled` with a closed
-`user | resource | recovery` reason, while a pre-admission dispatch error
-returns `failed` with reason `dispatch`. Treat
-`detail` as diagnostics; branch on `state` and `reason`, and use a new key to
-retry a terminal invocation.
+The successful result's `laneId` is the actual execution Lane and can be passed
+to a later call to continue the same side task. `completed` means the Turn
+closed, not that domain acceptance succeeded. A manual gate rejection returns
+`{ state: "success", value: { outcome: "declined" } }`. Closing a draft or
+pressing Esc returns `dismissed` and creates no HarnessInvocation when the gate
+has not passed. Dispatch errors and process interruption return `failure`.
+
+`timeoutMs` is mandatory on `ask`, `confirm`, `draft`, and `harness`. For an
+action verb, one deadline covers its Interaction gate, admission, and final
+Turn; approval does not reset the clock.

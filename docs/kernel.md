@@ -61,11 +61,12 @@ Core 直接改变另一方状态。
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
 | **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
-| **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
+| **Plugin execution** | Core 为一次 live reconcile 签发的进程内 continuation identity；verb 关联 execution 而不绑定 Resource，崩溃后以 failure 收口而不重放调用栈 |
+| **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin execution、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
-| **Interaction** | Harness 或 Plugin requester 等待 typed decision 的持久协作对象；人或宿主 policy 可以给出结果，Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复 Harness continuation 或 Resource reconcile |
+| **Interaction** | Harness 或 Plugin requester 等待 typed decision 的持久协作对象；人或宿主 policy 可以给出结果，Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复当前 Harness 或 Plugin execution continuation |
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 
@@ -73,9 +74,9 @@ Core 直接改变另一方状态。
 HarnessSession 和 Turn 则是执行坐标。这些维度正交，不能从 Harness 名、alias 或 wire key
 猜测彼此。
 
-Baton 签发的 Event、Interaction、Context Snapshot/Epoch、Session、Turn、Message、Tool Call
-和 Attempt 使用带前缀的稳定 ULID。HarnessTarget、PluginInstance 等配置对象使用各自作用域内
-的稳定 ID。fork 复制逻辑对象时保留对象 ID，进入 child ledger 的 Event envelope 重新签发
+Baton 签发的 Event、Interaction、Context Snapshot/Epoch、Session、Turn、Message、Tool Call、
+Attempt 和 live Plugin execution 使用带前缀的稳定 ULID。HarnessTarget、PluginInstance 等配置
+对象使用各自作用域内的稳定 ID。fork 复制逻辑对象时保留对象 ID，进入 child ledger 的 Event envelope 重新签发
 `eventId`；详细语义见 [resume 与 fork](./resume-fork.md)。
 
 ## 3. 整体设计
