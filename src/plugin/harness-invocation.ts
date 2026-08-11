@@ -38,7 +38,7 @@ export interface HarnessInvocationSnapshot {
   readonly resource: ResourceRef;
   readonly phase: HarnessInvocationPhase;
   readonly newLane: boolean;
-  readonly harnessTargetId: string;
+  readonly harnessTargetId?: string;
   readonly laneId?: string;
   readonly turnId?: string;
   readonly result?: TurnSummary;
@@ -56,7 +56,8 @@ export interface ReconcileHarnessInvocation {
     readonly prompt: string;
     readonly laneId: string;
     readonly newLane: boolean;
-    readonly harnessTargetId: string;
+    /** Required for harness(); omitted draft() Targets resolve when the user submits. */
+    readonly harnessTargetId?: string;
   };
 }
 
@@ -83,6 +84,8 @@ export interface DraftHarnessInvocationInput {
   readonly pluginInstanceId: string;
   readonly title: string;
   readonly prompt: string;
+  /** Plugin-fixed Target; omit to use the host selection when the user submits. */
+  readonly harnessTargetId?: string;
 }
 
 export interface ResolvedHarnessInvocation {
@@ -199,13 +202,15 @@ function frozenSummary(summary: TurnSummary): TurnSummary {
 
 function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
   const recorded = state.recorded.payload;
+  const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
+    recorded.harnessTargetId;
   return Object.freeze({
     invocationId: recorded.invocationId,
     operation: Object.freeze({ ...recorded.operation }),
     resource: Object.freeze({ ...recorded.resource }),
     phase: phaseOf(state),
     newLane: recorded.newLane,
-    harnessTargetId: recorded.harnessTargetId,
+    ...(harnessTargetId === undefined ? {} : { harnessTargetId }),
     ...(state.scheduled === undefined
       ? {}
       : {
@@ -301,7 +306,9 @@ export class HarnessInvocationStore {
         prompt: invocation.prompt,
         laneId: invocation.laneId,
         newLane: invocation.newLane,
-        harnessTargetId: invocation.harnessTargetId,
+        ...(invocation.harnessTargetId === undefined
+          ? {}
+          : { harnessTargetId: invocation.harnessTargetId }),
       },
     });
     const state = this.states.get(id);
@@ -333,6 +340,9 @@ export class HarnessInvocationStore {
           pluginInstanceId: pluginInstanceIdOf(state),
           title: state.recorded.payload.title,
           prompt: state.recorded.payload.prompt,
+          ...(state.recorded.payload.harnessTargetId === undefined
+            ? {}
+            : { harnessTargetId: state.recorded.payload.harnessTargetId }),
         })),
     );
   }
@@ -340,7 +350,11 @@ export class HarnessInvocationStore {
   resolveDraftInput(
     invocationId: string,
     outcome:
-      | { readonly kind: "submitted"; readonly blocks: readonly PromptBlock[] }
+      | {
+          readonly kind: "submitted";
+          readonly blocks: readonly PromptBlock[];
+          readonly harnessTargetId: string;
+        }
       | { readonly kind: "dismissed" },
   ): ResolvedHarnessInvocation | undefined {
     const state = this.states.get(invocationId);
@@ -360,11 +374,24 @@ export class HarnessInvocationStore {
         `HarnessInvocation ${invocationId} draft input must not be empty`,
       );
     }
+    const fixedHarnessTargetId = state.recorded.payload.harnessTargetId;
+    if (
+      fixedHarnessTargetId !== undefined &&
+      outcome.harnessTargetId !== fixedHarnessTargetId
+    ) {
+      throw new Error(
+        `HarnessInvocation ${invocationId} must use its fixed HarnessTarget: ${fixedHarnessTargetId}`,
+      );
+    }
     this.session.append({
       kind: "_baton_harness_invocation_input_submitted",
       source: { type: "user" },
       parentEventId: state.recorded.eventId,
-      payload: { invocationId, blocks: [...outcome.blocks] },
+      payload: {
+        invocationId,
+        blocks: [...outcome.blocks],
+        harnessTargetId: outcome.harnessTargetId,
+      },
     });
     const current = this.states.get(invocationId) as InvocationState;
     const scheduled = this.ensureScheduled(current);
@@ -463,12 +490,19 @@ export class HarnessInvocationStore {
     ) {
       return;
     }
+    const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
+      recorded.harnessTargetId;
+    if (!harnessTargetId) {
+      throw new Error(
+        `HarnessInvocation ${recorded.invocationId} requires a HarnessTarget before scheduling`,
+      );
+    }
     this.session.requireLane(recorded.laneId);
     const scheduled: HarnessInvocationScheduled = {
       invocationId: recorded.invocationId,
       messageId: newId("m"),
       turnId: newId("t"),
-      harnessTargetId: recorded.harnessTargetId,
+      harnessTargetId,
       laneId: recorded.newLane ? newId("hl") : recorded.laneId,
     };
     this.session.append({

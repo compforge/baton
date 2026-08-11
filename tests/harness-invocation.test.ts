@@ -121,6 +121,7 @@ describe("HarnessInvocation Store", () => {
     const store = new HarnessInvocationStore(handle);
     const pending = store.record(invocation(handle.id, {
       operation: { verb: "draft", key: "edit-first" },
+      harnessTargetId: undefined,
     }));
 
     expect(pending.phase).toBe("awaiting_input");
@@ -135,13 +136,20 @@ describe("HarnessInvocation Store", () => {
     const resolved = store.resolveDraftInput(pending.invocationId, {
       kind: "submitted",
       blocks: [{ type: "text", text: "Implement only the focused fix." }],
+      harnessTargetId: "claude",
     });
     expect(resolved?.scheduled).toMatchObject({
       invocationId: pending.invocationId,
+      harnessTargetId: "claude",
       source: "user",
       newLane: false,
       laneId: MAIN_LANE_ID,
       blocks: [{ type: "text", text: "Implement only the focused fix." }],
+    });
+    expect(handle.readEvents().find((event) =>
+      event.kind === "_baton_harness_invocation_input_submitted"
+    )).toMatchObject({
+      payload: { harnessTargetId: "claude" },
     });
     expect(store.pendingDraftInputs()).toEqual([]);
   });

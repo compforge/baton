@@ -642,7 +642,10 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     }
     case "_baton_harness_invocation_input_submitted": {
       const request = state.harnessInvocations.get(ev.payload.invocationId);
-      if (request) request.phase = "queued";
+      if (request) {
+        request.phase = "queued";
+        request.harnessTargetId = ev.payload.harnessTargetId;
+      }
       break;
     }
     case "_baton_harness_invocation_scheduled": {

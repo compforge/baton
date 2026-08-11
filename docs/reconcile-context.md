@@ -84,9 +84,14 @@ Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harne
 是 user，`harness` 产生的 Input source 是 Plugin；source 与 Lane 是两条正交轴。结果中的 `laneId`
 始终是实际执行 Lane，可传给后续 `harness` 调用以继续同一支线。
 
+`draft` 显式携带 `harnessTargetId` 时，Plugin 固定执行目标，草稿卡片展示该 Target；省略时不在创建
+草稿时读取默认值，而是在用户提交编辑结果时读取宿主的当前选择。最终 Target 先随 submitted Input
+事实落盘，再进入调度，因此提交后的恢复不会重新选择。`harness` 没有编辑等待阶段，省略 Target 时
+继续在调用时立即解析宿主当前选择。
+
 Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
-API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、Target、
-请求的 `laneId + newLane`，随后关联实际 Lane、Input、Delivery Attempt、Turn 和
+API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、显式 Target 意图、
+请求的 `laneId + newLane`，随后关联提交时确定的最终 Target、实际 Lane、Input、Delivery Attempt、Turn 和
 TurnSummary。新 Lane 的 `createdFor` 与 `parentLaneId` 只记录创建事实，不是后续调用的所有权约束。
 
 ## 身份、恢复与取消

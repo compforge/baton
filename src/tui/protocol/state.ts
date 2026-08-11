@@ -351,7 +351,9 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       kind: "suggested_input" as const,
       blocking: false,
       requester: request.pluginInstanceId,
-      title: request.title,
+      title: request.harnessTargetId === undefined
+        ? request.title
+        : `${request.title} · Target ${request.harnessTargetId}`,
       text: request.prompt,
       cancelResponse: {
         kind: "suggested_input" as const,
