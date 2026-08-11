@@ -391,12 +391,15 @@ export interface HarnessInvocationRecorded {
   /** Existing Lane used as the execution Lane or as the parent of a new Lane. */
   laneId: string;
   newLane: boolean;
-  harnessTargetId: string;
+  /** Fixed Target requested by the Plugin; an omitted draft resolves it on submission. */
+  harnessTargetId?: string;
 }
 
 export interface HarnessInvocationInputSubmitted {
   invocationId: string;
   blocks: PromptBlock[];
+  /** Final Target selected for this submitted Input. */
+  harnessTargetId: string;
 }
 
 export interface HarnessInvocationScheduled {

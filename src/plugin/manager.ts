@@ -167,8 +167,8 @@ export interface ManagerOptions {
   packages?: readonly PluginPackage[];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
   snapshot?: () => ReconcileSnapshot;
-  /** Current host selection used when harness() omits harnessTargetId. */
-  selectedHarnessTargetId?: () => string;
+  /** Current host selection used by an implicit harness() or a submitted draft(). */
+  selectedHarnessTargetId?: () => string | undefined;
   /** 按需加载已安装 Package；fresh 用于开发期 `/reload-plugins` 绕过模块缓存。 */
   loadPackage?(
     pluginId: string,
@@ -331,7 +331,7 @@ export class Manager {
   private readonly loadPackageEntry: ManagerOptions["loadPackageEntry"];
   private readonly pluginSupervisor?: PluginSupervisor;
   private readonly snapshot: () => ReconcileSnapshot;
-  private readonly selectedHarnessTargetId?: () => string;
+  private readonly selectedHarnessTargetId?: () => string | undefined;
   private readonly reconcileInteractions?: ReconcileInteractionStore;
   private readonly harnessInvocations?: HarnessInvocationStore;
   private readonly enqueueHarnessInvocation?: ManagerOptions["enqueueHarnessInvocation"];
@@ -975,7 +975,43 @@ export class Manager {
         }
       | { readonly kind: "dismissed" },
   ): boolean {
-    const resolved = this.harnessInvocations?.resolveDraftInput(invocationId, outcome);
+    if (!this.harnessInvocations) return false;
+    let resolvedOutcome:
+      | {
+          readonly kind: "submitted";
+          readonly blocks: readonly PromptBlock[];
+          readonly harnessTargetId: string;
+        }
+      | { readonly kind: "dismissed" };
+    if (outcome.kind === "dismissed") {
+      resolvedOutcome = outcome;
+    } else {
+      const pending = this.harnessInvocations.pendingDraftInputs().find(
+        (request) => request.invocationId === invocationId,
+      );
+      if (!pending) return false;
+      // Persist the effective Target with submission so recovery cannot re-read
+      // a later host selection before scheduling.
+      const harnessTargetId = pending.harnessTargetId ??
+        this.selectedHarnessTargetId?.();
+      if (!harnessTargetId) {
+        throw new Error(
+          `draft() ${invocationId} requires a HarnessTarget selection on submission`,
+        );
+      }
+      if (
+        !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
+      ) {
+        throw new Error(
+          `draft() ${invocationId} references unknown HarnessTarget on submission: ${harnessTargetId}`,
+        );
+      }
+      resolvedOutcome = { ...outcome, harnessTargetId };
+    }
+    const resolved = this.harnessInvocations.resolveDraftInput(
+      invocationId,
+      resolvedOutcome,
+    );
     if (!resolved) return false;
     if (resolved.scheduled) this.dispatchHarnessInvocation(resolved.scheduled);
     return true;
@@ -1021,15 +1057,19 @@ export class Manager {
       key: request.input.key,
     });
     const existing = this.harnessInvocations.current(context, operation);
-    const harnessTargetId = request.input.harnessTargetId ??
-      existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
-    if (!harnessTargetId) {
+    // draft() omission is a submission-time choice; harness() schedules now.
+    const harnessTargetId = request.verb === "draft"
+      ? request.input.harnessTargetId
+      : request.input.harnessTargetId ??
+        existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
+    if (request.verb === "harness" && !harnessTargetId) {
       throw new Error(
         `${request.verb}() ${request.input.key} requires a HarnessTarget selection`,
       );
     }
     if (
       !existing &&
+      harnessTargetId !== undefined &&
       !this.snapshot().harnessTargets.some((target) => target.id === harnessTargetId)
     ) {
       throw new Error(

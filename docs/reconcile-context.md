@@ -23,22 +23,25 @@ loop，但不能持有 Harness Adapter、进程、SDK 句柄或跨 reconcile 的
 Plugin 可以通过 `ctx.snapshot` 读取当前事实，再把领域动作写成普通控制流：
 
 ```ts
+const reviewRunId = resource.status.reviewRunId;
+if (!reviewRunId) return;
+const operationKey = `handle-review:${reviewRunId}`;
+
 const decision = await ctx.ask({
-  key: "handle-review:run-17",
+  key: operationKey,
   title: "Handle AI review comments",
   prompt: "How should Baton handle these findings?",
   choices: [
     { value: "run", label: "Run now" },
     { value: "edit", label: "Edit first" },
-    { value: "ignore", label: "Ignore" },
   ],
 });
 if (decision.state !== "answered") return;
 
 const execution = decision.value === "edit"
-  ? await ctx.draft({ key: "review:draft", prompt })
+  ? await ctx.draft({ key: operationKey, prompt })
   : await ctx.harness({
-      key: "review:run",
+      key: operationKey,
       prompt,
       laneId: "main",
       newLane: true,
@@ -60,7 +63,7 @@ Plugin 决定 timeout 在自己的领域里表示拒绝、跳过还是转人工�
 当领域条件变化、不再需要用户回答时，Plugin 显式撤回原 operation：
 
 ```ts
-await ctx.withdraw({ verb: "ask", key: "handle-review:run-17" });
+await ctx.withdraw({ verb: "ask", key: operationKey });
 ```
 
 撤回只结束仍未决的 Interaction，并持久化 `cancelled(requester)`；若用户答案或其它终态已经先到，
@@ -81,12 +84,21 @@ Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harne
 是 user，`harness` 产生的 Input source 是 Plugin；source 与 Lane 是两条正交轴。结果中的 `laneId`
 始终是实际执行 Lane，可传给后续 `harness` 调用以继续同一支线。
 
+`draft` 显式携带 `harnessTargetId` 时，Plugin 固定执行目标，草稿卡片展示该 Target；省略时不在创建
+草稿时读取默认值，而是在用户提交编辑结果时读取宿主的当前选择。最终 Target 先随 submitted Input
+事实落盘，再进入调度，因此提交后的恢复不会重新选择。`harness` 没有编辑等待阶段，省略 Target 时
+继续在调用时立即解析宿主当前选择。
+
 Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
-API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、Target、
-请求的 `laneId + newLane`，随后关联实际 Lane、Input、Delivery Attempt、Turn 和
+API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、显式 Target 意图、
+请求的 `laneId + newLane`，随后关联提交时确定的最终 Target、实际 Lane、Input、Delivery Attempt、Turn 和
 TurnSummary。新 Lane 的 `createdFor` 与 `parentLaneId` 只记录创建事实，不是后续调用的所有权约束。
 
 ## 身份、恢复与取消
+
+Plugin 必须在每次 reconcile 中，从 Resource 持久化的 `spec/status` 或可重新观测的稳定外部事实，
+确定性地重建下一步 operation ref（`verb + key`）及其编排顺序；不能依赖进程内存、随机值或当前
+时间。否则 Core 会把变化后的 ref 视为新 operation，已持久化的结果将无法接回。
 
 同一 Resource incarnation 内，完整操作身份是 `verb + key`。`key` 在各 verb 内是幂等键；同一
 operation ref 的参数不可变，不同 verb 可以复用同一个 caller key。需要再次提问或再次执行时使用

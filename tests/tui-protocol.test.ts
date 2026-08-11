@@ -1945,6 +1945,7 @@ describe("Plugin draft projection", () => {
         pluginInstanceId: "reqloop_default",
         title: "Handle review",
         prompt: "Handle every review comment.",
+        harnessTargetId: "codex",
       }];
       let submitted: unknown;
       const internals = protocol as unknown as {
@@ -1964,7 +1965,7 @@ describe("Plugin draft projection", () => {
       expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
         id: "hinv_edit",
         kind: "suggested_input",
-        title: "Handle review",
+        title: "Handle review · Target codex",
         text: "Handle every review comment.",
       }]);
 

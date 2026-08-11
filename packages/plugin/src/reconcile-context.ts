@@ -16,7 +16,11 @@ export type ReconcileOperationVerb =
   | "draft"
   | "harness";
 
-/** Stable identity of one level-based capability call within a Resource incarnation. */
+/**
+ * Stable identity of one level-based capability call within a Resource incarnation.
+ * Reconstruct the verb and key deterministically on every reconcile from durable
+ * Resource state or stable, re-observable facts.
+ */
 export interface ReconcileOperationRef<
   TVerb extends ReconcileOperationVerb = ReconcileOperationVerb,
 > {
@@ -32,7 +36,10 @@ export interface AskChoice<TValue extends string = string> {
 }
 
 export interface AskInput<TValue extends string = string> {
-  /** Stable within the Resource operation. Change it to ask a new question. */
+  /**
+   * Deterministically derived from durable Resource state or stable, re-observable facts.
+   * Change it only to ask a new question.
+   */
   readonly key: string;
   readonly title: string;
   readonly prompt: string;
@@ -57,7 +64,10 @@ export type AskResult<TValue extends string = string> =
     };
 
 export interface ConfirmInput {
-  /** Stable within the Resource operation. Change it to request new consent. */
+  /**
+   * Deterministically derived from durable Resource state or stable, re-observable facts.
+   * Change it only to request new consent.
+   */
   readonly key: string;
   readonly title: string;
   readonly prompt: string;
@@ -93,7 +103,10 @@ export type WithdrawResult =
     };
 
 export interface HarnessInput {
-  /** Stable within the Resource operation. Change it to start another Turn. */
+  /**
+   * Deterministically derived from durable Resource state or stable, re-observable facts.
+   * Change it only to start another Turn.
+   */
   readonly key: string;
   readonly prompt: string;
   /** Existing Baton Lane to continue, including the reserved main Lane ID `main`. */
@@ -105,7 +118,10 @@ export interface HarnessInput {
 }
 
 export interface DraftInput {
-  /** Stable within the Resource operation. Change it to offer another draft. */
+  /**
+   * Deterministically derived from durable Resource state or stable, re-observable facts.
+   * Change it only to offer another draft.
+   */
   readonly key: string;
   readonly prompt: string;
   /** Omit to use the host's selected HarnessTarget on submission. */

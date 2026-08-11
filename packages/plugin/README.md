@@ -275,6 +275,9 @@ Each choice `value` is the stable answer value persisted by Baton and returned
 as `decision.value`; `label` and `description` are presentation only. Operation
 keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and
 `confirm({ key: "ship" })` are distinct durable operations.
+The verb and key must be reconstructed deterministically on every reconcile
+from durable Resource state or stable, re-observable facts. Process memory,
+random values, and current time cannot own continuation identity.
 
 If the domain no longer needs an unresolved decision, withdraw it by the same
 operation ref:
@@ -298,6 +301,12 @@ declares the Lane for direct execution:
 Baton owns target selection, admission, execution, cancellation, ledger and
 recovery. Lane is a Baton-native task line rather than a Plugin-private
 execution type:
+
+An explicit `draft.harnessTargetId` fixes the Target and is shown with the
+editable draft. When omitted, Baton resolves the host's current selection when
+the user submits the draft and persists that final Target before scheduling.
+An omitted `harness.harnessTargetId` is resolved immediately because direct
+execution has no editing phase.
 
 ```ts
 const execution = await ctx.harness({

@@ -329,7 +329,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("holds ctx.draft until the edited input is submitted", async () => {
+  test("resolves omitted draft Targets on submission and preserves explicit Targets", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -341,15 +341,24 @@ describe("plugin Manager", () => {
       name: "run_1",
       spec: { value: "run_1" },
     });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_2",
+      spec: { value: "run_2" },
+    });
     const scheduled: ScheduledHarnessInvocation[] = [];
+    let selectedHarnessTargetId: string | undefined;
     const manager = new Manager({
       session,
       instances: new PluginInstanceStore({ session }),
       snapshot: () => ({
         ...emptyReconcileSnapshot(session.id),
-        harnessTargets: [{ id: "codex", harness: "codex" }],
+        harnessTargets: [
+          { id: "codex", harness: "codex" },
+          { id: "claude", harness: "claude" },
+        ],
       }),
-      selectedHarnessTargetId: () => "codex",
+      selectedHarnessTargetId: () => selectedHarnessTargetId,
       enqueueHarnessInvocation(request) {
         scheduled.push(request);
       },
@@ -357,10 +366,13 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(ctx) {
+      async reconcile(ctx, resource) {
         await ctx.draft({
           key: "implement",
-          prompt: "Implement run_1.",
+          prompt: `Implement ${resource.metadata.name}.`,
+          ...(resource.metadata.name === "run_2"
+            ? { harnessTargetId: "codex" }
+            : {}),
         });
       },
     });
@@ -376,8 +388,10 @@ describe("plugin Manager", () => {
       title: "implement",
       prompt: "Implement run_1.",
     }]);
+    expect(manager.listPendingHarnessInvocationInputs()[0]?.harnessTargetId).toBeUndefined();
 
     const invocationId = manager.listPendingHarnessInvocationInputs()[0]!.invocationId;
+    selectedHarnessTargetId = "claude";
     expect(manager.resolveHarnessInvocationInput(invocationId, {
       kind: "submitted",
       blocks: [{
@@ -388,6 +402,7 @@ describe("plugin Manager", () => {
     await waitFor(() => scheduled.length === 1);
     expect(scheduled[0]).toMatchObject({
       invocationId,
+      harnessTargetId: "claude",
       blocks: [{
         type: "text",
         text: "Implement run_1 with the focused test only.",
@@ -396,7 +411,34 @@ describe("plugin Manager", () => {
       newLane: false,
       laneId: MAIN_LANE_ID,
     });
+    expect(session.readEvents().find((event) =>
+      event.kind === "_baton_harness_invocation_input_submitted" &&
+      event.payload.invocationId === invocationId
+    )).toMatchObject({ payload: { harnessTargetId: "claude" } });
     expect(manager.listPendingHarnessInvocationInputs()).toEqual([]);
+
+    await manager.enqueue({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_2",
+    });
+    const fixed = manager.listPendingHarnessInvocationInputs()[0];
+    expect(fixed).toMatchObject({
+      title: "implement",
+      prompt: "Implement run_2.",
+      harnessTargetId: "codex",
+    });
+    expect(manager.resolveHarnessInvocationInput(fixed!.invocationId, {
+      kind: "submitted",
+      blocks: [{ type: "text", text: "Implement run_2." }],
+    })).toBe(true);
+    await waitFor(() => scheduled.length === 2);
+    expect(scheduled[1]).toMatchObject({
+      invocationId: fixed!.invocationId,
+      harnessTargetId: "codex",
+    });
     await manager.close();
   });
 
