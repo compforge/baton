@@ -247,6 +247,7 @@ const decision = await ctx.ask({
     { value: "req_1", label: "REQ-1" },
     { value: "standalone", label: "Do not associate" },
   ],
+  expiresAt: resource.spec.decisionExpiresAt,
 });
 if (decision.state !== "answered") return;
 ```
@@ -259,7 +260,22 @@ return the same remote-search picker shape so the field stays open.
 
 The call returns `waiting` until the answer is durable. Baton then re-enqueues
 the same Resource, and the same key returns `answered`. Plugins do not register
-callbacks or keep a Runner promise alive while waiting.
+callbacks or keep a Runner promise alive while waiting. An optional `expiresAt`
+must be a stable absolute ISO 8601 timestamp derived from durable state. Baton
+persists it with the Interaction, records `cancelled` with reason `timeout` when
+it expires, and re-enqueues the Resource. The Plugin decides whether that means
+decline, skip, escalation, or another domain outcome.
+
+If the domain no longer needs an unresolved decision, withdraw it by the same
+operation key:
+
+```ts
+await ctx.withdraw({ kind: "ask", key: "associate-pr" });
+```
+
+Withdrawal records cancellation with reason `requester`. It returns
+`not-pending` when an answer or another terminal result already won the race.
+Deleting the owning Resource also withdraws its unresolved Interactions.
 
 A Controller uses `ctx.draft` to let the user edit a prompt, or
 `ctx.harness` to originate a driven Turn directly. The Plugin explicitly

@@ -174,6 +174,56 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
+  test("reconciles a Resource again when ctx.ask reaches its deadline", async () => {
+    const root = testRoot();
+    const session = new SessionStore(root).createSession({ cwd: "/repo" });
+    const resources = new PluginResourceStore({
+      session,
+      pluginInstanceId: "reqloop_default",
+    });
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      spec: { value: "run_1" },
+    });
+    const states: string[] = [];
+    const expiresAt = new Date(Date.now() + 200).toISOString();
+    const manager = new Manager({
+      proposals: new ProposalStore({ session }),
+      session,
+      onProposal() {},
+    });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(ctx) {
+        const result = await ctx.ask({
+          key: "associate-pr",
+          title: "Associate pull request",
+          prompt: "Choose a requirement",
+          expiresAt,
+        });
+        states.push(
+          result.state === "cancelled"
+            ? `${result.state}:${result.reason}`
+            : result.state,
+        );
+      },
+    });
+
+    await manager.enqueue({
+      batonSessionId: session.id,
+      pluginInstanceId: "reqloop_default",
+      resourceApiVersion: API_VERSION,
+      resourceKind: "Requirement",
+      resourceId: "run_1",
+    });
+    expect(states).toEqual(["waiting"]);
+    await waitFor(() => states.length === 2, 2_000);
+    expect(states).toEqual(["waiting", "cancelled:timeout"]);
+    await manager.close();
+  });
+
   test("runs ctx.harness on a new lane once and reconciles its result", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
@@ -354,7 +404,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("cancels a pre-admission HarnessInvocation when its Resource incarnation is deleted", async () => {
+  test("cancels pending work when its Resource incarnation is deleted", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -391,6 +441,11 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
         if (resource.metadata.deletionTimestamp) return;
+        await ctx.ask({
+          key: "approve",
+          title: "Approve implementation",
+          prompt: "Continue?",
+        });
         await ctx.harness({
           key: "implement",
           prompt: "Implement run_1.",
@@ -408,6 +463,7 @@ describe("plugin Manager", () => {
 
     await manager.enqueue(reconcileKey);
     const requestId = manager.listHarnessInvocations()[0]!.invocationId;
+    const interactionId = [...session.loadState().interactions.keys()][0]!;
     resources.requestDeletion(
       resourceType("Requirement"),
       "run_1",
@@ -417,6 +473,10 @@ describe("plugin Manager", () => {
     await Bun.sleep(20);
 
     expect(manager.listHarnessInvocations()[0]?.phase).toBe("cancelled");
+    expect(session.loadState().interactions.get(interactionId)?.result).toEqual({
+      kind: "cancelled",
+      reason: "requester",
+    });
     expect(cancelled).toEqual([requestId]);
     expect(failures).toEqual([]);
     await manager.close();

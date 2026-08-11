@@ -24,6 +24,8 @@ export interface AskInput<TValue extends string = string> {
   readonly prompt: string;
   readonly choices?: readonly AskChoice<TValue>[];
   readonly allowOther?: boolean;
+  /** Absolute ISO 8601 deadline. Baton durably cancels the question when it expires. */
+  readonly expiresAt?: string;
 }
 
 export type AskResult<TValue extends string = string> =
@@ -46,6 +48,8 @@ export interface ConfirmInput {
   readonly prompt: string;
   readonly confirmLabel?: string;
   readonly declineLabel?: string;
+  /** Absolute ISO 8601 deadline. Baton durably cancels the confirmation when it expires. */
+  readonly expiresAt?: string;
 }
 
 export type ConfirmResult =
@@ -58,6 +62,22 @@ export type ConfirmResult =
   | {
       readonly state: "cancelled";
       readonly reason: CancellationReason;
+    };
+
+export interface WithdrawInput {
+  /** The Interaction-producing verb that owns the stable operation key. */
+  readonly kind: "ask" | "confirm";
+  readonly key: string;
+}
+
+export type WithdrawResult =
+  | {
+      readonly state: "cancelled";
+      readonly reason: "requester";
+    }
+  | {
+      /** No matching unresolved Interaction remains. */
+      readonly state: "not-pending";
     };
 
 export interface HarnessInput {
@@ -113,6 +133,7 @@ export interface ReconcileContext {
     input: AskInput<TValue>,
   ): Promise<AskResult<TValue>>;
   confirm(input: ConfirmInput): Promise<ConfirmResult>;
+  withdraw(input: WithdrawInput): Promise<WithdrawResult>;
   draft(input: DraftInput): Promise<DraftResult>;
   harness(input: HarnessInput): Promise<HarnessResult>;
 }

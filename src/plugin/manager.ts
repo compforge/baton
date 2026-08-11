@@ -416,7 +416,14 @@ export class Manager {
       (() => emptyReconcileSnapshot(options.proposals.batonSessionId));
     this.selectedHarnessTargetId = options.selectedHarnessTargetId;
     if (options.session) {
-      this.interactions = new InteractionStore(options.session);
+      this.interactions = new InteractionStore(options.session, {
+        now: this.now,
+        onTimeout: (key) => {
+          void this.enqueue(key).catch(() => {
+            // The durable result remains available to initial reconcile or retry.
+          });
+        },
+      });
       this.harnessInvocations = new HarnessInvocationStore(options.session, {
         onChanged: (request, key) =>
           this.enqueueHarnessInvocationOwner(key, request.resource),
@@ -1031,6 +1038,12 @@ export class Manager {
         throw new Error("plugin Manager requires a SessionHandle for confirm()");
       }
       return this.interactions.confirm(context, request.input);
+    }
+    if (request.verb === "withdraw") {
+      if (!this.interactions) {
+        throw new Error("plugin Manager requires a SessionHandle for withdraw()");
+      }
+      return this.interactions.withdraw(context, request.input);
     }
     if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
       throw new Error("plugin Manager host does not support harness()");
@@ -1773,7 +1786,7 @@ export class Manager {
   }
 
   private handlePluginResourceChange(change: ResourceClientChange): void {
-    if (change.kind === "deleted" && this.harnessInvocations) {
+    if (change.kind === "deleted") {
       const resource = change.resource;
       const ref: ResourceRef = {
         apiVersion: resource.apiVersion,
@@ -1782,8 +1795,11 @@ export class Manager {
         name: resource.metadata.name,
         uid: resource.metadata.uid,
       };
-      for (const requestId of this.harnessInvocations.cancelForResource(ref)) {
-        this.cancelHostHarnessInvocation?.(requestId);
+      this.interactions?.cancelForResource(ref);
+      if (this.harnessInvocations) {
+        for (const requestId of this.harnessInvocations.cancelForResource(ref)) {
+          this.cancelHostHarnessInvocation?.(requestId);
+        }
       }
     }
     this.notifyBoardChanged();

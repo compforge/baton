@@ -9,6 +9,8 @@ import type {
   HarnessResult,
   ReconcileContext,
   ResourceRef,
+  WithdrawInput,
+  WithdrawResult,
 } from "@compforge/baton-plugin";
 
 import type { ReconcileSnapshot } from "./reconcile-snapshot.ts";
@@ -32,6 +34,10 @@ export type ReconcileVerbRequest =
       readonly input: ConfirmInput;
     }
   | {
+      readonly verb: "withdraw";
+      readonly input: WithdrawInput;
+    }
+  | {
       readonly verb: "draft";
       readonly input: DraftInput;
     }
@@ -43,6 +49,7 @@ export type ReconcileVerbRequest =
 export type ReconcileVerbResponse =
   | AskResult
   | ConfirmResult
+  | WithdrawResult
   | DraftResult
   | HarnessResult;
 
@@ -61,6 +68,7 @@ function validateAsk(input: AskInput): void {
   nonEmpty("ask key", input.key);
   nonEmpty("ask title", input.title);
   nonEmpty("ask prompt", input.prompt);
+  validateExpiresAt("ask", input.expiresAt);
   if (input.choices === undefined) return;
   if (input.choices.length === 0) {
     throw new Error("ask choices must not be empty");
@@ -85,6 +93,26 @@ function validateConfirm(input: ConfirmInput): void {
   }
   if (input.declineLabel !== undefined) {
     nonEmpty("confirm declineLabel", input.declineLabel);
+  }
+  validateExpiresAt("confirm", input.expiresAt);
+}
+
+function validateExpiresAt(name: string, value: string | undefined): void {
+  if (value === undefined) return;
+  if (
+    !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    throw new Error(
+      `${name} expiresAt must be an ISO 8601 timestamp with a timezone`,
+    );
+  }
+}
+
+function validateWithdraw(input: WithdrawInput): void {
+  nonEmpty("withdraw key", input.key);
+  if (input.kind !== "ask" && input.kind !== "confirm") {
+    throw new Error(`withdraw kind is invalid: ${String(input.kind)}`);
   }
 }
 
@@ -129,6 +157,13 @@ export function createReconcileContext(
         verb: "confirm",
         input,
       }) as ConfirmResult;
+    },
+    async withdraw(input: WithdrawInput) {
+      validateWithdraw(input);
+      return await invoke(scope, {
+        verb: "withdraw",
+        input,
+      }) as WithdrawResult;
     },
     async draft(input: DraftInput) {
       validateDraft(input);
