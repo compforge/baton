@@ -29,7 +29,6 @@ import { reconcileResourceOwner } from "./reconcile-scope.ts";
 type HarnessOperationRef = ReconcileOperationRef<"draft" | "harness">;
 
 export type HarnessInvocationPhase =
-  | "awaiting_input"
   | "queued"
   | "running"
   | "uncertain"
@@ -43,7 +42,7 @@ export interface HarnessInvocationSnapshot {
   readonly resource: ResourceRef;
   readonly phase: HarnessInvocationPhase;
   readonly newLane: boolean;
-  readonly harnessTargetId?: string;
+  readonly harnessTargetId: string;
   readonly laneId?: string;
   readonly turnId?: string;
   readonly result?: TurnSummary;
@@ -64,8 +63,7 @@ export interface ReconcileHarnessInvocation {
     readonly blocks?: readonly PromptBlock[];
     readonly laneId: string;
     readonly newLane: boolean;
-    /** Required for harness(); omitted draft() Targets resolve when the user submits. */
-    readonly harnessTargetId?: string;
+    readonly harnessTargetId: string;
   };
 }
 
@@ -87,23 +85,8 @@ export interface ScheduledHarnessInvocation {
   readonly blocks: readonly PromptBlock[];
 }
 
-export interface DraftHarnessInvocationInput {
-  readonly invocationId: string;
-  readonly pluginInstanceId: string;
-  readonly title: string;
-  readonly prompt: string;
-  /** Plugin-fixed Target; omit to use the host selection when the user submits. */
-  readonly harnessTargetId?: string;
-}
-
-export interface ResolvedHarnessInvocation {
-  readonly key: ReconcileKey;
-  readonly scheduled?: ScheduledHarnessInvocation;
-}
-
 interface InvocationState {
   readonly recorded: EventEnvelope<"_baton_harness_invocation_recorded">;
-  inputSubmission?: EventEnvelope<"_baton_harness_invocation_input_submitted">;
   scheduled?: EventEnvelope<"_baton_harness_invocation_scheduled">;
   cancelled?: EventEnvelope<"_baton_harness_invocation_cancelled">;
   failed?: EventEnvelope<"_baton_harness_invocation_failed">;
@@ -145,16 +128,13 @@ function sameEnvelope(
   draft: ReconcileHarnessInvocation,
 ): boolean {
   const invocation = draft.invocation;
-  const sameBlocks = (current.operation.verb === "draft" &&
-      invocation.blocks === undefined) ||
-    JSON.stringify(current.blocks) === JSON.stringify(invocation.blocks);
   return current.operation.verb === invocation.operation.verb &&
     current.operation.key === invocation.operation.key &&
     current.resourceOwner === reconcileResourceOwner(draft.key) &&
     sameResource(current.resource, draft.resource) &&
     current.title === invocation.title &&
     current.prompt === invocation.prompt &&
-    sameBlocks &&
+    JSON.stringify(current.blocks) === JSON.stringify(invocation.blocks) &&
     current.laneId === invocation.laneId &&
     current.newLane === invocation.newLane &&
     current.harnessTargetId === invocation.harnessTargetId;
@@ -197,30 +177,7 @@ function phaseOf(state: InvocationState): HarnessInvocationPhase {
   if (state.uncertain) return "uncertain";
   if (state.admitted) return "running";
   if (state.scheduled) return "queued";
-  return state.recorded.payload.operation.verb === "draft" &&
-      state.recorded.payload.blocks === undefined
-    ? "awaiting_input"
-    : "queued";
-}
-
-function cancellationOf(
-  state: InvocationState,
-): Readonly<HarnessInvocationCancelled> | undefined {
-  const cancellation = state.cancelled?.payload;
-  if (!cancellation) return;
-  // Normalize the original persisted representation so existing Sessions keep
-  // the same public draft-dismissal semantics after the outcome became typed.
-  if (
-    state.recorded.payload.operation.verb === "draft" &&
-    cancellation.reason === "user" &&
-    cancellation.detail === "draft input dismissed"
-  ) {
-    return Object.freeze({
-      invocationId: cancellation.invocationId,
-      reason: "dismissed",
-    });
-  }
-  return Object.freeze({ ...cancellation });
+  return "queued";
 }
 
 function frozenSummary(summary: TurnSummary): TurnSummary {
@@ -237,15 +194,13 @@ function frozenSummary(summary: TurnSummary): TurnSummary {
 
 function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
   const recorded = state.recorded.payload;
-  const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
-    recorded.harnessTargetId;
   return Object.freeze({
     invocationId: recorded.invocationId,
     operation: Object.freeze({ ...recorded.operation }),
     resource: Object.freeze({ ...recorded.resource }),
     phase: phaseOf(state),
     newLane: recorded.newLane,
-    ...(harnessTargetId === undefined ? {} : { harnessTargetId }),
+    harnessTargetId: recorded.harnessTargetId,
     ...(state.scheduled === undefined
       ? {}
       : {
@@ -257,7 +212,7 @@ function snapshotOf(state: InvocationState): HarnessInvocationSnapshot {
       : { result: frozenSummary(state.result) }),
     ...(state.cancelled === undefined
       ? {}
-      : { cancellation: cancellationOf(state) }),
+      : { cancellation: Object.freeze({ ...state.cancelled.payload }) }),
     ...(state.failed === undefined
       ? {}
       : { failure: Object.freeze({ ...state.failed.payload }) }),
@@ -281,10 +236,21 @@ function scheduledOf(
     source: recorded.operation.verb === "draft" ? "user" : "plugin",
     messageId: scheduled.messageId,
     turnId: scheduled.turnId,
-    blocks: recorded.blocks ?? state.inputSubmission?.payload.blocks ?? [
-      { type: "text", text: recorded.prompt } satisfies PromptBlock,
-    ],
+    blocks: invocationBlocks(state),
   });
+}
+
+function invocationBlocks(state: InvocationState): readonly PromptBlock[] {
+  const recorded = state.recorded.payload;
+  if (recorded.operation.verb !== "draft") {
+    return [{ type: "text", text: recorded.prompt } satisfies PromptBlock];
+  }
+  if (!recorded.blocks?.length) {
+    throw new Error(
+      `draft HarnessInvocation ${recorded.invocationId} has no submitted Interaction blocks`,
+    );
+  }
+  return recorded.blocks;
 }
 
 /** Event-backed owner for one durable harness() or draft() execution. */
@@ -317,6 +283,15 @@ export class HarnessInvocationStore {
         `HarnessInvocation batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
       );
     }
+    if (
+      draft.invocation.operation.verb === "draft" &&
+      (draft.invocation.blocks === undefined ||
+        draft.invocation.blocks.length === 0)
+    ) {
+      throw new Error(
+        "draft HarnessInvocation requires blocks from a submitted Interaction",
+      );
+    }
     const id = invocationId(draft, draft.invocation.operation);
     const existing = this.states.get(id);
     if (existing) {
@@ -327,15 +302,6 @@ export class HarnessInvocationStore {
       }
       this.ensureScheduled(existing);
       return snapshotOf(existing);
-    }
-    if (
-      draft.invocation.operation.verb === "draft" &&
-      (draft.invocation.blocks === undefined ||
-        draft.invocation.blocks.length === 0)
-    ) {
-      throw new Error(
-        "draft HarnessInvocation requires blocks from a submitted Interaction",
-      );
     }
 
     const invocation = draft.invocation;
@@ -360,9 +326,7 @@ export class HarnessInvocationStore {
           : { blocks: invocation.blocks.map((block) => ({ ...block })) }),
         laneId: invocation.laneId,
         newLane: invocation.newLane,
-        ...(invocation.harnessTargetId === undefined
-          ? {}
-          : { harnessTargetId: invocation.harnessTargetId }),
+        harnessTargetId: invocation.harnessTargetId,
       },
     });
     const state = this.states.get(id);
@@ -382,80 +346,6 @@ export class HarnessInvocationStore {
         .sort((left, right) => left.recorded.seq - right.recorded.seq)
         .map(snapshotOf),
     );
-  }
-
-  pendingDraftInputs(): readonly DraftHarnessInvocationInput[] {
-    // Compatibility projection for Sessions written before draft input moved
-    // to Core Interaction. New record() calls cannot create this state.
-    return Object.freeze(
-      [...this.states.values()]
-        .filter((state) => phaseOf(state) === "awaiting_input")
-        .sort((left, right) => left.recorded.seq - right.recorded.seq)
-        .map((state) => Object.freeze({
-          invocationId: state.recorded.payload.invocationId,
-          pluginInstanceId: pluginInstanceIdOf(state),
-          title: state.recorded.payload.title,
-          prompt: state.recorded.payload.prompt,
-          ...(state.recorded.payload.harnessTargetId === undefined
-            ? {}
-            : { harnessTargetId: state.recorded.payload.harnessTargetId }),
-        })),
-    );
-  }
-
-  resolveDraftInput(
-    invocationId: string,
-    outcome:
-      | {
-          readonly kind: "submitted";
-          readonly blocks: readonly PromptBlock[];
-          readonly harnessTargetId: string;
-        }
-      | { readonly kind: "dismissed" },
-  ): ResolvedHarnessInvocation | undefined {
-    // Compatibility resolver for pre-Interaction draft invocations.
-    const state = this.states.get(invocationId);
-    if (
-      !state ||
-      phaseOf(state) !== "awaiting_input" ||
-      state.recorded.payload.operation.verb !== "draft"
-    ) {
-      return;
-    }
-    if (outcome.kind === "dismissed") {
-      this.appendCancellation(state, "dismissed");
-      return Object.freeze({ key: keyOf(state) });
-    }
-    if (outcome.blocks.length === 0) {
-      throw new Error(
-        `HarnessInvocation ${invocationId} draft input must not be empty`,
-      );
-    }
-    const fixedHarnessTargetId = state.recorded.payload.harnessTargetId;
-    if (
-      fixedHarnessTargetId !== undefined &&
-      outcome.harnessTargetId !== fixedHarnessTargetId
-    ) {
-      throw new Error(
-        `HarnessInvocation ${invocationId} must use its fixed HarnessTarget: ${fixedHarnessTargetId}`,
-      );
-    }
-    this.session.append({
-      kind: "_baton_harness_invocation_input_submitted",
-      source: { type: "user" },
-      parentEventId: state.recorded.eventId,
-      payload: {
-        invocationId,
-        blocks: [...outcome.blocks],
-        harnessTargetId: outcome.harnessTargetId,
-      },
-    });
-    const current = this.states.get(invocationId) as InvocationState;
-    const scheduled = this.ensureScheduled(current);
-    return Object.freeze({
-      key: keyOf(current),
-      ...(scheduled === undefined ? {} : { scheduled }),
-    });
   }
 
   latestCancellable(identifier?: string): HarnessInvocationSnapshot | undefined {
@@ -525,13 +415,6 @@ export class HarnessInvocationStore {
     const pending: ScheduledHarnessInvocation[] = [];
     for (const state of this.states.values()) {
       if (state.result || state.cancelled || state.failed) continue;
-      if (
-        state.recorded.payload.operation.verb === "draft" &&
-        state.recorded.payload.blocks === undefined &&
-        !state.inputSubmission
-      ) {
-        continue;
-      }
       const scheduled = this.ensureScheduled(state);
       const current = this.states.get(
         state.recorded.payload.invocationId,
@@ -560,35 +443,25 @@ export class HarnessInvocationStore {
     if (state.scheduled) return scheduledOf(state);
     const recorded = state.recorded.payload;
     if (
-      (recorded.operation.verb === "draft" &&
-        recorded.blocks === undefined &&
-        !state.inputSubmission) ||
       state.cancelled ||
       state.failed ||
       state.result
     ) {
       return;
     }
-    const harnessTargetId = state.inputSubmission?.payload.harnessTargetId ??
-      recorded.harnessTargetId;
-    if (!harnessTargetId) {
-      throw new Error(
-        `HarnessInvocation ${recorded.invocationId} requires a HarnessTarget before scheduling`,
-      );
-    }
+    invocationBlocks(state);
     this.session.requireLane(recorded.laneId);
     const scheduled: HarnessInvocationScheduled = {
       invocationId: recorded.invocationId,
       messageId: newId("m"),
       turnId: newId("t"),
-      harnessTargetId,
+      harnessTargetId: recorded.harnessTargetId,
       laneId: recorded.newLane ? newId("hl") : recorded.laneId,
     };
     this.session.append({
       kind: "_baton_harness_invocation_scheduled",
       source: { type: "baton" },
-      parentEventId:
-        state.inputSubmission?.eventId ?? state.recorded.eventId,
+      parentEventId: state.recorded.eventId,
       payload: scheduled,
     });
     return scheduledOf(
@@ -598,14 +471,12 @@ export class HarnessInvocationStore {
 
   private appendCancellation(
     state: InvocationState,
-    reason: HarnessCancellationReason | "dismissed",
+    reason: HarnessCancellationReason,
     detail?: string,
   ): void {
     this.session.append({
       kind: "_baton_harness_invocation_cancelled",
-      source: reason === "user" || reason === "dismissed"
-        ? { type: "user" }
-        : { type: "baton" },
+      source: reason === "user" ? { type: "user" } : { type: "baton" },
       parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
       payload: {
         invocationId: state.recorded.payload.invocationId,
@@ -643,13 +514,6 @@ export class HarnessInvocationStore {
           uncertain: false,
         });
         return;
-      }
-      case "_baton_harness_invocation_input_submitted": {
-        const state = this.states.get(event.payload.invocationId);
-        if (!state || state.inputSubmission) return;
-        state.inputSubmission = event;
-        changed = state;
-        break;
       }
       case "_baton_harness_invocation_scheduled": {
         const state = this.states.get(event.payload.invocationId);

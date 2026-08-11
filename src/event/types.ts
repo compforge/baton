@@ -372,14 +372,6 @@ export interface HarnessInvocationRecorded {
   /** Existing Lane used as the execution Lane or as the parent of a new Lane. */
   laneId: string;
   newLane: boolean;
-  /** Fixed Target requested by the Plugin; an omitted draft resolves it on submission. */
-  harnessTargetId?: string;
-}
-
-export interface HarnessInvocationInputSubmitted {
-  invocationId: string;
-  blocks: PromptBlock[];
-  /** Final Target selected for this submitted Input. */
   harnessTargetId: string;
 }
 
@@ -394,8 +386,7 @@ export interface HarnessInvocationScheduled {
 
 export interface HarnessInvocationCancelled {
   invocationId: string;
-  /** dismissed only replays Sessions created before draft input moved to Interaction. */
-  reason: HarnessCancellationReason | "dismissed";
+  reason: HarnessCancellationReason;
   detail?: string;
 }
 
@@ -435,7 +426,6 @@ export type EventPayloadMap = {
   _baton_delivery_attempt_update: HarnessDeliveryAttemptUpdate;
   _baton_turn_summary: TurnSummary;
   _baton_harness_invocation_recorded: HarnessInvocationRecorded;
-  _baton_harness_invocation_input_submitted: HarnessInvocationInputSubmitted;
   _baton_harness_invocation_scheduled: HarnessInvocationScheduled;
   _baton_harness_invocation_cancelled: HarnessInvocationCancelled;
   _baton_harness_invocation_failed: HarnessInvocationFailed;

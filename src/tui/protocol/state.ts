@@ -22,7 +22,6 @@ import type {
   PermissionOption,
 } from "../../interaction/types.ts";
 import type { BoardItem } from "../../plugin/board.ts";
-import type { Manager } from "../../plugin/manager.ts";
 import type { ToastMessage } from "../../plugin/package.ts";
 import {
   laneTargetStateKey,
@@ -54,7 +53,6 @@ export interface PickerViewProjection {
 export interface ChatStateProjectionInput {
   state: SessionState;
   controller: Controller;
-  pendingHarnessInvocationInputs: ReturnType<Manager["listPendingHarnessInvocationInputs"]>;
   session: SessionHandle;
   config: Pick<BatonConfig, "showThoughts">;
   harnessTargetId: string;
@@ -376,32 +374,15 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller,
     session,
     harnessTargetId,
-    pendingHarnessInvocationInputs,
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
   const hasRecallableQueuedInput = controller.queuedTurns.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
-  const interactions: InteractionView[] = [
-    ...[...state.interactions.values()]
-      .filter((item) => !item.result)
-      .map((item) => interactionView(item.interaction)),
-    ...pendingHarnessInvocationInputs.map((request) => ({
-      id: request.invocationId,
-      kind: "suggested_input" as const,
-      blocking: false,
-      requester: request.pluginInstanceId,
-      title: request.harnessTargetId === undefined
-        ? request.title
-        : `${request.title} · Target ${request.harnessTargetId}`,
-      text: request.prompt,
-      cancelResponse: {
-        kind: "suggested_input" as const,
-        outcome: "dismissed" as const,
-      },
-    })),
-  ];
+  const interactions: InteractionView[] = [...state.interactions.values()]
+    .filter((item) => !item.result)
+    .map((item) => interactionView(item.interaction));
   const observedRuns = [...state.activeTurns.values()].filter(
     (turn) =>
       turn.role === "observed" &&

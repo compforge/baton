@@ -128,7 +128,6 @@ export interface HarnessInvocationState {
   title: string;
   pluginInstanceId?: string;
   phase:
-    | "awaiting_input"
     | "queued"
     | "running"
     | "uncertain"
@@ -634,10 +633,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         title: ev.payload.title,
         pluginInstanceId:
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
-        phase: ev.payload.operation.verb === "draft" &&
-            ev.payload.blocks === undefined
-          ? "awaiting_input"
-          : "queued",
+        phase: "queued",
         requestedLaneId: ev.payload.laneId,
         newLane: ev.payload.newLane,
         harnessTargetId: ev.payload.harnessTargetId,
@@ -646,14 +642,6 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         type: "harness_invocation",
         id: ev.payload.invocationId,
       });
-      break;
-    }
-    case "_baton_harness_invocation_input_submitted": {
-      const request = state.harnessInvocations.get(ev.payload.invocationId);
-      if (request) {
-        request.phase = "queued";
-        request.harnessTargetId = ev.payload.harnessTargetId;
-      }
       break;
     }
     case "_baton_harness_invocation_scheduled": {

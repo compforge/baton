@@ -917,10 +917,6 @@ export class Manager {
     return this.harnessInvocations?.list() ?? [];
   }
 
-  listPendingHarnessInvocationInputs() {
-    return this.harnessInvocations?.pendingDraftInputs() ?? [];
-  }
-
   listBoardItems(): readonly BoardItem[] {
     return this.boardItemsCache ?? [];
   }

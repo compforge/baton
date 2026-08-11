@@ -720,30 +720,6 @@ export class BatonChatProtocol implements ChatProtocol {
     response: InteractionResponse,
   ): Promise<void> {
     const interaction = this.state.interactions.get(id)?.interaction;
-    if (
-      response.kind === "suggested_input" &&
-      interaction?.kind !== "suggested_input"
-    ) {
-      // Compatibility for Sessions that persisted a draft as an awaiting
-      // HarnessInvocation before suggested input became a Core Interaction.
-      const harnessInvocation = this.plugins
-        .listPendingHarnessInvocationInputs()
-        .find((request) => request.invocationId === id);
-      if (!harnessInvocation) {
-        this.toast = { text: "plugin suggestion is no longer pending", tone: "info" };
-        this.changed();
-        return;
-      }
-      if (response.outcome === "submitted") {
-        const blocks = await this.prepareComposerInput(response.text);
-        this.plugins.resolveHarnessInvocationInput(id, { kind: "submitted", blocks });
-      } else {
-        this.plugins.resolveHarnessInvocationInput(id, { kind: "dismissed" });
-      }
-      this.changed();
-      return;
-    }
-
     let result: InteractionResult | undefined;
     if (
       response.kind === "suggested_input" &&
@@ -1403,7 +1379,6 @@ export class BatonChatProtocol implements ChatProtocol {
     return projectChatState({
       state: this.state,
       controller: this.controller,
-      pendingHarnessInvocationInputs: this.plugins.listPendingHarnessInvocationInputs(),
       session: this.session,
       config: this.config,
       harnessTargetId: this.harnessTargetId,
