@@ -90,7 +90,7 @@ describe("buildTargetCatchUpContext", () => {
     const target = { id: "codex", harness: "codex" };
     const mainLaneId = h.ensureMainLane().laneId;
     const sideLaneId = "hl_side";
-    h.ensureHarnessInvocationLane(sideLaneId, "trq_1");
+    h.ensureHarnessInvocationLane(sideLaneId, "trq_1", mainLaneId);
     turn(target, 1, "already native", mainLaneId);
     const watermark = h.readEvents().at(-1)!.seq;
     turn(target, 2, "same binding output", mainLaneId);

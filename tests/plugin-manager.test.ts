@@ -12,7 +12,7 @@ import { Manager } from "../src/plugin/manager.ts";
 import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import type { ScheduledHarnessInvocation } from "../src/plugin/harness-invocation.ts";
-import { SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID, SessionStore } from "../src/store/store.ts";
 
 interface Spec {
   value: string;
@@ -214,7 +214,8 @@ describe("plugin Manager", () => {
         const result = await ctx.harness({
           key: "implement",
           prompt: "Implement run_1.",
-          lane: "new",
+          laneId: "main",
+          newLane: true,
         });
         states.push(result.state === "pending" ? `${result.state}:${result.phase}` : result.state);
       },
@@ -233,9 +234,10 @@ describe("plugin Manager", () => {
       harnessTargetId: "claude",
       blocks: [{ type: "text", text: "Implement run_1." }],
       source: "plugin",
-      lane: "new",
+      newLane: true,
+      parentLaneId: "main",
     });
-    expect(scheduled[0]?.laneId).not.toBe(session.meta.mainLaneId);
+    expect(scheduled[0]?.laneId).not.toBe(MAIN_LANE_ID);
     expect([...session.loadState().interactions.values()]).toEqual([]);
     expect(states).toEqual(["pending:queued"]);
     await manager.start();
@@ -345,8 +347,8 @@ describe("plugin Manager", () => {
         text: "Implement run_1 with the focused test only.",
       }],
       source: "user",
-      lane: "main",
-      laneId: session.meta.mainLaneId,
+      newLane: false,
+      laneId: MAIN_LANE_ID,
     });
     expect(manager.listPendingHarnessInvocationInputs()).toEqual([]);
     await manager.close();
@@ -392,7 +394,7 @@ describe("plugin Manager", () => {
         await ctx.harness({
           key: "implement",
           prompt: "Implement run_1.",
-          lane: "main",
+          laneId: "main",
         });
       },
     });

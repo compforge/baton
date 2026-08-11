@@ -91,8 +91,9 @@ function validateConfirm(input: ConfirmInput): void {
 function validateHarness(input: HarnessInput): void {
   nonEmpty("harness key", input.key);
   nonEmpty("harness prompt", input.prompt);
-  if (input.lane !== "main" && input.lane !== "new") {
-    throw new Error(`harness lane is invalid: ${String(input.lane)}`);
+  nonEmpty("harness laneId", input.laneId);
+  if (input.newLane !== undefined && typeof input.newLane !== "boolean") {
+    throw new Error(`harness newLane is invalid: ${String(input.newLane)}`);
   }
   if (input.harnessTargetId !== undefined) {
     nonEmpty("harness harnessTargetId", input.harnessTargetId);

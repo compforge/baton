@@ -28,7 +28,7 @@ import {
   laneTargetStateKey,
   type SessionState,
 } from "../../store/reduce.ts";
-import type { SessionHandle } from "../../store/store.ts";
+import { MAIN_LANE_ID, type SessionHandle } from "../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
 import {
   buildTranscript,
@@ -376,11 +376,11 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const observedRuns = [...state.activeTurns.values()].filter(
     (turn) =>
       turn.role === "observed" &&
-      (!turn.laneId || turn.laneId === session.meta.mainLaneId),
+      (!turn.laneId || turn.laneId === MAIN_LANE_ID),
   );
   const sideRuns = [...state.activeTurns.values()].filter(
     (turn) =>
-      turn.laneId !== undefined && turn.laneId !== session.meta.mainLaneId,
+      turn.laneId !== undefined && turn.laneId !== MAIN_LANE_ID,
   );
   const observedRun = observedRuns.at(-1);
   const activeTurnId = controller.activeTurnId;
@@ -389,7 +389,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     : undefined;
   const statusTargetId =
     activeTargetId ?? observedRun?.harnessTargetId ?? harnessTargetId;
-  const statusLaneId = session.meta.mainLaneId;
+  const statusLaneId = MAIN_LANE_ID;
   const targetState =
     state.perLaneTarget.get(laneTargetStateKey(statusLaneId, statusTargetId)) ??
     state.perTarget.get(statusTargetId);
@@ -475,7 +475,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   ];
   const busy = activeTargetId !== undefined || observedRuns.length > 0;
 
-  const selectedLaneId = session.meta.mainLaneId;
+  const selectedLaneId = MAIN_LANE_ID;
   const selectedState =
     state.perLaneTarget.get(laneTargetStateKey(selectedLaneId, harnessTargetId)) ??
     state.perTarget.get(harnessTargetId);
@@ -499,7 +499,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     timeline: {
       items: [
         ...buildTranscript(state, pinnedPlanId, {
-          isSideLane: (laneId) => laneId !== session.meta.mainLaneId,
+          isSideLane: (laneId) => laneId !== MAIN_LANE_ID,
         }),
         ...(input.commandOutput ? [input.commandOutput] : []),
       ],

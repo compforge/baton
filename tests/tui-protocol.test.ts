@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
-import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID, sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
   BatonChatProtocol,
   runStatusLabel,
@@ -871,7 +871,7 @@ describe("BatonChatProtocol harness commands", () => {
           source: { type: "harness", harnessTargetId: "codex" },
           harness: "codex",
           harnessTargetId: "codex",
-          laneId: session.meta.mainLaneId,
+          laneId: MAIN_LANE_ID,
           payload: {
             options: [{ id: "fast", type: "boolean", name: "Fast", value: fast }],
           },
@@ -1177,7 +1177,7 @@ describe("BatonChatProtocol transcript projection", () => {
         harnessTargetId: "codex",
         harness: "codex",
       });
-      session.ensureHarnessInvocationLane("hl_worker", "hinv_worker");
+      session.ensureHarnessInvocationLane("hl_worker", "hinv_worker", MAIN_LANE_ID);
       session.append({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "_baton_harness_invocation_recorded",
@@ -1195,7 +1195,8 @@ describe("BatonChatProtocol transcript projection", () => {
           title: "Implement requirement",
           prompt: "Implement REQ-1",
           delivery: "direct",
-          lane: "new",
+          laneId: MAIN_LANE_ID,
+          newLane: true,
           harnessTargetId: "codex",
         },
       });

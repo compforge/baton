@@ -1,6 +1,8 @@
 import type { ReconcileSnapshot, TurnSummary } from "./snapshot.ts";
 
-export type LanePlacement = "main" | "new";
+/** Session-scoped reserved ID for Baton's default task line. */
+export const MAIN_LANE_ID = "main" as const;
+
 export type CancellationReason =
   | "user"
   | "requester"
@@ -62,7 +64,10 @@ export interface HarnessInput {
   /** Stable within the Resource operation. Change it to start another Turn. */
   readonly key: string;
   readonly prompt: string;
-  readonly lane: LanePlacement;
+  /** Existing Baton Lane to continue, including the reserved main Lane ID `main`. */
+  readonly laneId: string;
+  /** Create a new side Lane from laneId instead of continuing it. Defaults to false. */
+  readonly newLane?: boolean;
   /** Omit to use the host's selected HarnessTarget when scheduling. */
   readonly harnessTargetId?: string;
 }

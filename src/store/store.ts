@@ -25,6 +25,10 @@ import {
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
+import { MAIN_LANE_ID } from "@compforge/baton-plugin";
+
+export { MAIN_LANE_ID } from "@compforge/baton-plugin";
+
 import {
   type LogEntry,
   type LogLevel,
@@ -95,6 +99,8 @@ export type LaneCreatedFor =
 export interface LaneMeta {
   laneId: string;
   createdFor: LaneCreatedFor;
+  /** Creation provenance for a side Lane; it does not constrain later use. */
+  parentLaneId?: string;
   /** harnessTargetId → native binding used by that Target within this Lane. */
   harnessSessions: Record<string, HarnessSessionMeta>;
 }
@@ -160,8 +166,6 @@ export interface SessionMeta {
   harnessTargets: Record<string, HarnessTargetMeta>;
   /** Baton-native task lines. A Lane may traverse multiple HarnessTargets. */
   lanes: Record<string, LaneMeta>;
-  /** The default session path (conceptually lane0); the ID remains opaque. */
-  mainLaneId: string;
   /** @deprecated in-memory compatibility projection; omitted from new meta.json writes. */
   harnessSessions: Record<string, LegacyHarnessSessionMeta>;
   forkedFrom?: SessionForkOrigin;
@@ -225,24 +229,15 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
   return explicitTitle ?? meta.preview?.trim() ?? meta.description?.trim() ?? `chat @ ${meta.cwd}`;
 }
 
-function migratedLaneId(batonSessionId: string): string {
-  return `hl_${createHash("sha256")
-    .update(`${batonSessionId}\0main-lane`)
-    .digest("hex")
-    .slice(0, 26)
-    .toUpperCase()}`;
-}
-
 function normalizeSessionMeta(meta: SessionMeta): SessionMeta {
   const harnessTargets = { ...(meta.harnessTargets ?? {}) };
   const lanes = { ...(meta.lanes ?? {}) };
-  const mainLaneId = meta.mainLaneId ?? migratedLaneId(meta.batonSessionId);
-  const mainLane = lanes[mainLaneId] ?? {
-    laneId: mainLaneId,
+  const mainLane = lanes[MAIN_LANE_ID] ?? {
+    laneId: MAIN_LANE_ID,
     createdFor: { type: "session" as const },
     harnessSessions: {},
   };
-  lanes[mainLaneId] = mainLane;
+  lanes[MAIN_LANE_ID] = mainLane;
 
   for (const [harnessTargetId, legacy] of Object.entries(meta.harnessSessions ?? {})) {
     harnessTargets[harnessTargetId] ??= {
@@ -274,10 +269,12 @@ function normalizeSessionMeta(meta: SessionMeta): SessionMeta {
 
   const {
     harnessSessions: _legacy,
+    mainLaneId: _legacyMainLaneId,
     harnessLanes: _obsoleteHarnessLanes,
     interactiveLaneByTarget: _obsoleteInteractiveLanes,
     ...current
   } = meta as SessionMeta & {
+    mainLaneId?: unknown;
     harnessLanes?: unknown;
     interactiveLaneByTarget?: unknown;
   };
@@ -301,7 +298,6 @@ function normalizeSessionMeta(meta: SessionMeta): SessionMeta {
     ...current,
     harnessTargets,
     lanes,
-    mainLaneId,
     harnessSessions,
   };
 }
@@ -419,7 +415,6 @@ export class SessionStore {
     const dir = this.sessionDir(cwd, id);
     this.ensureProject(cwd);
     mkdirSync(dir, { recursive: true });
-    const mainLaneId = newId("hl");
     const meta: SessionMeta = {
       batonSessionId: id,
       title: opts.title,
@@ -428,13 +423,12 @@ export class SessionStore {
       updatedAt: new Date().toISOString(),
       harnessTargets: {},
       lanes: {
-        [mainLaneId]: {
-          laneId: mainLaneId,
+        [MAIN_LANE_ID]: {
+          laneId: MAIN_LANE_ID,
           createdFor: { type: "session" },
           harnessSessions: {},
         },
       },
-      mainLaneId,
       harnessSessions: {},
     };
     writeMetaAtomic(dir, meta);
@@ -686,9 +680,16 @@ export class SessionStore {
       const dir = join(projectDir, "sessions", id);
       const metaPath = join(dir, "meta.json");
       if (!existsSync(metaPath)) continue;
-      const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta;
+      const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta & {
+        mainLaneId?: unknown;
+      };
       const meta = withSessionPreview(dir, normalizeSessionMeta(parsed));
-      if (parsed.harnessSessions || !parsed.harnessTargets || !parsed.lanes || !parsed.mainLaneId) {
+      if (
+        parsed.harnessSessions ||
+        !parsed.harnessTargets ||
+        !parsed.lanes ||
+        parsed.mainLaneId !== undefined
+      ) {
         writeMetaAtomic(dir, meta);
       }
       return new SessionHandle(id, dir, meta, this.loggerOptions);
@@ -818,6 +819,7 @@ export class SessionStore {
         {
           laneId,
           createdFor: lane.createdFor,
+          ...(lane.parentLaneId === undefined ? {} : { parentLaneId: lane.parentLaneId }),
           harnessSessions: {},
         } satisfies LaneMeta,
       ]),
@@ -831,7 +833,6 @@ export class SessionStore {
       updatedAt: now,
       harnessTargets,
       lanes,
-      mainLaneId: source.meta.mainLaneId,
       harnessSessions: {},
       forkedFrom: { batonSessionId: sourceSessionId, throughSeq: events.at(-1)?.seq ?? 0 },
     };
@@ -1242,7 +1243,7 @@ export class SessionHandle {
   }
 
   harnessSessionForTarget(harnessTargetId: string): HarnessSessionMeta | undefined {
-    return this.meta.lanes[this.meta.mainLaneId]?.harnessSessions[harnessTargetId];
+    return this.meta.lanes[MAIN_LANE_ID]?.harnessSessions[harnessTargetId];
   }
 
   /** @deprecated Use Lane APIs; retained for embedders migrating old SessionMeta setup. */
@@ -1284,20 +1285,29 @@ export class SessionHandle {
   }
 
   ensureMainLane(): LaneMeta {
-    const lane = this.meta.lanes[this.meta.mainLaneId];
-    if (!lane) throw new Error(`main Lane not found: ${this.meta.mainLaneId}`);
+    const lane = this.meta.lanes[MAIN_LANE_ID];
+    if (!lane) throw new Error(`main Lane not found: ${MAIN_LANE_ID}`);
+    return lane;
+  }
+
+  requireLane(laneId: string): LaneMeta {
+    const lane = this.meta.lanes[laneId];
+    if (!lane) throw new Error(`Lane not found: ${laneId}`);
     return lane;
   }
 
   ensureHarnessInvocationLane(
     laneId: string,
     invocationId: string,
+    parentLaneId: string,
   ): LaneMeta {
+    this.requireLane(parentLaneId);
     const existing = this.meta.lanes[laneId];
     if (existing) {
       if (
         existing.createdFor.type !== "harness_invocation" ||
-        existing.createdFor.invocationId !== invocationId
+        existing.createdFor.invocationId !== invocationId ||
+        existing.parentLaneId !== parentLaneId
       ) {
         throw new Error(`Lane identity conflict: ${laneId}`);
       }
@@ -1306,6 +1316,7 @@ export class SessionHandle {
     const lane: LaneMeta = {
       laneId,
       createdFor: { type: "harness_invocation", invocationId },
+      parentLaneId,
       harnessSessions: {},
     };
     this.setLane(laneId, lane);

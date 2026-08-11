@@ -62,7 +62,7 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
    先校验完整语义前缀并补齐新增尾部，再复用该 owner。adoption 完成后，
    resume / fork 仍走 BatonSession 主路径。
 3. 一切打开路径（CLI 启动、TUI `/sessions` 切换、`/new`）收敛到 `session/open.ts` 的 `openBatonSession()`：解析目标 → `acquireLock()` → `recoverInterruptedState()`。
-4. fork child 保留逻辑 Lane 拓扑和 `mainLaneId`，但清空所有 `Lane × HarnessTarget` 原生 binding；
+4. fork child 保留逻辑 Lane 拓扑（包括保留 ID `main`），但清空所有 `Lane × HarnessTarget` 原生 binding；
    `Controller.ensureHarness()` 发现当前 binding 无 `harnessSessionId` → 开 fresh 原生会话并签发新的 ContextEpoch → 从 revision 0 触发全量
    补课（`buildTargetCatchUpContext`）。输入来自 `bs_` 还是原生 ID 都走这一条路径。
 
@@ -85,7 +85,7 @@ toolCall 等领域对象 ID 仍原样保留。
 
 ### 为什么 fork 保留 Lane identity，但不复制原生 session binding
 
-Lane identity 属于被 fork 的逻辑历史：`mainLaneId`、事件上的 `laneId` 与领域对象 ID 一样保留，
+Lane identity 属于被 fork 的逻辑历史：保留 ID `main`、事件上的 `laneId` 与领域对象 ID 一样保留，
 否则 child 中已经发生的并行事实会失去坐标。
 
 `harnessSessionId` / `resumeState` / `contextEpochId` / `syncedSeq` / `resumeCursor` 则描述源会话某个

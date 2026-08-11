@@ -62,8 +62,9 @@ accepted_steer → finalized | interrupted
 不能再伪装成“从未提交”；此后只能 cancel/interrupt。Controller 按 `laneId` 调度，而不按
 Input source 调度：
 
-- `lane:main` 绑定 BatonSession 的 `mainLaneId`，跨 Target 保持串行；
-- `lane:new` 在准备调度时创建支线 Lane，受支线并发上限约束，不占用主 Lane admission 槽。
+- `laneId` 指定要继续的既有 Lane；保留值 `main` 表示主线；
+- `newLane:true` 从 `laneId` 指向的既有 Lane 创建支线，受支线并发上限约束，不占用主 Lane
+  admission 槽；缺省 `false`，直接继续该 Lane。
 
 Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代表是否调用 Harness。人或 Plugin
 发起的异步任务都可以使用新 Lane。
@@ -78,8 +79,9 @@ HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
 ### 2.2 Turn 开界
 
-Input 在 admission 前已经绑定 `laneId`。普通用户输入使用 `mainLaneId`；HarnessInvocation 在最终 Input
-准备调度时，按 `lane` 策略绑定 `mainLaneId` 或签发新 Lane。Controller 出队时先 append：
+Input 在 admission 前已经绑定实际 `laneId`。普通用户输入使用保留 ID `main`；
+HarnessInvocation 在最终 Input 准备调度时，按 `laneId + newLane` 继续既有 Lane 或签发新 Lane。
+同一 operation key 重放时复用已签发的实际 Lane ID。Controller 出队时先 append：
 
 1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。

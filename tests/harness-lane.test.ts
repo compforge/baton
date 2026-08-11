@@ -16,7 +16,7 @@ import type {
   SendTurnReceipt,
 } from "../src/harness/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
-import { SessionStore, type SessionHandle } from "../src/store/store.ts";
+import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 class LaneAdapter implements HarnessAdapter {
@@ -124,8 +124,8 @@ describe("Baton Lane scheduling", () => {
       harnessInvocationId: "trq_main_plugin",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
-      laneId: session.meta.mainLaneId,
-      lane: "main",
+      laneId: MAIN_LANE_ID,
+      newLane: false,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_main_plugin",
       turnId: "t_main_plugin",
@@ -134,7 +134,7 @@ describe("Baton Lane scheduling", () => {
     await until(() => adapters[0]?.prompts.length === 1);
     expect(controller.sideRunCount).toBe(0);
     expect(controller.inputs[0]).toMatchObject({
-      laneId: session.meta.mainLaneId,
+      laneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       harnessInvocationId: "trq_main_plugin",
     });
@@ -145,8 +145,8 @@ describe("Baton Lane scheduling", () => {
       harnessInvocationId: "trq_main_user",
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
-      laneId: session.meta.mainLaneId,
-      lane: "main",
+      laneId: MAIN_LANE_ID,
+      newLane: false,
       source: { type: "user" },
       messageId: "m_main_user",
       turnId: "t_main_user",
@@ -158,7 +158,7 @@ describe("Baton Lane scheduling", () => {
     );
     expect(editedEvent).toMatchObject({
       source: { type: "user" },
-      laneId: session.meta.mainLaneId,
+      laneId: MAIN_LANE_ID,
     });
     adapters[0]!.finish();
     expect(await edited).toBe("completed");
@@ -172,7 +172,8 @@ describe("Baton Lane scheduling", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_1",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_1",
       turnId: "t_worker_1",
@@ -183,7 +184,8 @@ describe("Baton Lane scheduling", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_2",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_2",
       turnId: "t_worker_2",
@@ -200,7 +202,7 @@ describe("Baton Lane scheduling", () => {
       "/repo",
       "/repo",
     ]);
-    const mainLaneId = session.meta.mainLaneId;
+    const mainLaneId = MAIN_LANE_ID;
     expect(mainLaneId).not.toBe("hl_worker_1");
     expect(mainLaneId).not.toBe("hl_worker_2");
     expect(new Set(Object.values(session.meta.lanes).flatMap(
@@ -222,6 +224,50 @@ describe("Baton Lane scheduling", () => {
     expect(await Promise.all([workerOne, workerTwo])).toEqual(["completed", "completed"]);
   });
 
+  test("continued work stays serial within one side Lane", async () => {
+    const adapters: LaneAdapter[] = [];
+    const controller = laneController(adapters);
+    const laneId = "hl_worker";
+    const first = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "hinv_first",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId,
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_first",
+      turnId: "t_first",
+      blocks: blocks("first"),
+    });
+    const second = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "hinv_second",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId,
+      newLane: false,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_second",
+      turnId: "t_second",
+      blocks: blocks("second"),
+    });
+
+    await until(() => adapters[0]?.prompts.length === 1);
+    expect(adapters).toHaveLength(1);
+    expect(controller.queueLength).toBe(1);
+    adapters[0]!.finish();
+    expect(await first).toBe("completed");
+
+    await until(() => adapters[0]?.prompts.length === 2);
+    expect(adapters).toHaveLength(1);
+    expect(session.meta.lanes[laneId]).toMatchObject({
+      parentLaneId: MAIN_LANE_ID,
+      createdFor: { type: "harness_invocation", invocationId: "hinv_first" },
+    });
+    adapters[0]!.finish();
+    expect(await second).toBe("completed");
+  });
+
   test("one Lane can hand off serially across HarnessTargets", async () => {
     const adapters: LaneAdapter[] = [];
     const controller = laneController(adapters);
@@ -236,10 +282,10 @@ describe("Baton Lane scheduling", () => {
     adapters[1]!.finish();
     expect(await second).toBe("completed");
 
-    const mainLane = session.meta.lanes[session.meta.mainLaneId]!;
+    const mainLane = session.meta.lanes[MAIN_LANE_ID]!;
     expect(Object.keys(mainLane.harnessSessions).sort()).toEqual(["claude", "codex"]);
     expect(new Set(session.readEvents().flatMap((event) => event.laneId ? [event.laneId] : [])))
-      .toEqual(new Set([session.meta.mainLaneId]));
+      .toEqual(new Set([MAIN_LANE_ID]));
   });
 
   test("main interrupt and HarnessInvocation cancellation target only their own Lane", async () => {
@@ -250,7 +296,8 @@ describe("Baton Lane scheduling", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_worker_cancel",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_worker_cancel",
       turnId: "t_worker_cancel",
@@ -279,7 +326,8 @@ describe("Baton Lane scheduling", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_first",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_first",
       turnId: "t_first",
@@ -290,7 +338,8 @@ describe("Baton Lane scheduling", () => {
       pluginInstanceId: "reqloop_default",
       harnessTargetId: "codex",
       laneId: "hl_second",
-      lane: "new",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       messageId: "m_second",
       turnId: "t_second",

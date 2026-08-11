@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { ReconcileHarnessInvocation } from "../src/plugin/harness-invocation.ts";
 import { HarnessInvocationStore } from "../src/plugin/harness-invocation.ts";
-import { SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID, SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
 
@@ -41,7 +41,8 @@ function invocation(
       title: "Implement requirement",
       prompt: "Implement REQ-1 and run its focused tests.",
       delivery: "direct",
-      lane: "main",
+      laneId: "main",
+      newLane: false,
       harnessTargetId: "codex",
       ...overrides,
     },
@@ -66,8 +67,8 @@ describe("HarnessInvocation Store", () => {
       operationKey: "implement",
       phase: "queued",
       delivery: "direct",
-      lane: "main",
-      laneId: handle.meta.mainLaneId,
+      newLane: false,
+      laneId: MAIN_LANE_ID,
     });
     expect(handle.readEvents().filter((event) =>
       event.kind === "_baton_harness_invocation_recorded"
@@ -141,24 +142,60 @@ describe("HarnessInvocation Store", () => {
     expect(resolved?.scheduled).toMatchObject({
       invocationId: pending.invocationId,
       source: "user",
-      lane: "main",
-      laneId: handle.meta.mainLaneId,
+      newLane: false,
+      laneId: MAIN_LANE_ID,
       blocks: [{ type: "text", text: "Implement only the focused fix." }],
     });
     expect(store.pendingDraftInputs()).toEqual([]);
   });
 
-  test("allocates a side Lane only when lane is new", () => {
+  test("allocates a side Lane from an existing Lane and can continue it", () => {
     const handle = session();
     const store = new HarnessInvocationStore(handle);
     const pending = store.record(invocation(handle.id, {
       operationKey: "async",
-      lane: "new",
+      newLane: true,
     }));
     const scheduled = store.scheduled(pending.invocationId);
 
-    expect(scheduled?.lane).toBe("new");
-    expect(scheduled?.laneId).not.toBe(handle.meta.mainLaneId);
+    expect(scheduled?.newLane).toBe(true);
+    expect(scheduled?.parentLaneId).toBe("main");
+    expect(scheduled?.laneId).not.toBe(MAIN_LANE_ID);
+    if (!scheduled) throw new Error("expected side Lane schedule");
+
+    handle.ensureHarnessInvocationLane(
+      scheduled.laneId,
+      scheduled.invocationId,
+      scheduled.parentLaneId as string,
+    );
+    const continued = store.record(invocation(handle.id, {
+      operationKey: "continue-async",
+      laneId: scheduled.laneId,
+    }));
+    expect(store.scheduled(continued.invocationId)).toMatchObject({
+      laneId: scheduled.laneId,
+      newLane: false,
+    });
+
+    const child = store.record(invocation(handle.id, {
+      operationKey: "child-async",
+      laneId: scheduled.laneId,
+      newLane: true,
+    }));
+    expect(store.scheduled(child.invocationId)).toMatchObject({
+      newLane: true,
+      parentLaneId: scheduled.laneId,
+    });
+  });
+
+  test("rejects an unknown base Lane before recording an invocation", () => {
+    const handle = session();
+    const store = new HarnessInvocationStore(handle);
+
+    expect(() => store.record(invocation(handle.id, {
+      laneId: "missing",
+    }))).toThrow("Lane not found: missing");
+    expect(handle.readEvents()).toEqual([]);
   });
 
   test("rejects an envelope change for the same operation identity", () => {

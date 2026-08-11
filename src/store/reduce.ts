@@ -132,7 +132,8 @@ export interface HarnessInvocationState {
     | "cancelled";
   harnessTargetId?: string;
   delivery?: "draft" | "direct";
-  lane?: "main" | "new";
+  requestedLaneId: string;
+  newLane: boolean;
   laneId?: string;
   messageId?: string;
   turnId?: string;
@@ -621,7 +622,8 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
           ev.source.type === "plugin" ? ev.source.pluginInstanceId : undefined,
         phase: ev.payload.delivery === "draft" ? "awaiting_input" : "queued",
         delivery: ev.payload.delivery,
-        lane: ev.payload.lane,
+        requestedLaneId: ev.payload.laneId,
+        newLane: ev.payload.newLane,
         harnessTargetId: ev.payload.harnessTargetId,
       });
       state.timeline.push({

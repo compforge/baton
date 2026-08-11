@@ -1,3 +1,5 @@
+import { MAIN_LANE_ID } from "@compforge/baton-plugin";
+
 import {
   Controller,
   type ReconcileKey,
@@ -163,6 +165,7 @@ export interface ManagerOptions {
     | "append"
     | "log"
     | "ensureMainLane"
+    | "requireLane"
   >;
   /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
   instances?: PluginInstanceRepository;
@@ -1055,7 +1058,8 @@ export class Manager {
         title: request.input.key,
         prompt: request.input.prompt,
         delivery: request.verb === "draft" ? "draft" : "direct",
-        lane: request.verb === "draft" ? "main" : request.input.lane,
+        laneId: request.verb === "draft" ? MAIN_LANE_ID : request.input.laneId,
+        newLane: request.verb === "draft" ? false : (request.input.newLane ?? false),
         harnessTargetId,
       },
     });

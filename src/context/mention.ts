@@ -3,7 +3,12 @@
 
 import type { TurnSummary } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
-import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../store/store.ts";
+import {
+  MAIN_LANE_ID,
+  sessionDisplayTitle,
+  type SessionHandle,
+  type SessionStore,
+} from "../store/store.ts";
 import type { ContextProvider } from "@compforge/baton-plugin";
 
 /** @bs_<ULID>：ContextProvider 上线前的 Session token，继续兼容已有输入。 */
@@ -148,7 +153,7 @@ export function buildTargetCatchUpContext(
     // migration assigns that history to the BatonSession main Lane.
     return !(
       item.harnessTargetId === opts.target.id &&
-      (opts.laneId === undefined || handle.meta.mainLaneId === opts.laneId)
+      (opts.laneId === undefined || MAIN_LANE_ID === opts.laneId)
     );
   });
   if (missed.length === 0) return null;

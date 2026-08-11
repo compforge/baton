@@ -36,7 +36,12 @@ if (decision.state !== "answered") return;
 
 const execution = decision.value === "edit"
   ? await ctx.draft({ key: "review:draft", prompt })
-  : await ctx.harness({ key: "review:run", prompt, lane: "new" });
+  : await ctx.harness({
+      key: "review:run",
+      prompt,
+      laneId: "main",
+      newLane: true,
+    });
 if (execution.state !== "completed") return;
 
 await resources.patchStatus(resource, {
@@ -50,18 +55,19 @@ await resources.patchStatus(resource, {
 
 ## Lane、source 与执行记录
 
-`harness` 的 `lane` 只选择执行位置：
+`harness` 用两个参数选择执行位置：
 
-- `main` 进入 BatonSession 主 Lane，与主任务串行；
-- `new` 创建支线 Lane，可与主 Lane 并行，Lane 内仍然串行。
+- `laneId` 是一个已存在的 Lane；`main` 是 BatonSession 主 Lane 的保留 ID；
+- `newLane` 缺省为 `false`，表示继续 `laneId`；设为 `true` 时从该 Lane 创建支线。
 
 Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harness。`draft` 提交后的 Input source
-是 user，`harness` 产生的 Input source 是 Plugin；source 与 lane 是两条正交轴。
+是 user，`harness` 产生的 Input source 是 Plugin；source 与 Lane 是两条正交轴。结果中的 `laneId`
+始终是实际执行 Lane，可传给后续 `harness` 调用以继续同一支线。
 
 Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
 API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation key、prompt、Target、
-delivery 与 lane，随后关联 Input、Delivery Attempt、Turn 和 TurnSummary。`new` Lane 的
-`createdFor` 只记录该 invocation 的创建事实。
+delivery、请求的 `laneId + newLane`，随后关联实际 Lane、Input、Delivery Attempt、Turn 和
+TurnSummary。新 Lane 的 `createdFor` 与 `parentLaneId` 只记录创建事实，不是后续调用的所有权约束。
 
 ## 身份、恢复与取消
 

@@ -978,7 +978,10 @@ export class BatonChatProtocol implements ChatProtocol {
           pluginInstanceId: request.pluginInstanceId,
           harnessTargetId: request.harnessTargetId,
           laneId: request.laneId,
-          lane: request.lane,
+          newLane: request.newLane,
+          ...(request.parentLaneId === undefined
+            ? {}
+            : { parentLaneId: request.parentLaneId }),
           source: request.source === "user"
             ? { type: "user" }
             : {
