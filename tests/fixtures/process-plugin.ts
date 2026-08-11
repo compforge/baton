@@ -42,8 +42,8 @@ const plugin: PluginPackage = {
         apiVersion: "baton.dev/v1alpha1",
         kind: "Turn",
       },
-      async reconcile(baton, turn) {
-        await baton.ask({
+      async reconcile(ctx, turn) {
+        await ctx.ask({
           key: `runner:${turn.metadata.name}`,
           title: "Runner question",
           prompt: `Review ${turn.metadata.name}?`,

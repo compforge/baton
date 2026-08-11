@@ -12,7 +12,7 @@ baton 按三层协作：
 1. **Baton core** 提供 Input、Interaction、Event、Context、权限、Harness routing、调度和
    Projection 等通用控制能力，不理解 Requirement、Deployment、Review 等领域语义。
 2. **Baton Plugin** 拥有长期领域 loop，以 Resource 的 `spec/status` 表达期望与观测，由
-   Controller reconcile。Plugin 通过 Core-owned Baton verbs 请求人的决定、准备 draft 或发起
+   Controller reconcile。Plugin 通过 `ReconcileContext` 请求人的决定、准备 draft 或发起
    Harness Turn；Harness 只是后续执行端，Plugin 不能绕过 Baton 直接调用。
 3. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
    Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
@@ -20,7 +20,8 @@ baton 按三层协作：
 稳定内核已经支持同一 BatonSession 内的 Harness 接力，以及主 Lane 与
 异步支线 Lane 并发；Plugin host 已支持 Marketplace、
 Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board presentation、
-Interaction、Baton verbs 和 ContextProvider；三方 Package 按 Binding 在独立 Runner 进程执行。
+Interaction、reconcile 控制能力和 ContextProvider；三方 Package 按 Binding 在独立
+Runner 进程执行。
 同一输入向多 Harness 批量 fan-out 后策展结果，以及跨 BatonSession 的主线 /
 草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness 进程或 SDK 句柄来提前实现。
 
@@ -69,7 +70,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    `namespace/name/uid` 标识对象；`labels` 是受约束、可检索的分组 metadata，`annotations`
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。
 3. **长期 loop 与执行小闭环分层**：Baton core 保持领域无关，Baton Plugin 通过 Resource /
-   Controller 与 reconcile-scoped verbs 推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
+   Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
    `draft` 交给用户修改，`harness` 直接执行并选择主 Lane 或新 Lane。Core 把调用持久化为
    Interaction 或 HarnessInvocation，最终 Input 统一走 Context、Permission、Attempt 与 routing。
    Plugin 只能依赖
@@ -94,7 +95,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 - `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
 - `docs/harness/codex.md`、`docs/harness/claude-code.md` — 首批内置 Harness 的协议适配
 - `docs/plugin.md` — Plugin Manager / Supervisor / Runner、Resource/Controller 与三方 authoring 契约
-- `docs/baton-verbs.md` — Plugin 编排人机决策、draft 与 Harness Turn 的公共契约
+- `docs/reconcile-context.md` — Plugin reconcile 视图与宿主控制能力的公共契约
 - `docs/resource-lifecycle.md` — Plugin Resource 准入、结构 owner、删除与恢复契约
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
 - `docs/logging.md` — Baton、Harness 与 Plugin 共用的结构化运维日志

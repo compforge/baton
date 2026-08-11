@@ -4,7 +4,7 @@ import type {
   TurnSummary,
 } from "../event/types.ts";
 import type {
-  Baton,
+  ReconcileContext,
   ResourceRef,
   Watch,
 } from "@compforge/baton-plugin";
@@ -18,13 +18,13 @@ import {
 import { ReconcileQueue } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
-  emptyBatonSnapshot,
-  type BatonSnapshot,
-} from "./baton-snapshot.ts";
+  emptyReconcileSnapshot,
+  type ReconcileSnapshot,
+} from "./reconcile-snapshot.ts";
 import { validateWatches } from "./watch.ts";
 import {
-  createBaton,
-  type InvokeBatonVerb,
+  createReconcileContext,
+  type InvokeReconcileVerb,
 } from "./verbs.ts";
 import type {
   ControllerSource,
@@ -213,14 +213,14 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   sources?: readonly ControllerSource[];
   watches?: readonly Watch[];
   reconcile(
-    baton: Baton,
+    context: ReconcileContext,
     resource: Readonly<BuiltinResource<K>>,
   ): Promise<ReconcileResult | void>;
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
-  invokeVerb?: InvokeBatonVerb;
+  snapshot?: (key: ReconcileKey, resource: ResourceRef) => ReconcileSnapshot;
+  invokeVerb?: InvokeReconcileVerb;
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
@@ -250,7 +250,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
   private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
-  private readonly invokeVerb: InvokeBatonVerb;
+  private readonly invokeVerb: InvokeReconcileVerb;
   private readonly executeWithCapacity: NonNullable<
     BuiltinControllerOptions<K>["executeWithCapacity"]
   >;
@@ -276,9 +276,9 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ??
-      (() => emptyBatonSnapshot(options.resources.batonSessionId));
+      (() => emptyReconcileSnapshot(options.resources.batonSessionId));
     this.invokeVerb = options.invokeVerb ?? (async () => {
-      throw new Error("plugin BuiltinController has no Baton verb host");
+      throw new Error("plugin BuiltinController has no reconcile capability host");
     });
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
@@ -298,10 +298,10 @@ export class BuiltinController<K extends BuiltinResourceKind> {
           const snapshot = deepFreeze(this.snapshot(key, resourceRef));
           if (snapshot.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
-              `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
+              `ReconcileSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
             );
           }
-          const baton = createBaton(
+          const context = createReconcileContext(
             snapshot,
             {
               key,
@@ -311,7 +311,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
             this.invokeVerb,
           );
           const result = validatedResult(
-            await this.reconcileResource(baton, resource),
+            await this.reconcileResource(context, resource),
           );
           const now = this.now();
           if (Number.isNaN(now.getTime())) {

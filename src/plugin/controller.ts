@@ -15,14 +15,14 @@ import {
 import { ReconcileQueue } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
-  emptyBatonSnapshot,
-  type BatonSnapshot,
-} from "./baton-snapshot.ts";
+  emptyReconcileSnapshot,
+  type ReconcileSnapshot,
+} from "./reconcile-snapshot.ts";
 import { ControllerSources } from "./source.ts";
 import { validateWatches } from "./watch.ts";
 import {
-  createBaton,
-  type InvokeBatonVerb,
+  createReconcileContext,
+  type InvokeReconcileVerb,
 } from "./verbs.ts";
 
 export type ReconcileResourceOwner = "plugin" | "baton";
@@ -66,8 +66,8 @@ export interface ControllerOptions<TSpec, TStatus> {
   maxConcurrency?: number;
   now?: () => Date;
   /** 每次执行前读取最新 BatonSession 只读视图。 */
-  snapshot?: (key: ReconcileKey, resource: ResourceRef) => BatonSnapshot;
-  invokeVerb?: InvokeBatonVerb;
+  snapshot?: (key: ReconcileKey, resource: ResourceRef) => ReconcileSnapshot;
+  invokeVerb?: InvokeReconcileVerb;
   /** Manager 注入的进程总容量；缺省表示不额外限流。 */
   executeWithCapacity?: <T>(execute: () => Promise<T>) => Promise<T>;
   /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
@@ -154,7 +154,7 @@ export class Controller<TSpec, TStatus> {
   private readonly executeWithCapacity: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeWithCapacity"]
   >;
-  private readonly invokeVerb: InvokeBatonVerb;
+  private readonly invokeVerb: InvokeReconcileVerb;
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private closed = false;
@@ -169,11 +169,11 @@ export class Controller<TSpec, TStatus> {
     this.present = options.present;
     this.now = options.now ?? (() => new Date());
     this.snapshot =
-      options.snapshot ?? (() => emptyBatonSnapshot(options.store.batonSessionId));
+      options.snapshot ?? (() => emptyReconcileSnapshot(options.store.batonSessionId));
     this.executeWithCapacity =
       options.executeWithCapacity ?? (async (execute) => await execute());
     this.invokeVerb = options.invokeVerb ?? (async () => {
-      throw new Error("plugin Controller has no Baton verb host");
+      throw new Error("plugin Controller has no reconcile capability host");
     });
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
@@ -309,10 +309,10 @@ export class Controller<TSpec, TStatus> {
         const snapshot = deepFreeze(this.snapshot(key, resourceRef));
         if (snapshot.session.batonSessionId !== this.scope.batonSessionId) {
           throw new Error(
-            `BatonSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
+            `ReconcileSnapshot batonSessionId must be ${this.scope.batonSessionId}, got ${snapshot.session.batonSessionId}`,
           );
         }
-        const baton = createBaton(
+        const context = createReconcileContext(
           snapshot,
           {
             key,
@@ -323,7 +323,7 @@ export class Controller<TSpec, TStatus> {
           this.invokeVerb,
         );
         const result = validatedResult(
-          await this.reconcileResource(baton, resource),
+          await this.reconcileResource(context, resource),
         );
         const now = this.now();
         if (Number.isNaN(now.getTime())) {

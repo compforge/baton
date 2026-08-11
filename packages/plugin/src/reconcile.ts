@@ -1,5 +1,5 @@
 import type { Resource, ResourceType } from "./resource.ts";
-import type { Baton } from "./baton.ts";
+import type { ReconcileContext } from "./reconcile-context.ts";
 import type { BoardPresentation } from "./board.ts";
 import type { ControllerSource } from "./source.ts";
 import type { Watch } from "./watch.ts";
@@ -19,7 +19,7 @@ export interface Controller<TSpec, TStatus> {
   readonly watches?: readonly Watch[];
   readonly maxConcurrency?: number;
   reconcile(
-    baton: Baton,
+    context: ReconcileContext,
     resource: Readonly<Resource<TSpec, TStatus>>,
   ): Promise<ReconcileResult | void>;
   present?(

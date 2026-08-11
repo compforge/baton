@@ -16,7 +16,7 @@ Baton 按三层协作：
 1. **Baton core** 负责 Input、Interaction、Event、Context、权限、Harness routing、调度和
    Projection，不理解 Requirement、Deployment、Review 等领域语义。
 2. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
-   通过 Core-owned Baton verbs 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
+   通过 `ReconcileContext` 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
 3. **Harness** 提供智能执行能力，Adapter 把各家协议归一成稳定契约。devloop 等 Harness
    Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
 
@@ -51,7 +51,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
 | **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
-| **HarnessInvocation** | `draft` / `harness` verb 的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
+| **HarnessInvocation** | `draft` / `harness` 调用的 Core-owned 持久执行记录；关联 Plugin、Resource、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
@@ -140,7 +140,8 @@ src/harness/ids.ts
 ### 4.4 事实先于副作用和投影
 
 获准执行的 prompt Input 先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
-再调用 Adapter。Baton verb 的 Interaction 或 HarnessInvocation 先持久化，再产生 UI 或执行副作用。Context Snapshot 只说明准备送什么，只有
+再调用 Adapter。`ReconcileContext` 调用对应的 Interaction 或 HarnessInvocation 先持久化，
+再产生 UI 或执行副作用。Context Snapshot 只说明准备送什么，只有
 DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发生时保留 `uncertain`，不盲目
 重投。
 
@@ -149,7 +150,7 @@ DeliveryReceipt 才证明 transport 已接受。无法证明副作用是否发�
 Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领域 Plugin 拥有 Resource、
 Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 用 `ask` /
 `confirm` 组织 human-in-the-loop，用 `draft` 交给用户修改，用 `harness` 直接执行。Core 把这些
-verb 物化为持久 Interaction 或 HarnessInvocation，并让最终 Input 继续走统一的 Context、
+能力调用物化为持久 Interaction 或 HarnessInvocation，并让最终 Input 继续走统一的 Context、
 Permission、Attempt 和 Harness routing 主路径。Plugin 决定业务步骤，Core 始终拥有授权与执行。
 
 ### 4.6 单 Ledger、多 Lane

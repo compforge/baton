@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
+import { emptyReconcileSnapshot } from "../src/plugin/reconcile-snapshot.ts";
 import { Manager, type PluginToast } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
@@ -287,7 +287,7 @@ describe("Plugin Package lifecycle", () => {
             { phase?: string }
           >({
             resourceType: REQ_LOOP_RUN,
-            async reconcile(_baton, resource) {
+            async reconcile(_ctx, resource) {
               phases.push(resource.status.phase ?? "pending");
               if (resource.status.phase === undefined) {
                 await activation.resources.patchStatus(resource, {
@@ -354,7 +354,7 @@ describe("Plugin Package lifecycle", () => {
                 (workspace.status.repositories ?? []).map((name) => ({ name }))
               ),
             }],
-            async reconcile(_baton, repository) {
+            async reconcile(_ctx, repository) {
               reconciled.push(repository.metadata.name);
             },
           });
@@ -517,7 +517,7 @@ describe("Plugin Package lifecycle", () => {
         });
       })],
       snapshot: () => {
-        const snapshot = emptyBatonSnapshot("bs_test");
+        const snapshot = emptyReconcileSnapshot("bs_test");
         return {
           ...snapshot,
           session: { ...snapshot.session, cwd: root },
@@ -699,7 +699,7 @@ describe("Plugin Package lifecycle", () => {
           activated.push(context.instance.pluginInstanceId);
           context.registerController({
             resourceType: REQ_LOOP_RUN,
-            async reconcile(_baton, resource) {
+            async reconcile(_ctx, resource) {
                 reconciled.push(resource.metadata.namespace);
               },
           });

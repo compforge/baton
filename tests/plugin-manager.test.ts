@@ -7,7 +7,7 @@ import type {
   ReconcileKey,
   ReconcileScope,
 } from "../src/plugin/controller.ts";
-import { emptyBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
+import { emptyReconcileSnapshot } from "../src/plugin/reconcile-snapshot.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
@@ -104,7 +104,7 @@ afterEach(() => {
 });
 
 describe("plugin Manager", () => {
-  test("persists baton.ask and reconciles its durable answer", async () => {
+  test("persists ctx.ask and reconciles its durable answer", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -125,8 +125,8 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(baton) {
-        const result = await baton.ask({
+      async reconcile(ctx) {
+        const result = await ctx.ask({
           key: "associate-pr",
           title: "Associate pull request",
           prompt: "Choose a requirement",
@@ -174,7 +174,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("runs baton.harness on a new lane once and reconciles its result", async () => {
+  test("runs ctx.harness on a new lane once and reconciles its result", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -194,7 +194,7 @@ describe("plugin Manager", () => {
       session,
       snapshot() {
         return {
-          ...emptyBatonSnapshot(session.id),
+          ...emptyReconcileSnapshot(session.id),
           harnessTargets: [
             { id: "codex", harness: "codex" },
             { id: "claude", harness: "claude" },
@@ -210,8 +210,8 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(baton) {
-        const result = await baton.harness({
+      async reconcile(ctx) {
+        const result = await ctx.harness({
           key: "implement",
           prompt: "Implement run_1.",
           lane: "new",
@@ -280,7 +280,7 @@ describe("plugin Manager", () => {
     await manager.close();
   });
 
-  test("holds baton.draft until the edited input is submitted", async () => {
+  test("holds ctx.draft until the edited input is submitted", async () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: "/repo" });
     const resources = new PluginResourceStore({
@@ -297,7 +297,7 @@ describe("plugin Manager", () => {
       proposals: new ProposalStore({ session }),
       session,
       snapshot: () => ({
-        ...emptyBatonSnapshot(session.id),
+        ...emptyReconcileSnapshot(session.id),
         harnessTargets: [{ id: "codex", harness: "codex" }],
       }),
       selectedHarnessTargetId: () => "codex",
@@ -309,8 +309,8 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(baton) {
-        await baton.draft({
+      async reconcile(ctx) {
+        await ctx.draft({
           key: "implement",
           prompt: "Implement run_1.",
         });
@@ -370,7 +370,7 @@ describe("plugin Manager", () => {
       proposals: new ProposalStore({ session }),
       session,
       snapshot: () => ({
-        ...emptyBatonSnapshot(session.id),
+        ...emptyReconcileSnapshot(session.id),
         harnessTargets: [{ id: "codex", harness: "codex" }],
       }),
       selectedHarnessTargetId: () => "codex",
@@ -387,9 +387,9 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(baton, resource) {
+      async reconcile(ctx, resource) {
         if (resource.metadata.deletionTimestamp) return;
-        await baton.harness({
+        await ctx.harness({
           key: "implement",
           prompt: "Implement run_1.",
           lane: "main",
@@ -436,7 +436,7 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
       resourceType: resourceType("Requirement"),
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           started.push(resource.metadata.namespace);
           await gate.promise;
           return;
@@ -445,7 +445,7 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: deployStore,
       resourceType: resourceType("Deployment"),
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           started.push(resource.metadata.namespace);
         },
     });
@@ -563,7 +563,7 @@ describe("plugin Manager", () => {
       store: reqloopStore,
       resourceType: resourceType("Requirement"),
       maxConcurrency: 1,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           started.push(
             `${resource.metadata.namespace}/${resource.metadata.name}`,
           );
@@ -574,7 +574,7 @@ describe("plugin Manager", () => {
       store: deployStore,
       resourceType: resourceType("Deployment"),
       maxConcurrency: 1,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           started.push(
             `${resource.metadata.namespace}/${resource.metadata.name}`,
           );
@@ -675,7 +675,7 @@ describe("plugin Manager", () => {
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
       resourceType: resourceType("Requirement"),
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           runs.push(resource.metadata.name);
         },
     });
@@ -743,7 +743,7 @@ describe("plugin Manager", () => {
           timeZone: "UTC",
         },
       ],
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           runs.push(resource.metadata.name);
         },
     });
@@ -795,7 +795,7 @@ describe("plugin Manager", () => {
           await ready.promise;
         },
       }],
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
         runs.push(resource.metadata.name);
       },
     });
@@ -854,7 +854,7 @@ describe("plugin Manager", () => {
           throw new Error("forge unavailable");
         },
       }],
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
         runs.push(resource.metadata.name);
       },
     });

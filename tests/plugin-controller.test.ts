@@ -68,7 +68,7 @@ afterEach(() => {
 });
 
 describe("plugin Controller", () => {
-  test("provides a frozen Baton facade and persists status and wake-up", async () => {
+  test("provides a frozen reconcile context and persists status and wake-up", async () => {
     const resources = store(testRoot());
     resources.create<Spec, Status>({
       type: REQ_LOOP_RUN,
@@ -76,8 +76,8 @@ describe("plugin Controller", () => {
       spec: { requirement: "ship it" },
     });
     const reconcile: ControllerOptions<Spec, Status>["reconcile"] =
-      async (baton, resource) => {
-        expect(Object.isFrozen(baton)).toBe(true);
+      async (ctx, resource) => {
+        expect(Object.isFrozen(ctx)).toBe(true);
         expect(Object.isFrozen(resource)).toBe(true);
         expect(Object.isFrozen(resource.spec)).toBe(true);
         resources.patchStatus<Spec, Status>(
@@ -149,7 +149,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceType: REQ_LOOP_RUN,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
         expect(resource.metadata.deletionTimestamp).toBe(
           "2026-07-29T00:00:00.000Z",
         );
@@ -303,7 +303,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceType: REQ_LOOP_RUN,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           seen.push(resource.metadata.name);
           if (resource.metadata.name === "run_1") await gate.promise;
         },
@@ -363,7 +363,7 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       maxConcurrency: 2,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           started.push(resource.metadata.name);
           await gate.promise;
         },
@@ -392,7 +392,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceType: REQ_LOOP_RUN,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           if (resource.metadata.name === "run_1") {
             throw new Error("connector unavailable");
           }
@@ -417,7 +417,7 @@ describe("plugin Controller", () => {
     const controller = new Controller<Spec, Status>({
       store: resources,
       resourceType: REQ_LOOP_RUN,
-      async reconcile(_baton, resource) {
+      async reconcile(_ctx, resource) {
           await gate.promise;
           seen.push(resource.metadata.name);
         },

@@ -44,7 +44,7 @@ import {
 } from "../../harness/registry.ts";
 import { bundledTextgenTargets } from "../../session/title.ts";
 import type { InteractionResolution } from "../../interaction/types.ts";
-import { createBatonSnapshot } from "../../plugin/baton-snapshot.ts";
+import { createReconcileSnapshot } from "../../plugin/reconcile-snapshot.ts";
 import { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
 import type {
@@ -930,7 +930,7 @@ export class BatonChatProtocol implements ChatProtocol {
         session: this.session,
       }),
       snapshot: () =>
-        createBatonSnapshot({
+        createReconcileSnapshot({
           batonSessionId: this.session.id,
           cwd: this.session.meta.cwd,
           state: this.state,

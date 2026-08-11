@@ -26,7 +26,7 @@ baton 是一个以持久、harness-independent 会话为内核的 terminal-nativ
 
 Plugin host 又增加了一条原则：
 
-- **Loop 分层**：baton core 保持领域无关，统一拥有 Interaction、Input、Context、Permission 与 Harness routing。Baton Plugin 拥有长期领域 loop，并组合 Core-owned verbs 来询问用户、准备 draft 或发起 Harness Turn；devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
+- **Loop 分层**：baton core 保持领域无关，统一拥有 Interaction、Input、Context、Permission 与 Harness routing。Baton Plugin 拥有长期领域 loop，并通过 `ReconcileContext` 询问用户、准备 draft 或发起 Harness Turn；devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
 
 在此之上仍有三个产品演进方向。BatonSession 已支持由人或 Plugin 发起主线与异步支线任务；协同 fan-out 与结果策展尚未完整落地：
 
@@ -40,7 +40,7 @@ Plugin host 又增加了一条原则：
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
-v2 保留这条流水线，并在其外分层组织长期领域 loop：baton core 保持领域无关并统一控制，Baton Plugin reconcile 领域 Resource 并调用 Baton verbs，Harness 提供智能执行能力，Harness Plugin 约束 Harness 内部的小闭环。所有 Plugin 发起的 Turn 都回到同一条 Input、Context、Permission 与 routing 路径。
+v2 保留这条流水线，并在其外分层组织长期领域 loop：baton core 保持领域无关并统一控制，Baton Plugin 通过 `ReconcileContext` reconcile 领域 Resource，Harness 提供智能执行能力，Harness Plugin 约束 Harness 内部的小闭环。所有 Plugin 发起的 Turn 都回到同一条 Input、Context、Permission 与 routing 路径。
 
 ![Baton、Plugin 与 Harness 的关系](docs/kernel-pipeline_v2.svg)
 
@@ -51,7 +51,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 ## 功能
 
 - 在同一个终端界面中使用 Claude Code 和 Codex
-- 让 Plugin 通过 Core-owned verbs 询问用户、准备可编辑 draft，或在 main/new Lane 发起 Harness Turn
+- 让 Plugin 通过 `ReconcileContext` 询问用户、准备可编辑 draft，或在 main/new Lane 发起 Harness Turn
 - 使用 `Ctrl+V` 粘贴剪贴板图片，并作为原生图片输入发送给 Codex 或 Claude Code
 - 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话

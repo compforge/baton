@@ -1,13 +1,14 @@
-# Baton Verbs
+# Plugin Reconcile Context
 
 ## 理念与边界
 
-Baton Plugin 通过 reconcile-scoped verbs 编排人和 Harness，而不是返回一份待 Core 解释的
-`Output`。Plugin 负责领域判断与操作顺序；Baton Core 负责 Interaction、授权、执行调度、Event
-Ledger、幂等、恢复和结果回传。Plugin 因而能表达完整 loop，但不能持有 Harness Adapter、进程、
-SDK 句柄或跨 reconcile 的内存 continuation。
+Plugin Controller 每次 reconcile 都会收到一个 `ReconcileContext`。其中 `snapshot`
+是当前 BatonSession 的冻结只读视图，`ask`、`confirm`、`draft`、`harness` 是宿主
+提供的控制能力。Plugin 负责领域判断与操作顺序；Baton Core 负责 Interaction、
+授权、执行调度、Event Ledger、幂等、恢复和结果回传。Plugin 因而能表达完整
+loop，但不能持有 Harness Adapter、进程、SDK 句柄或跨 reconcile 的内存 continuation。
 
-当前 verbs 分成两组：
+这些能力分成两组：
 
 - `ask`、`confirm` 请求人的决定，并把问题与答案持久化为 Interaction；
 - `draft`、`harness` 请求一个 Harness Turn。前者先让用户编辑，后者直接执行。
@@ -18,10 +19,10 @@ SDK 句柄或跨 reconcile 的内存 continuation。
 
 ## 编排流程
 
-Plugin 可以把同一领域动作写成普通控制流：
+Plugin 可以通过 `ctx.snapshot` 读取当前事实，再把领域动作写成普通控制流：
 
 ```ts
-const decision = await baton.ask({
+const decision = await ctx.ask({
   key: "handle-review:run-17",
   title: "Handle AI review comments",
   prompt: "How should Baton handle these findings?",
@@ -34,8 +35,8 @@ const decision = await baton.ask({
 if (decision.state !== "answered") return;
 
 const execution = decision.value === "edit"
-  ? await baton.draft({ key: "review:draft", prompt })
-  : await baton.harness({ key: "review:run", prompt, lane: "new" });
+  ? await ctx.draft({ key: "review:draft", prompt })
+  : await ctx.harness({ key: "review:run", prompt, lane: "new" });
 if (execution.state !== "completed") return;
 
 await resources.patchStatus(resource, {
@@ -57,14 +58,14 @@ await resources.patchStatus(resource, {
 Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harness。`draft` 提交后的 Input source
 是 user，`harness` 产生的 Input source 是 Plugin；source 与 lane 是两条正交轴。
 
-Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是 verb 的执行记录，不是 Plugin
+Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
 API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation key、prompt、Target、
 delivery 与 lane，随后关联 Input、Delivery Attempt、Turn 和 TurnSummary。`new` Lane 的
 `createdFor` 只记录该 invocation 的创建事实。
 
 ## 身份、恢复与取消
 
-同一 Resource incarnation 内，verb `key` 是逻辑操作的幂等键。同一个 key 的参数不可变；需要
+同一 Resource incarnation 内，调用的 `key` 是逻辑操作的幂等键。同一个 key 的参数不可变；需要
 再次提问或再次执行时使用新 key。Core 先记录意图再执行副作用，并从 ledger 派生当前状态：
 
 - `ask/confirm` 重放同一 Interaction，答案落盘后再唤醒 Resource；

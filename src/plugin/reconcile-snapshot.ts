@@ -1,4 +1,4 @@
-import type { InputSnapshot } from "../controller/input.ts";
+import type { InputSnapshot as ControllerInputSnapshot } from "../controller/input.ts";
 import type { TurnSummary } from "../event/types.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import type {
@@ -18,7 +18,7 @@ type SnapshotReadonly<T> =
         ? { readonly [Key in keyof T]: SnapshotReadonly<T[Key]> }
         : T;
 
-export interface BatonSessionSnapshot {
+export interface SessionSnapshot {
   readonly batonSessionId: string;
   readonly cwd?: string;
   readonly runState: SessionState["runState"];
@@ -26,7 +26,7 @@ export interface BatonSessionSnapshot {
   readonly revision: number;
 }
 
-export interface BatonActiveTurnSnapshot {
+export interface ActiveTurnSnapshot {
   readonly turnId: string;
   readonly role: "driven" | "observed";
   readonly state: "running" | "requires_action";
@@ -36,25 +36,25 @@ export interface BatonActiveTurnSnapshot {
   readonly startedAt?: number;
 }
 
-export interface BatonInputSnapshot {
+export interface InputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
   readonly harness: string;
-  readonly status: InputSnapshot["status"];
-  readonly delivery: InputSnapshot["delivery"];
-  readonly source: SnapshotReadonly<InputSnapshot["source"]>;
+  readonly status: ControllerInputSnapshot["status"];
+  readonly delivery: ControllerInputSnapshot["delivery"];
+  readonly source: SnapshotReadonly<ControllerInputSnapshot["source"]>;
   readonly harnessInvocationId?: string;
 }
 
-export interface BatonHarnessTargetSnapshot {
+export interface HarnessTargetSnapshot {
   readonly id: string;
   readonly harness: string;
   readonly label?: string;
 }
 
-export interface BatonPendingInteractionSnapshot {
+export interface PendingInteractionSnapshot {
   readonly interactionId: string;
   readonly kind: Interaction["kind"];
   readonly requester: SnapshotReadonly<InteractionRequester>;
@@ -67,24 +67,24 @@ export interface BatonPendingInteractionSnapshot {
  * Snapshot 只暴露 Plugin 做当前决策所需的稳定视图；内部 Controller、Store、HarnessBinding
  * 和其他可变 owner 不穿透这条边界。
  */
-export interface BatonSnapshot {
-  readonly session: BatonSessionSnapshot;
-  readonly activeTurns: readonly BatonActiveTurnSnapshot[];
-  readonly inputs: readonly BatonInputSnapshot[];
-  readonly harnessTargets: readonly BatonHarnessTargetSnapshot[];
-  readonly pendingInteractions: readonly BatonPendingInteractionSnapshot[];
+export interface ReconcileSnapshot {
+  readonly session: SessionSnapshot;
+  readonly activeTurns: readonly ActiveTurnSnapshot[];
+  readonly inputs: readonly InputSnapshot[];
+  readonly harnessTargets: readonly HarnessTargetSnapshot[];
+  readonly pendingInteractions: readonly PendingInteractionSnapshot[];
   readonly latestTurn?: SnapshotReadonly<TurnSummary>;
   readonly turns: readonly SnapshotReadonly<TurnSummary>[];
 }
 
-interface CreateBatonSnapshotOptions {
+interface CreateReconcileSnapshotOptions {
   readonly batonSessionId: string;
   readonly cwd?: string;
   readonly state: Pick<
     SessionState,
     "runState" | "lastSeq" | "activeTurns" | "interactions" | "turnSummaries"
   >;
-  readonly inputs?: readonly InputSnapshot[];
+  readonly inputs?: readonly ControllerInputSnapshot[];
   readonly harnessTargets?: readonly (HarnessTarget & { readonly label?: string })[];
 }
 
@@ -95,8 +95,8 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Host-side snapshot builder; Plugin packages only consume the resulting BatonSnapshot type. */
-export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonSnapshot {
+/** Host-side snapshot builder; Plugin packages only consume the resulting ReconcileSnapshot type. */
+export function createReconcileSnapshot(options: CreateReconcileSnapshotOptions): ReconcileSnapshot {
   const latestTurn = options.state.turnSummaries.at(-1);
   return deepFreeze({
     session: {
@@ -149,7 +149,7 @@ export function createBatonSnapshot(options: CreateBatonSnapshotOptions): BatonS
   });
 }
 
-export function emptyBatonSnapshot(batonSessionId: string): BatonSnapshot {
+export function emptyReconcileSnapshot(batonSessionId: string): ReconcileSnapshot {
   return deepFreeze({
     session: {
       batonSessionId,

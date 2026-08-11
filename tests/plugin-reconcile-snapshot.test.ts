@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { createBatonSnapshot } from "../src/plugin/baton-snapshot.ts";
+import { createReconcileSnapshot } from "../src/plugin/reconcile-snapshot.ts";
 import { emptySessionState } from "../src/store/reduce.ts";
 
-describe("BatonSnapshot", () => {
+describe("ReconcileSnapshot", () => {
   test("projects and freezes the current session state for Plugin reconcile", () => {
     const state = emptySessionState();
     state.runState = "running";
@@ -39,7 +39,7 @@ describe("BatonSnapshot", () => {
       turnId: "t_latest",
     });
 
-    const snapshot = createBatonSnapshot({
+    const snapshot = createReconcileSnapshot({
       batonSessionId: "bs_test",
       cwd: "/tmp/project",
       state,

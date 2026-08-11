@@ -26,7 +26,7 @@ Two fundamentals are in place today:
 
 The Plugin host adds a third principle:
 
-- **Layered loops**: baton core stays domain-neutral and owns interaction, input, context, permission, and harness routing. Baton Plugins own long-running domain loops and compose Core-owned verbs to ask the user, prepare a draft, or run a Harness Turn. Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
+- **Layered loops**: baton core stays domain-neutral and owns interaction, input, context, permission, and harness routing. Baton Plugins own long-running domain loops and use `ReconcileContext` to ask the user, prepare a draft, or run a Harness Turn. Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
 
 On top of these, three product directions continue to evolve. A BatonSession already supports mainline and asynchronous side-lane tasks initiated by users or Plugins; coordinated fan-out and result curation remain incomplete:
 
@@ -40,7 +40,7 @@ Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carr
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-v2 keeps that pipeline and layers long-running domain loops around it. baton core remains domain-neutral and owns shared control; Baton Plugins reconcile domain Resources and call Baton verbs; Harnesses provide intelligent execution, while Harness Plugins constrain the smaller loop inside a Harness. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
+v2 keeps that pipeline and layers long-running domain loops around it. baton core remains domain-neutral and owns shared control; Baton Plugins reconcile domain Resources through `ReconcileContext`; Harnesses provide intelligent execution, while Harness Plugins constrain the smaller loop inside a Harness. Every Plugin-initiated Turn returns to the same Input, context, permission, and routing path.
 
 ![Baton, Plugin, and Harness relationship](docs/kernel-pipeline_v2.svg)
 
@@ -51,7 +51,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 ## Features
 
 - Use Claude Code and Codex from the same terminal interface
-- Let Plugins ask users, prepare editable drafts, or run Harness Turns on the main/new Lane through Core-owned verbs
+- Let Plugins ask users, prepare editable drafts, or run Harness Turns on the main/new Lane through `ReconcileContext`
 - Paste a clipboard image with `Ctrl+V` and send it as native image input to Codex or Claude Code
 - Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
 - Use one Plan mode across Codex and Claude Code, with `/plan` or `Shift+Tab` to toggle back to Default
