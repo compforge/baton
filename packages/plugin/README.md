@@ -362,4 +362,5 @@ has not passed. Dispatch errors and process interruption return `failure`.
 
 `timeoutMs` is mandatory on `ask`, `confirm`, `draft`, and `harness`. For an
 action verb, one deadline covers its Interaction gate, admission, and final
-Turn; approval does not reset the clock.
+Turn; approval does not reset the clock. Its value must be an integer between
+`1` and `MAX_VERB_TIMEOUT_MS` (2,147,483,647 milliseconds).

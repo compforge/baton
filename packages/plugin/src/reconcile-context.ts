@@ -3,6 +3,9 @@ import type { ReconcileSnapshot, TurnSummary } from "./snapshot.ts";
 /** Session-scoped reserved ID for Baton's default task line. */
 export const MAIN_LANE_ID = "main" as const;
 
+/** Largest timeout supported by JavaScript timers. */
+export const MAX_VERB_TIMEOUT_MS = 2_147_483_647 as const;
+
 /**
  * @spec Every Plugin verb has exactly four terminal outcomes: success with a business value, explicit user dismissal, deadline timeout, or execution failure.
  * @rule Treat deliberate negative answers as successful business values; reserve dismissed for Esc/close and failure for infrastructure or execution errors.
@@ -14,7 +17,7 @@ export type VerbResult<T> =
   | { readonly state: "failure"; readonly error?: string };
 
 interface VerbInput {
-  /** Maximum time Baton may wait for the Interaction and any resulting work. */
+  /** Maximum time Baton may wait; must be between 1 and MAX_VERB_TIMEOUT_MS. */
   readonly timeoutMs: number;
 }
 

@@ -1,14 +1,15 @@
-import type {
-  AskInput,
-  AskResult,
-  AskValue,
-  ConfirmInput,
-  ConfirmResult,
-  DraftInput,
-  DraftResult,
-  HarnessInput,
-  HarnessResult,
-  ReconcileContext,
+import {
+  MAX_VERB_TIMEOUT_MS,
+  type AskInput,
+  type AskResult,
+  type AskValue,
+  type ConfirmInput,
+  type ConfirmResult,
+  type DraftInput,
+  type DraftResult,
+  type HarnessInput,
+  type HarnessResult,
+  type ReconcileContext,
 } from "@compforge/baton-plugin";
 
 import type { ReconcileSnapshot } from "./reconcile-snapshot.ts";
@@ -99,6 +100,11 @@ function validateConfirm(input: ConfirmInput): void {
 function validateTimeout(name: string, timeoutMs: number): void {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error(`${name} timeoutMs must be a positive integer`);
+  }
+  if (timeoutMs > MAX_VERB_TIMEOUT_MS) {
+    throw new Error(
+      `${name} timeoutMs must not exceed ${MAX_VERB_TIMEOUT_MS}`,
+    );
   }
 }
 

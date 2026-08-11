@@ -2048,6 +2048,7 @@ describe("Plugin draft projection", () => {
         id: "ix_run",
         kind: "approval",
         blocking: true,
+        cancelResponse: { kind: "cancelled" },
         approval: {
           title: "Implement",
           description: "Implement req_1.",
@@ -2065,6 +2066,19 @@ describe("Plugin draft projection", () => {
       expect(completed).toEqual({
         id: "ix_run",
         result: { kind: "harness_invocation", outcome: "approved" },
+      });
+      await protocol.resolveInteraction("ix_run", {
+        kind: "approval",
+        optionId: "decline",
+      });
+      expect(completed).toEqual({
+        id: "ix_run",
+        result: { kind: "harness_invocation", outcome: "declined" },
+      });
+      await protocol.resolveInteraction("ix_run", { kind: "cancelled" });
+      expect(completed).toEqual({
+        id: "ix_run",
+        result: { kind: "cancelled", reason: "user" },
       });
       await protocol.exit();
     } finally {
