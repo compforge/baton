@@ -316,8 +316,8 @@ export class Store {
       prompt: input.prompt,
       choices: [
         {
-          value: "grant",
-          label: input.confirmLabel ?? "Allow",
+          value: "accept",
+          label: input.confirmLabel ?? "Accept",
         },
         {
           value: "decline",
@@ -332,7 +332,7 @@ export class Store {
       return result;
     }
     return Object.freeze({
-      state: result.value === "grant" ? "granted" : "declined",
+      state: result.value === "accept" ? "accepted" : "declined",
     });
   }
 

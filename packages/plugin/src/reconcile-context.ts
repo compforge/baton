@@ -59,7 +59,7 @@ export type ConfirmResult =
       readonly state: "waiting";
     }
   | {
-      readonly state: "granted" | "declined";
+      readonly state: "accepted" | "declined";
     }
   | {
       readonly state: "cancelled";

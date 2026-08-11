@@ -1,6 +1,6 @@
 {
   "name": "@compforge/baton-plugin",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Public protocol and authoring types for Baton plugins.",
   "type": "module",
   "license": "Apache-2.0",
