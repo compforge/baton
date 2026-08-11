@@ -6,7 +6,6 @@ import { join } from "node:path";
 import type { PluginPackage } from "../src/plugin/package.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 
 const roots: string[] = [];
 
@@ -19,7 +18,6 @@ function stores() {
   };
   return {
     instances: new PluginInstanceStore({ session }),
-    proposals: new ProposalStore({ session }),
   };
 }
 
@@ -87,7 +85,7 @@ afterEach(() => {
 
 describe("Plugin commands", () => {
   test("register with a Binding and route picker selections back to the Plugin", async () => {
-    const { instances, proposals } = stores();
+    const { instances } = stores();
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -96,9 +94,7 @@ describe("Plugin commands", () => {
     let changes = 0;
     const manager = new Manager({
       instances,
-      proposals,
       packages: [requirementPackage()],
-      onProposal() {},
       onCommandsChanged() {
         changes += 1;
       },
@@ -135,7 +131,7 @@ describe("Plugin commands", () => {
   });
 
   test("rejects Plugin commands that shadow Baton commands", async () => {
-    const { instances, proposals } = stores();
+    const { instances } = stores();
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -143,10 +139,8 @@ describe("Plugin commands", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [requirementPackage("status")],
       reservedCommandNames: ["status"],
-      onProposal() {},
     });
 
     await expect(
@@ -156,7 +150,7 @@ describe("Plugin commands", () => {
   });
 
   test("routes remote search queries and permits an empty result page", async () => {
-    const { instances, proposals } = stores();
+    const { instances } = stores();
     instances.create({
       pluginInstanceId: "searchable_reqloop",
       pluginId: "qiankun/searchable-reqloop",
@@ -164,9 +158,7 @@ describe("Plugin commands", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [searchableRequirementPackage()],
-      onProposal() {},
     });
 
     await manager.start();

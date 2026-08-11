@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { MAIN_LANE_ID, sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
@@ -1929,86 +1928,7 @@ describe("interaction eventization: pending projects from the event stream", () 
   });
 });
 
-describe("Plugin Proposal projection", () => {
-  test("shows proposals in InteractionDock and persists dismiss/submit outcomes", async () => {
-    const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-proposal-"));
-    try {
-      const store = new SessionStore(root);
-      const session = store.createSession({ cwd: "/repo" });
-      const proposals = new ProposalStore({ session });
-      const protocol = new BatonChatProtocol(
-        store,
-        DEFAULT_CONFIG,
-        { session, resumed: false },
-        () => undefined,
-      );
-      const internals = protocol as unknown as { changed(): void };
-
-      const dismissed = proposals.record({
-        key: {
-          batonSessionId: session.id,
-          pluginInstanceId: "reqloop_default",
-          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-          resourceKind: "Requirement",
-          resourceId: "run_1",
-        },
-        basedOnGeneration: 1,
-        text: "Review the requirement",
-      });
-      internals.changed();
-      expect(protocol.stateStore.getState("composer").interactions).toEqual([
-        {
-          id: dismissed.proposalId,
-          kind: "suggested_input",
-          blocking: false,
-          requester: "reqloop_default",
-          title: "Suggested follow-up",
-          text: "Review the requirement",
-          cancelResponse: {
-            kind: "suggested_input",
-            outcome: "dismissed",
-          },
-        },
-      ]);
-
-      await protocol.resolveInteraction(dismissed.proposalId, {
-        kind: "suggested_input",
-        outcome: "dismissed",
-      });
-      expect(proposals.get(dismissed.proposalId).resolution?.outcome).toBe("dismissed");
-      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
-
-      const submitted = proposals.record({
-        key: {
-          batonSessionId: session.id,
-          pluginInstanceId: "reqloop_default",
-          resourceApiVersion: "reqloop.baton.dev/v1alpha1",
-          resourceKind: "Requirement",
-          resourceId: "run_2",
-        },
-        basedOnGeneration: 1,
-        text: "Check the implementation",
-      });
-      internals.changed();
-      const submittedInputs: string[] = [];
-      protocol.submit = async (text) => {
-        submittedInputs.push(text);
-      };
-      await protocol.resolveInteraction(submitted.proposalId, {
-        kind: "suggested_input",
-        outcome: "submitted",
-        text: "Check the implementation and tests",
-      });
-      expect(proposals.get(submitted.proposalId).resolution?.outcome).toBe("submitted");
-      expect(submittedInputs).toEqual(["Check the implementation and tests"]);
-      expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
-
-      await protocol.exit();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
+describe("Plugin draft projection", () => {
   test("a HarnessInvocation draft stays editable before scheduling", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-invocation-input-"));
     try {

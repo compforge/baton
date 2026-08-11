@@ -57,7 +57,6 @@ import {
   GlobalPluginInstanceStore,
   PluginSettingsStore,
 } from "../../plugin/settings.ts";
-import { ProposalStore } from "../../plugin/proposal.ts";
 import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
 import { Controller } from "../../controller/index.ts";
@@ -721,30 +720,21 @@ export class BatonChatProtocol implements ChatProtocol {
     response: InteractionResponse,
   ): Promise<void> {
     if (response.kind === "suggested_input") {
-      const pending = this.plugins
-        .listPendingProposals()
-        .find((proposal) => proposal.proposalId === id);
       const harnessInvocation = this.plugins
         .listPendingHarnessInvocationInputs()
         .find((request) => request.invocationId === id);
-      if (!pending && !harnessInvocation) {
+      if (!harnessInvocation) {
         this.toast = { text: "plugin suggestion is no longer pending", tone: "info" };
         this.changed();
         return;
       }
-      if (harnessInvocation) {
-        if (response.outcome === "submitted") {
-          const blocks = await this.prepareComposerInput(response.text);
-          this.plugins.resolveHarnessInvocationInput(id, { kind: "submitted", blocks });
-        } else {
-          this.plugins.resolveHarnessInvocationInput(id, { kind: "dismissed" });
-        }
-        this.changed();
-        return;
+      if (response.outcome === "submitted") {
+        const blocks = await this.prepareComposerInput(response.text);
+        this.plugins.resolveHarnessInvocationInput(id, { kind: "submitted", blocks });
+      } else {
+        this.plugins.resolveHarnessInvocationInput(id, { kind: "dismissed" });
       }
-      this.plugins.resolveProposal(id, response.outcome);
       this.changed();
-      if (response.outcome === "submitted") await this.submit(response.text);
       return;
     }
 
@@ -942,7 +932,6 @@ export class BatonChatProtocol implements ChatProtocol {
     );
     return new Manager({
       session: this.session,
-      proposals: new ProposalStore({ session: this.session }),
       instances: new GlobalPluginInstanceStore({
         settings,
         session: this.session,
@@ -994,9 +983,6 @@ export class BatonChatProtocol implements ChatProtocol {
         }),
       cancelHarnessInvocation: (requestId) =>
         this.controller.cancelHarnessInvocation(requestId),
-      onProposal: () => {
-        this.changed();
-      },
       onBoardChanged: () => {
         this.boardChanged();
       },
@@ -1393,7 +1379,6 @@ export class BatonChatProtocol implements ChatProtocol {
     return projectChatState({
       state: this.state,
       controller: this.controller,
-      pendingProposals: this.plugins.listPendingProposals(),
       pendingHarnessInvocationInputs: this.plugins.listPendingHarnessInvocationInputs(),
       session: this.session,
       config: this.config,

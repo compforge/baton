@@ -1,10 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1020" viewBox="0 0 1800 1020">
   <title>Baton Plugin and Harness relationship</title>
   <desc>
-    A Baton Plugin observes a long-running domain loop and proposes or submits
-    scoped work through Baton's normal input, context, permission and routing
-    path. Harnesses are capability providers. Harness Plugins such as devloop
-    constrain the development loop inside a Harness.
+    A Baton Plugin observes a long-running domain loop and uses reconcile-scoped
+    verbs to request user decisions, prepare editable drafts, or run Harness work
+    through Baton's normal input, context, permission and routing path. Harnesses
+    are capability providers. Harness Plugins such as devloop constrain the
+    development loop inside a Harness.
   </desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
@@ -28,7 +29,6 @@
       .tiny { font-size: 13px; }
       .box { stroke: #111827; stroke-width: 2.6; }
       .soft-box { stroke: #8a94a6; stroke-width: 1.8; }
-      .future-box { stroke: #7c8799; stroke-width: 2; stroke-dasharray: 8 7; }
       .flow { fill: none; stroke: #111827; stroke-width: 2.8; marker-end: url(#arrow); }
       .plugin-flow {
         fill: none;
@@ -41,13 +41,6 @@
         stroke: #a76b00;
         stroke-width: 2.8;
         marker-end: url(#event-arrow);
-      }
-      .future-flow {
-        fill: none;
-        stroke: #7c8799;
-        stroke-width: 2.2;
-        stroke-dasharray: 8 7;
-        marker-end: url(#arrow);
       }
     </style>
   </defs>
@@ -72,8 +65,8 @@
   <text x="302" y="252" text-anchor="middle" class="label">Input</text>
 
   <rect x="210" y="350" width="185" height="108" rx="14" fill="#f2edff" class="box"/>
-  <text x="302" y="389" text-anchor="middle" class="label">Plugin Proposal</text>
-  <text x="302" y="419" text-anchor="middle" class="small">确认 · 编辑 · 丢弃</text>
+  <text x="302" y="389" text-anchor="middle" class="label">Interaction / Draft</text>
+  <text x="302" y="419" text-anchor="middle" class="small">回答 · 编辑 · 撤回</text>
   <line x1="302" y1="338" x2="302" y2="296" class="plugin-flow"/>
   <text x="322" y="323" class="tiny">submit</text>
 
@@ -99,7 +92,7 @@
   <rect x="540" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
   <text x="655" y="282" text-anchor="middle" class="label">Input / Interaction</text>
   <text x="655" y="311" text-anchor="middle" class="small">可靠投递 · 用户控制</text>
-  <text x="655" y="334" text-anchor="middle" class="tiny">proposal 也从这里进入</text>
+  <text x="655" y="334" text-anchor="middle" class="tiny">draft / harness 也从这里进入</text>
   <line x1="430" y1="244" x2="525" y2="244" class="flow"/>
 
   <rect x="835" y="245" width="230" height="105" rx="13" fill="#e7edf8" class="box"/>
@@ -135,24 +128,24 @@
   <text x="916" y="772" class="small">外部事实与持久决定</text>
 
   <text x="967" y="818" text-anchor="middle" class="small">
-    Reconcile → 下一步工作 · Context · 审批
+    Reconcile → ask · confirm · draft · harness
   </text>
 
   <rect x="545" y="665" width="185" height="100" rx="14" fill="#fce8c3" class="box"/>
-  <text x="637" y="704" text-anchor="middle" class="label">Proposal</text>
-  <text x="637" y="733" text-anchor="middle" class="small">建议下一条 Input</text>
-  <text x="637" y="754" text-anchor="middle" class="tiny">当前默认路径</text>
+  <text x="637" y="704" text-anchor="middle" class="label">Interaction / Draft</text>
+  <text x="637" y="733" text-anchor="middle" class="small">请求决定或编辑 Input</text>
+  <text x="637" y="754" text-anchor="middle" class="tiny">ask · confirm · draft</text>
   <path d="M790 810 C765 810 755 755 745 730" class="plugin-flow"/>
   <path d="M545 715 H485 V404 H410" class="plugin-flow"/>
   <text x="473" y="560" text-anchor="middle" class="tiny" transform="rotate(-90 473 560)">
-    先交给用户确认，不直接调用 Harness
+    请求用户决定或编辑
   </text>
 
-  <rect x="545" y="805" width="185" height="70" rx="13" fill="#ffffff" class="future-box"/>
-  <text x="637" y="834" text-anchor="middle" class="small">Scoped work request</text>
-  <text x="637" y="858" text-anchor="middle" class="tiny">未来：在明确策略下提交给 Baton</text>
-  <path d="M790 818 C770 825 755 834 745 838" class="future-flow"/>
-  <path d="M637 805 V535 H655 V365" class="future-flow"/>
+  <rect x="545" y="805" width="185" height="70" rx="13" fill="#ffffff" class="box"/>
+  <text x="637" y="834" text-anchor="middle" class="small">HarnessInvocation</text>
+  <text x="637" y="858" text-anchor="middle" class="tiny">harness · 受控 Harness Turn</text>
+  <path d="M790 818 C770 825 755 834 745 838" class="plugin-flow"/>
+  <path d="M637 805 V535 H655 V365" class="plugin-flow"/>
 
   <rect x="1190" y="665" width="180" height="100" rx="14" fill="#e7f7ee" class="box"/>
   <text x="1280" y="704" text-anchor="middle" class="label">Connector</text>
@@ -209,7 +202,7 @@
   <line x1="815" y1="982" x2="870" y2="982" class="event-flow"/>
   <text x="885" y="988" class="small">事件与外部事实</text>
   <line x1="1100" y1="982" x2="1155" y2="982" class="plugin-flow"/>
-  <text x="1170" y="988" class="small">Plugin 建议与领域动作</text>
-  <line x1="1425" y1="982" x2="1480" y2="982" class="future-flow"/>
-  <text x="1495" y="988" class="small">未来受控工作请求</text>
+  <text x="1170" y="988" class="small">Plugin reconcile verbs</text>
+  <line x1="1425" y1="982" x2="1480" y2="982" class="flow"/>
+  <text x="1495" y="988" class="small">统一 Harness 执行路径</text>
 </svg>

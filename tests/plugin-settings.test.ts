@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { pluginKey } from "../src/plugin/identity.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import type { PluginPackage } from "../src/plugin/package.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 import {
   GlobalPluginInstanceStore,
   PluginSettingsStore,
@@ -114,7 +113,6 @@ plugins:
     const createManager = (id: string) => {
       const currentSession = session(root, id);
       return new Manager({
-        proposals: new ProposalStore({ session: currentSession }),
         instances: new GlobalPluginInstanceStore({
           settings,
           session: currentSession,
@@ -125,7 +123,6 @@ plugins:
           expect(options?.marketplace).toBe("reqloop");
           return plugin;
         },
-        onProposal() {},
       });
     };
 

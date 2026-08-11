@@ -9,7 +9,7 @@ import type {
 } from "../src/plugin/controller.ts";
 import { emptyReconcileSnapshot } from "../src/plugin/reconcile-snapshot.ts";
 import { Manager } from "../src/plugin/manager.ts";
-import { type Proposal, ProposalStore } from "../src/plugin/proposal.ts";
+import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import type { ScheduledHarnessInvocation } from "../src/plugin/harness-invocation.ts";
 import { MAIN_LANE_ID, SessionStore } from "../src/store/store.ts";
@@ -65,8 +65,8 @@ function store(root: string, pluginInstanceId: string): PluginResourceStore {
   });
 }
 
-function proposalStore(root: string): ProposalStore {
-  return new ProposalStore({
+function instanceStore(root: string): PluginInstanceStore {
+  return new PluginInstanceStore({
     session: testSession(root),
   });
 }
@@ -118,9 +118,8 @@ describe("plugin Manager", () => {
     });
     const states: string[] = [];
     const manager = new Manager({
-      proposals: new ProposalStore({ session }),
       session,
-      onProposal() {},
+      instances: new PluginInstanceStore({ session }),
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -189,9 +188,8 @@ describe("plugin Manager", () => {
     const states: string[] = [];
     const expiresAt = new Date(Date.now() + 200).toISOString();
     const manager = new Manager({
-      proposals: new ProposalStore({ session }),
       session,
-      onProposal() {},
+      instances: new PluginInstanceStore({ session }),
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -240,8 +238,8 @@ describe("plugin Manager", () => {
     const scheduled: ScheduledHarnessInvocation[] = [];
     let selectedHarnessTargetId = "claude";
     const manager = new Manager({
-      proposals: new ProposalStore({ session }),
       session,
+      instances: new PluginInstanceStore({ session }),
       snapshot() {
         return {
           ...emptyReconcileSnapshot(session.id),
@@ -255,7 +253,6 @@ describe("plugin Manager", () => {
       enqueueHarnessInvocation(request) {
         scheduled.push(request);
       },
-      onProposal() {},
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -346,8 +343,8 @@ describe("plugin Manager", () => {
     });
     const scheduled: ScheduledHarnessInvocation[] = [];
     const manager = new Manager({
-      proposals: new ProposalStore({ session }),
       session,
+      instances: new PluginInstanceStore({ session }),
       snapshot: () => ({
         ...emptyReconcileSnapshot(session.id),
         harnessTargets: [{ id: "codex", harness: "codex" }],
@@ -356,7 +353,6 @@ describe("plugin Manager", () => {
       enqueueHarnessInvocation(request) {
         scheduled.push(request);
       },
-      onProposal() {},
     });
     manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -419,8 +415,8 @@ describe("plugin Manager", () => {
     const cancelled: string[] = [];
     const failures: unknown[] = [];
     const manager = new Manager({
-      proposals: new ProposalStore({ session }),
       session,
+      instances: new PluginInstanceStore({ session }),
       snapshot: () => ({
         ...emptyReconcileSnapshot(session.id),
         harnessTargets: [{ id: "codex", harness: "codex" }],
@@ -431,7 +427,6 @@ describe("plugin Manager", () => {
         cancelled.push(requestId);
         return "queued";
       },
-      onProposal() {},
       onReconcileError(failure) {
         failures.push(failure.error);
       },
@@ -492,8 +487,7 @@ describe("plugin Manager", () => {
     const started: string[] = [];
     const manager = new Manager({
       maxTotalConcurrency: 1,
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
@@ -530,7 +524,7 @@ describe("plugin Manager", () => {
       resourceType: resourceType("Requirement"),
       async reconcile() {},
     };
-    const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
+    const manager = new Manager({ instances: instanceStore(root) });
     manager.registerController(definition);
 
     expect(() => manager.registerController(definition)).toThrow(
@@ -545,7 +539,7 @@ describe("plugin Manager", () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");
     createResource(resources, "Requirement", "run_1");
-    const manager = new Manager({ proposals: proposalStore(root), onProposal() {} });
+    const manager = new Manager({ instances: instanceStore(root) });
     const registration = manager.registerController({
       store: resources,
       resourceType: resourceType("Requirement"),
@@ -570,8 +564,7 @@ describe("plugin Manager", () => {
     let waitingRuns = 0;
     const manager = new Manager({
       maxTotalConcurrency: 1,
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     manager.registerController<Spec, Record<string, never>>({
       store: firstStore,
@@ -618,8 +611,7 @@ describe("plugin Manager", () => {
     const started: string[] = [];
     const manager = new Manager({
       maxTotalConcurrency: 2,
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
@@ -671,8 +663,7 @@ describe("plugin Manager", () => {
       () =>
         new Manager({
           maxTotalConcurrency: 0,
-          proposals: proposalStore(root),
-          onProposal() {},
+          instances: instanceStore(root),
         }),
     ).toThrow(
       "maxTotalConcurrency must be a positive integer",
@@ -680,45 +671,17 @@ describe("plugin Manager", () => {
     expect(
       () =>
         new Manager({
-          proposals: proposalStore(root),
-          onProposal() {},
+          instances: instanceStore(root),
           retryBackoff: { initialDelayMs: 0 },
         }),
     ).toThrow("retryBackoff.initialDelayMs must be a positive integer");
     expect(
       () =>
         new Manager({
-          proposals: proposalStore(root),
-          onProposal() {},
+          instances: instanceStore(root),
           retryBackoff: { initialDelayMs: 20, maxDelayMs: 10 },
         }),
     ).toThrow("retryBackoff.maxDelayMs must be at least initialDelayMs");
-  });
-
-  test("restores pending Proposals on start and can retry a failed projection", async () => {
-    const root = testRoot();
-    const persisted = proposalStore(root);
-    const pending = persisted.record({
-      key: key("reqloop_default", "run_1"),
-      basedOnGeneration: 1,
-      text: "Review requirement",
-    });
-    let shouldFail = true;
-    const surfaced: Proposal[] = [];
-    const manager = new Manager({
-      proposals: persisted,
-      onProposal(proposal) {
-        if (shouldFail) throw new Error("view unavailable");
-        surfaced.push(proposal);
-      },
-    });
-
-    await expect(manager.start()).rejects.toThrow("view unavailable");
-    shouldFail = false;
-    await manager.start();
-    await manager.start();
-
-    expect(surfaced).toEqual([pending]);
   });
 
   test("restores expired and future reconcile times when the Manager starts", async () => {
@@ -731,8 +694,7 @@ describe("plugin Manager", () => {
     resources.setNextReconcileAt(resourceType("Requirement"), "future", new Date(now + 100));
     const runs: string[] = [];
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -757,8 +719,7 @@ describe("plugin Manager", () => {
     createResource(resources, "Requirement", "run_1");
     let runs = 0;
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,
@@ -784,8 +745,7 @@ describe("plugin Manager", () => {
     let now = new Date("2026-07-26T00:00:00.990Z");
     const runs: string[] = [];
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       now: () => now,
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
@@ -835,8 +795,7 @@ describe("plugin Manager", () => {
     let emit!: (resource: { name: string; spec: Spec }) => void;
     let sourceSignal!: { readonly aborted: boolean };
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       onControllerSourceError(failure) {
         failures.push(failure.sourceId);
       },
@@ -900,8 +859,7 @@ describe("plugin Manager", () => {
     const failures: string[] = [];
     const runs: string[] = [];
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       onControllerSourceError(failure) {
         failures.push(failure.sourceId);
       },
@@ -937,8 +895,7 @@ describe("plugin Manager", () => {
     let now = new Date("2026-07-26T00:00:00.990Z");
     let runs = 0;
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       now: () => now,
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
@@ -969,8 +926,7 @@ describe("plugin Manager", () => {
     createResource(resources, "Requirement", "run_1");
     const failures: Array<{ attempt: number; nextRetryAt?: string }> = [];
     const firstManager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       retryBackoff: { initialDelayMs: 30, maxDelayMs: 60 },
       onReconcileError(failure) {
         failures.push({
@@ -999,8 +955,7 @@ describe("plugin Manager", () => {
 
     let recoveredRuns = 0;
     const recoveredManager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     const recoveredRegistration = recoveredManager.registerController<
       Spec,
@@ -1026,8 +981,7 @@ describe("plugin Manager", () => {
     let failNext = false;
     const attempts: number[] = [];
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
       retryBackoff: { initialDelayMs: 10, maxDelayMs: 20 },
       onReconcileError(failure) {
         attempts.push(failure.attempt);
@@ -1067,8 +1021,7 @@ describe("plugin Manager", () => {
     createResource(resources, "Requirement", "run_1");
     let runs = 0;
     const manager = new Manager({
-      proposals: proposalStore(root),
-      onProposal() {},
+      instances: instanceStore(root),
     });
     const registration = manager.registerController<Spec, Record<string, never>>({
       store: resources,

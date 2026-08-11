@@ -54,7 +54,6 @@ export interface PickerViewProjection {
 export interface ChatStateProjectionInput {
   state: SessionState;
   controller: Controller;
-  pendingProposals: ReturnType<Manager["listPendingProposals"]>;
   pendingHarnessInvocationInputs: ReturnType<Manager["listPendingHarnessInvocationInputs"]>;
   session: SessionHandle;
   config: Pick<BatonConfig, "showThoughts">;
@@ -336,7 +335,6 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller,
     session,
     harnessTargetId,
-    pendingProposals,
     pendingHarnessInvocationInputs,
     board,
   } = input;
@@ -348,18 +346,6 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     ...[...state.interactions.values()]
       .filter((item) => !item.result)
       .map((item) => interactionView(item.interaction)),
-    ...pendingProposals.map((proposal) => ({
-      id: proposal.proposalId,
-      kind: "suggested_input" as const,
-      blocking: false,
-      requester: proposal.key.pluginInstanceId,
-      title: "Suggested follow-up",
-      text: proposal.text,
-      cancelResponse: {
-        kind: "suggested_input" as const,
-        outcome: "dismissed" as const,
-      },
-    })),
     ...pendingHarnessInvocationInputs.map((request) => ({
       id: request.invocationId,
       kind: "suggested_input" as const,

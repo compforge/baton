@@ -11,7 +11,6 @@ import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import type { PluginPackage } from "../src/plugin/package.ts";
 import { BATON_TURN_RESOURCE_TYPE } from "../src/plugin/package.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 
 const roots: string[] = [];
@@ -110,7 +109,6 @@ describe("Baton Resource index", () => {
     const session = testSession();
     appendTurn(session, "t_existing", "which harness?");
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "router_default",
       pluginId: "example/router",
@@ -141,7 +139,6 @@ describe("Baton Resource index", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       packages: [plugin],
       snapshot: () => ({
         session: {
@@ -158,7 +155,6 @@ describe("Baton Resource index", () => {
       }),
       selectedHarnessTargetId: () => "codex_default",
       enqueueHarnessInvocation() {},
-      onProposal() {},
     });
 
     await manager.start();
@@ -187,7 +183,6 @@ describe("Baton Resource index", () => {
     const session = testSession();
     appendTurn(session, "t_existing", "existing question");
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "router_default",
       pluginId: "example/router",
@@ -196,7 +191,6 @@ describe("Baton Resource index", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
@@ -215,7 +209,6 @@ describe("Baton Resource index", () => {
           });
         },
       }],
-      onProposal() {},
     });
 
     await manager.start();
@@ -240,7 +233,6 @@ describe("Baton Resource index", () => {
   test("rejects resource Sources for read-only Baton Resources", async () => {
     const session = testSession();
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "router_default",
       pluginId: "example/router",
@@ -250,7 +242,6 @@ describe("Baton Resource index", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
@@ -266,7 +257,6 @@ describe("Baton Resource index", () => {
           });
         },
       }],
-      onProposal() {},
       onActivationError(failure) {
         failures.push(failure.error);
       },
@@ -284,7 +274,6 @@ describe("Baton Resource index", () => {
     const session = testSession();
     appendTurn(session, "t_retry", "retry me");
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "router_default",
       pluginId: "example/router",
@@ -295,7 +284,6 @@ describe("Baton Resource index", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       retryBackoff: { initialDelayMs: 10, maxDelayMs: 10 },
       packages: [{
         pluginId: "example/router",
@@ -310,7 +298,6 @@ describe("Baton Resource index", () => {
           });
         },
       }],
-      onProposal() {},
       onReconcileError(failure) {
         attempts.push(failure.attempt);
       },
@@ -326,7 +313,6 @@ describe("Baton Resource index", () => {
     const session = testSession();
     appendTurn(session, "t_waiting", "wait for activation");
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "router_default",
       pluginId: "example/router",
@@ -338,7 +324,6 @@ describe("Baton Resource index", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       packages: [{
         pluginId: "example/router",
         version: "1.0.0",
@@ -353,7 +338,6 @@ describe("Baton Resource index", () => {
           await finishActivation.promise;
         },
       }],
-      onProposal() {},
     });
 
     const starting = manager.start();

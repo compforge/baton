@@ -14,15 +14,9 @@ import {
   BatonResourceIndex,
 } from "./builtin.ts";
 import {
-  type Proposal,
-  type ProposalOutcome,
-  ProposalStore,
-} from "./proposal.ts";
-import {
   type CreatePluginInstance,
   type PluginInstance,
   type PluginInstanceRepository,
-  PluginInstanceStore,
 } from "./instance.ts";
 import {
   PluginBinding,
@@ -151,9 +145,11 @@ export interface PluginToast {
 export interface ManagerOptions {
   /** 所有 Controller 合计可占用的执行容量；默认 1。 */
   maxTotalConcurrency?: number;
-  proposals: ProposalStore;
+  /** Manager 与所有 Plugin 数据共享的 BatonSession owner。 */
+  instances: PluginInstanceRepository;
   /**
-   * 启用 Baton-owned Resource 时传完整 SessionHandle。只持有 ProposalStore 的调用方
+   * 启用 Baton-owned Resource 与 ReconcileContext verbs 时传完整 SessionHandle。只持有
+   * PluginInstanceRepository 的调用方
    * 仍可使用 Plugin Resource Controller，但不能观察 Baton-owned Resource。
    */
   session?: Pick<
@@ -167,8 +163,6 @@ export interface ManagerOptions {
     | "ensureMainLane"
     | "requireLane"
   >;
-  /** 缺省与 ProposalStore 使用同一个 BatonSession。 */
-  instances?: PluginInstanceRepository;
   /** 当前进程可激活的可信、不可变 Package 版本。 */
   packages?: readonly PluginPackage[];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
@@ -192,8 +186,6 @@ export interface ManagerOptions {
     options: { marketplace: string; fresh?: boolean },
   ): Promise<PluginPackageEntry>;
   pluginSupervisor?: PluginSupervisor;
-  /** Proposal 已落盘；接收方按 proposalId 幂等投影即可。 */
-  onProposal(proposal: Proposal): Promise<void> | void;
   /** Host-owned bridge that materializes the request's explicit Lane policy. */
   enqueueHarnessInvocation?(
     request: ScheduledHarnessInvocation,
@@ -348,10 +340,8 @@ export class Manager {
   private readonly bindings = new Map<string, PluginBinding>();
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
-  private readonly proposals: ProposalStore;
   private readonly batonResources?: BatonResourceIndex;
   private readonly unsubscribeBatonResources?: () => void;
-  private readonly onProposal: ManagerOptions["onProposal"];
   private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onToast: ManagerOptions["onToast"];
   private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
@@ -376,26 +366,16 @@ export class Manager {
 
   constructor(options: ManagerOptions) {
     this.capacity = new ReconcileCapacity(options.maxTotalConcurrency ?? 1);
-    this.proposals = options.proposals;
     this.now = options.now ?? (() => new Date());
-    this.instances =
-      options.instances ??
-      new PluginInstanceStore({
-        session: options.proposals.session,
-        now: this.now,
-      });
-    if (
-      this.instances.session.id !== options.proposals.session.id ||
-      this.instances.session.dir !== options.proposals.session.dir
-    ) {
-      throw new Error("plugin InstanceStore and ProposalStore must own the same BatonSession");
-    }
+    this.instances = options.instances;
     if (
       options.session &&
-      (options.session.id !== options.proposals.session.id ||
-        options.session.dir !== options.proposals.session.dir)
+      (options.session.id !== this.instances.session.id ||
+        options.session.dir !== this.instances.session.dir)
     ) {
-      throw new Error("plugin Manager session and ProposalStore must own the same BatonSession");
+      throw new Error(
+        "plugin Manager session and PluginInstanceRepository must own the same BatonSession",
+      );
     }
     this.log = options.session
       ? (entry) => options.session!.log(entry)
@@ -413,7 +393,7 @@ export class Manager {
     this.pluginSupervisor = options.pluginSupervisor;
     this.snapshot =
       options.snapshot ??
-      (() => emptyReconcileSnapshot(options.proposals.batonSessionId));
+      (() => emptyReconcileSnapshot(this.instances.session.id));
     this.selectedHarnessTargetId = options.selectedHarnessTargetId;
     if (options.session) {
       this.interactions = new InteractionStore(options.session, {
@@ -431,7 +411,6 @@ export class Manager {
     }
     this.enqueueHarnessInvocation = options.enqueueHarnessInvocation;
     this.cancelHostHarnessInvocation = options.cancelHarnessInvocation;
-    this.onProposal = options.onProposal;
     this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
     this.onCommandsChanged = options.onCommandsChanged;
@@ -489,9 +468,9 @@ export class Manager {
     suspended: boolean,
   ): ControllerRegistration {
     if (this.closed) throw new Error("plugin Manager is closed");
-    if (definition.store.batonSessionId !== this.proposals.batonSessionId) {
+    if (definition.store.batonSessionId !== this.instances.session.id) {
       throw new Error(
-        `plugin Controller batonSessionId must be ${this.proposals.batonSessionId}, got ${definition.store.batonSessionId}`,
+        `plugin Controller batonSessionId must be ${this.instances.session.id}, got ${definition.store.batonSessionId}`,
       );
     }
     validateSources(definition.sources, this.now());
@@ -568,10 +547,7 @@ export class Manager {
     return controller.enqueue(key);
   }
 
-  /**
-   * 恢复进程退出前尚未处理的 Proposal 和 Resource due time。
-   * Proposal 投影失败时允许重试，接收方依靠 proposalId 去重。
-   */
+  /** 恢复进程退出前尚未处理的 HarnessInvocation 和 Resource due time。 */
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error("plugin Manager is closed"));
     if (this.started) return Promise.resolve();
@@ -604,9 +580,9 @@ export class Manager {
     }
     const packageSource = await this.preparePackage(instance);
     const batonSession = this.snapshot().session;
-    if (batonSession.batonSessionId !== this.proposals.batonSessionId) {
+    if (batonSession.batonSessionId !== this.instances.session.id) {
       throw new Error(
-        `PluginActivationContext batonSessionId must be ${this.proposals.batonSessionId}, got ${batonSession.batonSessionId}`,
+        `PluginActivationContext batonSessionId must be ${this.instances.session.id}, got ${batonSession.batonSessionId}`,
       );
     }
 
@@ -931,10 +907,6 @@ export class Manager {
     return closing;
   }
 
-  listPendingProposals(): Proposal[] {
-    return this.proposals.listPending();
-  }
-
   listHarnessInvocations() {
     return this.harnessInvocations?.list() ?? [];
   }
@@ -956,10 +928,6 @@ export class Manager {
     input: PluginCommandInput,
   ): Promise<PluginCommandResult | undefined> {
     return await this.commandRegistry.execute(name, input);
-  }
-
-  resolveProposal(proposalId: string, outcome: ProposalOutcome): Proposal {
-    return this.proposals.resolve(proposalId, outcome);
   }
 
   /**
@@ -1117,12 +1085,6 @@ export class Manager {
     return this.snapshot();
   }
 
-  private async restoreProposals(): Promise<void> {
-    for (const proposal of this.proposals.listPending()) {
-      await this.onProposal(proposal);
-    }
-  }
-
   private restoreHarnessInvocations(): void {
     for (const request of this.harnessInvocations?.restore() ?? []) {
       this.dispatchHarnessInvocation(request);
@@ -1193,7 +1155,6 @@ export class Manager {
       if (failure) this.reportActivationFailure(failure);
     }
     this.restoreHarnessInvocations();
-    await this.restoreProposals();
     const controllers = [...this.controllers.values()];
     const scheduled = controllers.map((controller) => ({
       controller,
@@ -1522,7 +1483,7 @@ export class Manager {
       true,
     );
     const sourceId = reconcileScopeId({
-      batonSessionId: this.proposals.batonSessionId,
+      batonSessionId: this.instances.session.id,
       pluginInstanceId,
       resourceApiVersion: pluginController.resourceType.apiVersion,
       resourceKind: pluginController.resourceType.kind,
@@ -1588,7 +1549,7 @@ export class Manager {
       true,
     );
     const sourceId = reconcileScopeId({
-      batonSessionId: this.proposals.batonSessionId,
+      batonSessionId: this.instances.session.id,
       pluginInstanceId,
       resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       resourceKind,
@@ -1820,7 +1781,7 @@ export class Manager {
     }>();
     if (change.kind !== "deleted") {
       const key = Object.freeze({
-        batonSessionId: this.proposals.batonSessionId,
+        batonSessionId: this.instances.session.id,
         pluginInstanceId: change.resource.metadata.namespace,
         resourceApiVersion: change.resource.apiVersion,
         resourceKind: change.resource.kind,

@@ -22,7 +22,6 @@ import {
   BATON_TURN_RESOURCE_TYPE,
   enqueueRequestsFromMapFunc,
 } from "../src/plugin/package.ts";
-import { ProposalStore } from "../src/plugin/proposal.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { SessionStore } from "../src/store/store.ts";
 
@@ -51,12 +50,10 @@ function testSession(root: string): { id: string; dir: string } {
 
 function stores(root: string): {
   instances: PluginInstanceStore;
-  proposals: ProposalStore;
 } {
   const session = testSession(root);
   return {
     instances: new PluginInstanceStore({ session }),
-    proposals: new ProposalStore({ session }),
   };
 }
 
@@ -110,7 +107,7 @@ afterEach(() => {
 describe("Plugin Package lifecycle", () => {
   test("provides writable Plugin data directories at all four scopes", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -119,13 +116,11 @@ describe("Plugin Package lifecycle", () => {
     let context: PluginActivationContext | undefined;
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
         }),
       ],
-      onProposal() {},
     });
 
     await manager.start();
@@ -168,7 +163,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("scopes ContextProviders by Plugin name and removes them on deactivate", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -176,7 +171,6 @@ describe("Plugin Package lifecycle", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           context.registerContextProvider({
@@ -193,7 +187,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
 
     await manager.start();
@@ -214,7 +207,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("activates resource Sources through the public Controller contract", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -237,7 +230,6 @@ describe("Plugin Package lifecycle", () => {
     }
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           context.registerController({
@@ -252,7 +244,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
       onBoardChanged() {
         boardChanges += 1;
       },
@@ -268,7 +259,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("automatically reconciles created Resources and status changes", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -278,7 +269,6 @@ describe("Plugin Package lifecycle", () => {
     const phases: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
@@ -298,7 +288,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
 
     await manager.start();
@@ -315,7 +304,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("maps watched Resource create, update, and delete events to primary Resources", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -339,7 +328,6 @@ describe("Plugin Package lifecycle", () => {
     const reconciled: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
@@ -364,7 +352,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
 
     await manager.start();
@@ -401,7 +388,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("presents active Resources as Board items and invalidates on status changes", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -418,7 +405,6 @@ describe("Plugin Package lifecycle", () => {
     let presentations = 0;
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
@@ -438,7 +424,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
       onBoardChanged() {
         boardChanges += 1;
       },
@@ -486,7 +471,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("exposes a frozen, Instance-scoped Resource client to reconcile code", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -508,7 +493,6 @@ describe("Plugin Package lifecycle", () => {
     const toasts: PluginToast[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [reqloopPackage((activation) => {
         context = activation;
         activation.toast.show({
@@ -523,7 +507,6 @@ describe("Plugin Package lifecycle", () => {
           session: { ...snapshot.session, cwd: root },
         };
       },
-      onProposal() {},
       onToast(toast) {
         toasts.push(toast);
       },
@@ -614,7 +597,6 @@ describe("Plugin Package lifecycle", () => {
     const root = testRoot();
     const session = new SessionStore(root).createSession({ cwd: root });
     const instances = new PluginInstanceStore({ session });
-    const proposals = new ProposalStore({ session });
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -623,7 +605,6 @@ describe("Plugin Package lifecycle", () => {
     const manager = new Manager({
       session,
       instances,
-      proposals,
       packages: [reqloopPackage((activation) => {
         activation.logger.warn(
           "Could not parse devloop PR state",
@@ -634,7 +615,6 @@ describe("Plugin Package lifecycle", () => {
           },
         );
       })],
-      onProposal() {},
     });
 
     await manager.start();
@@ -670,7 +650,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("restores enabled instances and scopes Resource registration to each instance", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     for (const pluginInstanceId of ["reqloop_a", "reqloop_b"]) {
       instances.create({
         pluginInstanceId,
@@ -693,7 +673,6 @@ describe("Plugin Package lifecycle", () => {
     const reconciled: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           activated.push(context.instance.pluginInstanceId);
@@ -705,7 +684,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
 
     await manager.start();
@@ -720,7 +698,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("keeps one owner for each Plugin-defined Resource kind", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "first",
       pluginId: "example/first",
@@ -743,12 +721,10 @@ describe("Plugin Package lifecycle", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         controllerPackage("example/first"),
         controllerPackage("example/second"),
       ],
-      onProposal() {},
     });
 
     await manager.activateInstance("first");
@@ -760,7 +736,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("deactivation closes registrations and custom cleanup in reverse order", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -769,7 +745,6 @@ describe("Plugin Package lifecycle", () => {
     const closed: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           context.onClose(() => {
@@ -784,7 +759,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
 
     await manager.activateInstance("reqloop_default");
@@ -801,7 +775,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("rolls back a partially activated Binding", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -810,7 +784,6 @@ describe("Plugin Package lifecycle", () => {
     const closed: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           context.onClose(() => {
@@ -823,7 +796,6 @@ describe("Plugin Package lifecycle", () => {
           throw new Error("activation failed");
         }),
       ],
-      onProposal() {},
     });
 
     await expect(manager.activateInstance("reqloop_default")).rejects.toThrow(
@@ -839,7 +811,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("rejects disabled or unavailable package versions", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "disabled",
       pluginId: "qiankun/reqloop",
@@ -853,9 +825,7 @@ describe("Plugin Package lifecycle", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [reqloopPackage(() => {})],
-      onProposal() {},
     });
 
     await expect(manager.activateInstance("disabled")).rejects.toThrow(
@@ -869,7 +839,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("seals activation and rejects duplicate Package identities", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -881,9 +851,7 @@ describe("Plugin Package lifecycle", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [plugin],
-      onProposal() {},
     });
     await manager.activateInstance("reqloop_default");
 
@@ -897,9 +865,7 @@ describe("Plugin Package lifecycle", () => {
       () =>
         new Manager({
           instances,
-          proposals,
           packages: [plugin, plugin],
-          onProposal() {},
         }),
     ).toThrow("plugin Package already registered: qiankun/reqloop@1.2.0");
     await manager.close();
@@ -907,7 +873,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("Manager close is idempotent and tears down active Bindings", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -916,7 +882,6 @@ describe("Plugin Package lifecycle", () => {
     let cleanups = 0;
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           context.onClose(() => {
@@ -928,7 +893,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
     });
     await manager.start();
 
@@ -943,9 +907,8 @@ describe("Plugin Package lifecycle", () => {
     await expect(manager.start()).rejects.toThrow("plugin Manager is closed");
   });
 
-  test("requires Instance and Proposal stores to own the same BatonSession", () => {
+  test("requires the Manager session and Instance store to own the same BatonSession", () => {
     const root = testRoot();
-    const { proposals } = stores(root);
     const instances = new PluginInstanceStore({
       session: {
         id: "bs_other",
@@ -956,16 +919,15 @@ describe("Plugin Package lifecycle", () => {
     expect(
       () =>
         new Manager({
+          session: new SessionStore(root).createSession({ cwd: "/repo" }),
           instances,
-          proposals,
-          onProposal() {},
         }),
-    ).toThrow("plugin InstanceStore and ProposalStore must own the same BatonSession");
+    ).toThrow("plugin Manager session and PluginInstanceRepository must own the same BatonSession");
   });
 
   test("startup isolates one Instance activation failure from other Plugins", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     for (const pluginInstanceId of ["broken", "healthy"]) {
       instances.create({
         pluginInstanceId,
@@ -976,7 +938,6 @@ describe("Plugin Package lifecycle", () => {
     const failures: Array<{ pluginInstanceId: string; error: unknown }> = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage((context) => {
           if (context.instance.pluginInstanceId === "broken") {
@@ -988,7 +949,6 @@ describe("Plugin Package lifecycle", () => {
           });
         }),
       ],
-      onProposal() {},
       onActivationError(failure) {
         failures.push(failure);
       },
@@ -1006,7 +966,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("loads persisted Package versions lazily and restores enabled Instances", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -1015,13 +975,11 @@ describe("Plugin Package lifecycle", () => {
     let loads = 0;
     const manager = new Manager({
       instances,
-      proposals,
       async loadPackage(pluginId, version) {
         loads += 1;
         expect([pluginId, version]).toEqual(["qiankun/reqloop", "1.2.0"]);
         return reqloopPackage(() => {});
       },
-      onProposal() {},
     });
 
     await manager.start();
@@ -1033,7 +991,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("creates, disables, and restores a session-scoped Instance through Manager", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     let activations = 0;
     let cleanups = 0;
     const loadPackage = async () =>
@@ -1045,9 +1003,7 @@ describe("Plugin Package lifecycle", () => {
       });
     const manager = new Manager({
       instances,
-      proposals,
       loadPackage,
-      onProposal() {},
     });
 
     const created = await manager.createInstance({
@@ -1066,9 +1022,7 @@ describe("Plugin Package lifecycle", () => {
 
     const restored = new Manager({
       instances,
-      proposals,
       loadPackage,
-      onProposal() {},
     });
     await restored.start();
     expect(activations).toBe(1);
@@ -1078,7 +1032,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("updates an Instance Package while preserving identity, config, and enabled state", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -1088,7 +1042,6 @@ describe("Plugin Package lifecycle", () => {
     const activated: string[] = [];
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage(() => {
           activated.push("1.2.0");
@@ -1097,7 +1050,6 @@ describe("Plugin Package lifecycle", () => {
           activated.push("1.3.0");
         }, "1.3.0"),
       ],
-      onProposal() {},
     });
     await manager.start();
 
@@ -1119,7 +1071,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("restores the previous Package when updated activation fails", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     instances.create({
       pluginInstanceId: "reqloop_default",
       pluginId: "qiankun/reqloop",
@@ -1127,14 +1079,12 @@ describe("Plugin Package lifecycle", () => {
     });
     const manager = new Manager({
       instances,
-      proposals,
       packages: [
         reqloopPackage(() => {}),
         reqloopPackage(() => {
           throw new Error("new Package failed");
         }, "1.3.0"),
       ],
-      onProposal() {},
     });
     await manager.start();
 
@@ -1148,7 +1098,7 @@ describe("Plugin Package lifecycle", () => {
 
   test("fresh reloads each Package once and isolates activation failures", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     for (const pluginInstanceId of ["reqloop_a", "reqloop_b"]) {
       instances.create({
         pluginInstanceId,
@@ -1160,7 +1110,6 @@ describe("Plugin Package lifecycle", () => {
     let generation = 0;
     const manager = new Manager({
       instances,
-      proposals,
       async loadPackage(_pluginId, _version, options) {
         loads.push(options?.fresh);
         generation += 1;
@@ -1174,7 +1123,6 @@ describe("Plugin Package lifecycle", () => {
           }
         });
       },
-      onProposal() {},
     });
     await manager.start();
 
@@ -1192,10 +1140,9 @@ describe("Plugin Package lifecycle", () => {
 
   test("rolls explicit enable failure back to disabled", async () => {
     const root = testRoot();
-    const { instances, proposals } = stores(root);
+    const { instances } = stores(root);
     const manager = new Manager({
       instances,
-      proposals,
       async loadPackage() {
         return {
           pluginId: "wrong/plugin",
@@ -1203,7 +1150,6 @@ describe("Plugin Package lifecycle", () => {
           async activate() {},
         };
       },
-      onProposal() {},
     });
 
     await expect(

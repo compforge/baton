@@ -66,7 +66,7 @@ v2 保留这条流水线，并在其外分层组织长期领域 loop：baton cor
 - 提供 headless REPL，方便调试 agent 接入链路
 - 注册本地或 Git Plugin Marketplace，并安装不可变的 PluginPackage
 - 让每个活动的三方 Plugin Binding 在独立、受监管的进程中执行
-- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 Resource/cron Source、requeue 唤醒、Board 投影与用户确认 Proposal
+- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 Resource/cron Source、requeue 唤醒、Board 投影与 reconcile-scoped 用户交互
 
 ## 安装与配置
 
@@ -186,8 +186,7 @@ baton 的数据默认保存在 `~/.baton/`：
         ├── session.jsonl
         ├── session.log
         └── plugins/<plugin-instance-id>/
-            ├── resources/
-            └── proposals/
+            └── resources/
 ```
 
 Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；剪贴板图片作为不可变、按内容寻址的附件由会话历史与 fork 共享，`session.jsonl` 只保存其路径。Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
