@@ -10,7 +10,7 @@ import type {
 } from "../event/types.ts";
 import type {
   InteractionDraft,
-  InteractionResolution,
+  InteractionResult,
 } from "../interaction/types.ts";
 import type { HarnessResumeState } from "./resume.ts";
 
@@ -392,9 +392,9 @@ export interface InteractionContext {
 
 /**
  * Harness 只提交 kind-specific 草稿并等待结果。宿主负责铸造 interactionId/requester、
- * 先持久化 `interaction.opened`，再把持久化后的 resolution 送回 Adapter。
+ * 先持久化 `interaction.requested`，再把持久化后的 result 送回 Adapter。
  */
 export type InteractionHandler = (
   interaction: InteractionDraft,
   context?: InteractionContext,
-) => Promise<InteractionResolution>;
+) => Promise<InteractionResult>;

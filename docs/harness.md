@@ -161,8 +161,8 @@ Controller 的 driven admission 队列。
 
 ### 5.3 Interaction
 
-Adapter 需要外部参与者时提交 `InteractionDraft` 并等待 resolution。Controller 签发
-`interactionId` 和 requester，持久化 opened/resolved；Adapter 不得自行发完整生命周期 Event。
+Adapter 需要外部参与者时提交 `InteractionDraft` 并等待 result。Controller 签发
+`interactionId` 和 requester，持久化 requested/answered/cancelled；Adapter 不得自行发完整生命周期 Event。
 Interaction 的执行坐标和原生请求留在 envelope context/raw，不能污染稳定 payload。
 
 ## 6. 外部 HarnessSession 纳管

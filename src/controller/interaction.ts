@@ -4,7 +4,7 @@ import type { AnyEventDraft, EventSource } from "../event/types.ts";
 import type {
   Interaction,
   InteractionDraft,
-  InteractionResolution,
+  InteractionResult,
 } from "../interaction/types.ts";
 
 interface InteractionBinding {
@@ -19,8 +19,8 @@ type AppendEvent<TBinding> = (
 ) => void;
 
 /**
- * 当前进程内的 Interaction continuation owner。持久状态仍以 opened/resolved Event
- * 为准；这里仅持有等待 resolution 的 Harness continuation。
+ * 当前进程内的 Interaction continuation owner。持久状态以 requested / answered / cancelled
+ * Event 为准；这里仅持有等待结果的 Harness continuation。
  */
 export class InteractionWaiters<TBinding extends InteractionBinding> {
   private readonly pending = new Map<
@@ -29,7 +29,7 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
       interaction: Interaction;
       binding: TBinding;
       turnId?: string;
-      resolve: (resolution: InteractionResolution) => void;
+      resolve: (result: InteractionResult) => void;
     }
   >();
 
@@ -43,7 +43,7 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
     draft: InteractionDraft,
     turnId: string | undefined,
     context?: InteractionContext,
-  ): Promise<InteractionResolution> {
+  ): Promise<InteractionResult> {
     const harnessTargetId = binding.target.id;
     const interaction: Interaction = {
       ...draft,
@@ -66,7 +66,7 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
         this.appendEvent(
           binding,
           {
-            kind: "interaction.opened",
+            kind: "interaction.requested",
             ...(turnId ? { turnId } : {}),
             payload: interaction,
             ...(context?.raw !== undefined ? { raw: context.raw } : {}),
@@ -82,11 +82,11 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
     });
   }
 
-  resolve(interactionId: string, resolution: InteractionResolution): boolean {
+  complete(interactionId: string, result: InteractionResult): boolean {
     const entry = this.pending.get(interactionId);
     if (!entry) return false;
-    if (resolution.kind !== "cancelled" && resolution.kind !== entry.interaction.kind) return false;
-    return this.settle(interactionId, resolution, { type: "user" });
+    if (result.kind !== "cancelled" && result.kind !== entry.interaction.kind) return false;
+    return this.settle(interactionId, result, { type: "user" });
   }
 
   cancelForTurn(turnId: string): void {
@@ -102,22 +102,35 @@ export class InteractionWaiters<TBinding extends InteractionBinding> {
 
   private settle(
     interactionId: string,
-    resolution: InteractionResolution,
+    result: InteractionResult,
     source: EventSource,
   ): boolean {
     const entry = this.pending.get(interactionId);
     if (!entry) return false;
-    this.appendEvent(
-      entry.binding,
-      {
-        kind: "interaction.resolved",
-        ...(entry.turnId ? { turnId: entry.turnId } : {}),
-        payload: { interactionId, resolution },
-      },
-      source,
-    );
+    const turn = entry.turnId ? { turnId: entry.turnId } : {};
+    if (result.kind === "cancelled") {
+      this.appendEvent(
+        entry.binding,
+        {
+          kind: "interaction.cancelled",
+          ...turn,
+          payload: { interactionId, reason: result.reason },
+        },
+        source,
+      );
+    } else {
+      this.appendEvent(
+        entry.binding,
+        {
+          kind: "interaction.answered",
+          ...turn,
+          payload: { interactionId, answer: result },
+        },
+        source,
+      );
+    }
     this.pending.delete(interactionId);
-    entry.resolve(resolution);
+    entry.resolve(result);
     return true;
   }
 }

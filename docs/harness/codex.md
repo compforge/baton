@@ -71,12 +71,12 @@ pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最�
 ## 5. Interaction 与输出
 
 Codex 的 permission、question 等 server request 由 Adapter 转成 `InteractionDraft`，等待 Baton
-resolution 后再回原生协议。hook trust 是 thread 打开前的 setup Interaction：Baton 按 hook
+result 后再回原生协议。hook trust 是 thread 打开前的 setup Interaction：Baton 按 hook
 精确定义保存信任指纹，定义变化后重新询问；已信任且未变化时显示可见 notice。
 
 delegated reviewer 没有向 Baton 打开 Interaction 时，Adapter 把 review 终态归一为带独立
 `reviewId` 的 `ApprovalReview` 审计事实。无 target 的 review 也必须留痕，未知 decision
-fail closed，不能伪造成 permission opened/resolved。
+fail closed，不能伪造成 permission requested/answered。
 
 主要输出映射包括：
 

@@ -695,7 +695,7 @@ describe("BatonChatProtocol streaming State", () => {
       });
       session.append({
         source: { type: "baton" },
-        kind: "interaction.opened",
+        kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
         payload: {
@@ -1616,17 +1616,17 @@ describe("interaction eventization: pending projects from the event stream", () 
     { optionId: "deny", name: "Deny", polarity: "reject" as const, lifetime: "once" as const },
   ];
 
-  test("approval card follows Interaction opened/resolved events; stale answer is a hint, not a crash", async () => {
+  test("approval card follows Interaction requested/terminal events; stale answer is a hint, not a crash", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-interaction-"));
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      // 事件流是 pending 交互的唯一真相源：opened 落盘即出卡片，id = interactionId
+      // 事件流是 pending 交互的唯一真相源：requested 落盘即出卡片，id = interactionId
       session.append({
         source: { type: "baton" },
-        kind: "interaction.opened",
+        kind: "interaction.requested",
         harness: "claude-code",
         turnId: "t1",
         payload: {
@@ -1651,20 +1651,20 @@ describe("interaction eventization: pending projects from the event stream", () 
         },
       });
 
-      // 无 live resolver（如崩溃残留）：应答提示 stale，不静默吞掉
+      // 无 live continuation（如崩溃残留）：应答提示 stale，不静默吞掉
       await protocol.resolveInteraction("ix_1", { kind: "approval", optionId: "allow" });
       composer = protocol.stateStore.getState("composer");
-      expect(composer.interactions).toHaveLength(1); // 卡片消失只由 resolved 事件驱动
+      expect(composer.interactions).toHaveLength(1); // 卡片消失只由 terminal 事件驱动
       expect(protocol.stateStore.getState("footer").toast?.text).toContain("no longer pending");
 
-      // resolved 落盘 → 卡片消失
+      // cancelled 落盘 → 卡片消失
       session.append({
         source: { type: "baton" },
-        kind: "interaction.resolved",
+        kind: "interaction.cancelled",
         harness: "baton",
         payload: {
           interactionId: "ix_1",
-          resolution: { kind: "cancelled", reason: "recovery" },
+          reason: "recovery",
         },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
@@ -1674,7 +1674,7 @@ describe("interaction eventization: pending projects from the event stream", () 
     }
   });
 
-  test("question card follows Interaction opened/resolved events", async () => {
+  test("question card follows Interaction requested/terminal events", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-question-"));
     try {
       const store = new SessionStore(root);
@@ -1683,7 +1683,7 @@ describe("interaction eventization: pending projects from the event stream", () 
 
       session.append({
         source: { type: "baton" },
-        kind: "interaction.opened",
+        kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
         payload: {
@@ -1700,18 +1700,18 @@ describe("interaction eventization: pending projects from the event stream", () 
         requester: "codex",
         cancelResponse: { kind: "cancelled" },
       });
-      let resolution: unknown;
+      let result: unknown;
       const internals = protocol as unknown as {
         controller: {
-          resolveInteraction(id: string, value: unknown): boolean;
+          completeInteraction(id: string, value: unknown): boolean;
         };
       };
-      internals.controller.resolveInteraction = (_id, value) => {
-        resolution = value;
+      internals.controller.completeInteraction = (_id, value) => {
+        result = value;
         return true;
       };
       await protocol.resolveInteraction("ix_2", { kind: "cancelled" });
-      expect(resolution).toEqual({
+      expect(result).toEqual({
         kind: "cancelled",
         reason: "user",
       });
@@ -1719,7 +1719,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "question",
         answers: { q1: ["repository"] },
       });
-      expect(resolution).toEqual({
+      expect(result).toEqual({
         kind: "question",
         outcome: "answered",
         answers: { q1: ["repository"] },
@@ -1727,11 +1727,11 @@ describe("interaction eventization: pending projects from the event stream", () 
 
       session.append({
         source: { type: "baton" },
-        kind: "interaction.resolved",
+        kind: "interaction.cancelled",
         harness: "baton",
         payload: {
           interactionId: "ix_2",
-          resolution: { kind: "cancelled", reason: "recovery" },
+          reason: "recovery",
         },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
@@ -1757,7 +1757,7 @@ describe("interaction eventization: pending projects from the event stream", () 
           type: "plugin",
           pluginInstanceId: "reqloop_default",
         },
-        kind: "interaction.opened",
+        kind: "interaction.requested",
         payload: {
           kind: "question",
           interactionId: "ix_plugin",
@@ -1824,25 +1824,25 @@ describe("interaction eventization: pending projects from the event stream", () 
         },
       });
 
-      let resolution: unknown;
+      let result: unknown;
       const internals = protocol as unknown as {
-        controller: { resolveInteraction(): boolean };
+        controller: { completeInteraction(): boolean };
         plugins: {
-          resolveInteraction(id: string, value: unknown): Promise<boolean>;
+          completeInteraction(id: string, value: unknown): Promise<boolean>;
         };
       };
-      internals.controller.resolveInteraction = () => {
+      internals.controller.completeInteraction = () => {
         throw new Error("Plugin Interaction must not route to Harness");
       };
-      internals.plugins.resolveInteraction = async (_id, value) => {
-        resolution = value;
+      internals.plugins.completeInteraction = async (_id, value) => {
+        result = value;
         return true;
       };
       await protocol.resolveInteraction("ix_plugin", {
         kind: "question",
         answers: { decision: ["Do not associate"] },
       });
-      expect(resolution).toEqual({
+      expect(result).toEqual({
         kind: "question",
         outcome: "answered",
         answers: { decision: ["reject"] },
@@ -1851,7 +1851,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "question",
         answers: { decision: ["REQ-1"] },
       });
-      expect(resolution).toEqual({
+      expect(result).toEqual({
         kind: "question",
         outcome: "answered",
         answers: { decision: ["req_1"] },
@@ -1862,7 +1862,7 @@ describe("interaction eventization: pending projects from the event stream", () 
     }
   });
 
-  test("hook trust Interaction uses the approval primitive but keeps its own resolution kind", async () => {
+  test("hook trust Interaction uses the approval primitive but keeps its own answer kind", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-hook-trust-"));
     try {
       const store = new SessionStore(root);
@@ -1870,7 +1870,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       session.append({
         source: { type: "baton" },
-        kind: "interaction.opened",
+        kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
         payload: {
@@ -1901,25 +1901,25 @@ describe("interaction eventization: pending projects from the event stream", () 
           options: [{ optionId: "trust" }, { optionId: "skip" }],
         },
       });
-      let resolution: unknown;
+      let result: unknown;
       const internals = protocol as unknown as {
         controller: {
-          resolveInteraction(id: string, value: unknown): boolean;
+          completeInteraction(id: string, value: unknown): boolean;
         };
       };
-      internals.controller.resolveInteraction = (_id, value) => {
-        resolution = value;
+      internals.controller.completeInteraction = (_id, value) => {
+        result = value;
         return true;
       };
       await protocol.resolveInteraction("ix_3", { kind: "approval", optionId: "trust" });
-      expect(resolution).toEqual({ kind: "hook_trust", outcome: "trusted" });
+      expect(result).toEqual({ kind: "hook_trust", outcome: "trusted" });
       session.append({
         source: { type: "baton" },
-        kind: "interaction.resolved",
+        kind: "interaction.cancelled",
         harness: "baton",
         payload: {
           interactionId: "ix_3",
-          resolution: { kind: "cancelled", reason: "recovery" },
+          reason: "recovery",
         },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);

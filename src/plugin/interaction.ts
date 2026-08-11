@@ -14,7 +14,7 @@ import type {
 } from "../event/types.ts";
 import type {
   Interaction,
-  InteractionResolution,
+  InteractionResult,
   PluginResourceInteractionContext,
 } from "../interaction/types.ts";
 import type { SessionHandle } from "../store/store.ts";
@@ -30,8 +30,8 @@ type InteractionSession = Pick<
 >;
 
 interface Entry {
-  readonly opened: EventEnvelope<"interaction.opened">;
-  resolution?: InteractionResolution;
+  readonly requested: EventEnvelope<"interaction.requested">;
+  result?: InteractionResult;
 }
 
 interface InteractionOption {
@@ -139,39 +139,39 @@ function stableEnvelope(interaction: Interaction): unknown {
 }
 
 function outcome(
-  resolution: InteractionResolution | undefined,
+  result: InteractionResult | undefined,
 ):
   | { readonly kind: "answered"; readonly values: readonly string[] }
   | { readonly kind: "cancelled"; readonly reason: CancellationReason }
   | undefined {
-  if (!resolution) return;
-  if (resolution.kind === "cancelled") {
+  if (!result) return;
+  if (result.kind === "cancelled") {
     return {
       kind: "cancelled",
-      reason: resolution.reason,
+      reason: result.reason,
     };
   }
-  if (resolution.kind !== "question") return;
+  if (result.kind !== "question") return;
   return {
     kind: "answered",
-    values: Object.freeze([...(resolution.answers[QUESTION_ID] ?? [])]),
+    values: Object.freeze([...(result.answers[QUESTION_ID] ?? [])]),
   };
 }
 
-function validResolution(
+function validResult(
   interaction: Interaction,
-  resolution: InteractionResolution,
+  result: InteractionResult,
 ): boolean {
-  if (resolution.kind === "cancelled") return true;
-  if (interaction.kind !== "question" || resolution.kind !== "question") {
+  if (result.kind === "cancelled") return true;
+  if (interaction.kind !== "question" || result.kind !== "question") {
     return false;
   }
   if (
-    Object.keys(resolution.answers).some((questionId) => questionId !== QUESTION_ID)
+    Object.keys(result.answers).some((questionId) => questionId !== QUESTION_ID)
   ) {
     return false;
   }
-  const values = resolution.answers[QUESTION_ID] ?? [];
+  const values = result.answers[QUESTION_ID] ?? [];
   if (values.length !== 1 || !values[0]?.trim()) return false;
   const question = interaction.questions[0];
   if (!question?.options?.length) return true;
@@ -182,7 +182,7 @@ function validResolution(
 }
 
 /**
- * Event-backed Plugin Interaction index. It stores no callbacks: resolution is
+ * Event-backed Plugin Interaction index. It stores no callbacks: the result is
  * persisted first, then routed back to the original Resource reconcile key.
  */
 export class Store {
@@ -223,17 +223,17 @@ export class Store {
       },
     });
     const entry = this.entries.get(interaction.interactionId);
-    const resolved = outcome(entry?.resolution);
-    if (!resolved) return Object.freeze({ state: "waiting" });
-    if (resolved.kind === "cancelled") {
+    const result = outcome(entry?.result);
+    if (!result) return Object.freeze({ state: "waiting" });
+    if (result.kind === "cancelled") {
       return Object.freeze({
         state: "cancelled",
-        reason: resolved.reason,
+        reason: result.reason,
       });
     }
     return Object.freeze({
       state: "answered",
-      value: resolved.values[0] as TValue,
+      value: result.values[0] as TValue,
     });
   }
 
@@ -278,20 +278,20 @@ export class Store {
       if (existing) {
         const candidate = pluginInteraction(draft);
         if (
-          JSON.stringify(stableEnvelope(existing.opened.payload)) !==
+          JSON.stringify(stableEnvelope(existing.requested.payload)) !==
             JSON.stringify(stableEnvelope(candidate))
         ) {
           throw new Error(
             `plugin Interaction identity conflict for ${draft.request.decisionKey}`,
           );
         }
-        return existing.opened.payload;
+        return existing.requested.payload;
       }
     }
 
     const interaction = pluginInteraction(draft);
     this.session.append({
-      kind: "interaction.opened",
+      kind: "interaction.requested",
       source: {
         type: "plugin",
         pluginInstanceId: draft.key.pluginInstanceId,
@@ -301,31 +301,37 @@ export class Store {
     return interaction;
   }
 
-  resolve(
+  complete(
     interactionId: string,
-    resolution: InteractionResolution,
+    result: InteractionResult,
   ): ReconcileKey | undefined {
     const entry = this.entries.get(interactionId);
-    const interaction = entry?.opened.payload;
+    const interaction = entry?.requested.payload;
     if (
       !entry ||
-      entry.resolution ||
+      entry.result ||
       !interaction ||
       interaction.requester.type !== "plugin" ||
       !interaction.pluginContext
     ) {
       return;
     }
-    if (!validResolution(interaction, resolution)) return;
-    this.session.append({
-      kind: "interaction.resolved",
-      source: { type: "user" },
-      parentEventId: entry.opened.eventId,
-      payload: {
-        interactionId,
-        resolution,
-      },
-    });
+    if (!validResult(interaction, result)) return;
+    if (result.kind === "cancelled") {
+      this.session.append({
+        kind: "interaction.cancelled",
+        source: { type: "user" },
+        parentEventId: entry.requested.eventId,
+        payload: { interactionId, reason: result.reason },
+      });
+    } else {
+      this.session.append({
+        kind: "interaction.answered",
+        source: { type: "user" },
+        parentEventId: entry.requested.eventId,
+        payload: { interactionId, answer: result },
+      });
+    }
     const context = interaction.pluginContext;
     return Object.freeze({
       batonSessionId: this.session.id,
@@ -344,7 +350,7 @@ export class Store {
   }
 
   private apply(event: AnyEventEnvelope): void {
-    if (event.kind === "interaction.opened") {
+    if (event.kind === "interaction.requested") {
       const interaction = event.payload;
       const context = interaction.pluginContext;
       if (interaction.requester.type !== "plugin" || !context) return;
@@ -355,13 +361,18 @@ export class Store {
       );
       const existingId = this.interactionIdByIdentity.get(identity);
       if (existingId) return;
-      this.entries.set(interaction.interactionId, { opened: event });
+      this.entries.set(interaction.interactionId, { requested: event });
       this.interactionIdByIdentity.set(identity, interaction.interactionId);
       return;
     }
-    if (event.kind !== "interaction.resolved") return;
+    if (
+      event.kind !== "interaction.answered" &&
+      event.kind !== "interaction.cancelled"
+    ) return;
     const entry = this.entries.get(event.payload.interactionId);
-    if (!entry || entry.resolution) return;
-    entry.resolution = event.payload.resolution;
+    if (!entry || entry.result) return;
+    entry.result = event.kind === "interaction.answered"
+      ? event.payload.answer
+      : { kind: "cancelled", reason: event.payload.reason };
   }
 }

@@ -31,7 +31,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 
 | 域 | 负责 | 不负责 |
 |---|---|---|
-| **Input** | 表达进入 Baton 的刺激；当前主要是用户 prompt、interaction resolution 和 control | 不理解 Harness wire，不决定执行终态 |
+| **Input** | 表达进入 Baton 的刺激；当前主要是用户 prompt、interaction result 和 control | 不理解 Harness wire，不决定执行终态 |
 | **Controller** | admission、queue、Attempt、Turn、Interaction、Event 持久化和 Projection | 不实现 Harness 方言，不依赖具体 UI shape |
 | **Harness** | Target、原生 Session、Adapter、Capability 和原生事件归一 | 不拥有用户输入生命周期，不直接向页面投影 |
 
@@ -55,7 +55,7 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
 | **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
 | **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
-| **Interaction** | 需要外部参与者给出结果后才能继续的持久待决对象；Controller 拥有 opened/resolved 生命周期 |
+| **Interaction** | 需要外部参与者给出结果后才能继续的持久待决对象；Controller 拥有 requested/answered/cancelled 生命周期 |
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
 

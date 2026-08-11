@@ -1,5 +1,5 @@
 // cancel-cascade（见 docs/workflow.md“Interaction 闭环”）：turn 被打断时，仍挂起的 Interaction 必须
-// 随之收口——adapter 的 await 解开、Controller 发 interaction.resolved、requires_action 落下，
+// 随之收口——adapter 的 await 解开、Controller 发 interaction.cancelled、requires_action 落下，
 // 不留悬挂 waiter。参考 codex clear_pending_waiters→Abort、opencode interrupt 的 ensuring(delete)。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -20,7 +20,7 @@ import { Controller, type InteractionHandlers } from "../src/controller/index.ts
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
-/** turn 阻塞在一个审批 Interaction 上，直到 resolve 或（cancel 时）级联取消；cancel() 合成 idle(cancelled) */
+/** turn 阻塞在一个审批 Interaction 上，直到回答或（cancel 时）级联取消；cancel() 合成 idle(cancelled) */
 class ApprovalHoldingAdapter implements HarnessAdapter {
   readonly harness = "codex";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
@@ -75,7 +75,7 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("cancel cascades to pending Interactions", () => {
-  test("Esc while a permission is pending resolves it cancelled, no dangling requires_action", async () => {
+  test("Esc while a permission is pending cancels it, no dangling requires_action", async () => {
     const controller = new Controller({
       session,
       mentionBudgetChars: 4096,
@@ -85,7 +85,7 @@ describe("cancel cascades to pending Interactions", () => {
 
     const turn = controller.submit("codex", text("do it"));
     // 阻塞在审批：pending 落盘 → 会话派生 requires_action
-    await until(() => [...session.loadState().interactions.values()].some((value) => !value.resolution));
+    await until(() => [...session.loadState().interactions.values()].some((value) => !value.result));
     expect(session.loadState().runState).toBe("requires_action");
 
     await controller.control({ kind: "interrupt" });
@@ -93,11 +93,11 @@ describe("cancel cascades to pending Interactions", () => {
     expect(await turn).toBe("completed");
 
     const events = session.readEvents();
-    const resolved = events.find((e) => e.kind === "interaction.resolved");
-    expect(resolved?.payload.resolution).toEqual({ kind: "cancelled", reason: "turn" });
+    const cancelled = events.find((e) => e.kind === "interaction.cancelled");
+    expect(cancelled?.payload.reason).toBe("turn");
 
     const state = session.loadState();
-    expect([...state.interactions.values()].every((value) => value.resolution)).toBe(true); // 不再悬挂
+    expect([...state.interactions.values()].every((value) => value.result)).toBe(true); // 不再悬挂
     expect(state.runState).toBe("idle"); // requires_action 落下
     // 打断标记仍在（turn 确实被取消）
     expect(events.some((e) => e.kind === "_baton_notice")).toBe(true);

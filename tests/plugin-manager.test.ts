@@ -155,7 +155,7 @@ describe("plugin Manager", () => {
     });
     expect(interaction?.kind).toBe("question");
     expect(
-      await manager.resolveInteraction(interaction!.interactionId, {
+      await manager.completeInteraction(interaction!.interactionId, {
         kind: "question",
         outcome: "answered",
         answers: { decision: ["req_1"] },
@@ -165,7 +165,7 @@ describe("plugin Manager", () => {
     expect(states).toEqual(["waiting", "answered:req_1"]);
     expect(
       session.loadState().interactions.get(interaction!.interactionId)
-        ?.resolution,
+        ?.result,
     ).toEqual({
       kind: "question",
       outcome: "answered",

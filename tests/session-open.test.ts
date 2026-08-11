@@ -265,7 +265,7 @@ describe("crash recovery on open", () => {
     h.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
     h.append({
       source: { type: "baton" },
-      kind: "interaction.opened",
+      kind: "interaction.requested",
       payload: {
         kind: "permission",
         interactionId: "ix1",
@@ -279,7 +279,7 @@ describe("crash recovery on open", () => {
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix1")?.resolution).toEqual({
+    expect(result.session.loadState().interactions.get("ix1")?.result).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });
@@ -290,7 +290,7 @@ describe("crash recovery on open", () => {
     h.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
     h.append({
       source: { type: "baton" },
-      kind: "interaction.opened",
+      kind: "interaction.requested",
       payload: {
         kind: "question",
         interactionId: "ix2",
@@ -303,7 +303,7 @@ describe("crash recovery on open", () => {
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix2")?.resolution).toEqual({
+    expect(result.session.loadState().interactions.get("ix2")?.result).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });
@@ -313,7 +313,7 @@ describe("crash recovery on open", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.append({
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
-      kind: "interaction.opened",
+      kind: "interaction.requested",
       payload: {
         kind: "question",
         interactionId: "ix_plugin",
@@ -349,7 +349,7 @@ describe("crash recovery on open", () => {
     });
     expect(result.recovered).toBe(false);
     expect(
-      result.session.loadState().interactions.get("ix_plugin")?.resolution,
+      result.session.loadState().interactions.get("ix_plugin")?.result,
     ).toBeUndefined();
   });
 
@@ -358,7 +358,7 @@ describe("crash recovery on open", () => {
     h.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
     h.append({
       source: { type: "baton" },
-      kind: "interaction.opened",
+      kind: "interaction.requested",
       payload: {
         kind: "hook_trust",
         interactionId: "ix3",
@@ -380,7 +380,7 @@ describe("crash recovery on open", () => {
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix3")?.resolution).toEqual({
+    expect(result.session.loadState().interactions.get("ix3")?.result).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });

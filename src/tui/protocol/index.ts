@@ -43,7 +43,7 @@ import {
   probeHarnessTarget,
 } from "../../harness/registry.ts";
 import { bundledTextgenTargets } from "../../session/title.ts";
-import type { InteractionResolution } from "../../interaction/types.ts";
+import type { InteractionResult } from "../../interaction/types.ts";
 import { createReconcileSnapshot } from "../../plugin/reconcile-snapshot.ts";
 import { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
@@ -749,13 +749,13 @@ export class BatonChatProtocol implements ChatProtocol {
     }
 
     const interaction = this.state.interactions.get(id)?.interaction;
-    let resolution: InteractionResolution | undefined;
+    let result: InteractionResult | undefined;
     if (response.kind === "cancelled" && interaction) {
-      resolution = { kind: "cancelled", reason: "user" };
+      result = { kind: "cancelled", reason: "user" };
     } else if (response.kind === "approval" && interaction?.kind === "permission") {
-      resolution = { kind: "permission", outcome: "selected", optionId: response.optionId };
+      result = { kind: "permission", outcome: "selected", optionId: response.optionId };
     } else if (response.kind === "approval" && interaction?.kind === "hook_trust") {
-      resolution = {
+      result = {
         kind: "hook_trust",
         outcome: response.optionId === "trust" ? "trusted" : "skipped",
       };
@@ -772,14 +772,14 @@ export class BatonChatProtocol implements ChatProtocol {
           }),
         ]),
       );
-      resolution = { kind: "question", outcome: "answered", answers };
+      result = { kind: "question", outcome: "answered", answers };
     }
-    const resolved =
-      resolution &&
+    const completed =
+      result &&
       (interaction?.requester.type === "plugin"
-        ? await this.plugins.resolveInteraction(id, resolution)
-        : this.controller.resolveInteraction(id, resolution));
-    if (!resolved) {
+        ? await this.plugins.completeInteraction(id, result)
+        : this.controller.completeInteraction(id, result));
+    if (!completed) {
       // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
       this.toast = { text: "interaction request is no longer pending", tone: "info" };
       this.changed();

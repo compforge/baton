@@ -346,7 +346,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   );
   const interactions: InteractionView[] = [
     ...[...state.interactions.values()]
-      .filter((item) => !item.resolution)
+      .filter((item) => !item.result)
       .map((item) => interactionView(item.interaction)),
     ...pendingProposals.map((proposal) => ({
       id: proposal.proposalId,
