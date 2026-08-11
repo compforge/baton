@@ -276,7 +276,11 @@ HarnessInvocation. Plugins cannot select a topic, provide a routing callback,
 or pass a Harness-native DTO through Core.
 
 Each choice `value` is the stable answer value persisted by Baton and returned
-as `decision.value`; `label` and `description` are presentation only. Operation
+as `decision.value`; `label` and `description` are presentation only. A closed
+choice ask preserves the literal union of those values. Setting
+`allowOther: true` permits arbitrary non-empty text and therefore widens the
+answer type to `string`; omit `choices` and set `allowOther: true` for a pure
+free-text ask. Operation
 keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and
 `confirm({ key: "ship" })` are distinct durable operations.
 The verb and key must be reconstructed deterministically on every reconcile

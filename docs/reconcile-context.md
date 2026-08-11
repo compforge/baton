@@ -65,7 +65,9 @@ await resources.patchStatus(resource, {
 Plugin 决定 timeout 在自己的领域里表示拒绝、跳过还是转人工，Core 不把它自动改写为某个答案。
 不能在每次 reconcile 时用当前时间重新计算同一 key 的 deadline；要延长期限或重新询问时使用新 key。
 `choices[].value` 是随 Interaction 持久化并最终返回给 Plugin 的稳定答案值；`label` 和
-`description` 只负责展示，不参与领域判断。
+`description` 只负责展示，不参与领域判断。仅提供 `choices` 时，`decision.value` 保留这些 value
+的字面量联合；设置 `allowOther: true` 后用户可以提交任意非空文本，因此结果类型扩宽为 `string`。
+纯文本问题省略 `choices`，并显式设置 `allowOther: true`。
 
 当领域条件变化、不再需要用户回答时，Plugin 显式撤回原 operation：
 

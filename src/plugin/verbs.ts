@@ -1,6 +1,7 @@
 import type {
   AskInput,
   AskResult,
+  AskValue,
   ConfirmInput,
   ConfirmResult,
   DraftInput,
@@ -74,7 +75,12 @@ function validateAsk(input: AskInput): void {
   nonEmpty("ask title", input.title);
   nonEmpty("ask prompt", input.prompt);
   validateExpiresAt("ask", input.expiresAt);
-  if (input.choices === undefined) return;
+  if (input.choices === undefined) {
+    if (input.allowOther !== true) {
+      throw new Error("ask without choices must set allowOther to true");
+    }
+    return;
+  }
   if (input.choices.length === 0) {
     throw new Error("ask choices must not be empty");
   }
@@ -149,12 +155,12 @@ export function createReconcileContext(
 ): ReconcileContext {
   const context = Object.freeze({
     snapshot,
-    async ask<const TValue extends string>(input: AskInput<TValue>) {
+    async ask<const TInput extends AskInput>(input: TInput) {
       validateAsk(input);
       return await invoke(scope, {
         verb: "ask",
         input,
-      }) as AskResult<TValue>;
+      }) as AskResult<AskValue<TInput>>;
     },
     async confirm(input: ConfirmInput) {
       validateConfirm(input);

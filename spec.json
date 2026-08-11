@@ -1,4 +1,15 @@
 {
+  "packages/plugin/src/reconcile-context.ts::AskInput": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Keep allowOther as the type discriminant; allowOther:true must never expose a choice-only result type."
+        ],
+        "spec": "Closed-choice asks preserve their choice value union, while any ask that permits free text returns string because the durable answer may be outside those choices."
+      }
+    ]
+  },
   "src/interaction/reconcile.ts::ReconcileInteractionStore.ask": {
     "specs": [
       {

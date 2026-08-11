@@ -35,7 +35,7 @@ export interface AskChoice<TValue extends string = string> {
   readonly description?: string;
 }
 
-export interface AskInput<TValue extends string = string> {
+interface AskBaseInput {
   /**
    * Deterministically derived from durable Resource state or stable, re-observable facts.
    * Change it only to ask a new question.
@@ -43,11 +43,32 @@ export interface AskInput<TValue extends string = string> {
   readonly key: string;
   readonly title: string;
   readonly prompt: string;
-  readonly choices?: readonly AskChoice<TValue>[];
-  readonly allowOther?: boolean;
   /** Absolute ISO 8601 deadline. Baton durably cancels the question when it expires. */
   readonly expiresAt?: string;
 }
+
+export interface ChoiceAskInput<TValue extends string = string>
+  extends AskBaseInput {
+  readonly choices: readonly AskChoice<TValue>[];
+  readonly allowOther?: false;
+}
+
+export interface FreeTextAskInput extends AskBaseInput {
+  /** Optional suggested values; the user may still answer with other non-empty text. */
+  readonly choices?: readonly AskChoice[];
+  readonly allowOther: true;
+}
+
+/**
+ * @spec Closed-choice asks preserve their choice value union, while any ask that permits free text returns string because the durable answer may be outside those choices.
+ * @rule Keep allowOther as the type discriminant; allowOther:true must never expose a choice-only result type.
+ */
+export type AskInput<TValue extends string = string> =
+  | ChoiceAskInput<TValue>
+  | FreeTextAskInput;
+
+export type AskValue<TInput extends AskInput> =
+  TInput extends ChoiceAskInput<infer TValue> ? TValue : string;
 
 export type AskResult<TValue extends string = string> =
   | {
@@ -188,9 +209,9 @@ export type DraftResult =
  */
 export interface ReconcileContext {
   readonly snapshot: ReconcileSnapshot;
-  ask<const TValue extends string>(
-    input: AskInput<TValue>,
-  ): Promise<AskResult<TValue>>;
+  ask<const TInput extends AskInput>(
+    input: TInput,
+  ): Promise<AskResult<AskValue<TInput>>>;
   confirm(input: ConfirmInput): Promise<ConfirmResult>;
   withdraw(input: WithdrawInput): Promise<WithdrawResult>;
   draft(input: DraftInput): Promise<DraftResult>;

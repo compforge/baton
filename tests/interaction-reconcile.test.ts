@@ -106,6 +106,36 @@ describe("ReconcileInteractionStore", () => {
     store.close();
   });
 
+  test("returns arbitrary text when an ask allows answers outside its choices", () => {
+    const handle = session();
+    const store = new ReconcileInteractionStore(handle);
+    const context = scope(handle.id);
+    const input = {
+      key: "execution",
+      title: "Execution",
+      prompt: "How should this run?",
+      choices: [
+        { value: "run", label: "Run" },
+        { value: "edit", label: "Edit" },
+      ],
+      allowOther: true,
+    } as const;
+
+    expect(store.ask(context, input)).toEqual({ state: "waiting" });
+    const interaction = [...handle.loadState().interactions.values()][0]
+      ?.interaction;
+    expect(store.complete(interaction!.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["run after the release"] },
+    })).toEqual(context.key);
+    expect(store.ask(context, input)).toEqual({
+      state: "answered",
+      value: "run after the release",
+    });
+    store.close();
+  });
+
   test("restores deadlines and durably times out an unanswered question", async () => {
     const handle = session();
     const context = scope(handle.id);
@@ -115,6 +145,7 @@ describe("ReconcileInteractionStore", () => {
       key: "associate-pr",
       title: "Associate pull request",
       prompt: "Choose a requirement",
+      allowOther: true,
       expiresAt: "2026-08-11T12:01:00.000Z",
     } as const;
 
@@ -166,6 +197,7 @@ describe("ReconcileInteractionStore", () => {
       key: "associate-pr",
       title: "Associate pull request",
       prompt: "Choose a requirement",
+      allowOther: true,
     } as const;
 
     expect(store.ask(context, input)).toEqual({ state: "waiting" });
@@ -303,6 +335,7 @@ describe("ReconcileInteractionStore", () => {
       key: "approve",
       title: "Approve",
       prompt: "Continue?",
+      allowOther: true,
     } as const;
 
     store.ask(context, input);
