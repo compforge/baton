@@ -85,7 +85,7 @@ describe("plugin Interaction Store", () => {
     })).toThrow("plugin Interaction identity conflict");
 
     expect(store.confirm(context, {
-      key: "close",
+      key: "associate-pr",
       title: "Close requirement",
       prompt: "Close it?",
     })).toEqual({ state: "waiting" });
@@ -99,7 +99,7 @@ describe("plugin Interaction Store", () => {
       answers: { decision: ["accept"] },
     });
     expect(store.confirm(context, {
-      key: "close",
+      key: "associate-pr",
       title: "Close requirement",
       prompt: "Close it?",
     })).toEqual({ state: "accepted" });
@@ -170,7 +170,7 @@ describe("plugin Interaction Store", () => {
 
     expect(store.ask(context, input)).toEqual({ state: "waiting" });
     expect(store.withdraw(context, {
-      kind: "ask",
+      verb: "ask",
       key: input.key,
     })).toEqual({ state: "cancelled", reason: "requester" });
     expect(store.ask(context, input)).toEqual({
@@ -178,7 +178,7 @@ describe("plugin Interaction Store", () => {
       reason: "requester",
     });
     expect(store.withdraw(context, {
-      kind: "ask",
+      verb: "ask",
       key: input.key,
     })).toEqual({ state: "cancelled", reason: "requester" });
 
@@ -189,7 +189,7 @@ describe("plugin Interaction Store", () => {
     } as const;
     expect(store.confirm(context, confirmation)).toEqual({ state: "waiting" });
     expect(store.withdraw(context, {
-      kind: "confirm",
+      verb: "confirm",
       key: confirmation.key,
     })).toEqual({ state: "cancelled", reason: "requester" });
     expect(store.confirm(context, confirmation)).toEqual({
@@ -201,7 +201,8 @@ describe("plugin Interaction Store", () => {
     expect(store.ask(context, answeredInput)).toEqual({ state: "waiting" });
     const answered = [...handle.loadState().interactions.values()]
       .find(({ interaction }) =>
-        interaction.pluginContext?.decisionKey === "ask:answer-first"
+        interaction.pluginContext?.operation.verb === "ask" &&
+        interaction.pluginContext.operation.key === "answer-first"
       )?.interaction;
     expect(store.complete(answered!.interactionId, {
       kind: "question",
@@ -209,7 +210,7 @@ describe("plugin Interaction Store", () => {
       answers: { decision: ["req_1"] },
     })).toEqual(context.key);
     expect(store.withdraw(context, {
-      kind: "ask",
+      verb: "ask",
       key: answeredInput.key,
     })).toEqual({ state: "not-pending" });
     expect(store.ask(context, answeredInput)).toEqual({

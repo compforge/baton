@@ -10,6 +10,20 @@ export type CancellationReason =
   | "timeout"
   | "recovery";
 
+export type ReconcileOperationVerb =
+  | "ask"
+  | "confirm"
+  | "draft"
+  | "harness";
+
+/** Stable identity of one level-based capability call within a Resource incarnation. */
+export interface ReconcileOperationRef<
+  TVerb extends ReconcileOperationVerb = ReconcileOperationVerb,
+> {
+  readonly verb: TVerb;
+  readonly key: string;
+}
+
 export interface AskChoice<TValue extends string = string> {
   /** Stable domain value returned when the user selects this choice. */
   readonly value: TValue;
@@ -66,11 +80,7 @@ export type ConfirmResult =
       readonly reason: CancellationReason;
     };
 
-export interface WithdrawInput {
-  /** The Interaction-producing verb that owns the stable operation key. */
-  readonly kind: "ask" | "confirm";
-  readonly key: string;
-}
+export type WithdrawInput = ReconcileOperationRef<"ask" | "confirm">;
 
 export type WithdrawResult =
   | {

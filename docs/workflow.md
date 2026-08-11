@@ -81,7 +81,7 @@ HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
 Input 在 admission 前已经绑定实际 `laneId`。普通用户输入使用保留 ID `main`；
 HarnessInvocation 在最终 Input 准备调度时，按 `laneId + newLane` 继续既有 Lane 或签发新 Lane。
-同一 operation key 重放时复用已签发的实际 Lane ID。Controller 出队时先 append：
+同一 `verb + key` operation ref 重放时复用已签发的实际 Lane ID。Controller 出队时先 append：
 
 1. `user_message(source:<Input source>)`：保存原始 prompt，并保留 user/plugin 发起方；
 2. `state_update(running, source:baton)`：为 driven Turn 开界。
@@ -219,7 +219,7 @@ Harness Adapter 不自签 interaction ID，也不自行伪造 requested/answered
 
 Plugin Resource 请求用户决议时不在 Runner 中持有 Promise continuation。`await ctx.ask(...)`
 立即返回 `waiting` 或当前持久答案；Baton 先持久化答案，再重新 enqueue 原 Resource，下一次
-reconcile 用同一 operation key 读取结果。
+reconcile 用同一 operation ref 读取结果。
 
 自动 reviewer 没有向 Baton 打开 Interaction 时，审批回执是独立 `ApprovalReview` 审计事实，
 不能伪造一组 requested/answered；详见 [审批生命周期](./approval-lifecycle.md)。

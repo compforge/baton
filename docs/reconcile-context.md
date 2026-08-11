@@ -54,11 +54,13 @@ await resources.patchStatus(resource, {
 随 Interaction 一起持久化；到期后 Core 先记录 `cancelled(timeout)`，再重新 enqueue Resource。
 Plugin 决定 timeout 在自己的领域里表示拒绝、跳过还是转人工，Core 不把它自动改写为某个答案。
 不能在每次 reconcile 时用当前时间重新计算同一 key 的 deadline；要延长期限或重新询问时使用新 key。
+`choices[].value` 是随 Interaction 持久化并最终返回给 Plugin 的稳定答案值；`label` 和
+`description` 只负责展示，不参与领域判断。
 
 当领域条件变化、不再需要用户回答时，Plugin 显式撤回原 operation：
 
 ```ts
-await ctx.withdraw({ kind: "ask", key: "handle-review:run-17" });
+await ctx.withdraw({ verb: "ask", key: "handle-review:run-17" });
 ```
 
 撤回只结束仍未决的 Interaction，并持久化 `cancelled(requester)`；若用户答案或其它终态已经先到，
@@ -80,14 +82,15 @@ Lane 不表示发起者、优先级、UI 位置、worktree 或是否调用 Harne
 始终是实际执行 Lane，可传给后续 `harness` 调用以继续同一支线。
 
 Core 为每次 `draft` / `harness` 持久化 `HarnessInvocation`。它是能力调用的执行记录，不是 Plugin
-API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation key、prompt、Target、
-delivery、请求的 `laneId + newLane`，随后关联实际 Lane、Input、Delivery Attempt、Turn 和
+API，也不承担人机授权语义。记录绑定 Plugin、Resource UID、operation ref、prompt、Target、
+请求的 `laneId + newLane`，随后关联实际 Lane、Input、Delivery Attempt、Turn 和
 TurnSummary。新 Lane 的 `createdFor` 与 `parentLaneId` 只记录创建事实，不是后续调用的所有权约束。
 
 ## 身份、恢复与取消
 
-同一 Resource incarnation 内，调用的 `key` 是逻辑操作的幂等键。同一个 key 的参数不可变；需要
-再次提问或再次执行时使用新 key。Core 先记录意图再执行副作用，并从 ledger 派生当前状态：
+同一 Resource incarnation 内，完整操作身份是 `verb + key`。`key` 在各 verb 内是幂等键；同一
+operation ref 的参数不可变，不同 verb 可以复用同一个 caller key。需要再次提问或再次执行时使用
+新 key。Core 先记录意图再执行副作用，并从 ledger 派生当前状态：
 
 - `ask/confirm` 重放同一 Interaction，答案落盘后再唤醒 Resource；
 - `expiresAt` 到期和 `withdraw` 都先落取消事实，再唤醒或继续当前 Resource；

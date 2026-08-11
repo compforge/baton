@@ -1048,7 +1048,11 @@ export class Manager {
     if (!this.harnessInvocations || !this.enqueueHarnessInvocation) {
       throw new Error("plugin Manager host does not support harness()");
     }
-    const existing = this.harnessInvocations.current(context, request.input.key);
+    const operation = Object.freeze({
+      verb: request.verb,
+      key: request.input.key,
+    });
+    const existing = this.harnessInvocations.current(context, operation);
     const harnessTargetId = request.input.harnessTargetId ??
       existing?.harnessTargetId ?? this.selectedHarnessTargetId?.();
     if (!harnessTargetId) {
@@ -1067,10 +1071,9 @@ export class Manager {
     const snapshot = this.harnessInvocations.record({
       ...context,
       invocation: {
-        operationKey: request.input.key,
+        operation,
         title: request.input.key,
         prompt: request.input.prompt,
-        delivery: request.verb === "draft" ? "draft" : "direct",
         laneId: request.verb === "draft" ? MAIN_LANE_ID : request.input.laneId,
         newLane: request.verb === "draft" ? false : (request.input.newLane ?? false),
         harnessTargetId,

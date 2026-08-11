@@ -266,11 +266,16 @@ persists it with the Interaction, records `cancelled` with reason `timeout` when
 it expires, and re-enqueues the Resource. The Plugin decides whether that means
 decline, skip, escalation, or another domain outcome.
 
+Each choice `value` is the stable answer value persisted by Baton and returned
+as `decision.value`; `label` and `description` are presentation only. Operation
+keys are namespaced by reconcile verb, so `ask({ key: "ship" })` and
+`confirm({ key: "ship" })` are distinct durable operations.
+
 If the domain no longer needs an unresolved decision, withdraw it by the same
-operation key:
+operation ref:
 
 ```ts
-await ctx.withdraw({ kind: "ask", key: "associate-pr" });
+await ctx.withdraw({ verb: "ask", key: "associate-pr" });
 ```
 
 Withdrawal records cancellation with reason `requester`. It returns

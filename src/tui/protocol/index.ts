@@ -764,11 +764,11 @@ export class BatonChatProtocol implements ChatProtocol {
         interaction.questions.map((question) => [
           question.questionId,
           (response.answers[question.questionId] ?? []).map((value) => {
-            const option = question.options?.find(
+            const choice = question.choices?.find(
               (candidate) =>
-                candidate.optionId === value || candidate.label === value,
+                candidate.value === value || candidate.label === value,
             );
-            return option?.optionId ?? value;
+            return choice?.value ?? value;
           }),
         ]),
       );

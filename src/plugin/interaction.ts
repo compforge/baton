@@ -1,9 +1,11 @@
 import type {
+  AskChoice,
   AskInput,
   AskResult,
   CancellationReason,
   ConfirmInput,
   ConfirmResult,
+  ReconcileOperationRef,
   ResourceRef,
   WithdrawInput,
   WithdrawResult,
@@ -19,9 +21,14 @@ import type {
   Interaction,
   InteractionResult,
   PluginResourceInteractionContext,
+  QuestionChoice,
 } from "../interaction/types.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { ReconcileKey } from "./controller.ts";
+import {
+  reconcileOperationIdentity,
+  reconcileOperationLabel,
+} from "./reconcile-operation.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import type { ReconcileVerbScope } from "./verbs.ts";
 
@@ -37,24 +44,25 @@ interface Entry {
   result?: InteractionResult;
 }
 
-interface InteractionOption {
-  readonly optionId: string;
-  readonly label: string;
-  readonly description?: string;
+interface PluginQuestionInput<TValue extends string = string> {
+  readonly title: string;
+  readonly prompt: string;
+  readonly choices?: readonly AskChoice<TValue>[];
+  readonly allowOther?: boolean;
+  readonly expiresAt?: string;
 }
 
-interface ReconcileInteraction {
+interface ReconcileQuestion {
   readonly key: ReconcileKey;
   readonly resource: ResourceRef;
   readonly basedOnGeneration?: number;
   readonly basedOnResourceVersion?: string;
   readonly basedOnRevision?: number;
   readonly request: {
-    readonly kind: "interaction";
-    readonly decisionKey: string;
+    readonly operation: ReconcileOperationRef<"ask" | "confirm">;
     readonly title: string;
     readonly prompt: string;
-    readonly options?: readonly InteractionOption[];
+    readonly choices?: readonly AskChoice[];
     readonly allowOther?: boolean;
     readonly expiresAt?: string;
   };
@@ -68,27 +76,24 @@ export interface StoreOptions {
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function interactionIdentity(
+  batonSessionId: string,
   pluginInstanceId: string,
   context: PluginResourceInteractionContext,
 ): string {
-  return JSON.stringify([
+  return reconcileOperationIdentity({
+    batonSessionId,
     pluginInstanceId,
-    context.resourceOwner,
-    context.resource.apiVersion,
-    context.resource.kind,
-    context.resource.namespace,
-    context.resource.name,
-    context.resource.uid,
-    context.decisionKey,
-  ]);
+    resourceOwner: context.resourceOwner,
+    resource: context.resource,
+  }, context.operation);
 }
 
 function interactionContext(
   draft: ReconcileVerbScope,
-  decisionKey: string,
+  operation: ReconcileOperationRef<"ask" | "confirm">,
 ): PluginResourceInteractionContext {
   return Object.freeze({
-    decisionKey,
+    operation: Object.freeze({ ...operation }),
     resource: draft.resource,
     resourceOwner: reconcileResourceOwner(draft.key),
     ...(draft.basedOnGeneration === undefined
@@ -104,7 +109,7 @@ function interactionContext(
 }
 
 function pluginInteraction(
-  draft: ReconcileInteraction,
+  draft: ReconcileQuestion,
 ): Interaction {
   const request = draft.request;
   return Object.freeze({
@@ -114,7 +119,7 @@ function pluginInteraction(
       type: "plugin" as const,
       pluginInstanceId: draft.key.pluginInstanceId,
     },
-    pluginContext: interactionContext(draft, request.decisionKey),
+    pluginContext: interactionContext(draft, request.operation),
     ...(request.expiresAt === undefined
       ? {}
       : { expiresAt: request.expiresAt }),
@@ -123,14 +128,16 @@ function pluginInteraction(
         questionId: QUESTION_ID,
         header: request.title,
         question: request.prompt,
-        ...(request.options === undefined
+        ...(request.choices === undefined
           ? {}
           : {
-              options: request.options.map((option) => ({
-                optionId: option.optionId,
-                label: option.label,
-                description: option.description ?? "",
-              })),
+              choices: request.choices.map((choice) => ({
+                value: choice.value,
+                label: choice.label,
+                ...(choice.description === undefined
+                  ? {}
+                  : { description: choice.description }),
+              } satisfies QuestionChoice)),
             }),
         ...(request.allowOther === undefined
           ? {}
@@ -164,12 +171,6 @@ function sameResource(left: ResourceRef, right: ResourceRef): boolean {
     left.namespace === right.namespace &&
     left.name === right.name &&
     left.uid === right.uid;
-}
-
-function withdrawDecisionKey(input: WithdrawInput): string {
-  return input.kind === "ask"
-    ? `ask:${input.key}`
-    : `ask:confirm:${input.key}`;
 }
 
 function stableEnvelope(interaction: Interaction): unknown {
@@ -221,8 +222,8 @@ function validResult(
   const values = result.answers[QUESTION_ID] ?? [];
   if (values.length !== 1 || !values[0]?.trim()) return false;
   const question = interaction.questions[0];
-  if (!question?.options?.length) return true;
-  if (question.options.some((option) => option.optionId === values[0])) {
+  if (!question?.choices?.length) return true;
+  if (question.choices.some((choice) => choice.value === values[0])) {
     return true;
   }
   return question.allowOther === true;
@@ -257,61 +258,21 @@ export class Store {
     context: ReconcileVerbScope,
     input: AskInput<TValue>,
   ): AskResult<TValue> {
-    const interaction = this.open({
-      ...context,
-      request: {
-        kind: "interaction",
-        decisionKey: `ask:${input.key}`,
-        title: input.title,
-        prompt: input.prompt,
-        ...(input.choices === undefined
-          ? {}
-          : {
-              options: input.choices.map((choice) => ({
-                optionId: choice.value,
-                label: choice.label,
-                ...(choice.description === undefined
-                  ? {}
-                  : { description: choice.description }),
-              })),
-            }),
-        ...(input.allowOther === undefined
-          ? {}
-          : { allowOther: input.allowOther }),
-        ...(input.expiresAt === undefined
-          ? {}
-          : { expiresAt: input.expiresAt }),
-      },
-    });
-    let entry = this.entries.get(interaction.interactionId);
-    if (entry && !entry.result && this.expired(entry)) {
-      this.settle(
-        interaction.interactionId,
-        { kind: "cancelled", reason: "timeout" },
-        { type: "baton" },
-      );
-      entry = this.entries.get(interaction.interactionId);
-    }
-    const result = outcome(entry?.result);
-    if (!result) return Object.freeze({ state: "waiting" });
-    if (result.kind === "cancelled") {
-      return Object.freeze({
-        state: "cancelled",
-        reason: result.reason,
-      });
-    }
-    return Object.freeze({
-      state: "answered",
-      value: result.values[0] as TValue,
-    });
+    return this.question(
+      context,
+      { verb: "ask", key: input.key },
+      input,
+    );
   }
 
   confirm(
     context: ReconcileVerbScope,
     input: ConfirmInput,
   ): ConfirmResult {
-    const result = this.ask(context, {
-      key: `confirm:${input.key}`,
+    const result = this.question(context, {
+      verb: "confirm",
+      key: input.key,
+    }, {
       title: input.title,
       prompt: input.prompt,
       choices: [
@@ -341,8 +302,9 @@ export class Store {
     input: WithdrawInput,
   ): WithdrawResult {
     const identity = interactionIdentity(
+      this.session.id,
       context.key.pluginInstanceId,
-      interactionContext(context, withdrawDecisionKey(input)),
+      interactionContext(context, input),
     );
     const interactionId = this.interactionIdByIdentity.get(identity);
     const entry = interactionId === undefined
@@ -384,14 +346,65 @@ export class Store {
     return cancelled;
   }
 
-  private open(draft: ReconcileInteraction): Interaction {
+  private question<TValue extends string>(
+    context: ReconcileVerbScope,
+    operation: ReconcileOperationRef<"ask" | "confirm">,
+    input: PluginQuestionInput<TValue>,
+  ): AskResult<TValue> {
+    const interaction = this.open({
+      ...context,
+      request: {
+        operation,
+        title: input.title,
+        prompt: input.prompt,
+        ...(input.choices === undefined
+          ? {}
+          : {
+              choices: input.choices.map((choice) => ({ ...choice })),
+            }),
+        ...(input.allowOther === undefined
+          ? {}
+          : { allowOther: input.allowOther }),
+        ...(input.expiresAt === undefined
+          ? {}
+          : { expiresAt: input.expiresAt }),
+      },
+    });
+    let entry = this.entries.get(interaction.interactionId);
+    if (entry && !entry.result && this.expired(entry)) {
+      this.settle(
+        interaction.interactionId,
+        { kind: "cancelled", reason: "timeout" },
+        { type: "baton" },
+      );
+      entry = this.entries.get(interaction.interactionId);
+    }
+    const result = outcome(entry?.result);
+    if (!result) return Object.freeze({ state: "waiting" });
+    if (result.kind === "cancelled") {
+      return Object.freeze({
+        state: "cancelled",
+        reason: result.reason,
+      });
+    }
+    return Object.freeze({
+      state: "answered",
+      value: result.values[0] as TValue,
+    });
+  }
+
+  private open(draft: ReconcileQuestion): Interaction {
     if (draft.key.batonSessionId !== this.session.id) {
       throw new Error(
         `plugin Interaction batonSessionId must be ${this.session.id}, got ${draft.key.batonSessionId}`,
       );
     }
-    const context = interactionContext(draft, draft.request.decisionKey);
-    const identity = interactionIdentity(draft.key.pluginInstanceId, context);
+    const context = interactionContext(draft, draft.request.operation);
+    const identity = interactionIdentity(
+      this.session.id,
+      draft.key.pluginInstanceId,
+      context,
+    );
     const existingId = this.interactionIdByIdentity.get(identity);
     if (existingId) {
       const existing = this.entries.get(existingId);
@@ -402,7 +415,7 @@ export class Store {
             JSON.stringify(stableEnvelope(candidate))
         ) {
           throw new Error(
-            `plugin Interaction identity conflict for ${draft.request.decisionKey}`,
+            `plugin Interaction identity conflict for ${reconcileOperationLabel(draft.request.operation)}`,
           );
         }
         return existing.requested.payload;
@@ -539,6 +552,7 @@ export class Store {
       if (interaction.requester.type !== "plugin" || !context) return;
       if (this.entries.has(interaction.interactionId)) return;
       const identity = interactionIdentity(
+        this.session.id,
         interaction.requester.pluginInstanceId,
         context,
       );

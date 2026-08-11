@@ -111,8 +111,8 @@ function validateExpiresAt(name: string, value: string | undefined): void {
 
 function validateWithdraw(input: WithdrawInput): void {
   nonEmpty("withdraw key", input.key);
-  if (input.kind !== "ask" && input.kind !== "confirm") {
-    throw new Error(`withdraw kind is invalid: ${String(input.kind)}`);
+  if (input.verb !== "ask" && input.verb !== "confirm") {
+    throw new Error(`withdraw verb is invalid: ${String(input.verb)}`);
   }
 }
 

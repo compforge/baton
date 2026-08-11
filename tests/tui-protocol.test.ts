@@ -1183,7 +1183,7 @@ describe("BatonChatProtocol transcript projection", () => {
         kind: "_baton_harness_invocation_recorded",
         payload: {
           invocationId: "hinv_worker",
-          operationKey: "implement",
+          operation: { verb: "harness", key: "implement" },
           resourceOwner: "plugin",
           resource: {
             apiVersion: "reqloop.baton.dev/v1alpha1",
@@ -1194,7 +1194,6 @@ describe("BatonChatProtocol transcript projection", () => {
           },
           title: "Implement requirement",
           prompt: "Implement REQ-1",
-          delivery: "direct",
           laneId: MAIN_LANE_ID,
           newLane: true,
           harnessTargetId: "codex",
@@ -1741,7 +1740,7 @@ describe("interaction eventization: pending projects from the event stream", () 
     }
   });
 
-  test("Plugin question routes stable optionId through Plugin Manager", async () => {
+  test("Plugin question routes stable choice value through Plugin Manager", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-question-"));
     try {
       const store = new SessionStore(root);
@@ -1766,7 +1765,7 @@ describe("interaction eventization: pending projects from the event stream", () 
             pluginInstanceId: "reqloop_default",
           },
           pluginContext: {
-            decisionKey: "associate-pr",
+            operation: { verb: "ask", key: "associate-pr" },
             resource: {
               apiVersion: "reqloop.baton.dev/v1alpha1",
               kind: "Requirement",
@@ -1781,14 +1780,14 @@ describe("interaction eventization: pending projects from the event stream", () 
               questionId: "decision",
               header: "Associate pull request",
               question: "Choose a requirement",
-              options: [
+              choices: [
                 {
-                  optionId: "req_1",
+                  value: "req_1",
                   label: "REQ-1",
                   description: "First requirement",
                 },
                 {
-                  optionId: "reject",
+                  value: "reject",
                   label: "Do not associate",
                   description: "",
                   role: "reject",

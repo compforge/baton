@@ -292,7 +292,7 @@ describe("event append / read", () => {
     expect(e1.eventId).toMatch(/^ev_/);
     expect(e2.eventId).not.toBe(e1.eventId);
     expect(e1.scope).toEqual({ type: "session", batonSessionId: h.id });
-    expect(e1.v).toBe(4);
+    expect(e1.v).toBe(5);
     expect(e1.source).toEqual({ type: "baton" });
 
     // 重开进程（新 handle），seq 从文件续上
