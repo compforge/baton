@@ -521,15 +521,17 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       message.role === "user" &&
       message.delivery === "steer" &&
       message.deliveryState === "pending" &&
-      message.laneId === MAIN_LANE_ID &&
-      message.turnId !== undefined &&
-      state.activeTurns.has(message.turnId),
+      message.laneId === MAIN_LANE_ID,
   );
   const queuedItems = [
     ...pendingSteers.map((message) => ({
       id: message.messageId,
       text: userVisibleText(composerTextOf(message.content)),
-      tag: `${message.harnessTargetId ?? message.harness ?? harnessTargetId} · current turn`,
+      tag: `${message.harnessTargetId ?? message.harness ?? harnessTargetId} · ${
+        message.turnId !== undefined && state.activeTurns.has(message.turnId)
+          ? "current turn"
+          : "native queue"
+      }`,
     })),
     ...controller.queuedTurns.map((turn) => ({
       id: String(turn.id),

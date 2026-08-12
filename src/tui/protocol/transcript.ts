@@ -333,13 +333,13 @@ export function buildTranscript(
       const msg = state.messages.get(entry.id);
       if (!msg) continue;
       if (hidden(msg.laneId)) continue;
-      // Codex 接受 turn/steer 只代表进入原生队列。在 userMessage 回执前
-      // 留在 Composer Queue，不提前冒充成模型已看到的 Transcript 历史。
+      // Harness 接受 steer 只代表承担投递责任。只有 applied 才是模型已看到的
+      // Transcript 历史；pending 留在 Composer Queue，failed 由诊断事件说明且不伪造历史。
       if (
         msg.role === "user" &&
         msg.delivery === "steer" &&
-        msg.deliveryState === "pending" &&
-        isTurnRunning(state, msg.turnId)
+        msg.deliveryState !== undefined &&
+        msg.deliveryState !== "applied"
       ) {
         continue;
       }

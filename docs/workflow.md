@@ -110,7 +110,7 @@ adapter.sendTurn(handle, promptInput)
 Adapter 根据自己的权威运行态返回：
 
 - `new_turn`：接受开启一轮新工作；
-- `steer`：已接受将输入注入匹配的当前 Turn；Harness 若内部还有原生队列，
+- `steer`：已接受向匹配的当前 Turn 投递；Harness 若内部还有原生队列，
   接受与进入模型上下文是两个独立事实；
 - `rejected`：没有接受责任，Controller 可以安全降级为 queued follow-up。
 
@@ -180,18 +180,26 @@ Turn 共享 Event/Projection 主路径，因此 live 与 resume 都能看到相�
    绑定当前 Turn。若接受只代表进入 Harness 原生队列，其 delivery state 为
    `pending`；
 3. Harness 确认该用户输入已写入模型上下文后，Adapter 将 delivery state 更新为
-   `applied`。不能区分这两个边界的 Harness，以原生接受作为 applied 边界；
+   `applied`；若 Harness 明确取消或丢弃该输入，则更新为 `failed` 并产生可见诊断。
+   不能区分这些边界的 Harness，以原生接受作为 applied 边界；
 4. Adapter 拒绝、原生 race 或无法安全定向时，原输入只入队一次，当前 Turn 结束后作为新 Turn
    执行。
 
 `pending` steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在
-Composer Queue，收到 `applied` 回执后再投影到 Transcript。queued follow-up 与 pending
-steer 共用 Queue surface，但前者等待新 Turn，后者等待当前 Turn 的原生安全边界，
-两者不能互相冒充。
+Composer Queue，收到 `applied` 回执后再投影到 Transcript；`failed` 则离开 Queue
+但不冒充成 Transcript 历史。原生队列可能跨过当时尝试注入的 Turn，因此 Turn 收口不能
+把 pending 自动当成 applied；它会留在 Queue，直到 Harness 报告应用或失败。queued follow-up
+与 pending steer 共用 Queue surface，但前者等待 Controller 开启新 Turn，后者等待 Harness
+原生投递边界，两者不能互相冒充。
 
-Esc 只打断主 Lane 当前的 driven Turn，不影响支线 Lane。已经接受的 steer
-与该 Turn 共命运：cancel 后标记 interrupted，
-不静默重发；仍在 queue 的 follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
+`pending` / `failed` 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
+`started` 时开启 observed turn，由该 turn 承接实际 `applied` 的用户正文，避免尚未执行或
+已经丢弃的指令提前污染下一棒上下文。
+
+Esc 只打断主 Lane 当前的 driven Turn，不影响支线 Lane。已经 `applied` 的 steer
+与该 Turn 共命运；仍是 `pending` 的 steer 以 Harness 原生 lifecycle 为准，interrupt 若保留
+它就继续留在 Queue，不静默重发也不伪造取消。仍在 queue 的 follow-up 保留并在当前
+Turn 收口后继续。cancel 请求本身不等于完成，
 最终以 Harness 的 `idle/cancelled` 为准；超过 cancel 宽限且 transport 状态足够明确时，Controller
 可以合成终态兜底。
 HarnessInvocation 只用 invocation identity 定向取消自己的 queued Input 或 driven Turn，不论它位于主 Lane
@@ -258,6 +266,8 @@ BatonSession 从 Event Ledger 重放 Projection、Attempt、Interaction 和 Cont
 从 Session meta 恢复；若其原生 HarnessSession identity 仍可恢复，Adapter 使用它加速继续；
 否则在同一 Lane 里新建原生 Session，并通过
 Context delivery 补齐 BatonSession 历史。切换 Harness 也是同一机制，不需要复制粘贴上下文。
+原生 steer 队列属于 Adapter 进程而非 HarnessSession 历史；recovery 看到遗留的 `pending`
+时将其收口为 `failed` 并告警，不猜测已应用，也不自动重投。
 
 外部 HarnessSession 必须先由只读 Inspector 生成完整历史 Snapshot，再 adoption 为
 BatonSession；此后 resume/fork 只走 BatonSession 主路径。详细边界见 [Harness](./harness.md)

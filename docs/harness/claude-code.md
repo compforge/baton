@@ -51,9 +51,14 @@ Harness-neutral 的 L1 notice，不根据启发式采样自动 finalize。用户
 空闲时 `sendTurn` 确保 streaming query 存在，把消息 offer 给 prompt channel，并返回
 `new_turn`。Controller 已经持久化原始 `user_message` 和 Baton running 开界，Adapter 不重复发送。
 
-运行中且 Baton turn ID 匹配时，同一 prompt channel 接受新的 `SDKUserMessage`，作为当前 Turn
-的 steer，并补 `delivery:"steer"` 用户消息。Turn 不匹配或 channel 已关闭时返回 `rejected`，
-由 Controller 排成 follow-up。
+运行中且 Baton turn ID 匹配时，同一 prompt channel 接受新的 `SDKUserMessage`，登记
+调用方签发的 UUID，并补 `delivery:"steer", deliveryState:"pending"` 用户消息。
+Turn 不匹配或 channel 已关闭时返回 `rejected`，由 Controller 排成 follow-up。
+
+Claude CLI 的 `command_lifecycle` 是 Queue 事实源：`queued` 仍留在 Composer Queue；
+`started` / `completed` 更新为 `applied` 并进入 Transcript；`cancelled` / `discarded`
+更新为 `failed` 并生成 warning。CLI 可能让 queued command 跨过当前 Turn 才启动，
+所以 Turn 收口不清理该 UUID，也不把 pending 乐观放入 Transcript。
 
 observed Turn 不占 driven admission 槽。后台消息在上一 driven Turn 结束后到达时，Adapter 铸造
 新的 observed Turn；下一条用户 Input 到达前会先明确收口该 observed Turn，避免两类消息共用
@@ -98,8 +103,9 @@ Claude Agent SDK 与 Claude Code 会快速演进，Baton 持续升级 SDK，但�
 - message UUID、command lifecycle 和 interrupt receipt 等只服务 Claude 投递、关联或中断正确性的
   事实留在 Adapter 内；`sendTurn` 仍只表达 admission，`cancel` 的权威确认仍是最终
   `idle/cancelled` Event。
-- 尚未通过稳定公开 SDK 类型暴露、Baton 没有消费路径或只能靠版本探测的字段不接入；未知 wire
-  保守保留在 `raw` 或显式 ignored inventory，不能解析 SDK 私有实现。
+- 公开 protocol capability 与 changelog 已定义、但 TypeScript `SDKMessage` 联合暂未跟上的
+  frame，可以在 Adapter wire 边界做最小结构窄化，不向 core 扩散。只能靠版本猜测或解析
+  SDK 私有实现的字段不接入；未知 wire 保守保留在 `raw` 或显式 ignored inventory。
 
 只有 Controller 必须依据某个事实改变 Input / Turn 状态，并且该事实能形成跨 Harness 的 owner、
 生命周期和恢复语义时，才把它提升为公共 Event、receipt 或 Capability；单家 Claude 方言不修改

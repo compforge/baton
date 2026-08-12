@@ -4,7 +4,11 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CRASH_RECOVERY_NOTICE_TITLE, openBatonSession } from "../src/session/open.ts";
+import {
+  CRASH_RECOVERY_NOTICE_TITLE,
+  PENDING_DELIVERY_RECOVERY_NOTICE_TITLE,
+  openBatonSession,
+} from "../src/session/open.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 let root: string;
@@ -60,6 +64,55 @@ describe("openBatonSession", () => {
 });
 
 describe("crash recovery on open", () => {
+  test("fails a native steer queue that lost its Adapter process", () => {
+    const h = store.createSession({ cwd: "/repo" });
+    h.append({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId: "t1",
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "user_message",
+      payload: {
+        messageId: "m_pending",
+        content: [{ type: "text", text: "queued after this turn" }],
+        delivery: "steer",
+        deliveryState: "pending",
+      },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId: "t1",
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "state_update",
+      payload: { state: "idle", stopReason: "end_turn" },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId: "t1",
+    });
+    h.summarizeTurnEvent("t1");
+
+    const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
+
+    expect(result.recovered).toBe(true);
+    expect(result.session.loadState().messages.get("m_pending")?.deliveryState).toBe("failed");
+    expect(
+      result.session
+        .loadState()
+        .notices.some((notice) => notice.title === PENDING_DELIVERY_RECOVERY_NOTICE_TITLE),
+    ).toBe(true);
+
+    const count = result.session.readEvents().length;
+    const second = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
+    expect(second.recovered).toBe(false);
+    expect(second.session.readEvents()).toHaveLength(count);
+  });
+
   test("does not infer a stable HarnessSession identity from event envelopes", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.setHarnessSession("claude", {

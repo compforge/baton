@@ -111,8 +111,11 @@ export type SubmitDelivery = "prompt" | "steer" | "follow_up" | (string & {});
 /** user_message 专属 upsert：比通用 MessageUpsert 多 delivery 标记 */
 export interface UserMessageUpsert extends MessageUpsert {
   delivery?: SubmitDelivery;
-  /** steer 已被 Harness 接受后，pending = 仍在原生队列，applied = 已进入模型上下文。 */
-  deliveryState?: "pending" | "applied";
+  /**
+   * steer 的原生投递进度：pending = 仍在 Harness 队列，applied = 已进入模型上下文，
+   * failed = Harness 已明确不会应用。failed 不能投影成 Transcript 里的用户历史。
+   */
+  deliveryState?: "pending" | "applied" | "failed";
 }
 
 /** chunk 永远是追加语义；role 由事件 kind 决定（user_/agent_/agent_thought_ 前缀） */

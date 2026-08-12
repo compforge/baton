@@ -95,7 +95,8 @@ export interface PromptReceipt {
  * `sendTurn` 的 admission 结果。Adapter 以自己的原生运行态决定实际投递：
  *
  * - `new_turn`：没有活跃 turn，已接受开启新 turn 的责任；
- * - `steer`：输入已进入 `input.turnId` 对应的当前 turn；
+ * - `steer`：已接受向 `input.turnId` 对应的当前 turn 投递；若 Harness 内部
+ *   还有原生队列，Adapter 继续用 user_message deliveryState 报告 pending/applied/failed；
  * - `rejected`：未接受输入，Controller 可安全降级为 queued follow-up。
  *
  * `rejected` 路径不得发事件。throw 同样只允许发生在接受责任之前。

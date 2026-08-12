@@ -108,7 +108,8 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 `sendTurn` 只返回 admission 结果：
 
 - `accepted/new_turn`：Adapter 接受开启新 Turn 的责任；
-- `accepted/steer`：消息进入匹配的当前 Turn；
+- `accepted/steer`：Adapter 接受向匹配的当前 Turn 投递；若原生 Harness 还有队列，
+  后续用 user message delivery state 报告实际应用或失败；
 - `rejected`：没有接受，Controller 可以安全排成 follow-up。
 
 有活跃 Turn 时，Adapter 不得擅自并行开启新 Turn。throw 只允许发生在接受责任之前；accepted

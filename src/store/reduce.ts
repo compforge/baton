@@ -47,8 +47,8 @@ export interface MessageState {
   source?: EventSource;
   /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
   delivery?: SubmitDelivery;
-  /** 仅 steer：pending 仍在 Harness 原生队列，applied 已进入模型上下文。 */
-  deliveryState?: "pending" | "applied";
+  /** 仅 steer：pending 仍在 Harness 队列，applied 已进入模型上下文，failed 已确认未应用。 */
+  deliveryState?: "pending" | "applied" | "failed";
 }
 
 export interface ToolCallState {
