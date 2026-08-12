@@ -137,6 +137,53 @@ describe("plugin Controller", () => {
     expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
   });
 
+  test("owns retry backoff state and resets attempts after success", async () => {
+    const resources = store(testRoot());
+    resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    let now = new Date("2026-07-25T00:00:00.000Z");
+    let runs = 0;
+    const attempts: number[] = [];
+    const scheduled: Array<string | null> = [];
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      async reconcile() {
+        runs += 1;
+        if (runs !== 3) throw new Error("connector unavailable");
+      },
+      retry: {
+        backoff: { initialDelayMs: 10, maxDelayMs: 20 },
+        now: () => now,
+        schedule(_key, nextReconcileAt) {
+          scheduled.push(nextReconcileAt?.toISOString() ?? null);
+        },
+        report(failure) {
+          attempts.push(failure.attempt);
+        },
+      },
+    });
+
+    await expect(controller.enqueue(key())).rejects.toThrow("connector unavailable");
+    expect(attempts).toEqual([1]);
+    expect(scheduled).toEqual(["2026-07-25T00:00:00.010Z"]);
+
+    now = new Date("2026-07-25T00:00:01.000Z");
+    await expect(controller.enqueue(key())).rejects.toThrow("connector unavailable");
+    expect(attempts).toEqual([1, 2]);
+    expect(scheduled.at(-1)).toBe("2026-07-25T00:00:01.020Z");
+
+    await controller.enqueue(key());
+    expect(resources.scheduledReconciles(REQ_LOOP_RUN)).toEqual([]);
+    expect(scheduled.at(-1)).toBeNull();
+
+    await expect(controller.enqueue(key())).rejects.toThrow("connector unavailable");
+    expect(attempts).toEqual([1, 2, 1]);
+  });
+
   test("finalizes a terminating Resource only after reconcile succeeds", async () => {
     const resources = store(testRoot());
     resources.create<Spec>({

@@ -11,18 +11,21 @@ import type {
 import type { SessionHandle } from "../store/store.ts";
 import { newId } from "../event/ids.ts";
 import {
+  type ControllerRetryOptions,
   type ReconcileKey,
   type ReconcileResult,
+  ReconcileRetry,
   type ReconcileScope,
   type ScheduledReconcile,
 } from "./controller.ts";
+import type { ResourceClientChange } from "./resource-client.ts";
 import { ReconcileQueue, type ReconcileCapacityLease } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
   emptyReconcileSnapshot,
   type ReconcileSnapshot,
 } from "./reconcile-snapshot.ts";
-import { validateWatches } from "./watch.ts";
+import { validateWatches, watchRequests } from "./watch.ts";
 import {
   createReconcileContext,
   type ExecutionScope,
@@ -230,6 +233,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   ) => Promise<T>;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
+  retry?: ControllerRetryOptions;
 }
 
 function validatedResult(result: ReconcileResult | void): ReconcileResult {
@@ -261,6 +265,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     BuiltinControllerOptions<K>["executeReconcile"]
   >;
   private readonly queue: ReconcileQueue;
+  private readonly retry?: ReconcileRetry;
   private closed = false;
 
   constructor(options: BuiltinControllerOptions<K>) {
@@ -299,6 +304,11 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         _localLease: ReconcileCapacityLease,
         execute: () => Promise<T>,
       ) => await execute());
+    if (options.retry) {
+      this.retry = new ReconcileRetry({
+        ...options.retry,
+      });
+    }
     this.queue = new ReconcileQueue({
       execute: (key, localLease) => {
         const executionScope = Object.freeze({
@@ -333,10 +343,14 @@ export class BuiltinController<K extends BuiltinResourceKind> {
               ? null
               : new Date(now.getTime() + result.requeueAfterMs);
           options.onReconcileSuccess?.(key, nextReconcileAt);
+          if (this.retry) this.retry.succeeded(key, nextReconcileAt);
         });
       },
       maxConcurrency: options.maxConcurrency,
-      onError: options.onReconcileError,
+      onError: (key, error) => {
+        if (this.retry) this.retry.failed(key, error);
+        else options.onReconcileError?.(key, error);
+      },
     });
   }
 
@@ -356,8 +370,17 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     );
   }
 
+  async watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]> {
+    const requests = await watchRequests(this.watches, change);
+    return Object.freeze(requests.map((request) => Object.freeze({
+      ...this.scope,
+      resourceId: request.name,
+    })));
+  }
+
   close(): void {
     this.closed = true;
+    this.retry?.close();
     this.queue.close();
   }
 

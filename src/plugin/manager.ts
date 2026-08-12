@@ -1,9 +1,14 @@
 import {
   Controller,
+  type ReconcileFailure,
   type ReconcileKey,
+  type ReconcileRetryBackoff,
   type ReconcileScope,
   type ScheduledReconcile,
+  reconcileRetryBackoff,
 } from "./controller.ts";
+
+export type { ReconcileFailure } from "./controller.ts";
 import {
   BuiltinController,
   type BuiltinResource,
@@ -30,7 +35,6 @@ import {
   type PluginLogRecord,
   type ToastMessage,
   type ToastTone,
-  type Watch,
 } from "./package.ts";
 import {
   PackageLoader,
@@ -54,10 +58,9 @@ import {
   type ResourceClientChange,
 } from "./resource-client.ts";
 import {
+  BoardProjection,
   type BoardItem,
-  type BoardItemCandidate,
   presentBoardSource,
-  selectBoardItems,
 } from "./board.ts";
 import {
   installRegistration,
@@ -85,7 +88,6 @@ import {
   type LogSink,
   logError,
 } from "../logging.ts";
-import { watchRequests } from "./watch.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
 import { Verb } from "./verb.ts";
@@ -180,10 +182,7 @@ export interface ManagerOptions {
   /** Baton-owned and Plugin-provided explicit context share one registry. */
   contextProviders?: ContextProviderRegistry;
   /** Controller reconcile 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
-  retryBackoff?: {
-    initialDelayMs?: number;
-    maxDelayMs?: number;
-  };
+  retryBackoff?: Partial<ReconcileRetryBackoff>;
   now?: () => Date;
   /** 单个 Instance 激活失败不阻断其他 Plugin；宿主可将失败展示到 UI 或诊断日志。 */
   onActivationError?(failure: PluginActivationFailure): void;
@@ -205,13 +204,6 @@ export interface PluginRunnerFailure {
   readonly error: Error;
 }
 
-export interface ReconcileFailure {
-  readonly key: ReconcileKey;
-  readonly error: unknown;
-  readonly attempt: number;
-  readonly nextRetryAt?: string;
-}
-
 export interface ControllerSourceFailure {
   readonly scope: ReconcileScope;
   readonly sourceId: string;
@@ -225,35 +217,17 @@ export interface PluginReloadResult {
 
 interface ManagedController {
   scope: ReconcileScope;
-  watches: readonly Watch[];
   ownsResource(resource: ResourceRef): boolean;
   cronSources?(): readonly CronSource[];
   startSources?(
     onError: (sourceId: string, error: unknown) => void,
   ): Promise<void>;
   enqueue(key: ReconcileKey): Promise<void>;
+  watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
   resourceKeys?(): ReconcileKey[];
   initialReconciles?(): ReconcileKey[];
-  /** PluginResource 持久化 due time；Builtin Resource 靠 ledger replay 在重启后重新唤醒。 */
-  setNextReconcileAt?(key: ReconcileKey, next: Date): void;
-}
-
-interface RetryState {
-  key: ReconcileKey;
-  attempt: number;
-}
-
-interface ManagedBoardSource {
-  readonly pluginInstanceId: string;
-  present(): Promise<readonly BoardItemCandidate[]>;
-}
-
-function positiveDelay(name: string, value: number): void {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer`);
-  }
 }
 
 function pluginName(pluginId: string): string {
@@ -278,10 +252,7 @@ export class Manager {
     ],
   ]);
   private readonly controllers = new Map<string, ManagedController>();
-  private readonly boardSources = new Map<string, ManagedBoardSource>();
-  private boardItemsCache: readonly BoardItem[] | undefined;
-  private boardRevision = 0;
-  private boardRefresh?: Promise<void>;
+  private readonly board: BoardProjection;
   private readonly commandRegistry: PluginCommandRegistry;
   private readonly contextProviders: ContextProviderRegistry;
   private readonly instances: PluginInstanceRepository;
@@ -294,7 +265,6 @@ export class Manager {
   private readonly capacity: ReconcileCapacity;
   private readonly batonResources?: BatonResourceIndex;
   private readonly unsubscribeBatonResources?: () => void;
-  private readonly onBoardChanged: ManagerOptions["onBoardChanged"];
   private readonly onToast: ManagerOptions["onToast"];
   private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
   private readonly onActivationError: ManagerOptions["onActivationError"];
@@ -303,9 +273,7 @@ export class Manager {
   private readonly onControllerSourceError:
     ManagerOptions["onControllerSourceError"];
   private readonly log?: LogSink;
-  private readonly retryInitialDelayMs: number;
-  private readonly retryMaxDelayMs: number;
-  private readonly retries = new Map<string, RetryState>();
+  private readonly retryBackoff: ReconcileRetryBackoff;
   /** Binding 激活完成前注册项可回滚，但不能提前消费 Event 或产生 Output。 */
   private readonly suspendedControllers = new Set<string>();
   private readonly now: () => Date;
@@ -332,6 +300,22 @@ export class Manager {
     this.log = options.session
       ? (entry) => options.session!.log(entry)
       : undefined;
+    this.board = new BoardProjection({
+      isInstanceActive: (pluginInstanceId) =>
+        this.bindings.has(pluginInstanceId),
+      ...(options.onBoardChanged
+        ? { onChanged: options.onBoardChanged }
+        : {}),
+      onRefreshError: (error) => {
+        this.log?.({
+          level: "error",
+          source: "baton",
+          component: "plugin.board",
+          message: "Could not refresh Plugin Board projection",
+          error: logError(error),
+        });
+      },
+    });
     this.pluginSupervisor = options.pluginSupervisor;
     this.packageLoader = new PackageLoader({
       ...(options.packages ? { packages: options.packages } : {}),
@@ -354,7 +338,6 @@ export class Manager {
       now: this.now,
       log: this.log,
     });
-    this.onBoardChanged = options.onBoardChanged;
     this.onToast = options.onToast;
     this.onCommandsChanged = options.onCommandsChanged;
     this.contextProviders =
@@ -369,13 +352,7 @@ export class Manager {
     this.onRunnerFailure = options.onRunnerFailure;
     this.onReconcileError = options.onReconcileError;
     this.onControllerSourceError = options.onControllerSourceError;
-    this.retryInitialDelayMs = options.retryBackoff?.initialDelayMs ?? 1_000;
-    this.retryMaxDelayMs = options.retryBackoff?.maxDelayMs ?? 60_000;
-    positiveDelay("retryBackoff.initialDelayMs", this.retryInitialDelayMs);
-    positiveDelay("retryBackoff.maxDelayMs", this.retryMaxDelayMs);
-    if (this.retryMaxDelayMs < this.retryInitialDelayMs) {
-      throw new Error("retryBackoff.maxDelayMs must be at least initialDelayMs");
-    }
+    this.retryBackoff = reconcileRetryBackoff(options.retryBackoff);
     this.dueQueue = new ReconcileDueQueue({
       now: this.now,
       onDue: (key) => {
@@ -394,7 +371,7 @@ export class Manager {
         session: options.session,
       });
       this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
-        this.notifyBoardChanged();
+        this.board.invalidate();
         this.enqueueBuiltinResource(resource);
       });
     }
@@ -425,15 +402,19 @@ export class Manager {
         this.capacity.run(async () => await execute()),
       executeReconcile: (scope, localLease, execute) =>
         this.verb.execute(scope, localLease, execute),
-      onReconcileSuccess: (key, next) => {
-        if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
-        this.retries.delete(reconcileKeyId(key));
-        if (this.started) this.dueQueue.schedule(key, next);
+      retry: {
+        backoff: this.retryBackoff,
+        now: this.now,
+        schedule: (key, next) => {
+          if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
+          if (this.started) this.dueQueue.schedule(key, next);
+        },
+        report: (failure) => {
+          if (this.controllers.get(reconcileScopeId(failure.key)) !== controller) return;
+          this.reportFailure(failure);
+        },
       },
-      onReconcileError: (key, error) => {
-        this.retry(controller, key, error);
-      },
-      onSourceResource: () => this.notifyBoardChanged(),
+      onSourceResource: () => this.board.invalidate(),
       onResourceDeleted: (resource) => {
         this.handlePluginResourceChange(Object.freeze({
           kind: "deleted",
@@ -468,13 +449,17 @@ export class Manager {
       invokeVerb: (context, request) => this.verb.invoke(context, request),
       executeReconcile: (scope, localLease, execute) =>
         this.verb.execute(scope, localLease, execute),
-      onReconcileSuccess: (key, next) => {
-        if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
-        this.retries.delete(reconcileKeyId(key));
-        if (this.started) this.dueQueue.schedule(key, next);
-      },
-      onReconcileError: (key, error) => {
-        this.retry(controller, key, error);
+      retry: {
+        backoff: this.retryBackoff,
+        now: this.now,
+        schedule: (key, next) => {
+          if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
+          if (this.started) this.dueQueue.schedule(key, next);
+        },
+        report: (failure) => {
+          if (this.controllers.get(reconcileScopeId(failure.key)) !== controller) return;
+          this.reportFailure(failure);
+        },
       },
     });
     return this.installController(controller, suspended);
@@ -642,7 +627,7 @@ export class Manager {
           });
           this.notifyCommandsChanged();
           await this.resumeControllers(pluginInstanceId);
-          this.notifyBoardChanged();
+          this.board.invalidate();
         } catch (error) {
           try {
             await binding.close();
@@ -677,7 +662,7 @@ export class Manager {
     try {
       await binding.close();
     } finally {
-      this.notifyBoardChanged();
+      this.board.invalidate();
     }
   }
 
@@ -853,6 +838,7 @@ export class Manager {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.board.close();
     const closing = this.closeManager();
     this.closing = closing;
     return closing;
@@ -863,7 +849,7 @@ export class Manager {
   }
 
   listBoardItems(): readonly BoardItem[] {
-    return this.boardItemsCache ?? [];
+    return this.board.list();
   }
 
   listCommands(): readonly AvailablePluginCommand[] {
@@ -1007,10 +993,11 @@ export class Manager {
       resourceApiVersion: pluginController.resourceType.apiVersion,
       resourceKind: pluginController.resourceType.kind,
     });
+    let unregisterBoardSource: (() => void) | undefined;
     if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
       const present = pluginController.present;
-      this.boardSources.set(sourceId, {
+      unregisterBoardSource = this.board.registerSource(sourceId, {
         pluginInstanceId,
         present: () =>
           presentBoardSource<TSpec, TStatus>({
@@ -1024,7 +1011,7 @@ export class Manager {
       });
     }
     return () => {
-      this.boardSources.delete(sourceId);
+      unregisterBoardSource?.();
       registration.close();
     };
   }
@@ -1074,10 +1061,11 @@ export class Manager {
       resourceKind,
       resourceOwner: "baton",
     });
+    let unregisterBoardSource: (() => void) | undefined;
     if (pluginController.present) {
       const pluginId = this.instances.get(pluginInstanceId).pluginId;
       const present = pluginController.present;
-      this.boardSources.set(sourceId, {
+      unregisterBoardSource = this.board.registerSource(sourceId, {
         pluginInstanceId,
         present: () =>
           presentBoardSource<TSpec, TStatus>({
@@ -1096,7 +1084,7 @@ export class Manager {
       });
     }
     return () => {
-      this.boardSources.delete(sourceId);
+      unregisterBoardSource?.();
       registration.close();
     };
   }
@@ -1193,8 +1181,6 @@ export class Manager {
     }
     for (const controller of this.controllers.values()) controller.close();
     this.controllers.clear();
-    this.boardSources.clear();
-    this.retries.clear();
     this.suspendedControllers.clear();
     this.dueQueue.close();
     this.cronSourceQueue.close();
@@ -1226,50 +1212,8 @@ export class Manager {
     }
   }
 
-  private notifyBoardChanged(): void {
-    if (this.closed) return;
-    this.boardRevision += 1;
-    this.refreshBoardItems();
-  }
-
-  private refreshBoardItems(): void {
-    if (this.closed || this.boardRefresh) return;
-    const revision = this.boardRevision;
-    const sources = [...this.boardSources.values()].filter((source) =>
-      this.bindings.has(source.pluginInstanceId)
-    );
-    const refresh = Promise.all(
-      sources.map((source) => source.present()),
-    )
-      .then((groups) => {
-        if (this.closed || revision !== this.boardRevision) return;
-        this.boardItemsCache = selectBoardItems(groups.flat());
-        try {
-          this.onBoardChanged?.();
-        } catch {
-          // Projection invalidation cannot affect Plugin state.
-        }
-      })
-      .catch((error) => {
-        this.log?.({
-          level: "error",
-          source: "baton",
-          component: "plugin.board",
-          message: "Could not refresh Plugin Board projection",
-          error: logError(error),
-        });
-      })
-      .finally(() => {
-        if (this.boardRefresh === refresh) this.boardRefresh = undefined;
-        if (!this.closed && revision !== this.boardRevision) {
-          this.refreshBoardItems();
-        }
-      });
-    this.boardRefresh = refresh;
-  }
-
   private handlePluginResourceChange(change: ResourceClientChange): void {
-    this.notifyBoardChanged();
+    this.board.invalidate();
     void this.routePluginResourceChange(change);
   }
 
@@ -1308,7 +1252,7 @@ export class Manager {
       }
       let requests;
       try {
-        requests = await watchRequests(controller.watches, change);
+        requests = await controller.watch(change);
       } catch (error) {
         this.log?.({
           level: "error",
@@ -1326,11 +1270,7 @@ export class Manager {
         continue;
       }
       for (const request of requests) {
-        const key = Object.freeze({
-          ...controller.scope,
-          resourceId: request.name,
-        });
-        pending.set(reconcileKeyId(key), { controller, key });
+        pending.set(reconcileKeyId(request), { controller, key: request });
       }
     }
 
@@ -1494,9 +1434,6 @@ export class Manager {
         controller.close();
         this.dueQueue.removeScope(controller.scope);
         this.cronSourceQueue.removeScope(controller.scope);
-        for (const [keyId, retry] of this.retries) {
-          if (sameReconcileScope(retry.key, controller.scope)) this.retries.delete(keyId);
-        }
       },
     });
   }
@@ -1592,46 +1529,6 @@ export class Manager {
         this.restoreDueReconciles(controller);
         this.enqueueInitial(controller);
       }
-    }
-  }
-
-  private retry(controller: ManagedController, key: ReconcileKey, error: unknown): void {
-    if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
-    const id = reconcileKeyId(key);
-    const attempt = (this.retries.get(id)?.attempt ?? 0) + 1;
-    this.retries.set(id, { key, attempt });
-    const now = this.now();
-    if (Number.isNaN(now.getTime())) {
-      this.reportFailure({
-        key,
-        error: new AggregateError([error], "plugin Manager now() returned an invalid Date"),
-        attempt,
-      });
-      return;
-    }
-    const delay = Math.min(
-      this.retryMaxDelayMs,
-      this.retryInitialDelayMs * 2 ** Math.min(attempt - 1, 30),
-    );
-    const nextRetryAt = new Date(now.getTime() + delay);
-    try {
-      controller.setNextReconcileAt?.(key, nextRetryAt);
-      if (this.started) this.dueQueue.schedule(key, nextRetryAt);
-      this.reportFailure({
-        key,
-        error,
-        attempt,
-        nextRetryAt: nextRetryAt.toISOString(),
-      });
-    } catch (retryError) {
-      this.reportFailure({
-        key,
-        error: new AggregateError(
-          [error, retryError],
-          `could not persist retry for ${reconcileScopeLabel(key)}/${key.resourceId}`,
-        ),
-        attempt,
-      });
     }
   }
 
