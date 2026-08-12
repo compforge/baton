@@ -10,15 +10,20 @@ Plugin 让长期领域 loop 拥有自己的 Resource、Controller、Connector �
 Baton Plugin 是 Baton 的领域扩展机制。它用 Resource `spec/status` 保存长期目标与观测，由 Controller
 执行 level-based reconcile，并通过 Connector 适配外部系统。
 
+从控制论看，Plugin 是围绕领域目标运行的负反馈控制器：`spec` 给出期望，Controller 先读取最新
+Resource，再通过 Connector 重新观察外部事实，根据偏差请求人、Harness 或外部系统采取行动，最后
+更新 `status`。下一轮 reconcile 重新执行同一观察过程；完成由领域事实是否收敛到目标决定，不能由
+单次 Harness Turn 自行宣布。
+
 ```text
-领域 loop = Resource(spec + status) + level-based reconcile
-                                      ▲
-             Resource change / Source / Watch / cron / requeueAfter
+read Resource → read external facts through Connector → act → update status
+      ▲                                                        │
+      └──────── Resource / Source / Watch / cron / requeue ─────┘
 ```
 
 - `spec` 是用户认可的期望与 Contract；
 - `status` 是 Controller 重新观察或计算的当前状态；
-- signal 只提示“可能变化”，reconcile 每次读取最新事实；
+- signal 只提示“可能变化”，reconcile 每次重新读取 Resource 与外部事实；
 - `ask/confirm/draft/harness` 让 reconcile 可以请求人的决定或 Harness 执行，不要求先把业务穷举成
   DSL。
 

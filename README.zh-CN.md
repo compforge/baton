@@ -28,6 +28,8 @@ Plugin host 又增加了一条原则：
 
 - **Typed coordination**：baton core 通过 Core-owned Input、Interaction、HarnessInvocation 和 Event 生命周期串联人、Harness 与 Baton Plugin，而不是转发 opaque message。Harness 原生 verb 由 Adapter lowering，Plugin reconcile verb 由 host lowering；Baton Plugin 拥有长期领域 loop，devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
 
+从控制论看，每个长期 Plugin loop 都是一条反馈控制循环：它先读取 Resource，再通过 Connector 重新观察外部事实，经由人、Harness 或外部系统采取行动，最后更新 status 留给下一次 reconcile。完成意味着领域事实已经收敛到目标，而不只是某个 agent 结束了一轮执行。
+
 在此之上仍有三个产品演进方向。BatonSession 已支持由人或 Plugin 发起主线与异步支线任务；协同 fan-out 与结果策展尚未完整落地：
 
 - **多 harness 协作**：一个 BatonSession 已可并发运行多个由人或 Plugin 发起的 Lane，并保持单一持久 ledger；每条 Lane 内可串行切换 Harness 接力。下一步是把同一任务作为协同 fan-out 分派给多家 Harness，再把结果策展进主线。
