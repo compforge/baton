@@ -89,6 +89,8 @@ interface ThreadRuntime {
   /** 当前被接受、尚未逻辑终结的 turn */
   activeTurn?: CodexTurn;
   codexTurnId?: string;
+  /** turn/steer 已接受、但尚未收到 Codex userMessage 消费回执的 Baton messageId。 */
+  pendingSteerMessageIds?: Set<string>;
   /**
    * cancel 早于 codexTurnId 就位（fast-submit 后 turn/start 响应与 turn/started
    * 通知都未回）时挂起的取消意图；id 就位后由 flushPendingCancel 补发 interrupt。
@@ -1308,25 +1310,54 @@ export class CodexAdapter implements HarnessAdapter {
       if (activeTurn.turnId !== input.turnId || !rt.codexTurnId) {
         return { accepted: false, effective: "rejected" };
       }
+      const pendingSteers = (rt.pendingSteerMessageIds ??= new Set<string>());
+      pendingSteers.add(input.messageId);
       try {
         await rt.peer.request("turn/steer", {
           threadId: rt.threadId,
           expectedTurnId: rt.codexTurnId,
           input: codexPromptInput(input.blocks),
+          clientUserMessageId: input.messageId,
         });
       } catch (error) {
+        // userMessage 原生回执比 RPC 错误更强：这种竞态下不能再降级成
+        // follow-up，否则同一条用户输入会被执行两次。
+        if (!pendingSteers.has(input.messageId)) {
+          this.emit(
+            rt,
+            {
+              kind: "user_message",
+              payload: {
+                messageId: input.messageId,
+                content: input.blocks,
+                delivery: "steer",
+                deliveryState: "applied",
+              },
+            },
+            undefined,
+            activeTurn,
+          );
+          return { accepted: true, effective: "steer" };
+        }
+        pendingSteers.delete(input.messageId);
         return {
           accepted: false,
           effective: "rejected",
           reason: error instanceof Error ? error.message : String(error),
         };
       }
-      // Codex 已按 expectedTurnId 校验通过：消息确定进入当前 Baton turn。
+      // RPC 成功只证明进入 Codex pending_input；userMessage 通知才证明
+      // 它已经在下一次 sampling 前写入模型上下文。
       this.emit(
         rt,
         {
           kind: "user_message",
-          payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+          payload: {
+            messageId: input.messageId,
+            content: input.blocks,
+            delivery: "steer",
+            deliveryState: pendingSteers.has(input.messageId) ? "pending" : "applied",
+          },
         },
         undefined,
         activeTurn,
@@ -1464,6 +1495,7 @@ export class CodexAdapter implements HarnessAdapter {
     if (rt.activeTurn === turn) {
       rt.activeTurn = undefined;
       rt.codexTurnId = undefined;
+      rt.pendingSteerMessageIds?.clear();
       rt.pendingCancel = undefined; // turn 已终结，挂起的取消意图随之失效
     }
   }
@@ -1568,6 +1600,24 @@ export class CodexAdapter implements HarnessAdapter {
         const item = (p.item ?? {}) as Record<string, unknown>;
         const itemType = String(item.type ?? "");
         const lifecycle = method === "item/started" ? "started" : "completed";
+        if (itemType === "userMessage" && lifecycle === "completed") {
+          const clientId = typeof item.clientId === "string" ? item.clientId : undefined;
+          if (clientId && rt.pendingSteerMessageIds?.delete(clientId)) {
+            this.emit(
+              rt,
+              {
+                kind: "user_message",
+                payload: {
+                  messageId: clientId,
+                  delivery: "steer",
+                  deliveryState: "applied",
+                },
+              },
+              params,
+            );
+          }
+          break;
+        }
         const terminal = lifecycle === "completed" ? codexToolTerminalStatus(item.status) : undefined;
         const isTool =
           itemType &&

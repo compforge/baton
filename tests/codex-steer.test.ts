@@ -1,5 +1,5 @@
 // codex sendTurn 的 active-turn 映射（见 docs/harness/codex.md）：baton turnId → codex turn id、
-// 成功发 delivery:"steer" 的 user_message 并绑定原 turn、stale/finalized/wire 失败
+// RPC 接受后先落 pending steer，原生 userMessage 回执再转 applied；stale/finalized/wire 失败
 // 一律 rejected 且不发事件（降级由 controller 决定）。
 import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
@@ -43,7 +43,11 @@ function harness(opts: { requestError?: Error } = {}) {
   // 私有 threads 表注入 seam：绕开真实子进程（同 codex-turn-race.test.ts 的做法）
   (adapter as unknown as { threads: Map<string, FakeRt> }).threads.set("th1", rt);
   const ref: HarnessSessionHandle = { harness: "codex", handleId: "th1" };
-  return { adapter, events, requests, rt, ref };
+  const notify = (method: string, params: unknown) =>
+    (adapter as unknown as {
+      handleNotification(runtime: FakeRt, method: string, params: unknown): void;
+    }).handleNotification(rt, method, params);
+  return { adapter, events, requests, rt, ref, notify };
 }
 
 const input: PromptInput = {
@@ -52,8 +56,8 @@ const input: PromptInput = {
   blocks: [{ type: "text", text: "prefer approach B" }],
 };
 
-test("codex steer: maps to turn/steer with the codex turn id and emits a steer user_message", async () => {
-  const { adapter, events, requests, ref } = harness();
+test("codex steer: stays pending until codex emits the correlated userMessage", async () => {
+  const { adapter, events, requests, ref, notify } = harness();
 
   const receipt = await adapter.sendTurn(ref, input);
 
@@ -65,15 +69,41 @@ test("codex steer: maps to turn/steer with the codex turn id and emits a steer u
         threadId: "th1",
         expectedTurnId: "codex-turn-1",
         input: [{ type: "text", text: "prefer approach B" }],
+        clientUserMessageId: "m_steer",
       },
     },
   ]);
   expect(events).toHaveLength(1);
-  const msg = events[0] as unknown as { kind: string; turnId?: string; payload: Record<string, unknown> };
-  expect(msg.kind).toBe("user_message");
-  expect(msg.turnId).toBe("t_A"); // 绑定被注入的 turn，不新开 turn
-  expect(msg.payload.delivery).toBe("steer");
-  expect(msg.payload.messageId).toBe("m_steer");
+  expect(events[0]).toMatchObject({
+    kind: "user_message",
+    turnId: "t_A",
+    payload: {
+      messageId: "m_steer",
+      delivery: "steer",
+      deliveryState: "pending",
+    },
+  });
+
+  notify("item/completed", {
+    threadId: "th1",
+    item: {
+      type: "userMessage",
+      id: "native-user-1",
+      clientId: "m_steer",
+      content: [{ type: "text", text: "prefer approach B" }],
+    },
+  });
+
+  expect(events).toHaveLength(2);
+  expect(events[1]).toMatchObject({
+    kind: "user_message",
+    turnId: "t_A",
+    payload: {
+      messageId: "m_steer",
+      delivery: "steer",
+      deliveryState: "applied",
+    },
+  });
 });
 
 test("codex steer: stale expectedTurnId is rejected without any wire call or event", async () => {

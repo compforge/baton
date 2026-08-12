@@ -308,7 +308,7 @@ export class BatonChatProtocol implements ChatProtocol {
     // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
     const sent = await this.controller.sendTurn(target, blocks, options);
     if (sent.effective === "steer") {
-      this.toast = { text: `steering ${target} — applies at the next safe point`, tone: "info" };
+      this.toast = { text: `${target} steer queued for the current turn`, tone: "info" };
       this.changed();
       return;
     }

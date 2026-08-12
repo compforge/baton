@@ -47,6 +47,8 @@ export interface MessageState {
   source?: EventSource;
   /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
   delivery?: SubmitDelivery;
+  /** 仅 steer：pending 仍在 Harness 原生队列，applied 已进入模型上下文。 */
+  deliveryState?: "pending" | "applied";
 }
 
 export interface ToolCallState {
@@ -351,8 +353,10 @@ function applyMessageUpsert(
   }
   // EventEnvelope<union> 不随 kind 自动收窄（非判别联合入参），手动断言 user_message
   if (ev.kind === "user_message") {
-    const delivery = (ev as EventEnvelope<"user_message">).payload.delivery;
+    const userMessage = (ev as EventEnvelope<"user_message">).payload;
+    const delivery = userMessage.delivery;
     if (delivery !== undefined) msg.delivery = delivery;
+    if (userMessage.deliveryState !== undefined) msg.deliveryState = userMessage.deliveryState;
   }
   if (role !== "user") msg.streamStatus = "completed";
 }
