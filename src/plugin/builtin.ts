@@ -25,6 +25,7 @@ import {
   emptyReconcileSnapshot,
   type ReconcileSnapshot,
 } from "./reconcile-snapshot.ts";
+import { validateSources } from "./source.ts";
 import { validateWatches, watchRequests } from "./watch.ts";
 import {
   createReconcileContext,
@@ -233,6 +234,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   ) => Promise<T>;
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   onReconcileError?(key: ReconcileKey, error: unknown): void;
+  onWatchError?(change: ResourceClientChange, error: unknown): void;
   retry?: ControllerRetryOptions;
 }
 
@@ -264,6 +266,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   private readonly executeReconcile: NonNullable<
     BuiltinControllerOptions<K>["executeReconcile"]
   >;
+  private readonly onWatchError?: BuiltinControllerOptions<K>["onWatchError"];
   private readonly queue: ReconcileQueue;
   private readonly retry?: ReconcileRetry;
   private closed = false;
@@ -275,6 +278,8 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.resources = options.resources;
     this.resourceKind = options.resourceKind;
     validateWatches(options.watches);
+    this.now = options.now ?? (() => new Date());
+    validateSources(options.sources, this.now());
     this.sources = Object.freeze([...(options.sources ?? [])]);
     this.watches = Object.freeze([...(options.watches ?? [])]);
     if (this.sources.some((source) => source.type === "resource")) {
@@ -284,7 +289,6 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     }
     this.resources.list(options.resourceKind);
     this.reconcileResource = options.reconcile;
-    this.now = options.now ?? (() => new Date());
     this.snapshot =
       options.snapshot ??
       (() => emptyReconcileSnapshot(options.resources.batonSessionId));
@@ -304,6 +308,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         _localLease: ReconcileCapacityLease,
         execute: () => Promise<T>,
       ) => await execute());
+    this.onWatchError = options.onWatchError;
     if (options.retry) {
       this.retry = new ReconcileRetry({
         ...options.retry,
@@ -370,8 +375,19 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     );
   }
 
-  async watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]> {
-    const requests = await watchRequests(this.watches, change);
+  async reconcileKeys(
+    change: ResourceClientChange,
+  ): Promise<readonly ReconcileKey[]> {
+    if (change.resource.metadata.namespace !== this.scope.pluginInstanceId) {
+      return [];
+    }
+    let requests;
+    try {
+      requests = await watchRequests(this.watches, change);
+    } catch (error) {
+      this.onWatchError?.(change, error);
+      return [];
+    }
     return Object.freeze(requests.map((request) => Object.freeze({
       ...this.scope,
       resourceId: request.name,

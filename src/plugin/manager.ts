@@ -48,7 +48,6 @@ import {
 import {
   CronSourceQueue,
 } from "./cron-source.ts";
-import { validateSources } from "./source.ts";
 import {
   PluginResourceStore,
   resourceTypeKey,
@@ -223,7 +222,7 @@ interface ManagedController {
     onError: (sourceId: string, error: unknown) => void,
   ): Promise<void>;
   enqueue(key: ReconcileKey): Promise<void>;
-  watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]>;
+  reconcileKeys(change: ResourceClientChange): Promise<readonly ReconcileKey[]>;
   close(): void;
   scheduledReconciles(): ScheduledReconcile[];
   resourceKeys?(): ReconcileKey[];
@@ -393,8 +392,7 @@ export class Manager {
         `plugin Controller batonSessionId must be ${this.instances.session.id}, got ${definition.store.batonSessionId}`,
       );
     }
-    validateSources(definition.sources, this.now());
-    const controller = new Controller({
+    const controller: Controller<TSpec, TStatus> = new Controller({
       ...definition,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
       invokeVerb: (context, request) => this.verb.invoke(context, request),
@@ -421,6 +419,8 @@ export class Manager {
           resource,
         }));
       },
+      onWatchError: (change, error) =>
+        this.reportWatchFailure(controller.scope, change, error),
     });
     return this.installController(controller, suspended);
   }
@@ -441,8 +441,7 @@ export class Manager {
         "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
-    validateSources(definition.sources, this.now());
-    const controller = new BuiltinController({
+    const controller: BuiltinController<K> = new BuiltinController({
       ...definition,
       resources: this.batonResources,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
@@ -461,6 +460,8 @@ export class Manager {
           this.reportFailure(failure);
         },
       },
+      onWatchError: (change, error) =>
+        this.reportWatchFailure(controller.scope, change, error),
     });
     return this.installController(controller, suspended);
   }
@@ -1226,21 +1227,6 @@ export class Manager {
       controller: ManagedController;
       key: ReconcileKey;
     }>();
-    if (change.kind !== "deleted") {
-      const key = Object.freeze({
-        batonSessionId: this.instances.session.id,
-        pluginInstanceId: change.resource.metadata.namespace,
-        resourceApiVersion: change.resource.apiVersion,
-        resourceKind: change.resource.kind,
-        resourceId: change.resource.metadata.name,
-      });
-      const scopeId = reconcileScopeId(key);
-      const controller = this.controllers.get(scopeId);
-      if (controller && !this.suspendedControllers.has(scopeId)) {
-        pending.set(reconcileKeyId(key), { controller, key });
-      }
-    }
-
     for (const controller of this.controllers.values()) {
       const scopeId = reconcileScopeId(controller.scope);
       if (
@@ -1252,21 +1238,9 @@ export class Manager {
       }
       let requests;
       try {
-        requests = await controller.watch(change);
+        requests = await controller.reconcileKeys(change);
       } catch (error) {
-        this.log?.({
-          level: "error",
-          source: "baton",
-          component: "plugin.watch",
-          message: "Plugin Controller EventHandler failed",
-          pluginInstanceId: controller.scope.pluginInstanceId,
-          error: logError(error),
-          attributes: {
-            primaryResource:
-              `${controller.scope.resourceApiVersion}/${controller.scope.resourceKind}`,
-            watchedResource: `${change.resource.apiVersion}/${change.resource.kind}`,
-          },
-        });
+        this.reportWatchFailure(controller.scope, change, error);
         continue;
       }
       for (const request of requests) {
@@ -1279,6 +1253,25 @@ export class Manager {
         // Reconcile failures use the Controller retry path; close races need no extra reaction.
       });
     }
+  }
+
+  private reportWatchFailure(
+    scope: ReconcileScope,
+    change: ResourceClientChange,
+    error: unknown,
+  ): void {
+    this.log?.({
+      level: "error",
+      source: "baton",
+      component: "plugin.watch",
+      message: "Plugin Controller EventHandler failed",
+      pluginInstanceId: scope.pluginInstanceId,
+      error: logError(error),
+      attributes: {
+        primaryResource: `${scope.resourceApiVersion}/${scope.resourceKind}`,
+        watchedResource: `${change.resource.apiVersion}/${change.resource.kind}`,
+      },
+    });
   }
 
   private notifyToast(
