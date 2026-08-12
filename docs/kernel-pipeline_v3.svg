@@ -88,39 +88,39 @@
   <text x="70" y="86" font-size="18" fill="#6b7280">A collaboration core with domain orchestration delivered as Plugins.</text>
 
   <!-- A Plugin is one domain's orchestration implementation, installed on the shared Core. -->
-  <rect x="420" y="115" width="960" height="245" rx="26" fill="#e7f5eb" stroke="#3f7650" stroke-width="2.5" filter="url(#shadow)"/>
-  <text x="455" y="156" font-size="25" font-weight="720">Baton Plugins · Domain orchestration layer</text>
+  <rect x="350" y="115" width="1030" height="255" rx="26" fill="#e7f5eb" stroke="#3f7650" stroke-width="2.5" filter="url(#shadow)"/>
+  <text x="385" y="156" font-size="25" font-weight="720">Baton Plugins · Domain orchestration layer</text>
   <text x="1345" y="156" font-size="17" fill="#3f7650" font-weight="650" text-anchor="end">one biz domain = one Plugin</text>
 
-  <rect class="plugin-card" x="455" y="180" width="340" height="145" rx="18"/>
-  <text class="actor-title" x="625" y="222">Plugin 1 · Biz A</text>
-  <text class="actor-detail" x="625" y="252">owns its domain control loop</text>
-  <rect class="plugin-loop" x="480" y="274" width="290" height="34" rx="17"/>
-  <text x="625" y="297" font-size="14" font-weight="650" text-anchor="middle">Resource · reconcile · Connector</text>
+  <rect class="plugin-card" x="385" y="180" width="320" height="145" rx="18"/>
+  <text class="actor-title" x="545" y="222">Plugin 1 · Biz A</text>
+  <text class="actor-detail" x="545" y="252">owns its domain control loop</text>
+  <rect class="plugin-loop" x="410" y="274" width="270" height="34" rx="17"/>
+  <text x="545" y="297" font-size="13" font-weight="650" text-anchor="middle">Resource · reconcile · Connector</text>
 
   <!-- One Plugin is expanded to show its domain loop and Core verbs. -->
-  <rect class="plugin-card" x="825" y="170" width="520" height="160" rx="18"/>
-  <text class="actor-title" x="1085" y="207">Plugin 2 · Biz B</text>
+  <rect class="plugin-card" x="730" y="165" width="615" height="170" rx="18"/>
+  <text class="actor-title" x="1037" y="205">Plugin 2 · Biz B</text>
 
-  <rect class="plugin-loop" x="850" y="225" width="150" height="34" rx="17"/>
-  <text x="925" y="248" font-size="14" font-weight="650" text-anchor="middle">Resource · spec/status</text>
-  <line class="plugin-flow" x1="1005" y1="242" x2="1022" y2="242"/>
+  <rect class="plugin-loop" x="760" y="225" width="180" height="34" rx="17"/>
+  <text x="850" y="248" font-size="14" font-weight="650" text-anchor="middle">Resource · spec/status</text>
+  <line class="plugin-flow" x1="945" y1="242" x2="967" y2="242"/>
 
-  <rect class="plugin-loop" x="1030" y="225" width="110" height="34" rx="17"/>
-  <text x="1085" y="248" font-size="14" font-weight="650" text-anchor="middle">reconcile</text>
-  <line class="plugin-flow" x1="1145" y1="242" x2="1162" y2="242"/>
+  <rect class="plugin-loop" x="975" y="225" width="125" height="34" rx="17"/>
+  <text x="1037" y="248" font-size="14" font-weight="650" text-anchor="middle">reconcile</text>
+  <line class="plugin-flow" x1="1105" y1="242" x2="1127" y2="242"/>
 
-  <rect class="plugin-loop" x="1170" y="225" width="145" height="34" rx="17"/>
-  <text x="1242" y="248" font-size="14" font-weight="650" text-anchor="middle">Connector</text>
+  <rect class="plugin-loop" x="1135" y="225" width="180" height="34" rx="17"/>
+  <text x="1225" y="248" font-size="14" font-weight="650" text-anchor="middle">Connector</text>
 
-  <text x="865" y="291" font-size="14" fill="#4b5563">Core verbs</text>
-  <rect class="action-pill" x="940" y="270" width="145" height="34" rx="17"/>
-  <text x="1012" y="293" font-size="14" font-weight="650" text-anchor="middle">ask(question)</text>
-  <rect class="action-pill" x="1100" y="270" width="175" height="34" rx="17"/>
-  <text x="1187" y="293" font-size="14" font-weight="650" text-anchor="middle">harness(prompt)</text>
-  <line class="plugin-flow" x1="1065" y1="260" x2="1012" y2="267"/>
-  <line class="plugin-flow" x1="1105" y1="260" x2="1187" y2="267"/>
-  <text x="1085" y="321" font-size="13" fill="#4b5563" text-anchor="middle">observe → measure diff → act → update status</text>
+  <text x="765" y="293" font-size="14" fill="#4b5563">Core verbs</text>
+  <rect class="action-pill" x="860" y="272" width="160" height="34" rx="17"/>
+  <text x="940" y="295" font-size="14" font-weight="650" text-anchor="middle">ask(question)</text>
+  <rect class="action-pill" x="1040" y="272" width="200" height="34" rx="17"/>
+  <text x="1140" y="295" font-size="14" font-weight="650" text-anchor="middle">harness(prompt)</text>
+  <line class="plugin-flow" x1="1017" y1="260" x2="940" y2="269"/>
+  <line class="plugin-flow" x1="1057" y1="260" x2="1140" y2="269"/>
+  <text x="1037" y="326" font-size="13" fill="#4b5563" text-anchor="middle">observe → measure diff → act → update status</text>
 
   <!-- Connector observes and acts on the Plugin's domain system directly. -->
   <line class="port-line" x1="1319" y1="242" x2="1475" y2="242"/>
@@ -129,16 +129,16 @@
   <text x="1607" y="235" font-size="20" font-weight="700" text-anchor="middle">External</text>
   <text x="1607" y="261" font-size="16" fill="#4b5563" text-anchor="middle">domain system</text>
 
-  <text x="900" y="342" font-size="15" fill="#4b5563" text-anchor="middle">Marketplace packages, installs, and upgrades each domain loop independently.</text>
+  <text x="900" y="357" font-size="15" fill="#4b5563" text-anchor="middle">Marketplace packages, installs, and upgrades each domain loop independently.</text>
 
   <!-- Every Plugin uses the same stable Core contract. -->
-  <line class="port-line" x1="625" y1="364" x2="625" y2="450"/>
-  <rect class="port-pill" x="513" y="380" width="224" height="38" rx="19"/>
-  <text class="port-label" x="625" y="405">ReconcileContext · result</text>
+  <line class="port-line" x1="545" y1="374" x2="545" y2="450"/>
+  <rect class="port-pill" x="433" y="390" width="224" height="38" rx="19"/>
+  <text class="port-label" x="545" y="415">ReconcileContext · result</text>
 
-  <line class="port-line" x1="1085" y1="364" x2="1085" y2="450"/>
-  <rect class="port-pill" x="973" y="380" width="224" height="38" rx="19"/>
-  <text class="port-label" x="1085" y="405">ReconcileContext · result</text>
+  <line class="port-line" x1="1037" y1="374" x2="1037" y2="450"/>
+  <rect class="port-pill" x="925" y="390" width="224" height="38" rx="19"/>
+  <text class="port-label" x="1037" y="415">ReconcileContext · result</text>
 
   <!-- Core owns collaboration objects and lifecycles, not domain semantics. -->
   <rect x="420" y="450" width="960" height="350" rx="28" fill="#edf3fc" stroke="#111827" stroke-width="3" filter="url(#shadow)"/>
