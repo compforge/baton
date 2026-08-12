@@ -42,7 +42,7 @@ Plugin host 又增加了一条原则：
 
 ![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
 
-v3 将这条流水线收敛成一个稳定边界：人、Harness 与 Baton Plugin 保留各自语义和资源，通过 Core 持有的 Input、Interaction、HarnessInvocation 与 Event 事实协作。Plugin 通过 Connector 连接外部系统；所有 Plugin 发起的 Turn 仍回到同一条 Input、Context、Permission 与 routing 路径。
+v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台；每个业务领域作为一个可独立交付的 Plugin，拥有自己的 Resource、reconcile、完成条件与 Connector。所有 Plugin 发起的 Turn 仍回到 Core 持有的 Input、Interaction、HarnessInvocation、Event 以及统一的 Context、Permission 与 routing 路径。
 
 ![Baton v3 协作内核](docs/kernel-pipeline_v3.svg)
 
