@@ -15,6 +15,32 @@ import {
   toolTranscriptItem,
 } from "../src/tui/protocol/index.ts";
 
+function stubCompletedSend(
+  protocol: BatonChatProtocol,
+  onSend?: (harness: string, blocks: Array<{ type: string; text?: string }>) => void,
+): void {
+  const controller = (protocol as unknown as {
+    controller: {
+      sendTurn: (
+        harness: string,
+        blocks: Array<{ type: string; text?: string }>,
+      ) => Promise<{
+        effective: "new_turn";
+        queued: false;
+        outcome: Promise<"completed">;
+      }>;
+    };
+  }).controller;
+  controller.sendTurn = async (harness, blocks) => {
+    onSend?.(harness, blocks);
+    return {
+      effective: "new_turn",
+      queued: false,
+      outcome: Promise.resolve("completed"),
+    };
+  };
+}
+
 describe("BatonChatProtocol exit", () => {
   test("restores the TUI only after controller and session cleanup", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-exit-"));
@@ -339,10 +365,7 @@ describe("BatonChatProtocol session preview", () => {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      const internals = protocol as unknown as {
-        controller: { submit: () => Promise<"completed">; close: () => Promise<void> };
-      };
-      internals.controller.submit = async () => "completed";
+      stubCompletedSend(protocol);
 
       await protocol.submit("Implement session previews");
       await protocol.submit("Do not replace the preview");
@@ -361,10 +384,7 @@ describe("BatonChatProtocol session preview", () => {
       source.setPreviewIfEmpty("Design session labels");
       const session = store.forkSession(source.id);
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      const internals = protocol as unknown as {
-        controller: { submit: () => Promise<"completed">; close: () => Promise<void> };
-      };
-      internals.controller.submit = async () => "completed";
+      stubCompletedSend(protocol);
 
       expect(sessionDisplayTitle(session.meta)).toBe("fork: Design session labels");
       await protocol.submit("Implement fork session labels");
@@ -405,8 +425,7 @@ describe("BatonChatProtocol status command", () => {
         text: expect.stringContaining("Context: 12,500 / 200,000 tokens (6%)"),
       });
       expect(session.readEvents()).toHaveLength(eventCount);
-      const internals = protocol as unknown as { controller: { submit: () => Promise<"completed"> } };
-      internals.controller.submit = async () => "completed";
+      stubCompletedSend(protocol);
       await protocol.submit("continue");
       expect(protocol.stateStore.getState("timeline").items.some((item) => item.id === "_baton_status")).toBe(false);
     } finally {
@@ -731,14 +750,12 @@ describe("BatonChatProtocol harness commands", () => {
       const submitted: Array<{ harness: string; text: string }> = [];
       const internals = protocol as unknown as {
         controller: {
-          submit: (harness: string, blocks: Array<{ type: string; text?: string }>) => Promise<"completed">;
           compactContext: (harness: string) => Promise<void>;
         };
       };
-      internals.controller.submit = async (harness, blocks) => {
+      stubCompletedSend(protocol, (harness, blocks) => {
         submitted.push({ harness, text: blocks[0]?.text ?? "" });
-        return "completed";
-      };
+      });
       const compacted: string[] = [];
       internals.controller.compactContext = async (harness) => {
         compacted.push(harness);
@@ -2247,7 +2264,7 @@ describe("BatonChatProtocol input history", () => {
     const store = new SessionStore(root);
     const session = store.createSession({ cwd: "/repo" });
     const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-    (protocol as unknown as { controller: { submit: () => Promise<"completed"> } }).controller.submit = async () => "completed";
+    stubCompletedSend(protocol);
     return { root, store, session, protocol };
   }
 

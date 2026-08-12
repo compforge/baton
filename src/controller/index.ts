@@ -46,6 +46,7 @@ import {
   InputQueue,
   inputSnapshot,
   type InputRecord,
+  type InputSubmission,
   type InputSource,
   type InputSnapshot,
   type QueuedTurnSnapshot,
@@ -306,7 +307,9 @@ export class Controller {
   get inputs(): InputSnapshot[] {
     const out: InputSnapshot[] = [];
     for (const input of this.mainQueue.queued) out.push(inputSnapshot(input));
+    for (const input of this.mainQueue.claimed) out.push(inputSnapshot(input));
     for (const input of this.sideQueue.queued) out.push(inputSnapshot(input));
+    for (const input of this.sideQueue.claimed) out.push(inputSnapshot(input));
     for (const record of this.turns.values()) {
       if (record.status !== "active") continue;
       if (record.turn) out.push(inputSnapshot(record.turn));
@@ -324,6 +327,17 @@ export class Controller {
     blocks: PromptBlock[],
     options?: { sourceProposedPlanId?: string },
   ): Promise<SubmitOutcome> {
+    const submission = this.enqueueMainInput(harnessTargetId, blocks, options);
+    this.changed();
+    void this.drainMain();
+    return submission.outcome;
+  }
+
+  private enqueueMainInput(
+    harnessTargetId: string,
+    blocks: PromptBlock[],
+    options?: { sourceProposedPlanId?: string },
+  ): InputSubmission {
     const target = this.targetFor(harnessTargetId);
     const laneId = this.mainLaneId();
     if (options?.sourceProposedPlanId) {
@@ -344,10 +358,7 @@ export class Controller {
         throw new Error(`Proposed plan already has an implementation turn: ${options.sourceProposedPlanId}`);
       }
     }
-    const outcome = this.mainQueue.enqueue(target, laneId, blocks, options);
-    this.changed();
-    void this.drainMain();
-    return outcome;
+    return this.mainQueue.enqueue(target, laneId, blocks, options);
   }
 
   /** Materializes a scheduled HarnessInvocation without inferring Lane from source. */
@@ -374,7 +385,7 @@ export class Controller {
       ).laneId
       : this.options.session.requireLane(input.laneId).laneId;
     const queue = laneId === this.mainLaneId() ? this.mainQueue : this.sideQueue;
-    const outcome = queue.enqueue(target, laneId, input.blocks, {
+    const submission = queue.enqueue(target, laneId, input.blocks, {
       source: input.source,
       harnessInvocationId: input.harnessInvocationId,
       identity: {
@@ -385,7 +396,7 @@ export class Controller {
     this.changed();
     if (laneId === this.mainLaneId()) void this.drainMain();
     else this.drainSideLanes();
-    return outcome;
+    return submission.outcome;
   }
 
   /** Cancels a queued Request, or interrupts its already-admitted Turn. */
@@ -410,9 +421,13 @@ export class Controller {
   }
 
   /**
-   * 用户输入的统一入口。没有更早 follow-up、目标与当前 driven turn 一致且 HarnessSession
-   * 已就绪时，直接交给 Adapter 依据原生运行态决定 same-turn send；其余情况进入全局队列。
+   * 用户输入的统一入口。Input 先获得稳定 messageId 并进入全局队列；没有更早 follow-up、
+   * 目标与当前 driven turn 一致且 HarnessSession 已就绪时，Controller 原子 claim 队头，
+   * 再交给 Adapter 依据原生运行态决定 same-turn send。Adapter 拒绝时同一 Input 回到队头。
    * observed turn（harness 自发）不接受输入——Baton 不拥有其生命周期。
+   *
+   * @spec 每次用户提交只创建一个 Input/messageId；steer rejection 降级 follow-up 时保持身份不变。
+   * @see {@link ../../docs/workflow.md}
    */
   async sendTurn(
     harnessTargetId: string,
@@ -421,20 +436,27 @@ export class Controller {
   ): Promise<SendTurnOutcome> {
     const laneId = this.mainLaneId();
     const active = this.turns.activeDriven(laneId);
+    const queued =
+      Boolean(this.activeMainTurn()) ||
+      this.drainingMain ||
+      this.mainQueue.length > 0;
+    const submission = this.enqueueMainInput(harnessTargetId, blocks, options);
+    const input = submission.input;
+    this.changed();
     if (
       !options?.sourceProposedPlanId &&
-      this.mainQueue.length === 0 &&
       active?.turn &&
       active.turn.target.id === harnessTargetId &&
-      active.binding.ref
+      active.binding.ref &&
+      this.mainQueue.claimFirstForSteer(input)
     ) {
-      const messageId = newId("m");
+      this.changed();
       let receipt: SendTurnReceipt;
       try {
         receipt = await active.binding.adapter.sendTurn(active.binding.ref, {
           turnId: active.turnId,
-          messageId,
-          blocks,
+          messageId: input.messageId,
+          blocks: input.blocks,
         });
       } catch (error) {
         receipt = {
@@ -444,42 +466,44 @@ export class Controller {
         };
       }
       if (receipt.effective === "steer") {
-        // 已接受的 same-turn send 是一等 Input：挂到当前 turn，cancel 时统一迁移 interrupted。
-        (active.steers ??= []).push(
-          this.mainQueue.acceptSteer(
-            active.turn.target,
-            laneId,
-            active.turnId,
-            messageId,
-            blocks,
-          ),
-        );
+        this.mainQueue.acceptClaimedSteer(input, active.turnId);
+        if (active.status === "active") {
+          // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
+          (active.steers ??= []).push(input);
+        } else {
+          // Adapter receipt 可能晚于 Esc/终态。输入已经被 Harness 接受，不能重新入队；
+          // 直接继承它所绑定 Turn 的终态，避免把 Input 挂回已退休的台账记录。
+          input.status = active.stopReason === "cancelled" ? "interrupted" : "finalized";
+          input.resolve?.("completed");
+        }
         this.changed();
         return { effective: "steer" };
       }
       if (receipt.effective === "new_turn") {
-        throw new Error(
+        const error = new Error(
           `adapter ${active.binding.adapter.harness} opened a new turn while Baton turn ${active.turnId} is active`,
         );
+        this.mainQueue.abandonClaimed(input);
+        this.changed();
+        throw error;
       }
+      this.mainQueue.requeueClaimed(input);
+      this.changed();
+      void this.drainMain();
       return {
         effective: "new_turn",
         queued: true,
-        outcome: this.submit(harnessTargetId, blocks, options),
+        outcome: submission.outcome,
         ...(receipt.effective === "rejected" && receipt.reason
           ? { reason: receipt.reason }
           : {}),
       };
     }
-
-    const queued =
-      Boolean(this.activeMainTurn()) ||
-      this.drainingMain ||
-      this.mainQueue.length > 0;
+    void this.drainMain();
     return {
       effective: "new_turn",
       queued,
-      outcome: this.submit(harnessTargetId, blocks, options),
+      outcome: submission.outcome,
     };
   }
 

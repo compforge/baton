@@ -38,7 +38,9 @@ composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `
 稳定路径而不内联大段 base64，Adapter 再按 Harness 原生协议 lowering。文本 paste 仍由普通
 composer 输入路径处理。
 
-Controller 为 prompt Input 分配稳定 `messageId` 和 `turnId`，并用一等状态记录它的消费位置：
+Controller 在用户提交时为 prompt Input 分配稳定 `messageId` 并先放入队列，同时为可能的新 Turn
+预留 `turnId`；若 Adapter 接受 steer，Input 改为绑定实际承载它的当前 Turn。Harness 空闲时队列
+停留可以极短，但仍遵守同一条状态机：
 
 ```text
 queued → admitted → finalized
@@ -46,10 +48,13 @@ queued → admitted → finalized
    │         └──────────────→ interrupted
    └────────→ recalled
 
-accepted_steer → finalized | interrupted
+queued → dispatching → accepted_steer → finalized | interrupted
+             └──────→ queued
 ```
 
-`queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
+`dispatching` 表示 Controller 已原子 claim 该 Input 并正在等待 same-turn Adapter admission；此时
+不再允许 recall。Adapter 拒绝后，同一个 `messageId` 回到队头并降级为 follow-up，不能重建成另一条
+Input。`queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
 不能再伪装成“从未提交”；此后只能 cancel/interrupt。Controller 按 `laneId` 调度，而不按
 Input source 调度：
 
@@ -175,14 +180,15 @@ Turn 共享 Event/Projection 主路径，因此 live 与 resume 都能看到相�
 `follow-up` 是 Controller 的排队策略，不是 Adapter 的另一套方法。用户在 Harness busy 时提交
 第二条输入：
 
-1. 若目标支持且当前 turn identity 匹配，Controller 尝试 `sendTurn`；
+1. Controller 先创建稳定 Input/message identity 并入队；若它位于队头、目标支持且当前 turn
+   identity 匹配，再 claim 为 `dispatching` 并尝试 `sendTurn`；
 2. Adapter 原生接受后，输入成为 `accepted_steer`，并以 `delivery:"steer"`
    绑定当前 Turn。若接受只代表进入 Harness 原生队列，其 delivery state 为
    `pending`；
 3. Harness 确认该用户输入已写入模型上下文后，Adapter 将 delivery state 更新为
    `applied`；若 Harness 明确取消或丢弃该输入，则更新为 `failed` 并产生可见诊断。
    不能区分这些边界的 Harness，以原生接受作为 applied 边界；
-4. Adapter 拒绝、原生 race 或无法安全定向时，原输入只入队一次，当前 Turn 结束后作为新 Turn
+4. Adapter 拒绝、原生 race 或无法安全定向时，同一 Input 回到队头，当前 Turn 结束后作为新 Turn
    执行。
 
 `pending` steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在

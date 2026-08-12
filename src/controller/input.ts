@@ -17,6 +17,7 @@ export type InputSource =
  */
 export type InputStatus =
   | "queued"
+  | "dispatching"
   | "admitted"
   | "accepted_steer"
   | "finalized"
@@ -31,7 +32,7 @@ export interface InputRecord {
   messageId: string;
   /** 队列内展示排序用的自增号；与身份无关。 */
   id: number;
-  /** baton turn id：入队时即分配，steer 的 expectedTurnId 引用它。 */
+  /** 为新 Turn 预留的 ID；accepted steer 后改为实际承载它的当前 Turn ID。 */
   turnId: string;
   target: HarnessTarget;
   /** Baton-owned logical execution channel selected before admission. */
@@ -76,12 +77,18 @@ export interface InputSnapshot {
 
 export type SubmitOutcome = "completed" | "recalled";
 
+export interface InputSubmission {
+  input: InputRecord;
+  outcome: Promise<SubmitOutcome>;
+}
+
 /**
  * Input 的内存 owner：只管理待 admission 的队列、输入身份与队列状态迁移。
  * 是否开始 drain、如何执行 turn 仍由 Controller 编排。
  */
 export class InputQueue {
   private readonly queue: InputRecord[] = [];
+  private readonly dispatching = new Map<string, InputRecord>();
   private nextId = 1;
 
   get length(): number {
@@ -90,6 +97,10 @@ export class InputQueue {
 
   get queued(): readonly InputRecord[] {
     return this.queue;
+  }
+
+  get claimed(): readonly InputRecord[] {
+    return [...this.dispatching.values()];
   }
 
   get snapshots(): QueuedTurnSnapshot[] {
@@ -106,28 +117,70 @@ export class InputQueue {
       sourceProposedPlanId?: string;
       identity?: { messageId: string; turnId: string };
     },
-  ): Promise<SubmitOutcome> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({
-        id: this.nextId++,
-        turnId: options?.identity?.turnId ?? newId("t"),
-        messageId: options?.identity?.messageId ?? newId("m"),
-        target,
-        laneId,
-        blocks,
-        source: options?.source ?? { type: "user" },
-        ...(options?.harnessInvocationId === undefined
-          ? {}
-          : { harnessInvocationId: options.harnessInvocationId }),
-        status: "queued",
-        delivery: "prompt",
-        ...(options?.sourceProposedPlanId
-          ? { sourceProposedPlanId: options.sourceProposedPlanId }
-          : {}),
-        resolve,
-        reject,
-      });
+  ): InputSubmission {
+    let resolve!: (outcome: SubmitOutcome) => void;
+    let reject!: (error: unknown) => void;
+    const outcome = new Promise<SubmitOutcome>((resolveOutcome, rejectOutcome) => {
+      resolve = resolveOutcome;
+      reject = rejectOutcome;
     });
+    const input: InputRecord = {
+      id: this.nextId++,
+      turnId: options?.identity?.turnId ?? newId("t"),
+      messageId: options?.identity?.messageId ?? newId("m"),
+      target,
+      laneId,
+      blocks,
+      source: options?.source ?? { type: "user" },
+      ...(options?.harnessInvocationId === undefined
+        ? {}
+        : { harnessInvocationId: options.harnessInvocationId }),
+      status: "queued",
+      delivery: "prompt",
+      ...(options?.sourceProposedPlanId
+        ? { sourceProposedPlanId: options.sourceProposedPlanId }
+        : {}),
+      resolve,
+      reject,
+    };
+    this.queue.push(input);
+    return { input, outcome };
+  }
+
+  /**
+   * @spec 只有仍位于队头的 Input 才能被 same-turn dispatch claim；claim 后不可被 composer recall。
+   * @see {@link ../../docs/workflow.md}
+   */
+  claimFirstForSteer(input: InputRecord): boolean {
+    if (this.dispatching.size > 0 || this.queue[0] !== input) return false;
+    this.queue.shift();
+    input.status = "dispatching";
+    input.delivery = "steer";
+    this.dispatching.set(input.messageId, input);
+    return true;
+  }
+
+  acceptClaimedSteer(input: InputRecord, turnId: string): void {
+    if (!this.dispatching.delete(input.messageId)) {
+      throw new Error(`Input ${input.messageId} is not dispatching`);
+    }
+    input.turnId = turnId;
+    input.status = "accepted_steer";
+  }
+
+  requeueClaimed(input: InputRecord): void {
+    if (!this.dispatching.delete(input.messageId)) {
+      throw new Error(`Input ${input.messageId} is not dispatching`);
+    }
+    input.status = "queued";
+    input.delivery = "prompt";
+    this.queue.unshift(input);
+  }
+
+  abandonClaimed(input: InputRecord): void {
+    if (!this.dispatching.delete(input.messageId)) return;
+    input.status = "interrupted";
+    input.resolve?.("completed");
   }
 
   dequeue(predicate?: (input: InputRecord) => boolean): InputRecord | undefined {
@@ -136,26 +189,6 @@ export class InputQueue {
     const [input] = this.queue.splice(index, 1);
     if (input) input.status = "admitted";
     return input;
-  }
-
-  acceptSteer(
-    target: HarnessTarget,
-    laneId: string,
-    turnId: string,
-    messageId: string,
-    blocks: PromptBlock[],
-  ): InputRecord {
-    return {
-      id: this.nextId++,
-      turnId,
-      messageId,
-      target,
-      laneId,
-      blocks,
-      source: { type: "user" },
-      status: "accepted_steer",
-      delivery: "steer",
-    };
   }
 
   recallLatestUser(): QueuedTurnSnapshot | undefined {

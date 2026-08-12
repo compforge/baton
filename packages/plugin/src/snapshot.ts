@@ -2,6 +2,7 @@ export type SessionRunState = "running" | "idle" | "requires_action";
 
 export type InputStatus =
   | "queued"
+  | "dispatching"
   | "admitted"
   | "accepted_steer"
   | "finalized"
