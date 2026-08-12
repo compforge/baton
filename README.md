@@ -28,6 +28,8 @@ The Plugin host adds a third principle:
 
 - **Typed coordination**: baton core connects humans, Harnesses, and Baton Plugins through Core-owned Input, Interaction, HarnessInvocation, and Event lifecycles—not opaque messages. Harness-native verbs are lowered by Adapters; Plugin reconcile verbs are lowered by the host. Baton Plugins own long-running domain loops, while Harness Plugins such as devloop constrain the smaller development loop inside a Harness.
 
+From a control-theory perspective, each long-running Plugin loop is a feedback controller: it first reads its Resource, then re-observes external facts through Connectors, acts through humans, Harnesses, or external systems, and finally updates status for the next reconcile. Completion means that observed domain facts have converged on the goal—not merely that an agent finished a turn.
+
 On top of these, three product directions continue to evolve. A BatonSession already supports mainline and asynchronous side-lane tasks initiated by users or Plugins; coordinated fan-out and result curation remain incomplete:
 
 - **Multi-harness collaboration**: a BatonSession can run multiple human- or Plugin-initiated lanes concurrently while keeping one durable ledger, and each lane can hand work between Harnesses serially. The next step is dispatching one task to several harnesses as a coordinated fan-out and curating results into the mainline.
