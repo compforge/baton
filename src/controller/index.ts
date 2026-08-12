@@ -97,7 +97,8 @@ export type Control = { kind: "interrupt" };
 
 /**
  * 用户 sendTurn 的调度结果（workflow：requested 与 effective 分开呈现）：
- * - `steer`：已注入当前 turn 的下一个安全边界，不产生新 turn；
+ * - `steer`：Adapter 已承担向当前 turn 投递的责任；原生队列是否已应用
+ *   由 user_message deliveryState 继续报告；
  * - `new_turn`：已进入 Controller 的 driven turn 队列；`queued` 说明它是否在等待当前
  *   turn。outcome 在该 turn 完成/被撤回时 resolve。
  */

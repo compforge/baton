@@ -560,13 +560,17 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   /** 未映射 wire 形状按 key 限流，只在每个 session 首次出现时报警。 */
   unmappedMessageKeys?: Set<string>;
   /**
-   * steer offer 出去、尚未在 SDK 流中确认归属的消息：uuid → 来源 turn/message。
-   * CLI 可能把运行中推送的消息排队而非折进当前 turn（fold 时机是 CLI 内部时序，
-   * 无回执）；凭此映射做归属对账（turn 收口时 warn）与 interrupt 回执匹配。
-   * 条目在流中回显该 uuid 时移除；容量有界，满时淘汰最旧条目。
+   * 已 offer 给 streaming input、尚未收到终结 command_lifecycle 的 steer：uuid → 来源
+   * turn/message。该表是 Queue 投影的关联事实，不能通过容量淘汰丢失条目；只有
+   * started/completed/cancelled/discarded 才终结对应条目。
    * 懒初始化：部分调用方（测试夹具、native import）只构造最小 runtime。
    */
-  pendingOfferUuids?: Map<string, { turnId: string; messageId: string }>;
+  pendingOfferUuids?: Map<string, {
+    turnId: string;
+    messageId: string;
+    /** started 可能落在后续 observed turn；保留正文，让该 turn 的 summary 能准确承接。 */
+    blocks: PromptBlock[];
+  }>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
   lastContextSample?: ClaudeContextSample;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
@@ -577,6 +581,32 @@ interface ClaudePromptChannel {
   stream: AsyncGenerator<SDKUserMessage>;
   offer(message: SDKUserMessage): boolean;
   close(): void;
+}
+
+/**
+ * Claude Code 的公开 command lifecycle frame。SDK runtime 会 yield 该 frame，但当前
+ * TypeScript SDKMessage 联合尚未包含它，因此只在 Adapter wire 边界做窄化。
+ */
+interface ClaudeCommandLifecycleMessage {
+  type: "command_lifecycle";
+  uuid: string;
+  state: string;
+}
+
+type ClaudeStreamMessage = SDKMessage | ClaudeCommandLifecycleMessage;
+
+function claudeCommandLifecycleMessage(value: unknown): ClaudeCommandLifecycleMessage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const frame = value as Record<string, unknown>;
+  if (
+    frame.type !== "command_lifecycle" ||
+    typeof frame.uuid !== "string" ||
+    typeof frame.state !== "string"
+  ) {
+    return undefined;
+  }
+  // 保留原始 frame 的其余字段，使 native trace 与 Event.raw 仍是完整 wire 事实。
+  return value as ClaudeCommandLifecycleMessage;
 }
 
 /**
@@ -1118,22 +1148,24 @@ export class ClaudeAdapter implements HarnessAdapter {
           reason: "Claude streaming input is unavailable",
         };
       }
-      // offer 成功不代表进入当前 turn（CLI 可能排队）；登记 uuid 供收口时对账。
-      // 容量有界：淘汰最旧条目，避免回显不带 uuid 时 Map 无界增长。
+      // offer 只代表 Baton 把消息交给 SDK input stream；原生 queued/started
+      // lifecycle 才决定它何时离开 Composer Queue。
       const pendingOffers = (rt.pendingOfferUuids ??= new Map());
-      if (pendingOffers.size >= 64) {
-        const oldest = pendingOffers.keys().next().value;
-        if (oldest !== undefined) pendingOffers.delete(oldest);
-      }
       pendingOffers.set(message.uuid as string, {
         turnId: active.turnId,
         messageId: input.messageId,
+        blocks: input.blocks,
       });
       this.emit(
         rt,
         {
           kind: "user_message",
-          payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+          payload: {
+            messageId: input.messageId,
+            content: input.blocks,
+            delivery: "steer",
+            deliveryState: "pending",
+          },
         },
         active,
       );
@@ -1224,7 +1256,9 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   private async consumeQuery(rt: ClaudeRuntime, q: Query, channel: ClaudePromptChannel): Promise<void> {
     try {
-      for await (const msg of q) {
+      for await (const sdkMessage of q) {
+        const msg: ClaudeStreamMessage =
+          claudeCommandLifecycleMessage(sdkMessage) ?? sdkMessage;
         this.options.nativeEvent?.({
           direction: "in",
           name: msg.type === "system" ? `system/${msg.subtype}` : msg.type,
@@ -1237,7 +1271,12 @@ export class ClaudeAdapter implements HarnessAdapter {
           }
           continue;
         }
-        if (startsObservedTurn(msg.type, current)) {
+        const startsQueuedTurn =
+          current.finalized &&
+          msg.type === "command_lifecycle" &&
+          msg.state === "started" &&
+          rt.pendingOfferUuids?.has(msg.uuid) === true;
+        if (startsObservedTurn(msg.type, current) || startsQueuedTurn) {
           current = this.mintObservedTurn(rt);
           rt.currentTurn = current;
         }
@@ -1279,6 +1318,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       }
     } finally {
       if (rt.activeQuery === q) {
+        this.failPendingOffers(rt, "Claude streaming query ended before queued message was applied");
         rt.activeQuery = undefined;
         rt.promptChannel = undefined;
       }
@@ -1292,8 +1332,42 @@ export class ClaudeAdapter implements HarnessAdapter {
     rt.activeQuery = undefined;
     rt.promptChannel = undefined;
     rt.queryOptionsDirty = false;
+    this.failPendingOffers(rt, "Claude streaming query closed before queued message was applied");
     channel?.close();
     queryHandle?.close();
+  }
+
+  /** query owner 消失后原生队列已不可证明；逐条悲观收口，避免 resume 后永久悬挂。 */
+  private failPendingOffers(rt: ClaudeRuntime, reason: string): void {
+    const pending = rt.pendingOfferUuids;
+    if (!pending || pending.size === 0) return;
+    for (const offer of pending.values()) {
+      this.emit(
+        rt,
+        {
+          kind: "user_message",
+          payload: {
+            messageId: offer.messageId,
+            delivery: "steer",
+            deliveryState: "failed",
+          },
+        },
+        offer,
+      );
+      this.emit(
+        rt,
+        {
+          kind: "_baton_notice",
+          payload: {
+            level: "warning",
+            title: "Queued message was not applied",
+            detail: `${reason}: ${offer.messageId}`,
+          },
+        },
+        offer,
+      );
+    }
+    pending.clear();
   }
 
   /**
@@ -1318,24 +1392,6 @@ export class ClaudeAdapter implements HarnessAdapter {
   private finishTurn(rt: ClaudeRuntime, emit: EventSink, turn: ClaudeTurn, stopReason: string, raw?: unknown): void {
     if (turn.finalized) return;
     turn.finalized = true;
-    // steer 归属对账（观测）：offer 时乐观记了 delivery:"steer"，若 turn 收口前
-    // 该 uuid 未在本 turn 流中回显，说明它被 CLI 排队（或回显不带 uuid——此时
-    // 每条 steer 都会报警，本身就是机制失效的信号）。保留条目：消息可能在后续
-    // turn 物化，届时 case "user" 会留痕并清理。
-    let orphaned = 0;
-    for (const offer of rt.pendingOfferUuids?.values() ?? []) {
-      if (offer.turnId === turn.turnId) orphaned++;
-    }
-    if (orphaned > 0) {
-      this.options.log?.({
-        level: "warn",
-        source: "harness",
-        component: "claude.steer",
-        harness: this.harness,
-        turnId: turn.turnId,
-        message: `${orphaned} steered message(s) not observed in turn stream before finalize; attribution may be optimistic (queued CLI-side or echo lacks uuid)`,
-      });
-    }
     emit({
       kind: "state_update",
       payload: { state: "idle", stopReason },
@@ -1345,7 +1401,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   /** 信封补齐：open 绑定的 sink + 所属 turnId。turn 内发射必须显式传 turn；跨 turn 的事件不带 turnId */
-  private emit(rt: ClaudeRuntime, ev: Parameters<EventSink>[0], turn?: ClaudeTurn): void {
+  private emit(rt: ClaudeRuntime, ev: Parameters<EventSink>[0], turn?: Pick<ClaudeTurn, "turnId">): void {
     rt.sink({
       ...ev,
       harnessSessionId: rt.claudeSessionId,
@@ -1517,8 +1573,52 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (draft) emit(draft);
   }
 
-  private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: SDKMessage, turn: ClaudeTurn): void {
+  private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
     switch (msg.type) {
+      case "command_lifecycle": {
+        const offer = rt.pendingOfferUuids?.get(msg.uuid);
+        // 首轮 prompt 和 CLI 内部 command 也有 lifecycle；只处理 Baton 发出的 steer uuid。
+        if (!offer) break;
+        if (msg.state === "queued") break;
+        if (msg.state === "started" || msg.state === "completed") {
+          rt.pendingOfferUuids?.delete(msg.uuid);
+          emit({
+            kind: "user_message",
+            payload: {
+              messageId: offer.messageId,
+              content: offer.blocks,
+              delivery: "steer",
+              deliveryState: "applied",
+            },
+            raw: msg,
+          });
+          break;
+        }
+        if (msg.state === "cancelled" || msg.state === "discarded") {
+          rt.pendingOfferUuids?.delete(msg.uuid);
+          emit({
+            kind: "user_message",
+            payload: {
+              messageId: offer.messageId,
+              delivery: "steer",
+              deliveryState: "failed",
+            },
+            raw: msg,
+          });
+          emit({
+            kind: "_baton_notice",
+            payload: {
+              level: "warning",
+              title: "Queued message was not applied",
+              detail: `Claude reported ${msg.state} for ${offer.messageId}`,
+            },
+            raw: msg,
+          });
+          break;
+        }
+        this.noticeUnmappedMessage(rt, `command_lifecycle/${msg.state}`);
+        break;
+      }
       case "system":
         if (msg.subtype === "init") this.publishSessionBinding(rt, msg.session_id);
         else if (msg.subtype === "status") {
@@ -1669,24 +1769,6 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       case "user": {
-        // steer offer 的 uuid 在流中回显 = 归属确认。若回显落在别的 turn，
-        // 说明该消息当时被 CLI 排队、后来才自成回合——之前记的 delivery:"steer"
-        // 是乐观归属，此处如实留痕。
-        const echoedUuid = "uuid" in msg && typeof msg.uuid === "string" ? msg.uuid : undefined;
-        const offer = echoedUuid ? rt.pendingOfferUuids?.get(echoedUuid) : undefined;
-        if (offer && echoedUuid) {
-          rt.pendingOfferUuids?.delete(echoedUuid);
-          if (offer.turnId !== turn.turnId) {
-            this.options.log?.({
-              level: "info",
-              source: "harness",
-              component: "claude.steer",
-              harness: this.harness,
-              turnId: turn.turnId,
-              message: `steered message ${offer.messageId} offered to turn ${offer.turnId} materialized in turn ${turn.turnId}`,
-            });
-          }
-        }
         for (const draft of claudeDurableMessageDrafts(rt, msg, {
           turnId: turn.turnId,
           raw: msg,

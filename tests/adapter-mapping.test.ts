@@ -45,6 +45,38 @@ function claudeHarness(): { events: AnyEventDraft[]; feed: (msg: unknown) => voi
   return { events, feed };
 }
 
+function claudeQueueHarness() {
+  const adapter = new ClaudeAdapter({ openInteraction });
+  const events: AnyEventDraft[] = [];
+  const pendingOfferUuids = new Map([
+    [
+      "native-steer",
+      {
+        turnId: "t1",
+        messageId: "m_steer",
+        blocks: [{ type: "text" as const, text: "queued steer" }],
+      },
+    ],
+  ]);
+  const rt = {
+    cwd: "/tmp",
+    suppressedToolIds: new Set<string>(),
+    capturedProposedPlanKeys: new Set<string>(),
+    claudeSessionId: "sess1",
+    tasks: new Map(),
+    pendingTaskOps: new Map(),
+    pendingOfferUuids,
+  };
+  const turn = { turnId: "t1", finalized: false, cancelRequested: false };
+  const feed = (msg: unknown) =>
+    (
+      adapter as unknown as {
+        handleMessage: (r: unknown, e: (ev: AnyEventDraft) => void, m: unknown, t: unknown) => void;
+      }
+    ).handleMessage(rt, (ev) => events.push(ev), msg, turn);
+  return { events, feed, pendingOfferUuids };
+}
+
 function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, params: unknown) => void } {
   const adapter = new CodexAdapter({ openInteraction });
   const events: AnyEventDraft[] = [];
@@ -135,6 +167,56 @@ describe("codex: unmapped notifications", () => {
     expect(diagnostics[0]!.message).toContain("future/event");
     expect(diagnostics[0]!.attributes?.count).toBe(1);
   });
+});
+
+describe("claude: command lifecycle → steer delivery", () => {
+  test("keeps queued steer pending until Claude starts the command", () => {
+    const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+
+    feed({ type: "command_lifecycle", uuid: "native-steer", state: "queued" });
+    expect(events).toHaveLength(0);
+    expect(pendingOfferUuids.has("native-steer")).toBe(true);
+
+    feed({ type: "command_lifecycle", uuid: "native-steer", state: "started" });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "user_message",
+      payload: {
+        messageId: "m_steer",
+        content: [{ type: "text", text: "queued steer" }],
+        delivery: "steer",
+        deliveryState: "applied",
+      },
+    });
+    expect(pendingOfferUuids.has("native-steer")).toBe(false);
+
+    // terminal frame follows started; the correlation was already consumed, so the upsert stays idempotent.
+    feed({ type: "command_lifecycle", uuid: "native-steer", state: "completed" });
+    expect(events).toHaveLength(1);
+  });
+
+  for (const state of ["cancelled", "discarded"] as const) {
+    test(`marks ${state} steer failed without putting it in Transcript`, () => {
+      const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+
+      feed({ type: "command_lifecycle", uuid: "native-steer", state });
+
+      expect(events.map((event) => event.kind)).toEqual([
+        "user_message",
+        "_baton_notice",
+      ]);
+      expect(events[0]).toMatchObject({
+        payload: { messageId: "m_steer", deliveryState: "failed" },
+      });
+      expect(events[1]).toMatchObject({
+        payload: {
+          level: "warning",
+          title: "Queued message was not applied",
+        },
+      });
+      expect(pendingOfferUuids.has("native-steer")).toBe(false);
+    });
+  }
 });
 
 describe("claude: TodoWrite → plan_update", () => {

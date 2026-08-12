@@ -81,6 +81,30 @@ describe("steer queue projection", () => {
     ).toBe(false);
     expect(pending.footer.text).toContain("queue:1");
 
+    // Claude may keep a steer in its native queue after the turn it was offered to has ended.
+    // Pending delivery remains future state until the lifecycle reports started/completed.
+    session.append({
+      kind: "state_update",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: { state: "idle", stopReason: "end_turn" },
+    });
+
+    const nativeQueued = project(controller);
+    expect(nativeQueued.composer.queued).toEqual([{
+      id: "m_steer",
+      text: "prefer approach B",
+      tag: "codex · native queue",
+    }]);
+    expect(
+      nativeQueued.timeline.items.some(
+        (item) => item.type === "message" && item.role === "user",
+      ),
+    ).toBe(false);
+
     session.append({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
@@ -103,5 +127,55 @@ describe("steer queue projection", () => {
       ),
     ).toBe(true);
     expect(applied.footer.text).toContain("queue:0");
+  });
+
+  test("removes failed native steer without presenting it as applied history", () => {
+    const turnId = "t_failed";
+    session.append({
+      kind: "user_message",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_failed",
+        content: [{ type: "text", text: "do not lose this" }],
+        delivery: "steer",
+        deliveryState: "pending",
+      },
+    });
+    session.append({
+      kind: "user_message",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_failed",
+        delivery: "steer",
+        deliveryState: "failed",
+      },
+    });
+    const controller = {
+      activeHarnessTargetId: undefined,
+      activeTurnId: undefined,
+      queuedTurns: [],
+      currentModel: () => null,
+      currentEffort: () => null,
+      currentMode: () => "default",
+      approvalRoute: () => null,
+      isBusy: false,
+      queueLength: 0,
+    } as unknown as Controller;
+
+    const failed = project(controller);
+    expect(failed.composer.queued).toEqual([]);
+    expect(
+      failed.timeline.items.some(
+        (item) => item.type === "message" && item.role === "user" && item.text === "do not lose this",
+      ),
+    ).toBe(false);
   });
 });

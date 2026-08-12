@@ -1496,7 +1496,11 @@ function materializedHistoryTurns(
       if (
         event.turnId !== summary.turnId ||
         event.seq >= summary.seq ||
-        HISTORY_OPERATIONAL_KINDS.has(event.kind)
+        HISTORY_OPERATIONAL_KINDS.has(event.kind) ||
+        (event.kind === "user_message" &&
+          event.payload.delivery === "steer" &&
+          event.payload.deliveryState !== undefined &&
+          event.payload.deliveryState !== "applied")
       ) {
         return [];
       }
@@ -1533,6 +1537,14 @@ function joinMessages(state: SessionState, role: "user" | "agent"): string {
     if (item.type !== "message") continue;
     const msg = state.messages.get(item.id);
     if (msg && msg.role === role) {
+      if (
+        role === "user" &&
+        msg.delivery === "steer" &&
+        msg.deliveryState !== undefined &&
+        msg.deliveryState !== "applied"
+      ) {
+        continue;
+      }
       const text = textOf(msg.content);
       if (text) parts.push(text);
     }

@@ -504,6 +504,49 @@ describe("turn summary", () => {
     expect(textOf(h.loadState().messages.get("sync-user")!.content)).toContain("old history");
   });
 
+  test("summary excludes queued and failed steers until their content is applied", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    const turnId = "t_queue";
+    h.append({
+      source: { type: "user" },
+      kind: "user_message",
+      harness: "claude-code",
+      turnId,
+      payload: {
+        messageId: "queued",
+        content: [{ type: "text", text: "future instruction" }],
+        delivery: "steer",
+        deliveryState: "pending",
+      },
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude-code" },
+      kind: "user_message",
+      harness: "claude-code",
+      turnId,
+      payload: {
+        messageId: "failed",
+        content: [{ type: "text", text: "discarded instruction" }],
+        delivery: "steer",
+        deliveryState: "failed",
+      },
+    });
+    h.append({
+      source: { type: "harness", harnessTargetId: "claude-code" },
+      kind: "user_message",
+      harness: "claude-code",
+      turnId,
+      payload: {
+        messageId: "applied",
+        content: [{ type: "text", text: "accepted instruction" }],
+        delivery: "steer",
+        deliveryState: "applied",
+      },
+    });
+
+    expect(h.summarizeTurn(turnId).userText).toBe("accepted instruction");
+  });
+
   test("summarizeTurn is idempotent", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     playTurn(h, "t_1");

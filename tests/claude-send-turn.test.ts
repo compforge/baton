@@ -76,7 +76,11 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     expect.objectContaining({
       kind: "user_message",
       turnId: "t_1",
-      payload: expect.objectContaining({ messageId: "m_2", delivery: "steer" }),
+      payload: expect.objectContaining({
+        messageId: "m_2",
+        delivery: "steer",
+        deliveryState: "pending",
+      }),
     }),
   );
 
@@ -127,4 +131,94 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
 
   await adapter.close(ref);
   expect(closes).toBe(2);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      kind: "user_message",
+      payload: expect.objectContaining({
+        messageId: "m_2",
+        deliveryState: "failed",
+      }),
+    }),
+  );
+});
+
+test("Claude lifecycle start moves a delayed steer into a new observed turn", async () => {
+  let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
+  let releaseOutput: ((message: unknown) => void) | undefined;
+  let finishOutput: (() => void) | undefined;
+  const outputFinished = new Promise<void>((resolve) => {
+    finishOutput = resolve;
+  });
+  const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+    if (typeof params.prompt === "string") throw new Error("expected streaming Claude prompt");
+    promptIterator = params.prompt[Symbol.asyncIterator]();
+    const nextOutput = new Promise<unknown>((resolve) => {
+      releaseOutput = resolve;
+    });
+    const output = (async function* () {
+      yield (await nextOutput) as never;
+      finishOutput?.();
+    })();
+    return Object.assign(output, {
+      initializationResult: async () => ({ models: [] }),
+      setModel: async () => undefined,
+      interrupt: async () => undefined,
+      close: () => undefined,
+    }) as unknown as Query;
+  }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+
+  const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
+  const events: Array<{ kind: string; turnId?: string; payload: Record<string, unknown> }> = [];
+  const ref = await adapter.open({ cwd: "/tmp" }, (event) => events.push(event as never));
+  await adapter.sendTurn(ref, {
+    turnId: "t_original",
+    messageId: "m_initial",
+    blocks: [{ type: "text", text: "start" }],
+  });
+  await promptIterator?.next();
+  await adapter.sendTurn(ref, {
+    turnId: "t_original",
+    messageId: "m_delayed",
+    blocks: [{ type: "text", text: "run after this turn" }],
+  });
+  const delayed = (await promptIterator?.next())?.value as SDKUserMessage;
+
+  const seams = adapter as unknown as {
+    sessions: Map<string, { activeTurn?: TurnState }>;
+    emit(rt: unknown, ev: AnyEventDraft, turn?: TurnState): void;
+    finishTurn(rt: unknown, emit: (ev: AnyEventDraft) => void, turn: TurnState, stopReason: string): void;
+  };
+  const rt = seams.sessions.get(ref.handleId);
+  const original = rt?.activeTurn;
+  if (!rt || !original) throw new Error("missing original Claude turn");
+  seams.finishTurn(rt, (ev) => seams.emit(rt, ev, original), original, "end_turn");
+
+  releaseOutput?.({
+    type: "command_lifecycle",
+    uuid: delayed.uuid,
+    state: "started",
+  });
+  await outputFinished;
+
+  const applied = events.find(
+    (event) => event.kind === "user_message" && event.payload.messageId === "m_delayed" &&
+      event.payload.deliveryState === "applied",
+  );
+  expect(applied).toMatchObject({
+    turnId: expect.not.stringMatching(/^t_original$/),
+    payload: {
+      content: [{ type: "text", text: "run after this turn" }],
+      delivery: "steer",
+      deliveryState: "applied",
+    },
+  });
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      kind: "state_update",
+      turnId: applied?.turnId,
+      payload: expect.objectContaining({ state: "running" }),
+    }),
+  );
+
+  await adapter.close(ref);
 });

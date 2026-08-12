@@ -22,6 +22,8 @@ export interface OpenBatonSessionResult {
 
 export const CRASH_RECOVERY_NOTICE_TITLE =
   "Previous baton process exited before this turn completed";
+export const PENDING_DELIVERY_RECOVERY_NOTICE_TITLE =
+  "Queued message could not be recovered";
 
 /**
  * BatonSession 的唯一打开策略，供 CLI 与 TUI 会话切换共同复用。
@@ -84,7 +86,8 @@ function resolveSession(
  * 崩溃残留归一化。前提：调用方已持有会话锁——否则"最后事件是 running"可能是
  * 另一个活进程正在执行，合成终态会污染活会话。
  * 收口顺序与 controller.finalize 一致（终态 → notice → summary），三类残留：
- * 悬挂 Harness/Baton 审批 → cancelled；Plugin Interaction 也以 recovery 收口，使对应 verb
+ * 悬挂的原生 steer 队列 → failed；悬挂 Harness/Baton 审批 → cancelled；
+ * Plugin Interaction 也以 recovery 收口，使对应 verb
  * 明确成为 failure，而不是尝试重放进程内 continuation。每个未收口的 turn（driven/observed 并发崩溃时
  * 可能不止一个）→ 各补 idle(cancelled) + 中断 notice；缺 summary 的 turn
  * （含 fork 从运行中源会话复制来的半截 turn）→ 补 summary。
@@ -94,6 +97,12 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   if (events.length === 0) return false;
   const state = reduceEvents(events);
   const recoveredAttempt = recoverDeliveryAttempts(session, events);
+  const pendingSteers = [...state.messages.values()].filter(
+    (message) =>
+      message.role === "user" &&
+      message.delivery === "steer" &&
+      message.deliveryState === "pending",
+  );
 
   const summarized = new Set<string>();
   for (const ev of events) {
@@ -109,9 +118,42 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   if (
     interruptedTurns.length === 0 &&
     unsummarized.length === 0 &&
+    pendingSteers.length === 0 &&
     ![...state.interactions.values()].some((interaction) => !interaction.result)
   ) {
     return recoveredAttempt;
+  }
+
+  // CLI 队列属于上一个 Adapter 进程；拿到会话独占锁后仍只有 pending 事实，
+  // 就已无法证明它会继续运行。悲观收口，不重投也不冒充成 applied。
+  for (const message of pendingSteers) {
+    const harness = message.harness ?? "baton";
+    session.append({
+      kind: "user_message",
+      source: { type: "baton" },
+      harness,
+      ...(message.harnessTargetId ? { harnessTargetId: message.harnessTargetId } : {}),
+      ...(message.laneId ? { laneId: message.laneId } : {}),
+      ...(message.turnId ? { turnId: message.turnId } : {}),
+      payload: {
+        messageId: message.messageId,
+        delivery: "steer",
+        deliveryState: "failed",
+      },
+    });
+    session.append({
+      kind: "_baton_notice",
+      source: { type: "baton" },
+      harness,
+      ...(message.harnessTargetId ? { harnessTargetId: message.harnessTargetId } : {}),
+      ...(message.laneId ? { laneId: message.laneId } : {}),
+      ...(message.turnId ? { turnId: message.turnId } : {}),
+      payload: {
+        level: "warning",
+        title: PENDING_DELIVERY_RECOVERY_NOTICE_TITLE,
+        detail: message.messageId,
+      },
+    });
   }
 
   for (const [interactionId, interaction] of state.interactions) {
