@@ -60,7 +60,7 @@ Core 直接改变另一方状态。
 | **HarnessSession** | Harness 在某个 `Lane × HarnessTarget` 下持有的持久原生执行会话；缺失只影响恢复优化，不阻止 Lane 继续 |
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
-| **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message/turn identity 和可查询消费状态 |
+| **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message identity、路由确定的 Turn 坐标和可查询消费状态 |
 | **Plugin execution** | Core 为一次 live reconcile 签发的进程内 continuation identity；verb 关联 execution 而不绑定 Resource，崩溃后以 failure 收口而不重放调用栈 |
 | **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin execution、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
 | **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |

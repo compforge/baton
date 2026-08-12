@@ -1,5 +1,5 @@
 // Input 一等抽象（InputRecord）（见 docs/workflow.md“采集与准入”）：
-// 每条输入身份即其 messageId（m_）+ 显式 status；queued/admitted/accepted_steer 可查，
+// 每条输入身份即其 messageId（m_）+ 显式 status；queued/dispatching/admitted/accepted_steer 可查，
 // recall→recalled、cancel→interrupted（S3：不静默丢、不自动重发）。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -25,6 +25,9 @@ class HoldingAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
   sink?: EventSink;
   prompts: string[] = [];
+  received: PromptInput[] = [];
+  steerGate?: Promise<void>;
+  steerResult: SendTurnReceipt = { accepted: true, effective: "steer" };
   private active?: PromptInput;
 
   constructor(readonly harness: string) {}
@@ -35,16 +38,19 @@ class HoldingAdapter implements HarnessAdapter {
   }
 
   async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
+    this.received.push(input);
     if (this.active) {
       if (this.active.turnId !== input.turnId) {
         return { accepted: false, effective: "rejected" };
       }
+      await this.steerGate;
+      if (this.steerResult.effective !== "steer") return this.steerResult;
       this.sink?.({
         kind: "user_message",
         turnId: input.turnId,
         payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
       });
-      return { accepted: true, effective: "steer" };
+      return this.steerResult;
     }
     this.active = input;
     this.prompts.push(textOf(input.blocks));
@@ -143,6 +149,103 @@ describe("Input lifecycle (InputRecord)", () => {
 
     adapter.finish("end_turn");
     await turn;
+  });
+
+  test("creates and claims the Input before waiting for steer admission", async () => {
+    const adapter = new HoldingAdapter("codex");
+    let releaseSteer!: () => void;
+    adapter.steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const controller = controllerWith(adapter);
+    const turn = controller.submit("codex", text("build it"));
+    await until(() => adapter.prompts.length === 1);
+
+    const sending = controller.sendTurn("codex", text("prefer B"));
+    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
+    const dispatching = controller.inputs.find((input) => input.status === "dispatching");
+    expect(dispatching?.messageId).toMatch(/^m_/);
+    expect(controller.recallLatestQueued()).toBeUndefined();
+    expect(adapter.received[1]?.messageId).toBe(dispatching?.messageId);
+
+    releaseSteer();
+    expect((await sending).effective).toBe("steer");
+    adapter.finish("end_turn");
+    await turn;
+  });
+
+  test("keeps the messageId when a rejected steer falls back to a queued turn", async () => {
+    const adapter = new HoldingAdapter("codex");
+    adapter.steerResult = { accepted: false, effective: "rejected" };
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("one"));
+    await until(() => adapter.prompts.length === 1);
+
+    const outcome = await controller.sendTurn("codex", text("two"));
+    expect(outcome.effective).toBe("new_turn");
+    const queued = controller.inputs.find((input) => input.status === "queued");
+    expect(queued?.messageId).toBe(adapter.received[1]?.messageId);
+
+    adapter.finish("end_turn");
+    await first;
+    await until(() => adapter.prompts.length === 2);
+    expect(adapter.received[2]?.messageId).toBe(queued?.messageId);
+    adapter.finish("end_turn");
+    if (outcome.effective === "new_turn") await outcome.outcome;
+  });
+
+  test("keeps later input queued while an earlier steer is awaiting admission", async () => {
+    const adapter = new HoldingAdapter("codex");
+    let releaseSteer!: () => void;
+    adapter.steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("one"));
+    await until(() => adapter.prompts.length === 1);
+
+    const steering = controller.sendTurn("codex", text("two"));
+    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
+    const later = await controller.sendTurn("codex", text("three"));
+    expect(later).toMatchObject({ effective: "new_turn", queued: true });
+    expect(controller.inputs.map((input) => input.status).sort()).toEqual([
+      "admitted",
+      "dispatching",
+      "queued",
+    ]);
+
+    releaseSteer();
+    expect((await steering).effective).toBe("steer");
+    adapter.finish("end_turn");
+    await first;
+    await until(() => adapter.prompts.length === 2);
+    expect(adapter.prompts).toEqual(["one", "three"]);
+    adapter.finish("end_turn");
+    if (later.effective === "new_turn") await later.outcome;
+  });
+
+  test("settles a steer accepted after Esc without attaching it to the retired turn", async () => {
+    const adapter = new HoldingAdapter("codex");
+    let releaseSteer!: () => void;
+    adapter.steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const controller = controllerWith(adapter);
+    const turn = controller.submit("codex", text("one"));
+    await until(() => adapter.prompts.length === 1);
+
+    const steering = controller.sendTurn("codex", text("two"));
+    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
+    await controller.control({ kind: "interrupt" });
+    await turn;
+
+    releaseSteer();
+    expect((await steering).effective).toBe("steer");
+    expect(controller.inputs).toEqual([]);
+    const messages = [...session.loadState().messages.values()]
+      .filter((message) => message.role === "user")
+      .map((message) => textOf(message.content));
+    expect(messages.filter((message) => message === "two")).toHaveLength(1);
   });
 
   test("Esc after an accepted steer interrupts the turn without silently dropping the steer", async () => {

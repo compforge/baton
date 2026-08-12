@@ -47,6 +47,28 @@
       }
     ]
   },
+  "src/controller/index.ts::Controller.sendTurn": {
+    "specs": [
+      {
+        "cases": [],
+        "links": [
+          "../../docs/workflow.md"
+        ],
+        "spec": "每次用户提交只创建一个 Input/messageId；steer rejection 降级 follow-up 时保持身份不变。"
+      }
+    ]
+  },
+  "src/controller/input.ts::InputQueue.claimFirstForSteer": {
+    "specs": [
+      {
+        "cases": [],
+        "links": [
+          "../../docs/workflow.md"
+        ],
+        "spec": "只有仍位于队头的 Input 才能被 same-turn dispatch claim；claim 后不可被 composer recall。"
+      }
+    ]
+  },
   "src/interaction/reconcile.ts::ReconcileInteractionStore": {
     "specs": [
       {

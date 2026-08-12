@@ -116,7 +116,10 @@ export class TurnLedger<TBinding extends TurnBinding> {
     const inputTerminal: InputStatus =
       record.role === "driven" && stopReason === "cancelled" ? "interrupted" : "finalized";
     if (record.turn) record.turn.status = inputTerminal;
-    for (const steer of record.steers ?? []) steer.status = inputTerminal;
+    for (const steer of record.steers ?? []) {
+      steer.status = inputTerminal;
+      steer.resolve?.("completed");
+    }
 
     if (record.role === "driven") {
       if (this.activeDrivenByLane.get(record.laneId) === record.turnId) {
