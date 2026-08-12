@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
-  <title id="title">Baton Coordination Kernel</title>
-  <desc id="desc">Human, Harness, and Baton Plugin coordinate through one durable Baton Core. A Plugin reconciles Resource spec into status while connecting to external systems.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="900" viewBox="0 0 1800 900" role="img" aria-labelledby="title desc">
+  <title id="title">Baton Core and domain orchestration Plugins</title>
+  <desc id="desc">Baton Core is the collaboration platform for humans, Harnesses, and Plugins. Each business domain is delivered as one Plugin with its own Resource, reconcile loop, and Connector.</desc>
 
   <defs>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -48,6 +48,16 @@
         font-weight: 650;
         text-anchor: middle;
       }
+      .plugin-card {
+        fill: #ffffff;
+        stroke: #3f7650;
+        stroke-width: 2;
+      }
+      .plugin-loop {
+        fill: #edf8f0;
+        stroke: #8bb498;
+        stroke-width: 1.5;
+      }
       .primitive {
         fill: #ffffff;
         stroke: #6080b8;
@@ -61,72 +71,76 @@
     </style>
   </defs>
 
-  <rect width="1600" height="820" fill="#fbfcfe"/>
+  <rect width="1800" height="900" fill="#fbfcfe"/>
 
-  <text x="80" y="58" font-size="34" font-weight="750">Baton Coordination Kernel</text>
-  <text x="80" y="88" font-size="17" fill="#6b7280">One core, three participants, typed coordination.</text>
+  <text x="70" y="54" font-size="34" font-weight="750">Baton v3</text>
+  <text x="70" y="86" font-size="18" fill="#6b7280">A collaboration core with domain orchestration delivered as Plugins.</text>
 
-  <!-- Participants own their semantics and local resources. -->
-  <rect class="actor" x="90" y="130" width="300" height="130" rx="20" fill="#eef3fb"/>
-  <text class="actor-title" x="240" y="180">Human</text>
-  <text class="actor-detail" x="240" y="218">intent · prompt · decision</text>
+  <!-- A Plugin is one domain's orchestration implementation, installed on the shared Core. -->
+  <rect x="420" y="115" width="960" height="245" rx="26" fill="#e7f5eb" stroke="#3f7650" stroke-width="2.5" filter="url(#shadow)"/>
+  <text x="455" y="156" font-size="25" font-weight="720">Baton Plugins · Domain orchestration layer</text>
+  <text x="1345" y="156" font-size="17" fill="#3f7650" font-weight="650" text-anchor="end">one biz domain = one Plugin</text>
 
-  <rect class="actor" x="480" y="130" width="320" height="130" rx="20" fill="#fff3cf"/>
-  <text class="actor-title" x="640" y="180">Harness</text>
-  <text class="actor-detail" x="640" y="218">native session · model · sandbox</text>
+  <rect class="plugin-card" x="455" y="180" width="425" height="135" rx="18"/>
+  <text class="actor-title" x="667" y="220">Plugin 1 · Biz A</text>
+  <text class="actor-detail" x="667" y="249">owns goal · observations · completion</text>
+  <rect class="plugin-loop" x="480" y="268" width="375" height="34" rx="17"/>
+  <text x="667" y="291" font-size="15" font-weight="650" text-anchor="middle">Resource (spec/status) → reconcile → Connector</text>
 
-  <rect class="actor" x="890" y="130" width="320" height="130" rx="20" fill="#e1f4e6"/>
-  <text class="actor-title" x="1050" y="180">Baton Plugin</text>
-  <text class="actor-detail" x="1050" y="218">
-    <tspan font-weight="700" fill="#27633a">Spec</tspan>
-    <tspan> → </tspan>
-    <tspan font-weight="700" fill="#27633a">Reconcile</tspan>
-    <tspan> → </tspan>
-    <tspan font-weight="700" fill="#27633a">Status</tspan>
-  </text>
+  <rect class="plugin-card" x="920" y="180" width="425" height="135" rx="18"/>
+  <text class="actor-title" x="1132" y="220">Plugin 2 · Biz B</text>
+  <text class="actor-detail" x="1132" y="249">owns goal · observations · completion</text>
+  <rect class="plugin-loop" x="945" y="268" width="375" height="34" rx="17"/>
+  <text x="1132" y="291" font-size="15" font-weight="650" text-anchor="middle">Resource (spec/status) → reconcile → Connector</text>
 
-  <rect class="actor" x="1330" y="146" width="210" height="98" rx="49" fill="#eee7ff"/>
-  <text x="1435" y="188" font-size="22" font-weight="700" text-anchor="middle">External</text>
-  <text x="1435" y="216" font-size="18" fill="#4b5563" text-anchor="middle">system</text>
+  <text x="900" y="342" font-size="15" fill="#4b5563" text-anchor="middle">Marketplace packages, installs, and upgrades each domain loop independently.</text>
 
-  <!-- Plugins observe and act through domain connectors. -->
-  <line x1="1214" y1="195" x2="1326" y2="195" class="port-line"/>
-  <rect x="1218" y="164" width="104" height="30" rx="15" fill="#ffffff"/>
-  <text x="1270" y="184" font-size="15" font-weight="650" text-anchor="middle">observe · act</text>
+  <!-- Every Plugin uses the same stable Core contract. -->
+  <line class="port-line" x1="667" y1="364" x2="667" y2="450"/>
+  <rect class="port-pill" x="555" y="380" width="224" height="38" rx="19"/>
+  <text class="port-label" x="667" y="405">ReconcileContext · result</text>
 
-  <!-- Typed ports. The arrows are bidirectional because work and facts flow both ways. -->
-  <line class="port-line" x1="240" y1="266" x2="240" y2="370"/>
-  <rect class="port-pill" x="146" y="292" width="188" height="42" rx="21"/>
-  <text class="port-label" x="240" y="319">Input · Interaction</text>
+  <line class="port-line" x1="1132" y1="364" x2="1132" y2="450"/>
+  <rect class="port-pill" x="1020" y="380" width="224" height="38" rx="19"/>
+  <text class="port-label" x="1132" y="405">ReconcileContext · result</text>
 
-  <line class="port-line" x1="640" y1="266" x2="640" y2="370"/>
-  <rect class="port-pill" x="515" y="292" width="250" height="42" rx="21"/>
-  <text class="port-label" x="640" y="319">Turn · Interaction · Event</text>
+  <!-- Core owns collaboration objects and lifecycles, not domain semantics. -->
+  <rect x="420" y="450" width="960" height="350" rx="28" fill="#edf3fc" stroke="#111827" stroke-width="3" filter="url(#shadow)"/>
+  <text x="900" y="505" font-size="31" font-weight="750" text-anchor="middle">Baton Core · Collaboration Platform</text>
+  <text x="900" y="537" font-size="18" fill="#4b5563" text-anchor="middle">Human · Harness · Plugins coordinate through typed, durable facts</text>
 
-  <line class="port-line" x1="1050" y1="266" x2="1050" y2="370"/>
-  <rect class="port-pill" x="934" y="292" width="232" height="42" rx="21"/>
-  <text class="port-label" x="1050" y="319">ReconcileContext · result</text>
+  <rect class="primitive" x="475" y="575" width="170" height="68" rx="16"/>
+  <text class="primitive-label" x="560" y="616">Input</text>
 
-  <!-- The Core owns coordination facts, not participant-specific business semantics. -->
-  <rect x="80" y="370" width="1150" height="360" rx="28" fill="#edf3fc" stroke="#111827" stroke-width="3" filter="url(#shadow)"/>
-  <text x="655" y="425" font-size="31" font-weight="750" text-anchor="middle">Baton Core</text>
-  <text x="655" y="455" font-size="18" fill="#4b5563" text-anchor="middle">typed coordination · durable facts · controlled execution</text>
+  <rect class="primitive" x="665" y="575" width="185" height="68" rx="16"/>
+  <text class="primitive-label" x="757" y="616">Interaction</text>
 
-  <rect class="primitive" x="155" y="500" width="190" height="70" rx="16"/>
-  <text class="primitive-label" x="250" y="542">Input</text>
+  <rect class="primitive" x="870" y="575" width="250" height="68" rx="16"/>
+  <text class="primitive-label" x="995" y="616">HarnessInvocation</text>
 
-  <rect class="primitive" x="385" y="500" width="190" height="70" rx="16"/>
-  <text class="primitive-label" x="480" y="542">Interaction</text>
+  <rect class="primitive" x="1140" y="575" width="170" height="68" rx="16"/>
+  <text class="primitive-label" x="1225" y="616">Event</text>
 
-  <rect class="primitive" x="615" y="500" width="250" height="70" rx="16"/>
-  <text class="primitive-label" x="740" y="542">HarnessInvocation</text>
+  <rect x="475" y="686" width="835" height="68" rx="17" fill="#dce8f8" stroke="#6080b8" stroke-width="2"/>
+  <text x="892" y="714" font-size="17" fill="#4b5563" text-anchor="middle">durable collaboration history</text>
+  <text x="892" y="741" font-size="20" font-weight="700" text-anchor="middle">BatonSession · Lane · Event Ledger</text>
 
-  <rect class="primitive" x="905" y="500" width="190" height="70" rx="16"/>
-  <text class="primitive-label" x="1000" y="542">Event</text>
+  <!-- Human and Harness are capability-owning participants connected through Core. -->
+  <rect class="actor" x="55" y="525" width="285" height="145" rx="22" fill="#eef3fb"/>
+  <text class="actor-title" x="197" y="578">Human</text>
+  <text class="actor-detail" x="197" y="614">intent · prompt · decision</text>
 
-  <rect x="155" y="615" width="940" height="66" rx="17" fill="#dce8f8" stroke="#6080b8" stroke-width="2"/>
-  <text x="625" y="644" font-size="17" fill="#4b5563" text-anchor="middle">durable coordination history</text>
-  <text x="625" y="670" font-size="20" font-weight="700" text-anchor="middle">BatonSession · Lane · Event Ledger</text>
+  <rect class="actor" x="1460" y="525" width="285" height="145" rx="22" fill="#fff3cf"/>
+  <text class="actor-title" x="1602" y="578">Harness</text>
+  <text class="actor-detail" x="1602" y="614">model · tools · sandbox</text>
 
-  <text x="655" y="776" font-size="17" fill="#6b7280" text-anchor="middle">Core owns coordination facts; participants keep their own semantics and resources.</text>
+  <line class="port-line" x1="344" y1="545" x2="416" y2="545"/>
+  <rect class="port-pill" x="280" y="493" width="200" height="38" rx="19"/>
+  <text class="port-label" x="380" y="518">Input · Interaction</text>
+
+  <line class="port-line" x1="1384" y1="545" x2="1456" y2="545"/>
+  <rect class="port-pill" x="1324" y="493" width="192" height="38" rx="19"/>
+  <text class="port-label" x="1420" y="518">Turn · Event</text>
+
+  <text x="900" y="858" font-size="18" fill="#6b7280" text-anchor="middle">Core owns collaboration; each Plugin owns one biz domain and its control loop.</text>
 </svg>

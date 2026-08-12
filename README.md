@@ -42,7 +42,7 @@ Start with the stable kernel: baton is one bidirectional pipeline. chat-tui carr
 
 ![baton kernel: one bidirectional pipeline](docs/kernel-pipeline_v1.svg)
 
-v3 distills that pipeline to one stable boundary: humans, Harnesses, and Baton Plugins keep their own semantics and resources while coordinating through Core-owned Input, Interaction, HarnessInvocation, and Event facts. Plugins reach external systems through Connectors; every Plugin-initiated Turn still follows the same Input, context, permission, and routing path.
+v3 makes two boundaries explicit: Baton Core is the collaboration platform for humans, Harnesses, and Plugins; each business domain is delivered as one independently packaged Plugin with its own Resource, reconcile loop, completion criteria, and Connectors. Every Plugin-initiated Turn still follows the same Core-owned Input, Interaction, HarnessInvocation, Event, context, permission, and routing path.
 
 ![Baton v3 coordination kernel](docs/kernel-pipeline_v3.svg)
 
