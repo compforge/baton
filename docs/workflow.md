@@ -43,13 +43,20 @@ Controller 在用户提交时为 prompt Input 分配稳定 `messageId` 并先放
 停留可以极短，但仍遵守同一条状态机：
 
 ```text
-queued → admitted → finalized
-   │         │
-   │         └──────────────→ interrupted
-   └────────→ recalled
-
-queued → dispatching → accepted_steer → finalized | interrupted
-             └──────→ queued
+Enter
+  │ create Input(messageId, reserved turnId)
+  ▼
+queued ── ↑ recall latest user Input ─────────────────────────────→ recalled
+  │
+  ├─ Lane idle / dequeue ─────────→ admitted ── Turn completes ──→ finalized
+  │                                     └────── Esc / cancel ─────→ interrupted
+  │
+  └─ active steerable Turn / claim head ─→ dispatching
+                                                │
+                    Adapter accepts steer ──────┼→ accepted_steer
+                                                │       ├─ Turn completes ─→ finalized
+                                                │       └─ Esc / cancel ───→ interrupted
+                    Adapter rejects / throws ───┴→ queued (same messageId, queue head)
 ```
 
 `dispatching` 表示 Controller 已原子 claim 该 Input 并正在等待 same-turn Adapter admission；此时
