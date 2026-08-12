@@ -333,6 +333,16 @@ export function buildTranscript(
       const msg = state.messages.get(entry.id);
       if (!msg) continue;
       if (hidden(msg.laneId)) continue;
+      // Codex 接受 turn/steer 只代表进入原生队列。在 userMessage 回执前
+      // 留在 Composer Queue，不提前冒充成模型已看到的 Transcript 历史。
+      if (
+        msg.role === "user" &&
+        msg.delivery === "steer" &&
+        msg.deliveryState === "pending" &&
+        isTurnRunning(state, msg.turnId)
+      ) {
+        continue;
+      }
       if (msg.role === "thought") {
         const turnCompleted = state.turnSummaries.some(
           (summary) => summary.turnId === msg.turnId,

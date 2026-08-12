@@ -2111,7 +2111,7 @@ describe("BatonChatProtocol steer submit", () => {
 
       await protocol.submit("prefer approach B");
       expect(calls).toEqual(["sendTurn"]);
-      expect(protocol.stateStore.getState("footer").toast?.text).toContain("steering");
+      expect(protocol.stateStore.getState("footer").toast?.text).toContain("queued for the current turn");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -516,6 +516,30 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     targetRunning &&
     planEntries.some((entry) => entry.status !== "completed");
   const pinnedPlanId = planActive ? lastPlan?.planId : undefined;
+  const pendingSteers = [...state.messages.values()].filter(
+    (message) =>
+      message.role === "user" &&
+      message.delivery === "steer" &&
+      message.deliveryState === "pending" &&
+      message.laneId === MAIN_LANE_ID &&
+      message.turnId !== undefined &&
+      state.activeTurns.has(message.turnId),
+  );
+  const queuedItems = [
+    ...pendingSteers.map((message) => ({
+      id: message.messageId,
+      text: userVisibleText(composerTextOf(message.content)),
+      tag: `${message.harnessTargetId ?? message.harness ?? harnessTargetId} · current turn`,
+    })),
+    ...controller.queuedTurns.map((turn) => ({
+      id: String(turn.id),
+      text: userVisibleText(composerTextOf(turn.blocks)),
+      tag:
+        turn.source.type === "plugin"
+          ? `${turn.source.pluginInstanceId} · request`
+          : `${turn.harnessTargetId} · next turn`,
+    })),
+  ];
 
   return {
     timeline: {
@@ -531,14 +555,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     },
     composer: {
       busy,
-      queued: controller.queuedTurns.map((turn) => ({
-        id: String(turn.id),
-        text: userVisibleText(composerTextOf(turn.blocks)),
-        tag:
-          turn.source.type === "plugin"
-            ? `${turn.source.pluginInstanceId} · request`
-            : turn.harnessTargetId,
-      })),
+      queued: queuedItems,
       picker: input.picker
         ? {
             id: input.picker.id,
@@ -561,7 +578,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     },
     footer: {
       toast: input.toast,
-      text: `session: ${session.id}  in:${state.usage.inputTokens} out:${state.usage.outputTokens}  turns:${state.turnSummaries.length}  queue:${controller.queueLength}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${board.items.length > 0 ? `  board:${board.items.length}` : ""}  cwd:${session.meta.cwd}`,
+      text: `session: ${session.id}  in:${state.usage.inputTokens} out:${state.usage.outputTokens}  turns:${state.turnSummaries.length}  queue:${queuedItems.length}${planActive ? `  plan:${planEntries.filter((entry) => entry.status === "completed").length}/${planEntries.length}` : ""}${board.items.length > 0 ? `  board:${board.items.length}` : ""}  cwd:${session.meta.cwd}`,
     },
     sidecar: board.sidecar,
   };

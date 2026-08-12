@@ -110,7 +110,8 @@ adapter.sendTurn(handle, promptInput)
 Adapter 根据自己的权威运行态返回：
 
 - `new_turn`：接受开启一轮新工作；
-- `steer`：输入已经进入匹配的当前 Turn；
+- `steer`：已接受将输入注入匹配的当前 Turn；Harness 若内部还有原生队列，
+  接受与进入模型上下文是两个独立事实；
 - `rejected`：没有接受责任，Controller 可以安全降级为 queued follow-up。
 
 Receipt 只确认 Adapter 接受了投递责任，不代表 Harness 已完成。accepted 后的错误必须通过事件流
@@ -175,9 +176,18 @@ Turn 共享 Event/Projection 主路径，因此 live 与 resume 都能看到相�
 第二条输入：
 
 1. 若目标支持且当前 turn identity 匹配，Controller 尝试 `sendTurn`；
-2. Adapter 原生接受后，输入成为 `accepted_steer`，并以 `delivery:"steer"` 进入当前 Turn；
-3. Adapter 拒绝、原生 race 或无法安全定向时，原输入只入队一次，当前 Turn 结束后作为新 Turn
+2. Adapter 原生接受后，输入成为 `accepted_steer`，并以 `delivery:"steer"`
+   绑定当前 Turn。若接受只代表进入 Harness 原生队列，其 delivery state 为
+   `pending`；
+3. Harness 确认该用户输入已写入模型上下文后，Adapter 将 delivery state 更新为
+   `applied`。不能区分这两个边界的 Harness，以原生接受作为 applied 边界；
+4. Adapter 拒绝、原生 race 或无法安全定向时，原输入只入队一次，当前 Turn 结束后作为新 Turn
    执行。
+
+`pending` steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在
+Composer Queue，收到 `applied` 回执后再投影到 Transcript。queued follow-up 与 pending
+steer 共用 Queue surface，但前者等待新 Turn，后者等待当前 Turn 的原生安全边界，
+两者不能互相冒充。
 
 Esc 只打断主 Lane 当前的 driven Turn，不影响支线 Lane。已经接受的 steer
 与该 Turn 共命运：cancel 后标记 interrupted，
