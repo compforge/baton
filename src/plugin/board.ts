@@ -27,6 +27,17 @@ export interface BoardItemCandidate {
   readonly creationTimestamp: string;
 }
 
+export interface BoardProjectionSource {
+  readonly pluginInstanceId: string;
+  present(): Promise<readonly BoardItemCandidate[]>;
+}
+
+export interface BoardProjectionOptions {
+  isInstanceActive(pluginInstanceId: string): boolean;
+  onChanged?(): void;
+  onRefreshError?(error: unknown): void;
+}
+
 const MAX_ITEMS_PER_RESOURCE_TYPE = 5;
 
 export interface BoardSource<TSpec = unknown, TStatus = unknown> {
@@ -167,4 +178,80 @@ export function selectBoardItems(
     }
   }
   return Object.freeze(selected);
+}
+
+/** Owns Plugin Board sources and publishes a coherent derived snapshot. */
+export class BoardProjection {
+  private readonly sources = new Map<string, BoardProjectionSource>();
+  private readonly isInstanceActive:
+    BoardProjectionOptions["isInstanceActive"];
+  private readonly onChanged: BoardProjectionOptions["onChanged"];
+  private readonly onRefreshError: BoardProjectionOptions["onRefreshError"];
+  private itemsCache: readonly BoardItem[] | undefined;
+  private revision = 0;
+  private refresh?: Promise<void>;
+  private closed = false;
+
+  constructor(options: BoardProjectionOptions) {
+    this.isInstanceActive = options.isInstanceActive;
+    this.onChanged = options.onChanged;
+    this.onRefreshError = options.onRefreshError;
+  }
+
+  registerSource(
+    sourceId: string,
+    source: BoardProjectionSource,
+  ): () => void {
+    if (this.closed) throw new Error("Plugin Board projection is closed");
+    this.sources.set(sourceId, source);
+    return () => {
+      this.sources.delete(sourceId);
+    };
+  }
+
+  list(): readonly BoardItem[] {
+    return this.itemsCache ?? [];
+  }
+
+  invalidate(): void {
+    if (this.closed) return;
+    this.revision += 1;
+    this.refreshItems();
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.sources.clear();
+  }
+
+  private refreshItems(): void {
+    if (this.closed || this.refresh) return;
+    const revision = this.revision;
+    const sources = [...this.sources.values()].filter((source) =>
+      this.isInstanceActive(source.pluginInstanceId)
+    );
+    const refresh = Promise.all(
+      sources.map((source) => source.present()),
+    )
+      .then((groups) => {
+        if (this.closed || revision !== this.revision) return;
+        this.itemsCache = selectBoardItems(groups.flat());
+        try {
+          this.onChanged?.();
+        } catch {
+          // Projection invalidation cannot affect Plugin state.
+        }
+      })
+      .catch((error) => {
+        this.onRefreshError?.(error);
+      })
+      .finally(() => {
+        if (this.refresh === refresh) this.refresh = undefined;
+        if (!this.closed && revision !== this.revision) {
+          this.refreshItems();
+        }
+      });
+    this.refresh = refresh;
+  }
 }

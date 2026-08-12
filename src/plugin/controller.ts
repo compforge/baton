@@ -8,12 +8,13 @@ import type {
 } from "@compforge/baton-plugin";
 
 import type { PluginResource } from "./resource.ts";
+import type { ResourceClientChange } from "./resource-client.ts";
 import { newId } from "../event/ids.ts";
 import {
   PluginResourceStore,
   validateResourceType,
 } from "./resource.ts";
-import { ReconcileQueue } from "./queue.ts";
+import { reconcileKeyId, ReconcileQueue } from "./queue.ts";
 import type { ReconcileCapacityLease } from "./queue.ts";
 import { reconcileResourceOwner } from "./reconcile-scope.ts";
 import {
@@ -21,7 +22,7 @@ import {
   type ReconcileSnapshot,
 } from "./reconcile-snapshot.ts";
 import { ControllerSources } from "./source.ts";
-import { validateWatches } from "./watch.ts";
+import { validateWatches, watchRequests } from "./watch.ts";
 import {
   createReconcileContext,
   type ExecutionScope,
@@ -53,6 +54,104 @@ export interface ScheduledReconcile {
   readonly nextReconcileAt: Date;
 }
 
+export interface ReconcileRetryBackoff {
+  readonly initialDelayMs: number;
+  readonly maxDelayMs: number;
+}
+
+export interface ReconcileFailure {
+  readonly key: ReconcileKey;
+  readonly error: unknown;
+  readonly attempt: number;
+  readonly nextRetryAt?: string;
+}
+
+export function reconcileRetryBackoff(
+  value?: Partial<ReconcileRetryBackoff>,
+): ReconcileRetryBackoff {
+  const initialDelayMs = value?.initialDelayMs ?? 1_000;
+  const maxDelayMs = value?.maxDelayMs ?? 60_000;
+  for (const [name, delay] of Object.entries({ initialDelayMs, maxDelayMs })) {
+    if (!Number.isSafeInteger(delay) || delay < 1) {
+      throw new Error(`retryBackoff.${name} must be a positive integer`);
+    }
+  }
+  if (maxDelayMs < initialDelayMs) {
+    throw new Error("retryBackoff.maxDelayMs must be at least initialDelayMs");
+  }
+  return Object.freeze({ initialDelayMs, maxDelayMs });
+}
+
+export interface ControllerRetryOptions {
+  backoff: ReconcileRetryBackoff;
+  now: () => Date;
+  schedule(key: ReconcileKey, nextReconcileAt: Date | null): void;
+  report(failure: ReconcileFailure): void;
+}
+
+interface ReconcileRetryOptions extends ControllerRetryOptions {
+  persist?(key: ReconcileKey, nextRetryAt: Date): void;
+}
+
+/** Per-Controller retry state; the shared due queue remains a Manager dependency. */
+export class ReconcileRetry {
+  private readonly attempts = new Map<string, number>();
+  private closed = false;
+
+  constructor(private readonly options: ReconcileRetryOptions) {}
+
+  succeeded(key: ReconcileKey, nextReconcileAt: Date | null): void {
+    if (this.closed) return;
+    this.attempts.delete(reconcileKeyId(key));
+    this.options.schedule(key, nextReconcileAt);
+  }
+
+  failed(key: ReconcileKey, error: unknown): void {
+    if (this.closed) return;
+    const id = reconcileKeyId(key);
+    const attempt = (this.attempts.get(id) ?? 0) + 1;
+    this.attempts.set(id, attempt);
+    const now = this.options.now();
+    if (Number.isNaN(now.getTime())) {
+      this.options.report({
+        key,
+        error: new AggregateError([error], "plugin Controller now() returned an invalid Date"),
+        attempt,
+      });
+      return;
+    }
+    const delay = Math.min(
+      this.options.backoff.maxDelayMs,
+      this.options.backoff.initialDelayMs * 2 ** Math.min(attempt - 1, 30),
+    );
+    const nextRetryAt = new Date(now.getTime() + delay);
+    try {
+      this.options.persist?.(key, nextRetryAt);
+      this.options.schedule(key, nextRetryAt);
+      this.options.report({
+        key,
+        error,
+        attempt,
+        nextRetryAt: nextRetryAt.toISOString(),
+      });
+    } catch (retryError) {
+      this.options.report({
+        key,
+        error: new AggregateError(
+          [error, retryError],
+          `could not persist retry for ${key.resourceApiVersion}/${key.resourceKind}/${key.resourceId}`,
+        ),
+        attempt,
+      });
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    this.attempts.clear();
+  }
+}
+
 export interface ControllerOptions<TSpec, TStatus> {
   store: PluginResourceStore;
   resourceType: ResourceType;
@@ -73,10 +172,11 @@ export interface ControllerOptions<TSpec, TStatus> {
     localLease: ReconcileCapacityLease,
     execute: () => Promise<T>,
   ) => Promise<T>;
-  /** 仅供 Manager 收口成功后的动态唤醒；持久化由 Controller 先完成。 */
+  /** Reconcile 成功观察点；动态唤醒持久化已由 Controller 完成。 */
   onReconcileSuccess?(key: ReconcileKey, nextReconcileAt: Date | null): void;
   /** 仅报告实际执行失败，不包含 enqueue 参数校验错误。 */
   onReconcileError?(key: ReconcileKey, error: unknown): void;
+  retry?: ControllerRetryOptions;
   /** Source 首次 materialize Resource 后失效 Board 等派生投影。 */
   onSourceResource?(resource: Readonly<PluginResource<TSpec, TStatus>>): void;
   /** Terminating Resource reconcile 成功后，向 Manager 发布最终删除事实。 */
@@ -163,6 +263,7 @@ export class Controller<TSpec, TStatus> {
   >;
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
+  private readonly retry?: ReconcileRetry;
   private closed = false;
 
   constructor(options: ControllerOptions<TSpec, TStatus>) {
@@ -189,6 +290,12 @@ export class Controller<TSpec, TStatus> {
       resourceApiVersion: options.resourceType.apiVersion,
       resourceKind: options.resourceType.kind,
     });
+    if (options.retry) {
+      this.retry = new ReconcileRetry({
+        ...options.retry,
+        persist: (key, nextRetryAt) => this.setNextReconcileAt(key, nextRetryAt),
+      });
+    }
     this.queue = new ReconcileQueue({
       execute: (key, localLease) => {
         const executionScope = Object.freeze({
@@ -203,10 +310,14 @@ export class Controller<TSpec, TStatus> {
             options.onResourceDeleted?.(execution.deletedResource);
           }
           options.onReconcileSuccess?.(key, execution.nextReconcileAt);
+          if (this.retry) this.retry.succeeded(key, execution.nextReconcileAt);
         });
       },
       maxConcurrency: options.maxConcurrency,
-      onError: options.onReconcileError,
+      onError: (key, error) => {
+        if (this.retry) this.retry.failed(key, error);
+        else options.onReconcileError?.(key, error);
+      },
     });
     this.controllerSources = new ControllerSources({
       sources: options.sources,
@@ -219,7 +330,7 @@ export class Controller<TSpec, TStatus> {
           ...this.scope,
           resourceId,
         }).catch(() => {
-          // Reconcile failure reporting and retry are owned by Manager.
+          // The Controller retry path has already persisted and reported the failure.
         });
       },
     });
@@ -247,8 +358,19 @@ export class Controller<TSpec, TStatus> {
     return this.controllerSources.cron();
   }
 
+  async watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]> {
+    const requests = await watchRequests(this.watches, change);
+    return Object.freeze(requests.map((request) =>
+      ownedKey({
+        ...this.scope,
+        resourceId: request.name,
+      })
+    ));
+  }
+
   close(): void {
     this.closed = true;
+    this.retry?.close();
     this.controllerSources.close();
     this.queue.close();
   }
