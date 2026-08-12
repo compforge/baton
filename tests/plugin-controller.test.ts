@@ -28,6 +28,10 @@ const REQ_LOOP_RUN = {
   apiVersion: "reqloop.baton.dev/v1alpha1",
   kind: "Requirement",
 } as const;
+const WORKSPACE = {
+  apiVersion: "reqloop.baton.dev/v1alpha1",
+  kind: "Workspace",
+} as const;
 
 function testRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "baton-plugin-controller-"));
@@ -72,6 +76,107 @@ afterEach(() => {
 });
 
 describe("plugin Controller", () => {
+  test("validates its Sources when constructed", () => {
+    expect(() =>
+      new Controller<Spec, Status>({
+        store: store(testRoot()),
+        resourceType: REQ_LOOP_RUN,
+        sources: [{
+          type: "cron",
+          sourceId: "poll",
+          cron: "not-a-cron",
+          timeZone: "UTC",
+        }],
+        async reconcile() {},
+        now: () => new Date("2026-07-25T00:00:00.000Z"),
+      })
+    ).toThrow("invalid Controller cron source poll");
+  });
+
+  test("maps primary and watched Resource changes to reconcile keys", async () => {
+    const resources = store(testRoot());
+    const requirement = resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    const workspace = resources.create({
+      type: WORKSPACE,
+      name: "workspace_1",
+      spec: {},
+    });
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      watches: [{
+        resourceType: WORKSPACE,
+        handler: {
+          async create() {
+            return [{ name: "run_1" }];
+          },
+          async update() {
+            return [{ name: "run_1" }];
+          },
+          async delete() {
+            return [{ name: "run_1" }];
+          },
+        },
+      }],
+      async reconcile() {},
+    });
+
+    expect(await controller.reconcileKeys({
+      kind: "created",
+      resource: requirement,
+    })).toEqual([key("run_1")]);
+    expect(await controller.reconcileKeys({
+      kind: "created",
+      resource: workspace,
+    })).toEqual([key("run_1")]);
+    expect(await controller.reconcileKeys({
+      kind: "deleted",
+      resource: requirement,
+    })).toEqual([]);
+  });
+
+  test("keeps the primary reconcile key when its Watch handler fails", async () => {
+    const resources = store(testRoot());
+    const requirement = resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      spec: { requirement: "ship it" },
+    });
+    const errors: unknown[] = [];
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      watches: [{
+        resourceType: REQ_LOOP_RUN,
+        handler: {
+          async create() {
+            throw new Error("mapping failed");
+          },
+          async update() {
+            return [];
+          },
+          async delete() {
+            return [];
+          },
+        },
+      }],
+      async reconcile() {},
+      onWatchError(_change, error) {
+        errors.push(error);
+      },
+    });
+
+    expect(await controller.reconcileKeys({
+      kind: "created",
+      resource: requirement,
+    })).toEqual([key("run_1")]);
+    expect(errors.map(String)).toEqual(["Error: mapping failed"]);
+  });
+
   test("provides a frozen reconcile context and persists status and wake-up", async () => {
     const resources = store(testRoot());
     resources.create<Spec, Status>({

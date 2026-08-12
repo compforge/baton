@@ -21,7 +21,7 @@ import {
   emptyReconcileSnapshot,
   type ReconcileSnapshot,
 } from "./reconcile-snapshot.ts";
-import { ControllerSources } from "./source.ts";
+import { ControllerSources, validateSources } from "./source.ts";
 import { validateWatches, watchRequests } from "./watch.ts";
 import {
   createReconcileContext,
@@ -183,6 +183,7 @@ export interface ControllerOptions<TSpec, TStatus> {
   onResourceDeleted?(
     resource: Readonly<PluginResource<unknown, unknown>>,
   ): void;
+  onWatchError?(change: ResourceClientChange, error: unknown): void;
 }
 
 function ownedKey(key: ReconcileKey): ReconcileKey {
@@ -261,6 +262,7 @@ export class Controller<TSpec, TStatus> {
   private readonly executeReconcile: NonNullable<
     ControllerOptions<TSpec, TStatus>["executeReconcile"]
   >;
+  private readonly onWatchError?: ControllerOptions<TSpec, TStatus>["onWatchError"];
   private readonly queue: ReconcileQueue;
   private readonly controllerSources: ControllerSources<TSpec, TStatus>;
   private readonly retry?: ReconcileRetry;
@@ -275,6 +277,7 @@ export class Controller<TSpec, TStatus> {
     this.reconcileResource = options.reconcile;
     this.present = options.present;
     this.now = options.now ?? (() => new Date());
+    validateSources(options.sources, this.now());
     this.snapshot =
       options.snapshot ?? (() => emptyReconcileSnapshot(options.store.batonSessionId));
     this.executeWithCapacity =
@@ -284,6 +287,7 @@ export class Controller<TSpec, TStatus> {
     });
     this.executeReconcile = options.executeReconcile ??
       (async (_scope, _localLease, execute) => await execute());
+    this.onWatchError = options.onWatchError;
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
@@ -358,14 +362,40 @@ export class Controller<TSpec, TStatus> {
     return this.controllerSources.cron();
   }
 
-  async watch(change: ResourceClientChange): Promise<readonly ReconcileKey[]> {
-    const requests = await watchRequests(this.watches, change);
-    return Object.freeze(requests.map((request) =>
-      ownedKey({
+  async reconcileKeys(
+    change: ResourceClientChange,
+  ): Promise<readonly ReconcileKey[]> {
+    if (change.resource.metadata.namespace !== this.scope.pluginInstanceId) {
+      return [];
+    }
+    const keys = new Map<string, ReconcileKey>();
+    if (
+      change.kind !== "deleted" &&
+      change.resource.apiVersion === this.resourceType.apiVersion &&
+      change.resource.kind === this.resourceType.kind
+    ) {
+      const key = ownedKey({
+        ...this.scope,
+        resourceId: change.resource.metadata.name,
+      });
+      keys.set(reconcileKeyId(key), key);
+    }
+    let requests;
+    try {
+      requests = await watchRequests(this.watches, change);
+    } catch (error) {
+      // A broken secondary mapping must not suppress the primary Resource wake-up.
+      this.onWatchError?.(change, error);
+      return Object.freeze([...keys.values()]);
+    }
+    for (const request of requests) {
+      const key = ownedKey({
         ...this.scope,
         resourceId: request.name,
-      })
-    ));
+      });
+      keys.set(reconcileKeyId(key), key);
+    }
+    return Object.freeze([...keys.values()]);
   }
 
   close(): void {
