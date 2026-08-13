@@ -49,6 +49,10 @@ Harness ── Event ────────> Core Projection ────> Hum
 Core 拥有这些箭头的稳定语义，而不是端点的业务。三方不能互持进程句柄、私建回调通道或绕过
 Core 直接改变另一方状态。
 
+Hook 不是第四类参与者，也不是新的消息通道。它只是 Plugin 对上述 human/Harness inbound、
+outbound 边界的 typed 通知；Hook 没有控制流返回值，需要行动时仍通过 Core verbs 物化为
+Interaction、HarnessInvocation 等既有对象。
+
 ### 2.2 身份、owner 与生命周期
 
 | 概念 | 语义与 owner |

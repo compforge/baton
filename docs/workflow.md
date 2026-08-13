@@ -33,6 +33,13 @@ chat-tui 把 composer 内容和用户意图交给 Baton；HarnessInvocation 则�
 mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
 Harness wire。
 
+Human Hook 覆盖这条采集边界。prompt、command、Harness/model/effort/mode 配置、Interaction
+回答和 interrupt 都先形成带稳定 `intentId` 的 `HumanIntent`，再通知
+`human.inbound.before`。prompt 的 `human.inbound.after` 钉在 Input 实际进入 Core queue 的位置，
+此时相同的 `intentId/messageId` 已可从 snapshot 观察，但它不等待随后可能发生的 steer 回执或
+Turn 完成。其它 intent 的 after 表示对应 host action 已返回。before 失败或超时 fail-open，after
+best-effort，因此 Plugin 故障不能阻塞用户继续输入。
+
 剪贴板图片由 Baton 壳层在显式 paste 时读取，按内容寻址归档到 Baton attachment store，并在
 composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `image` block。Event Ledger 只保存
 稳定路径而不内联大段 base64，Adapter 再按 Harness 原生协议 lowering。文本 paste 仍由普通
@@ -71,6 +78,13 @@ Input source 调度：
 
 Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代表是否调用 Harness。人或 Plugin
 发起的异步任务都可以使用新 Lane。
+
+Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，以
+`HumanPresentation` 通知 `human.outbound.before/after`。before 位于 chat state store commit
+之前；after 只说明 store 已接收最新 presentation，不证明终端已经绘制或用户已经看见。多个更新可在
+等待 before 时合并。若 before Hook 通过 Verb 打开 Interaction 并等待人的回答，该 Interaction
+必须立即发布而不能递归进入同一个 before Hook，否则 Hook 会等待一个尚未展示的问题而自锁；这种
+重入发布仍发送 after 通知。
 每个 Lane 同时最多一个 driven Turn，不同 Lane 可并行。Harness 自发产生的 observed Turn 不进 Input 队列。
 
 prompt Input 另有一条与状态和 Lane 正交的 source 轴：composer、ProposedPlan 实施和用户编辑提交的

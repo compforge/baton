@@ -112,6 +112,14 @@ export type SendTurnOutcome =
       reason?: string;
     };
 
+export interface SendTurnOptions {
+  readonly sourceProposedPlanId?: string;
+  /** Host-prepared intake identity used to correlate human Hook stages with the Input. */
+  readonly identity?: { readonly messageId: string; readonly turnId: string };
+  /** Called synchronously after the Input is visible in the Core queue. */
+  readonly onEnqueued?: () => void;
+}
+
 /** Controller 注入给 Adapter 的 Core ports；原生 Harness verb 只能经这些边界 lowering。 */
 export interface HarnessAdapterPorts {
   openInteraction: OpenInteraction;
@@ -336,7 +344,7 @@ export class Controller {
   private enqueueMainInput(
     harnessTargetId: string,
     blocks: PromptBlock[],
-    options?: { sourceProposedPlanId?: string },
+    options?: SendTurnOptions,
   ): InputSubmission {
     const target = this.targetFor(harnessTargetId);
     const laneId = this.mainLaneId();
@@ -432,7 +440,7 @@ export class Controller {
   async sendTurn(
     harnessTargetId: string,
     blocks: PromptBlock[],
-    options?: { sourceProposedPlanId?: string },
+    options?: SendTurnOptions,
   ): Promise<SendTurnOutcome> {
     const laneId = this.mainLaneId();
     const active = this.turns.activeDriven(laneId);
@@ -443,6 +451,7 @@ export class Controller {
     const submission = this.enqueueMainInput(harnessTargetId, blocks, options);
     const input = submission.input;
     this.changed();
+    options?.onEnqueued?.();
     if (
       !options?.sourceProposedPlanId &&
       active?.turn &&

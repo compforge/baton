@@ -61,6 +61,10 @@ export class HookRegistry {
   list<S extends HookStage>(stage: S): readonly RegisteredHook<S>[] {
     return [...(this.byStage.get(stage) ?? [])] as RegisteredHook<S>[];
   }
+
+  has(stage: HookStage): boolean {
+    return (this.byStage.get(stage)?.size ?? 0) > 0;
+  }
 }
 
 /**

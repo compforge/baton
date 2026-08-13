@@ -30,6 +30,7 @@ import {
 } from "../../context/mention.ts";
 import { MentionRegistry } from "../../context/registry.ts";
 import { logError } from "../../logging.ts";
+import { newId } from "../../event/ids.ts";
 import {
   textOf,
   type ContentBlock,
@@ -48,6 +49,8 @@ import { createReconcileSnapshot } from "../../plugin/reconcile-snapshot.ts";
 import { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
 import type {
+  HumanIntent,
+  HumanPresentation,
   PluginCommandInput,
   PluginCommandResult,
   ToastMessage,
@@ -134,6 +137,35 @@ function publishChatState(
   });
 }
 
+function chatPresentationKind(
+  store: WritableChatStore,
+  next: ChatState,
+): HumanPresentation["kind"] | undefined {
+  const timeline = store.getState("timeline");
+  const composer = store.getState("composer");
+  const activity = store.getState("activity");
+  const footer = store.getState("footer");
+  if (composer.interactions !== next.composer.interactions) return "interaction";
+  if (composer.picker !== next.composer.picker) return "picker";
+  if (composer.queued !== next.composer.queued) return "queue";
+  if (store.getState("sidecar") !== next.sidecar) return "board";
+  if (footer.toast !== next.footer.toast) return "toast";
+  if (timeline.items !== next.timeline.items || timeline.plan !== next.timeline.plan) {
+    return "transcript";
+  }
+  if (
+    timeline.header !== next.timeline.header ||
+    timeline.showThoughts !== next.timeline.showThoughts ||
+    composer.busy !== next.composer.busy ||
+    composer.placeholder !== next.composer.placeholder ||
+    activity.items !== next.activity.items ||
+    footer.text !== next.footer.text
+  ) {
+    return "status";
+  }
+  return undefined;
+}
+
 export interface BatonNavigation {
   openPlugins(): void;
 }
@@ -183,6 +215,10 @@ export class BatonChatProtocol implements ChatProtocol {
   private composerImagePaths: string[] = [];
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
+  private humanOutboundBeforeActive = false;
+  private humanStatePublicationPending = false;
+  private humanStatePublicationRunning = false;
+  private humanPresentationRevision = 0;
 
   constructor(
     private readonly store: SessionStore,
@@ -287,10 +323,7 @@ export class BatonChatProtocol implements ChatProtocol {
       return;
     }
     if (route?.kind === "matched") {
-      this.harnessTargetId = route.harness;
-      this.toast = null;
-      this.commandOutput = null;
-      this.changed();
+      await this.configureHarness(route.harness);
       if (!route.message) return;
       return this.submitMessage(route.message);
     }
@@ -302,11 +335,23 @@ export class BatonChatProtocol implements ChatProtocol {
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
     const target = this.harnessTargetId;
+    const messageId = newId("m");
+    const intent: HumanIntent = Object.freeze({
+      intentId: messageId,
+      kind: "prompt",
+      text,
+      harnessTargetId: target,
+    });
+    await this.plugins.beforeHook("human.inbound.before", intent);
     const blocks = await this.prepareComposerInput(text);
 
     // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
     // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
-    const sent = await this.controller.sendTurn(target, blocks, options);
+    const sent = await this.controller.sendTurn(target, blocks, {
+      ...options,
+      identity: { messageId, turnId: newId("t") },
+      onEnqueued: () => this.plugins.afterHook("human.inbound.after", intent),
+    });
     if (sent.effective === "steer") {
       this.toast = { text: `${target} steer queued for the current turn`, tone: "info" };
       this.changed();
@@ -368,12 +413,23 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   async command(name: string, argument: string): Promise<void> {
+    const intent: HumanIntent = Object.freeze({
+      intentId: newId("hint"),
+      kind: "command",
+      command: name,
+      argument,
+      harnessTargetId: this.harnessTargetId,
+    });
+    return await this.runHumanIntent(intent, async () =>
+      await this.executeCommand(name, argument)
+    );
+  }
+
+  private async executeCommand(name: string, argument: string): Promise<void> {
     if (name !== "status") this.commandOutput = null;
     const harness = parseHarness(name);
     if (harness) {
-      this.harnessTargetId = harness;
-      this.toast = null;
-      this.changed();
+      await this.configureHarness(harness);
       if (argument) await this.submitMessage(argument);
       return;
     }
@@ -596,7 +652,14 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   cancel(): void {
-    void this.controller.control({ kind: "interrupt" });
+    const intent: HumanIntent = Object.freeze({
+      intentId: newId("hint"),
+      kind: "interrupt",
+      harnessTargetId: this.controller.activeHarnessTargetId ?? this.harnessTargetId,
+    });
+    void this.runHumanIntent(intent, async () => {
+      await this.controller.control({ kind: "interrupt" });
+    });
   }
 
   dismissSidecar(): void {
@@ -716,6 +779,20 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   async resolveInteraction(
+    id: string,
+    response: InteractionResponse,
+  ): Promise<void> {
+    const intent: HumanIntent = Object.freeze({
+      intentId: newId("hint"),
+      kind: "interaction_response",
+      interactionId: id,
+    });
+    return await this.runHumanIntent(intent, async () =>
+      await this.applyInteractionResponse(id, response)
+    );
+  }
+
+  private async applyInteractionResponse(
     id: string,
     response: InteractionResponse,
   ): Promise<void> {
@@ -1103,13 +1180,50 @@ export class BatonChatProtocol implements ChatProtocol {
     this.changed();
   }
 
+  private async runHumanIntent<T>(
+    intent: HumanIntent,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const plugins = this.plugins;
+    await plugins.beforeHook("human.inbound.before", intent);
+    const result = await action();
+    plugins.afterHook("human.inbound.after", intent);
+    return result;
+  }
+
+  private async runHumanConfiguration(
+    setting: NonNullable<HumanIntent["setting"]>,
+    target: string,
+    value: string | null,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    await this.runHumanIntent(Object.freeze({
+      intentId: newId("hint"),
+      kind: "configuration",
+      harnessTargetId: target,
+      setting,
+      value,
+    }), action);
+  }
+
+  private async configureHarness(target: string): Promise<void> {
+    await this.runHumanConfiguration("harness", target, target, async () => {
+      this.harnessTargetId = target;
+      this.toast = null;
+      this.commandOutput = null;
+      this.changed();
+    });
+  }
+
   private async configureModel(target: string, model: { id: string; label: string }): Promise<void> {
-    await this.controller.setModel(target, model.id);
-    saveModelPreference(this.store.rootDir, target, model.id);
-    if (model.id === "default") delete this.modelPreferences[target];
-    else this.modelPreferences[target] = model.id;
-    this.toast = { text: `${target} model: ${model.label} (takes effect next turn)`, tone: "info" };
-    this.changed();
+    await this.runHumanConfiguration("model", target, model.id, async () => {
+      await this.controller.setModel(target, model.id);
+      saveModelPreference(this.store.rootDir, target, model.id);
+      if (model.id === "default") delete this.modelPreferences[target];
+      else this.modelPreferences[target] = model.id;
+      this.toast = { text: `${target} model: ${model.label} (takes effect next turn)`, tone: "info" };
+      this.changed();
+    });
   }
 
   private async modeOption(target: string) {
@@ -1125,21 +1239,25 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private async configureMode(target: string, value: string): Promise<void> {
-    const option = await this.modeOption(target);
-    const selected = option.options.find((candidate) => candidate.value === value);
-    if (!selected) throw new Error(`Unknown ${target} mode: ${value}`);
-    await this.controller.setConfig(target, option.id, selected.value);
-    this.toast = { text: `${target} mode: ${selected.name}`, tone: "info" };
-    this.changed();
+    await this.runHumanConfiguration("mode", target, value, async () => {
+      const option = await this.modeOption(target);
+      const selected = option.options.find((candidate) => candidate.value === value);
+      if (!selected) throw new Error(`Unknown ${target} mode: ${value}`);
+      await this.controller.setConfig(target, option.id, selected.value);
+      this.toast = { text: `${target} mode: ${selected.name}`, tone: "info" };
+      this.changed();
+    });
   }
 
   private async configureEffort(target: string, effort: { id: string; label: string }): Promise<void> {
-    await this.controller.setEffort(target, effort.id);
-    saveEffortPreference(this.store.rootDir, target, effort.id);
-    if (effort.id === "default") delete this.effortPreferences[target];
-    else this.effortPreferences[target] = effort.id;
-    this.toast = { text: `${target} effort: ${effort.label} (takes effect next turn)`, tone: "info" };
-    this.changed();
+    await this.runHumanConfiguration("effort", target, effort.id, async () => {
+      await this.controller.setEffort(target, effort.id);
+      saveEffortPreference(this.store.rootDir, target, effort.id);
+      if (effort.id === "default") delete this.effortPreferences[target];
+      else this.effortPreferences[target] = effort.id;
+      this.toast = { text: `${target} effort: ${effort.label} (takes effect next turn)`, tone: "info" };
+      this.changed();
+    });
   }
 
   /** 控制命令输出只进入当前 timeline State，不写 session.jsonl，避免污染可恢复的会话历史。 */
@@ -1326,33 +1444,139 @@ export class BatonChatProtocol implements ChatProtocol {
       clearTimeout(this.streamStateTimer);
       this.streamStateTimer = undefined;
     }
-    publishChatState(this.stateStore, this.buildState());
+    // A before Hook may open an Interaction through a Verb and wait for the
+    // answer. Publish that reentrant state without nesting the same Hook, or
+    // the Interaction needed to unblock it would remain hidden.
+    if (
+      this.humanOutboundBeforeActive ||
+      !this.plugins.hasHook("human.outbound.before")
+    ) {
+      this.publishCurrentChatState();
+      return;
+    }
+    this.humanStatePublicationPending = true;
+    void this.flushHumanStatePublication();
   }
 
-  /**
-   * Board 是独立 read model：插件 reconcile 或显隐切换不重建 transcript/input。
-   * footer 只替换 board 计数片段，其他 State 保持引用不变。
-   */
+  private publishCurrentChatState(): void {
+    const next = this.buildState();
+    const kind = chatPresentationKind(this.stateStore, next);
+    if (!kind) return;
+    const presentation = this.newHumanPresentation(kind);
+    publishChatState(this.stateStore, next);
+    this.plugins.afterHook("human.outbound.after", presentation);
+  }
+
+  private async flushHumanStatePublication(): Promise<void> {
+    if (this.humanStatePublicationRunning) return;
+    this.humanStatePublicationRunning = true;
+    try {
+      while (this.humanStatePublicationPending) {
+        this.humanStatePublicationPending = false;
+        const kind = chatPresentationKind(this.stateStore, this.buildState());
+        if (!kind) continue;
+        const presentation = this.newHumanPresentation(kind);
+        const plugins = this.plugins;
+        this.humanOutboundBeforeActive = true;
+        try {
+          await plugins.beforeHook("human.outbound.before", presentation);
+        } finally {
+          this.humanOutboundBeforeActive = false;
+        }
+        const next = this.buildState();
+        if (chatPresentationKind(this.stateStore, next)) {
+          publishChatState(this.stateStore, next);
+          plugins.afterHook("human.outbound.after", presentation);
+        }
+      }
+    } finally {
+      this.humanStatePublicationRunning = false;
+      if (this.humanStatePublicationPending) {
+        void this.flushHumanStatePublication();
+      }
+    }
+  }
+
+  private newHumanPresentation(
+    kind: HumanPresentation["kind"],
+  ): HumanPresentation {
+    return Object.freeze({
+      presentationId: newId("hp"),
+      kind,
+      revision: ++this.humanPresentationRevision,
+    });
+  }
+
+  /** Board keeps its narrow sidecar/footer publication path to avoid unrelated redraws. */
   private boardChanged(): void {
+    if (
+      !this.boardPublicationChanged() ||
+      this.humanOutboundBeforeActive ||
+      !this.plugins.hasHook("human.outbound.before")
+    ) {
+      this.publishBoard();
+      return;
+    }
+    const presentation = this.newHumanPresentation("board");
+    const plugins = this.plugins;
+    void (async () => {
+      this.humanOutboundBeforeActive = true;
+      try {
+        await plugins.beforeHook("human.outbound.before", presentation);
+      } finally {
+        this.humanOutboundBeforeActive = false;
+      }
+      this.publishBoard(presentation, plugins);
+    })();
+  }
+
+  private boardPublicationChanged(): boolean {
     const board = this.boardView();
     const currentFooter = this.stateStore.getState("footer");
-    const footerWithoutBoard = (currentFooter.text ?? "").replace(
-      /  board:\d+(?=  cwd:)/,
-      "",
+    return (
+      this.stateStore.getState("sidecar") !== board.sidecar ||
+      currentFooter.toast !== this.toast ||
+      currentFooter.text !== this.boardFooterText(currentFooter.text, board)
     );
-    const footer =
-      board.items.length > 0
-        ? footerWithoutBoard.replace(
-          /  cwd:/,
-          `  board:${board.items.length}  cwd:`,
-        )
-        : footerWithoutBoard;
+  }
+
+  private publishBoard(
+    presentation = this.newHumanPresentation("board"),
+    plugins = this.plugins,
+  ): void {
+    const board = this.boardView();
+    const currentFooter = this.stateStore.getState("footer");
+    const footer = this.boardFooterText(currentFooter.text, board);
+    const changed =
+      this.stateStore.getState("sidecar") !== board.sidecar ||
+      currentFooter.toast !== this.toast ||
+      currentFooter.text !== footer;
+    if (!changed) return;
     this.stateStore.commit({
       sidecar: board.sidecar,
       ...(currentFooter.toast === this.toast && currentFooter.text === footer
         ? {}
         : { footer: { toast: this.toast, text: footer } }),
     });
+    plugins.afterHook("human.outbound.after", presentation);
+  }
+
+  private boardFooterText(
+    current: string | undefined,
+    board: BoardViewProjection,
+  ): string {
+    const footerWithoutBoard = (current ?? "").replace(
+      /  board:\d+(?=  cwd:)/,
+      "",
+    );
+    return (
+      board.items.length > 0
+        ? footerWithoutBoard.replace(
+          /  cwd:/,
+          `  board:${board.items.length}  cwd:`,
+        )
+        : footerWithoutBoard
+    );
   }
 
   private completionsChanged(invalidateMentions = true): void {
