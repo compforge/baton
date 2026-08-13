@@ -119,7 +119,7 @@ describe("Baton Resource index", () => {
       pluginId: "example/router",
       version: "1.0.0",
       async activate(context) {
-        context.registerController<
+        context.controllers.register<
           Record<string, never>,
           { userText?: string }
         >({
@@ -128,7 +128,7 @@ describe("Baton Resource index", () => {
             expect(Object.isFrozen(ctx)).toBe(true);
             expect(ctx.snapshot.session.batonSessionId).toBe(session.id);
             reconciled.push(resource.metadata.name);
-            await ctx.draft({
+            await ctx.verbs.draft({
               title: `Route ${resource.metadata.name}`,
               prompt: `Route: ${resource.status.userText}`,
               timeoutMs: 20,
@@ -207,7 +207,7 @@ describe("Baton Resource index", () => {
         pluginId: "example/router",
         version: "1.0.0",
         async activate(context) {
-          context.registerController<
+          context.controllers.register<
             Record<string, never>,
             { userText?: string }
           >({
@@ -258,7 +258,7 @@ describe("Baton Resource index", () => {
         pluginId: "example/router",
         version: "1.0.0",
         async activate(context) {
-          context.registerController({
+          context.controllers.register({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             sources: [{
               type: "resource",
@@ -301,7 +301,7 @@ describe("Baton Resource index", () => {
         pluginId: "example/router",
         version: "1.0.0",
         async activate(context) {
-          context.registerController({
+          context.controllers.register({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {
                 runs += 1;
@@ -340,7 +340,7 @@ describe("Baton Resource index", () => {
         pluginId: "example/router",
         version: "1.0.0",
         async activate(context) {
-          context.registerController({
+          context.controllers.register({
             resourceType: BATON_TURN_RESOURCE_TYPE,
             async reconcile() {
                 runs += 1;

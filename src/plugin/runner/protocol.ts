@@ -2,6 +2,7 @@ import type {
   PluginDataDirectories,
   PluginInstance,
   PluginSessionContext,
+  HookStage,
   Resource,
   ResourceListOptions,
   ResourceOwnerReference,
@@ -29,11 +30,19 @@ export interface CommandRegistration {
   readonly description: string;
 }
 
-export interface ContextProviderRegistration {
-  readonly kind: "context-provider";
-  readonly providerKind: string;
+export interface MentionRegistration {
+  readonly kind: "mention";
+  readonly namespace: string;
   readonly searchHandlerId: string;
-  readonly provideHandlerId: string;
+  readonly resolveHandlerId: string;
+}
+
+export interface HookRegistration {
+  readonly kind: "hook";
+  readonly hookId: string;
+  readonly stage: HookStage;
+  readonly timeoutMs?: number;
+  readonly handlerId: string;
 }
 
 export interface ResourceSourceRegistration {
@@ -73,7 +82,8 @@ export interface ControllerRegistration {
 
 export type PluginRegistration =
   | CommandRegistration
-  | ContextProviderRegistration
+  | MentionRegistration
+  | HookRegistration
   | ControllerRegistration;
 
 export interface ActivationResult {

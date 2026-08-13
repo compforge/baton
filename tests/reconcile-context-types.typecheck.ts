@@ -10,7 +10,7 @@ type Expect<TValue extends true> = TValue;
 
 declare const context: ReconcileContext;
 
-const closedChoice = context.ask({
+const closedChoice = context.verbs.ask({
   timeoutMs: 1_000,
   title: "Execution",
   prompt: "How should this run?",
@@ -23,7 +23,7 @@ type ClosedChoiceResult = Expect<
   Equal<Awaited<typeof closedChoice>, AskResult<"run" | "edit">>
 >;
 
-const choiceOrText = context.ask({
+const choiceOrText = context.verbs.ask({
   timeoutMs: 1_000,
   title: "Execution",
   prompt: "How should this run?",
@@ -37,7 +37,7 @@ type ChoiceOrTextResult = Expect<
   Equal<Awaited<typeof choiceOrText>, AskResult<string>>
 >;
 
-const freeText = context.ask({
+const freeText = context.verbs.ask({
   timeoutMs: 1_000,
   title: "Reason",
   prompt: "Why?",
@@ -48,7 +48,7 @@ type FreeTextResult = Expect<
 >;
 
 // @ts-expect-error A question without choices must explicitly opt into free text.
-context.ask({ timeoutMs: 1_000, title: "Reason", prompt: "Why?" });
+context.verbs.ask({ timeoutMs: 1_000, title: "Reason", prompt: "Why?" });
 
 void (0 as unknown as ClosedChoiceResult);
 void (0 as unknown as ChoiceOrTextResult);

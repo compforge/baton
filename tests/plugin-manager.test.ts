@@ -125,7 +125,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
-        const result = await ctx.ask({
+        const result = await ctx.verbs.ask({
           timeoutMs: 1_000,
           title: "Associate pull request",
           prompt: "Choose a requirement",
@@ -199,7 +199,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
-        const result = await ctx.ask({
+        const result = await ctx.verbs.ask({
           timeoutMs: 30,
           title: "Associate pull request",
           prompt: "Choose a requirement",
@@ -241,7 +241,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
-        const result = await ctx.ask({
+        const result = await ctx.verbs.ask({
           title: "Approve",
           prompt: "Continue?",
           timeoutMs: 60_000,
@@ -304,7 +304,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
-        const result = await ctx.harness({
+        const result = await ctx.verbs.harness({
           title: "Implement",
           prompt: "Implement run_1.",
           timeoutMs: 1_000,
@@ -435,7 +435,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
-        await ctx.draft({
+        await ctx.verbs.draft({
           title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
           timeoutMs: 1_000,
@@ -553,7 +553,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
-        const result = await ctx.harness({
+        const result = await ctx.verbs.harness({
           title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
           timeoutMs: 1_000,
@@ -641,7 +641,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx) {
-        const result = await ctx.harness({
+        const result = await ctx.verbs.harness({
           title: "Implement",
           prompt: "Implement run_1.",
           timeoutMs: 1_000,
@@ -702,7 +702,7 @@ describe("plugin Manager", () => {
       store: resources,
       resourceType: resourceType("Requirement"),
       async reconcile(ctx, resource) {
-        const result = await ctx.draft({
+        const result = await ctx.verbs.draft({
           title: "Implement",
           prompt: `Implement ${resource.metadata.name}.`,
           timeoutMs: 1_000,

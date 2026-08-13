@@ -10,7 +10,7 @@ Public, host-independent authoring contract for Baton plugins.
 import {
   type ConditionedStatus,
   type Resource as ExampleResource,
-  type PluginActivationContext,
+  type PluginContext,
   type PluginPackage,
 } from "@compforge/baton-plugin";
 
@@ -37,13 +37,13 @@ type Example = ExampleResource<{ title: string }, ExampleStatus>;
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
-  async activate(context: PluginActivationContext) {
+  async activate(context: PluginContext) {
     context.logger.info("Example plugin activated", {
       component: "activation",
       attributes: { resourceTypes: [EXAMPLE_RESOURCE.kind] },
     });
     context.toast.show({ text: "Example plugin ready", tone: "success" });
-    context.registerCommand({
+    context.commands.register({
       commandId: "examples",
       name: "examples",
       description: "List examples",
@@ -60,8 +60,8 @@ const plugin: PluginPackage = {
         };
       },
     });
-    context.registerContextProvider({
-      kind: "example",
+    context.mentions.register({
+      namespace: "example",
       async search(query) {
         const resources = await context.resources.list<
           { title: string },
@@ -74,10 +74,10 @@ const plugin: PluginPackage = {
           .map((resource) => ({
             id: resource.metadata.name,
             label: resource.spec.title,
-            detail: resource.status.phase,
+            description: resource.status.phase,
           }));
       },
-      async provide(id, { maxChars }) {
+      async resolve(id, { maxChars }) {
         const resource = await context.resources.get<
           { title: string },
           ExampleStatus
@@ -85,7 +85,7 @@ const plugin: PluginPackage = {
         return `Example: ${resource.spec.title}`.slice(0, maxChars);
       },
     });
-    context.registerController({
+    context.controllers.register({
       resourceType: EXAMPLE_RESOURCE,
       sources: [{
         type: "cron",
@@ -142,12 +142,39 @@ for troubleshooting context. Never include secrets or use diagnostics as
 Resource state. Keep lifecycle and aggregate results at `info`, entity details
 at `debug`, and deduplicate repeated polling output.
 
-`registerContextProvider` exposes searchable, read-only context that a user can
-explicitly add to one Harness turn with `@`. `kind` is local to the Package;
-Baton qualifies it as `<pluginName>@<kind>`, groups picker candidates by that
+`context.mentions.register` exposes searchable, read-only context that a user can
+explicitly add to one Harness turn with `@`. `namespace` is local to the Package;
+Baton qualifies it as `<pluginName>@<namespace>`, groups picker candidates by that
 identity, and removes the registration with the Plugin Binding. Keep `search`
-local and side-effect free; `provide` runs only after the user selects a
+local and side-effect free; `resolve` runs only after the user selects a
 reference and submits the turn.
+
+`context.hooks.register` subscribes a Plugin to Core coordination boundaries:
+
+```ts
+context.hooks.register({
+  hookId: "observe-human-input",
+  stage: "human.inbound.before",
+  async run(hook) {
+    if (hook.subject.kind !== "prompt") return;
+    const decision = await hook.verbs.confirm({
+      title: "Autopilot",
+      prompt: `Inspect ${hook.subject.intentId}?`,
+      timeoutMs: 30_000,
+    });
+    // The Hook itself returns no decision or replacement payload.
+    // Any effect is requested through hook.verbs.
+    void decision;
+  },
+});
+```
+
+The eight stages are the Cartesian product of boundary (`human` or `harness`),
+direction (`inbound` or `outbound`), and phase (`before` or `after`). A `before`
+notification waits for every matching Hook concurrently; failure or timeout is
+logged and fails open. An `after` notification is best-effort and non-blocking,
+with a bounded host queue. `human.outbound.after` means the presentation state
+was accepted by the UI store, not that a person actually saw it.
 
 Controller Sources have two narrow roles:
 
@@ -238,7 +265,7 @@ const repositories: EventHandler = {
   },
 };
 
-registerController({
+context.controllers.register({
   resourceType: "Repository",
   watches: [{ resourceType: "Workspace", handler: repositories }],
   async reconcile(_ctx, repository) {
@@ -256,7 +283,7 @@ A Controller receives a `ReconcileContext`, reads current facts from
 `ctx.snapshot`, and can await a typed user decision directly:
 
 ```ts
-const decision = await ctx.ask({
+const decision = await ctx.verbs.ask({
   title: "Associate pull request",
   prompt: "Which requirement should own this pull request?",
   timeoutMs: 10 * 60_000,
@@ -299,7 +326,7 @@ type VerbResult<T> =
 deliberate negative answer, such as declining a confirmation, is a successful
 business value. The Plugin decides how each non-success outcome degrades.
 
-`ReconcileContext` methods are typed Core verbs rather than generic messages.
+`ReconcileContext.verbs` contains typed Core verbs rather than generic messages.
 Every verb first materializes a Core-owned Interaction. `draft` continues only
 after its suggested input is submitted; `harness` continues only after its
 mandatory gate is approved. A host policy may auto-approve that gate, but Baton
@@ -321,7 +348,7 @@ not implicitly dismiss an Interaction. If the Runner or Core crashes, the
 in-memory continuation is not replayed and its unfinished verb becomes
 `failure`.
 
-A Controller uses `ctx.draft` to let the user edit a prompt, or `ctx.harness`
+A Controller uses `ctx.verbs.draft` to let the user edit a prompt, or `ctx.verbs.harness`
 to request a driven Turn with a ready prompt. Both pass through Interaction;
 only an approved/submitted result creates the HarnessInvocation. The Plugin
 explicitly declares the Lane for execution:
@@ -341,7 +368,7 @@ An omitted `harness.harnessTargetId` is resolved immediately because direct
 execution has no editing phase.
 
 ```ts
-const execution = await ctx.harness({
+const execution = await ctx.verbs.harness({
   title: "Implement",
   prompt: "Implement the example and run its focused tests.",
   timeoutMs: 30 * 60_000,

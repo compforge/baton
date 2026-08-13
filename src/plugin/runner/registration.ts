@@ -7,12 +7,14 @@ import {
 import {
   reconcileScope,
   reconcileSnapshot,
+  hookScope,
 } from "../verb.ts";
 import type { PluginRunnerClient } from "./client.ts";
 import type {
   CommandRegistration,
-  ContextProviderRegistration,
   ControllerRegistration,
+  HookRegistration,
+  MentionRegistration,
   PluginRegistration,
 } from "./protocol.ts";
 
@@ -26,8 +28,12 @@ export function installRegistration(
     installCommand(binding, runner, registration);
     return;
   }
-  if (registration.kind === "context-provider") {
-    installContextProvider(binding, runner, registration);
+  if (registration.kind === "mention") {
+    installMention(binding, runner, registration);
+    return;
+  }
+  if (registration.kind === "hook") {
+    installHook(binding, runner, registration);
     return;
   }
   installController(binding, runner, registration);
@@ -38,7 +44,7 @@ function installCommand(
   runner: PluginRunnerClient,
   registration: CommandRegistration,
 ): void {
-  binding.registerCommand({
+  binding.commands.register({
     commandId: registration.commandId,
     name: registration.name,
     description: registration.description,
@@ -50,23 +56,45 @@ function installCommand(
   });
 }
 
-function installContextProvider(
+function installMention(
   binding: PluginBinding,
   runner: PluginRunnerClient,
-  registration: ContextProviderRegistration,
+  registration: MentionRegistration,
 ): void {
-  binding.registerContextProvider({
-    kind: registration.providerKind,
+  binding.mentions.register({
+    namespace: registration.namespace,
     search: async (query) =>
       await runner.invoke(
         registration.searchHandlerId,
         query,
       ),
-    provide: async (id, options) =>
+    resolve: async (id, options) =>
       await runner.invoke<string | undefined>(
-        registration.provideHandlerId,
+        registration.resolveHandlerId,
         id,
         options,
+      ),
+  });
+}
+
+function installHook(
+  binding: PluginBinding,
+  runner: PluginRunnerClient,
+  registration: HookRegistration,
+): void {
+  binding.hooks.register({
+    hookId: registration.hookId,
+    stage: registration.stage,
+    ...(registration.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: registration.timeoutMs }),
+    run: async (context) =>
+      await runner.invoke(
+        registration.handlerId,
+        context.stage,
+        context.subject,
+        context.snapshot,
+        hookScope(context),
       ),
   });
 }
@@ -105,7 +133,7 @@ function installController(
         await runner.invoke(watch.deleteHandlerId, event),
     },
   }));
-  binding.registerController({
+  binding.controllers.register({
     resourceType: registration.resourceType,
     sources,
     watches,

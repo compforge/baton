@@ -1,14 +1,14 @@
-import type { ContextProvider } from "@compforge/baton-plugin";
+import type { Mention } from "@compforge/baton-plugin";
 
 const LOCAL_KIND = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const REFERENCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const REFERENCE_PATTERN =
   /@([A-Za-z0-9][A-Za-z0-9._-]*):([A-Za-z0-9][A-Za-z0-9._-]*)/g;
 
-interface RegisteredProvider {
-  readonly kind: string;
+interface RegisteredMention {
+  readonly namespace: string;
   readonly referencePrefix: string;
-  readonly provider: ContextProvider;
+  readonly mention: Mention;
 }
 
 function assertLocalKind(name: string, value: string): void {
@@ -22,7 +22,7 @@ function assertLocalKind(name: string, value: string): void {
 function assertReferenceId(kind: string, value: string): void {
   if (!REFERENCE_ID.test(value)) {
     throw new Error(
-      `ContextProvider ${kind} reference id must contain only letters, digits, dot, underscore, or hyphen`,
+      `Mention ${kind} reference id must contain only letters, digits, dot, underscore, or hyphen`,
     );
   }
 }
@@ -34,47 +34,49 @@ function bounded(text: string, maxChars: number): string {
 }
 
 /**
- * Shared registry for Baton-owned and Plugin-provided explicit context.
- * The caller's namespace scopes kind identity; providers never construct or
+ * Shared registry for Baton-owned and Plugin-provided explicit mentions.
+ * The caller's namespace scopes identity; mentions never construct or
  * parse the stable mention token themselves.
  */
-export class ContextProviderRegistry {
-  private readonly providers = new Map<string, RegisteredProvider>();
-  private readonly referencePrefixes = new Map<string, RegisteredProvider>();
+export class MentionRegistry {
+  private readonly mentions = new Map<string, RegisteredMention>();
+  private readonly referencePrefixes = new Map<string, RegisteredMention>();
 
-  registerContextProvider(
-    provider: ContextProvider,
-    namespace?: string,
+  registerMention(
+    mention: Mention,
+    ownerNamespace?: string,
   ): () => void {
-    assertLocalKind("ContextProvider kind", provider.kind);
-    if (namespace) assertLocalKind("ContextProvider namespace", namespace);
-    const kind = namespace ? `${namespace}@${provider.kind}` : provider.kind;
-    if (this.providers.has(kind)) {
-      throw new Error(`ContextProvider already registered: ${kind}`);
+    assertLocalKind("Mention namespace", mention.namespace);
+    if (ownerNamespace) assertLocalKind("Mention owner namespace", ownerNamespace);
+    const namespace = ownerNamespace
+      ? `${ownerNamespace}@${mention.namespace}`
+      : mention.namespace;
+    if (this.mentions.has(namespace)) {
+      throw new Error(`Mention already registered: ${namespace}`);
     }
 
     // Mentions use one leading @. The runtime-only dot encoding keeps Plugin
     // ownership readable without exposing a second @ to chat-tui's trigger.
-    const referencePrefix = kind.replace("@", ".");
+    const referencePrefix = namespace.replace("@", ".");
     if (this.referencePrefixes.has(referencePrefix)) {
       throw new Error(
-        `ContextProvider reference prefix already registered: ${referencePrefix}`,
+        `Mention reference prefix already registered: ${referencePrefix}`,
       );
     }
     const registration = Object.freeze({
-      kind,
+      namespace,
       referencePrefix,
-      provider,
+      mention,
     });
-    this.providers.set(kind, registration);
+    this.mentions.set(namespace, registration);
     this.referencePrefixes.set(referencePrefix, registration);
 
     let active = true;
     return () => {
       if (!active) return;
       active = false;
-      if (this.providers.get(kind) === registration) {
-        this.providers.delete(kind);
+      if (this.mentions.get(namespace) === registration) {
+        this.mentions.delete(namespace);
       }
       if (this.referencePrefixes.get(referencePrefix) === registration) {
         this.referencePrefixes.delete(referencePrefix);
@@ -94,19 +96,19 @@ export class ContextProviderRegistry {
       readonly label: string;
       readonly detail: string;
     }> = [];
-    for (const registration of this.providers.values()) {
-      for (const candidate of await registration.provider.search(query)) {
-        assertReferenceId(registration.kind, candidate.id);
+    for (const registration of this.mentions.values()) {
+      for (const candidate of await registration.mention.search(query)) {
+        assertReferenceId(registration.namespace, candidate.id);
         if (!candidate.label.trim()) {
           throw new Error(
-            `ContextProvider ${registration.kind} candidate label must not be empty`,
+            `Mention ${registration.namespace} candidate label must not be empty`,
           );
         }
         candidates.push({
-          group: registration.kind,
+          group: registration.namespace,
           insert: `@${registration.referencePrefix}:${candidate.id}`,
           label: candidate.label,
-          detail: candidate.detail ?? "",
+          detail: candidate.description ?? "",
         });
       }
     }
@@ -120,23 +122,23 @@ export class ContextProviderRegistry {
     return false;
   }
 
-  async provide(
+  async resolve(
     input: string,
     maxChars: number,
   ): Promise<readonly string[]> {
     if (!Number.isSafeInteger(maxChars) || maxChars < 1) {
-      throw new Error("ContextProvider maxChars must be a positive integer");
+      throw new Error("Mention maxChars must be a positive integer");
     }
     const references = new Map<string, {
-      readonly provider: RegisteredProvider;
+      readonly mention: RegisteredMention;
       readonly id: string;
     }>();
     for (const match of input.matchAll(REFERENCE_PATTERN)) {
       const registration = this.referencePrefixes.get(match[1] as string);
       if (!registration) continue;
       const id = match[2] as string;
-      references.set(`${registration.kind}:${id}`, {
-        provider: registration,
+      references.set(`${registration.namespace}:${id}`, {
+        mention: registration,
         id,
       });
     }
@@ -147,8 +149,8 @@ export class ContextProviderRegistry {
       Math.floor(maxChars / references.size),
     );
     const contexts = await Promise.all(
-      [...references.values()].map(async ({ provider, id }) => {
-        const text = await provider.provider.provide(id, {
+      [...references.values()].map(async ({ mention, id }) => {
+        const text = await mention.mention.resolve(id, {
           maxChars: perReferenceBudget,
         });
         if (!text?.trim()) return undefined;

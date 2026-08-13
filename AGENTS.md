@@ -13,8 +13,9 @@ baton core 位于人、Harness 和 Baton Plugin 三类参与者之间：
 2. **Harness** 提供智能执行能力，Adapter 负责协议与事件归一；devloop 等 Harness Plugin 只约束
    Harness 内部的开发小闭环，不成为 Baton Plugin 的私有执行接口。
 3. **Baton Plugin** 拥有长期领域 loop，以 Resource 的 `spec/status` 表达期望与观测，由
-   Controller reconcile。Plugin 通过 `ReconcileContext` 请求人的决定、准备 draft 或发起
-   Harness Turn；Harness 只是后续执行端，Plugin 不能绕过 Baton 直接调用。
+   Controller reconcile。Plugin 通过 `ReconcileContext.verbs` 请求人的决定、准备 draft 或发起
+   Harness Turn，也可用 Hook 观察 Core 协调边界；Harness 只是后续执行端，Plugin 不能绕过 Baton
+   直接调用。
 
 Core 只接受 typed intent/verb，并将其物化为 Input、Interaction、HarnessInvocation、Event 等
 有身份和状态机的持久对象；它拥有路由、权限、调度、取消、恢复与 Projection，但不提供任意
@@ -23,7 +24,7 @@ payload 的 publish/subscribe，也不理解 Requirement、Deployment、Review �
 稳定内核已经支持同一 BatonSession 内的 Harness 接力，以及主 Lane 与
 异步支线 Lane 并发；Plugin host 已支持 Marketplace、
 Command、Resource/Controller、Resource/cron Source 与 `requeueAfter`、Board presentation、
-Interaction、reconcile 控制能力和 ContextProvider；三方 Package 按 Binding 在独立
+Interaction、reconcile 控制能力、Mention 与 Hook；三方 Package 按 Binding 在独立
 Runner 进程执行。
 同一输入向多 Harness 批量 fan-out 后策展结果，以及跨 BatonSession 的主线 /
 草稿收录仍是后续方向，不能用 Plugin 私下持有 Harness 进程或 SDK 句柄来提前实现。

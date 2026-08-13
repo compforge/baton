@@ -1,7 +1,8 @@
 import type { Controller } from "./reconcile.ts";
 import type { ResourceClient } from "./resource.ts";
 import type { Command } from "./command.ts";
-import type { ContextProvider } from "./context.ts";
+import type { Hook, HookStage } from "./hook.ts";
+import type { Mention } from "./mention.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
@@ -81,7 +82,23 @@ export interface PluginLogger {
   error(message: string, context?: PluginLogContext): void;
 }
 
-export interface PluginActivationContext {
+export interface PluginRegistry<T> {
+  register(value: T): void;
+}
+
+export interface PluginControllerRegistry {
+  register<TSpec, TStatus>(controller: Controller<TSpec, TStatus>): void;
+}
+
+export interface PluginHookRegistry {
+  register<S extends HookStage>(hook: Hook<S>): void;
+}
+
+export interface PluginLifecycle {
+  onClose(cleanup: () => Promise<void> | void): void;
+}
+
+export interface PluginContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
   readonly dataDirs: PluginDataDirectories;
@@ -90,16 +107,15 @@ export interface PluginActivationContext {
   readonly toast: ToastSink;
   /** Session-scoped structured diagnostics. Never log secrets or use logs as domain state. */
   readonly logger: PluginLogger;
-  registerCommand(command: Command): void;
-  registerContextProvider(provider: ContextProvider): void;
-  registerController<TSpec, TStatus>(
-    controller: Controller<TSpec, TStatus>,
-  ): void;
-  onClose(cleanup: () => Promise<void> | void): void;
+  readonly commands: PluginRegistry<Command>;
+  readonly mentions: PluginRegistry<Mention>;
+  readonly controllers: PluginControllerRegistry;
+  readonly hooks: PluginHookRegistry;
+  readonly lifecycle: PluginLifecycle;
 }
 
 export interface PluginPackage {
   readonly pluginId: string;
   readonly version: string;
-  activate(context: PluginActivationContext): Promise<void>;
+  activate(context: PluginContext): Promise<void>;
 }

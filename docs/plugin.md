@@ -50,7 +50,7 @@ Requirement、Deployment、Evaluation 等领域模型与 Connector。外部系�
 PluginPackage（不可变交付物）
   └── PluginInstance（用户配置身份）
         └── PluginBinding（当前 BatonSession 的活动绑定）
-              ├── Command / ContextProvider
+              ├── Command / Mention / Hook
               ├── Controller / Source / Watch
               └── Runner process
 ```
@@ -124,11 +124,23 @@ Plugin 对外部系统写入时仍应使用领域自己的幂等键。无法确�
 Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
 让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
 
-## 4. ReconcileContext、Board 与 Context
+## 4. PluginContext、ReconcileContext 与 HookContext
+
+三种 Context 对应三种生命周期，不再把所有能力摊平到同一个激活对象：
+
+| Context | 生命周期 | 稳定内容 |
+|---|---|---|
+| `PluginContext` | 一次 Binding 激活 | Instance、Session、ResourceClient，以及 Command、Mention、Controller、Hook、lifecycle 注册入口 |
+| `ReconcileContext` | 一次 Resource reconcile | 冻结的 `snapshot` 与 `verbs` |
+| `HookContext` | 一次 Hook 通知 | `stage`、类型化 `subject`、冻结的 `snapshot` 与 `verbs` |
+
+`PluginContext` 只用于装配，注册入口按概念分组为 `commands.register`、`mentions.register`、
+`controllers.register`、`hooks.register` 和 `lifecycle.onClose`。`ReconcileContext` 与
+`HookContext` 都只通过 `verbs` 请求 Core 动作；它们不能直接持有 Harness，也不提供通用消息总线。
 
 ### 4.1 Reconcile 作用域能力
 
-Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，其余方法是
+Controller 的第一个参数是 `ReconcileContext`：`snapshot` 提供冻结只读视图，`verbs` 提供
 Plugin-facing typed verbs：
 
 - `ask`：请求一个选项或自由文本答案；
@@ -173,7 +185,25 @@ Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:tru
 边界，不是 Plugin 私有对象、worktree 策略或“前台/后台”标签。`createdFor` 仅记录创建事实，
 不会阻止其它 invocation 继续该 Lane。
 
-### 4.2 Board
+### 4.2 Hook 通知
+
+Hook 让 Core 把 human、Plugin、Harness 协调路径上的事实通知 Plugin。stage 由三个正交维度组成：
+
+| boundary | direction | phase | stages |
+|---|---|---|---|
+| `human` | `inbound` / `outbound` | `before` / `after` | `human.inbound.before/after`、`human.outbound.before/after` |
+| `harness` | `inbound` / `outbound` | `before` / `after` | `harness.inbound.before/after`、`harness.outbound.before/after` |
+
+direction 始终以 Baton Core 为参照：human inbound 是人进入 Core 的 intent，human outbound 是 Core
+向人发布 presentation；harness outbound 是 Core 向 Harness 发送，harness inbound 是 Harness 事件
+进入 Core。Hook 回调返回 `void`，没有 replacement、allow/deny 或控制流返回值；需要副作用时只能调用
+`HookContext.verbs`。因此 Hook 是通知面，Verb 是动作面。
+
+`before` 同一 stage 的回调并发执行，Core 等待全部 settled；单个回调抛错或超时只记录结构化日志，
+不阻断用户输入或 Harness 主链路。`after` 进入有界、best-effort 的异步队列，不延长主链路。
+`human.outbound.after` 只表示 chat-tui state store 已接收 presentation，不代表用户真实看见。
+
+### 4.3 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、
 Resource reference 和身份，再生成面向用户的 Board view。`present` 只读、可重复，不能修改
@@ -183,9 +213,9 @@ Board 是共享协作读模型，但不是 Event、Resource 或外部系统的�
 和 Resource Type 分组排序，每组只展示有限条目，避免一个 Plugin 占满侧栏。持续状态进入
 Resource status/Board；toast 只用于一次操作或状态边沿的短寿命反馈。
 
-### 4.3 Context
+### 4.4 Mention 与 Context
 
-ContextProvider 提供用户通过 `@` 明确选择的只读 Context。`search` 无副作用，`provide` 遵守
+Mention 提供用户通过 `@` 明确选择的只读 Context。`search` 无副作用，`resolve` 遵守
 `maxChars`，不能返回 secret。Binding 关闭时注册整体撤销。
 
 必须区分：
@@ -215,8 +245,8 @@ HarnessInvocation，并控制 reconcile 容量和维护 Board cache。
 
 **Supervisor** 只负责 Runner 子进程的启动、deadline、退出和回收，不理解 Resource 或领域策略。
 
-**Runner** 加载一份 Package，保存 Plugin 回调，通过 IPC 执行 activate、Command、ContextProvider、
-Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton Store、Controller、Harness
+**Runner** 加载一份 Package，保存 Plugin 回调，通过 IPC 执行 activate、Command、Mention、
+Source、Watch、Hook、reconcile、present 和 cleanup。Runner 不直接访问 Baton Store、Controller、Harness
 或 TUI。
 
 隔离粒度选择 Binding，因为它同时是注册撤销、局部连接共享和故障回收的原子边界。同一 Package
@@ -224,7 +254,7 @@ Source、Watch、reconcile、present 和 cleanup。Runner 不直接访问 Baton 
 进程隔离是故障和调度边界，不是安全沙箱：Plugin 仍以当前用户身份访问文件、网络和子进程。
 
 IPC 只传可结构化克隆的数据。激活完成后注册表封口，避免异步偷注册留下半个 Binding。调用
-timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、ContextProvider、Controller、
+timeout、非法信封或进程退出时，Manager 撤销 Binding 的 Command、Mention、Hook、Controller、
 Source 和 Board，并把该 Runner 尚未完成的 verb 以 `failure` 收口。Resource、Interaction、
 HarnessInvocation 和日志保留为事实，但进程内 continuation 不恢复。当前不自动重启失败 Runner，
 因为外部副作用可能已经生效却没有回执。Runner 的一般调用 watchdog 在 verb 等待期间暂停；该段
@@ -240,11 +270,11 @@ import type { PluginPackage, Resource } from "@compforge/baton-plugin";
 
 公共包不导出 Manager、Supervisor、Runner、Store、HarnessAdapter 或 Marketplace。作者必须：
 
-1. 让 activate、Command、Context、Source、Watch、reconcile 和 present 等跨边界入口保持 async；
+1. 让 activate、Command、Mention、Hook、Source、Watch、reconcile 和 present 等跨边界入口保持 async；
 2. 只返回可结构化传输的数据，不返回函数、class instance、stream、socket 或文件句柄；
 3. 为 HTTP、DB、Git 和子进程设置 timeout、并发/连接容量、取消与输出上限；
 4. 不把 module global 当恢复状态，事实进入 Resource、Event Ledger 或外部系统；
-5. Source 和连接响应 abort/onClose，cleanup 能停止订阅和自建进程；
+5. Source 和连接响应 abort，清理通过 `context.lifecycle.onClose` 注册，cleanup 能停止订阅和自建进程；
 6. 日志使用结构化 `context.logger`，不包含 secret，也不代替 Resource status；
 7. 不导入 Baton 私有源码，不解析 Board 展示文本，不直接访问 Harness。
 
@@ -266,7 +296,7 @@ HarnessInvocation 继续使用宿主 API，不能复制到私有 JSON 形成第�
 启动时，Manager 解析 enabled Instance 和不可变 Package entry，为每个活动 Binding 创建 Runner，
 完成 activate 后原子安装注册，再启动 Source、恢复待决 HarnessInvocation/due time 并 initial reconcile。
 
-关闭时先撤销宿主注册，再停止 Source/Runner；Runner 内先 abort Source，再逆序执行 onClose。
+关闭时先撤销宿主注册，再停止 Source/Runner；Runner 内先 abort Source，再逆序执行 lifecycle cleanup。
 禁用、reload 或版本切换不删除持久数据。升级先验证新 Package，关闭旧 Binding 后激活新版本；
 失败时恢复旧 Binding。Resource schema migration 由 Plugin 新版本显式完成，Manager 不猜测。
 

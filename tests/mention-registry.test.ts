@@ -3,14 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { sessionContextProvider } from "../src/context/mention.ts";
-import { ContextProviderRegistry } from "../src/context/registry.ts";
+import { sessionMention } from "../src/context/mention.ts";
+import { MentionRegistry } from "../src/context/registry.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
 
 function sessionStore(): SessionStore {
-  const root = mkdtempSync(join(tmpdir(), "baton-context-provider-"));
+  const root = mkdtempSync(join(tmpdir(), "baton-mention-registry-"));
   roots.push(root);
   return new SessionStore(root);
 }
@@ -21,22 +21,22 @@ afterEach(() => {
   }
 });
 
-describe("ContextProviderRegistry", () => {
-  test("registers built-in providers with a bare kind", async () => {
+describe("MentionRegistry", () => {
+  test("registers built-in mentions with a bare namespace", async () => {
     const store = sessionStore();
     const current = store.createSession({ cwd: "/tmp", title: "current" });
     const referenced = store.createSession({
       cwd: "/tmp",
       title: "需求设计",
     });
-    const context = new ContextProviderRegistry();
-    context.registerContextProvider(
-      sessionContextProvider(store, {
+    const mentions = new MentionRegistry();
+    mentions.registerMention(
+      sessionMention(store, {
         excludeSessionId: current.id,
       }),
     );
 
-    const candidates = await context.candidates("需求");
+    const candidates = await mentions.candidates("需求");
     expect(candidates).toEqual([{
       group: "session",
       insert: `@session:${referenced.id}`,
@@ -44,47 +44,47 @@ describe("ContextProviderRegistry", () => {
       detail: "需求设计",
     }]);
     await expect(
-      context.provide(`参考 ${candidates[0]!.insert}`, 1_024),
+      mentions.resolve(`参考 ${candidates[0]!.insert}`, 1_024),
     ).resolves.toEqual([
       expect.stringContaining("Session summary: 需求设计"),
     ]);
   });
 
-  test("qualifies Plugin kinds and removes only their registration", async () => {
-    const context = new ContextProviderRegistry();
-    const unregister = context.registerContextProvider({
-      kind: "requirement",
+  test("qualifies Plugin namespaces and removes only their registration", async () => {
+    const mentions = new MentionRegistry();
+    const unregister = mentions.registerMention({
+      namespace: "requirement",
       async search(query) {
         if (query && !query.toLowerCase().includes("ship")) return [];
         return [{
           id: "req_1",
-          label: "Ship ContextProvider",
-          detail: "Story",
+          label: "Ship Mention",
+          description: "Story",
         }];
       },
-      async provide(id) {
-        return id === "req_1" ? "Requirement: Ship ContextProvider" : undefined;
+      async resolve(id) {
+        return id === "req_1" ? "Requirement: Ship Mention" : undefined;
       },
     }, "reqloop");
 
-    await expect(context.candidates("ship")).resolves.toEqual([{
+    await expect(mentions.candidates("ship")).resolves.toEqual([{
       group: "reqloop@requirement",
       insert: "@reqloop.requirement:req_1",
-      label: "Ship ContextProvider",
+      label: "Ship Mention",
       detail: "Story",
     }]);
     await expect(
-      context.provide("处理 @reqloop.requirement:req_1", 1_024),
-    ).resolves.toEqual(["Requirement: Ship ContextProvider"]);
+      mentions.resolve("处理 @reqloop.requirement:req_1", 1_024),
+    ).resolves.toEqual(["Requirement: Ship Mention"]);
     expect(() =>
-      context.registerContextProvider({
-        kind: "requirement",
+      mentions.registerMention({
+        namespace: "requirement",
         search: async () => [],
-        provide: async () => undefined,
+        resolve: async () => undefined,
       }, "reqloop")
-    ).toThrow("ContextProvider already registered: reqloop@requirement");
+    ).toThrow("Mention already registered: reqloop@requirement");
 
     unregister();
-    await expect(context.candidates("ship")).resolves.toEqual([]);
+    await expect(mentions.candidates("ship")).resolves.toEqual([]);
   });
 });

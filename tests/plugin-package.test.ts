@@ -13,7 +13,7 @@ import { emptyReconcileSnapshot } from "../src/plugin/reconcile-snapshot.ts";
 import { Manager, type PluginToast } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import type {
-  PluginActivationContext,
+  PluginContext,
   PluginPackage,
   Source,
   SourceContext,
@@ -76,7 +76,7 @@ function key(pluginInstanceId: string, resourceId: string) {
 
 function reqloopPackage(
   activate: (
-    context: PluginActivationContext,
+    context: PluginContext,
   ) => Promise<void> | void,
   version = "1.2.0",
 ): PluginPackage {
@@ -113,7 +113,7 @@ describe("Plugin Package lifecycle", () => {
       pluginId: "qiankun/reqloop",
       packageVersion: "1.2.0",
     });
-    let context: PluginActivationContext | undefined;
+    let context: PluginContext | undefined;
     const manager = new Manager({
       instances,
       packages: [
@@ -161,7 +161,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
-  test("scopes ContextProviders by Plugin name and removes them on deactivate", async () => {
+  test("scopes Mentions by Plugin name and removes them on deactivate", async () => {
     const root = testRoot();
     const { instances } = stores(root);
     instances.create({
@@ -173,15 +173,15 @@ describe("Plugin Package lifecycle", () => {
       instances,
       packages: [
         reqloopPackage((context) => {
-          context.registerContextProvider({
-            kind: "requirement",
+          context.mentions.register({
+            namespace: "requirement",
             async search() {
               return [{
                 id: "req_1",
                 label: "Ship it",
               }];
             },
-            async provide(id) {
+            async resolve(id) {
               return id === "req_1" ? "Requirement: Ship it" : undefined;
             },
           });
@@ -190,18 +190,18 @@ describe("Plugin Package lifecycle", () => {
     });
 
     await manager.start();
-    await expect(manager.listContextCandidates("")).resolves.toEqual([{
+    await expect(manager.listMentionCandidates("")).resolves.toEqual([{
       group: "reqloop@requirement",
       insert: "@reqloop.requirement:req_1",
       label: "Ship it",
       detail: "",
     }]);
     await expect(
-      manager.provideContext("@reqloop.requirement:req_1", 1_024),
+      manager.resolveMentions("@reqloop.requirement:req_1", 1_024),
     ).resolves.toEqual(["Requirement: Ship it"]);
 
     await manager.deactivateInstance("reqloop_default");
-    await expect(manager.listContextCandidates("")).resolves.toEqual([]);
+    await expect(manager.listMentionCandidates("")).resolves.toEqual([]);
     await manager.close();
   });
 
@@ -232,7 +232,7 @@ describe("Plugin Package lifecycle", () => {
       instances,
       packages: [
         reqloopPackage((context) => {
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             sources: [new PullRequestSource()],
             async reconcile() {
@@ -265,14 +265,14 @@ describe("Plugin Package lifecycle", () => {
       pluginId: "qiankun/reqloop",
       packageVersion: "1.2.0",
     });
-    let context: PluginActivationContext | undefined;
+    let context: PluginContext | undefined;
     const phases: string[] = [];
     const manager = new Manager({
       instances,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
-          activation.registerController<
+          activation.controllers.register<
             { requirement: string },
             { phase?: string }
           >({
@@ -324,14 +324,14 @@ describe("Plugin Package lifecycle", () => {
       repositories?: readonly string[];
     }
 
-    let context: PluginActivationContext | undefined;
+    let context: PluginContext | undefined;
     const reconciled: string[] = [];
     const manager = new Manager({
       instances,
       packages: [
         reqloopPackage((activation) => {
           context = activation;
-          activation.registerController({
+          activation.controllers.register({
             resourceType: repositoryType,
             watches: [{
               resourceType: workspaceType,
@@ -346,7 +346,7 @@ describe("Plugin Package lifecycle", () => {
               reconciled.push(repository.metadata.name);
             },
           });
-          activation.registerController({
+          activation.controllers.register({
             resourceType: workspaceType,
             async reconcile() {},
           });
@@ -400,7 +400,7 @@ describe("Plugin Package lifecycle", () => {
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
-    let context: PluginActivationContext | undefined;
+    let context: PluginContext | undefined;
     let boardChanges = 0;
     let presentations = 0;
     const manager = new Manager({
@@ -408,7 +408,7 @@ describe("Plugin Package lifecycle", () => {
       packages: [
         reqloopPackage((activation) => {
           context = activation;
-          activation.registerController<
+          activation.controllers.register<
             { requirement: string },
             { phase: string }
           >({
@@ -494,7 +494,7 @@ describe("Plugin Package lifecycle", () => {
       spec: { requirement: "do not touch" },
       status: { phase: "pending" },
     });
-    let context: PluginActivationContext | undefined;
+    let context: PluginContext | undefined;
     const toasts: PluginToast[] = [];
     const manager = new Manager({
       instances,
@@ -711,7 +711,7 @@ describe("Plugin Package lifecycle", () => {
       packages: [
         reqloopPackage((context) => {
           activated.push(context.instance.pluginInstanceId);
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile(_ctx, resource) {
                 reconciled.push(resource.metadata.namespace);
@@ -748,7 +748,7 @@ describe("Plugin Package lifecycle", () => {
       pluginId,
       version: "1.0.0",
       async activate(context) {
-        context.registerController({
+        context.controllers.register({
           resourceType: resourceType("SharedRun"),
           async reconcile() {},
         });
@@ -782,14 +782,14 @@ describe("Plugin Package lifecycle", () => {
       instances,
       packages: [
         reqloopPackage((context) => {
-          context.onClose(() => {
+          context.lifecycle.onClose(() => {
             closed.push("connector");
           });
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
-          context.onClose(() => {
+          context.lifecycle.onClose(() => {
             closed.push("subscription");
           });
         }),
@@ -821,10 +821,10 @@ describe("Plugin Package lifecycle", () => {
       instances,
       packages: [
         reqloopPackage((context) => {
-          context.onClose(() => {
+          context.lifecycle.onClose(() => {
             closed.push("connector");
           });
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
@@ -880,7 +880,7 @@ describe("Plugin Package lifecycle", () => {
       pluginId: "qiankun/reqloop",
       packageVersion: "1.2.0",
     });
-    let captured: PluginActivationContext | undefined;
+    let captured: PluginContext | undefined;
     const plugin = reqloopPackage((context) => {
       captured = context;
     });
@@ -891,7 +891,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.activateInstance("reqloop_default");
 
     expect(() =>
-      captured?.registerController({
+      captured?.controllers.register({
         resourceType: resourceType("LateResource"),
         async reconcile() {},
       }),
@@ -919,10 +919,10 @@ describe("Plugin Package lifecycle", () => {
       instances,
       packages: [
         reqloopPackage((context) => {
-          context.onClose(() => {
+          context.lifecycle.onClose(() => {
             cleanups += 1;
           });
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
@@ -978,7 +978,7 @@ describe("Plugin Package lifecycle", () => {
           if (context.instance.pluginInstanceId === "broken") {
             throw new Error("connector config is invalid");
           }
-          context.registerController({
+          context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile() {},
           });
@@ -1032,7 +1032,7 @@ describe("Plugin Package lifecycle", () => {
     const loadPackage = async () =>
       reqloopPackage((context) => {
         activations += 1;
-        context.onClose(() => {
+        context.lifecycle.onClose(() => {
           cleanups += 1;
         });
       });

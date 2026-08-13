@@ -2,7 +2,10 @@ import type {
   BoardPresentation,
   BoardItemTone,
   Command,
-  ContextProvider,
+  Hook,
+  HookStage,
+  HookSubjectMap,
+  Mention,
   Controller,
   ControllerSource,
   CronSource,
@@ -14,7 +17,7 @@ import type {
   PluginCommandInput,
   PluginCommandPickerSearch,
   PluginCommandResult,
-  PluginActivationContext,
+  PluginContext,
   PluginDataDirectories,
   PluginLogContext,
   PluginLogger,
@@ -42,7 +45,10 @@ export type {
   BoardPresentation,
   BoardItemTone,
   Command,
-  ContextProvider,
+  Hook,
+  HookStage,
+  HookSubjectMap,
+  Mention,
   Controller,
   ControllerSource,
   CronSource,
@@ -54,7 +60,7 @@ export type {
   PluginCommandInput,
   PluginCommandPickerSearch,
   PluginCommandResult,
-  PluginActivationContext,
+  PluginContext,
   PluginDataDirectories,
   PluginLogContext,
   PluginLogger,
@@ -132,13 +138,18 @@ type CommandRegistrar = (
   command: Command,
 ) => () => void;
 
-type ContextProviderRegistrar = (
-  provider: ContextProvider,
+type MentionRegistrar = (
+  mention: Mention,
+) => () => void;
+
+type HookRegistrar = (
+  hook: Hook,
 ) => () => void;
 
 interface PluginRegistrars {
   registerCommand: CommandRegistrar;
-  registerContextProvider: ContextProviderRegistrar;
+  registerMention: MentionRegistrar;
+  registerHook: HookRegistrar;
   registerController: ResourceRegistrar;
   showToast(message: ToastMessage): void;
   writeLog(record: PluginLogRecord): void;
@@ -169,13 +180,18 @@ export function validatePluginPackage(plugin: PluginPackage): void {
 /**
  * PluginInstance 在当前进程中的一次临时绑定。所有注册按逆序关闭，支持激活失败整体回滚。
  */
-export class PluginBinding implements PluginActivationContext {
+export class PluginBinding implements PluginContext {
   readonly instance: PluginInstance;
   readonly session: PluginSessionContext;
   readonly dataDirs: PluginDataDirectories;
   readonly resources: ResourceClient;
   readonly toast: ToastSink;
   readonly logger: PluginLogger;
+  readonly commands: PluginContext["commands"];
+  readonly mentions: PluginContext["mentions"];
+  readonly controllers: PluginContext["controllers"];
+  readonly hooks: PluginContext["hooks"];
+  readonly lifecycle: PluginContext["lifecycle"];
   private readonly registrars: PluginRegistrars;
   private readonly cleanups: Array<() => Promise<void> | void> = [];
   private sealed = false;
@@ -222,33 +238,23 @@ export class PluginBinding implements PluginActivationContext {
       error: (message: string, context?: PluginLogContext) =>
         write("error", message, context),
     });
-  }
-
-  registerController<TSpec, TStatus>(
-    controller: Controller<TSpec, TStatus>,
-  ): void {
-    this.assertRegistering();
-    validateResourceType(controller.resourceType);
-    const close = this.registrars.registerController(controller);
-    this.cleanups.push(close);
-  }
-
-  registerCommand(command: Command): void {
-    this.assertRegistering();
-    const close = this.registrars.registerCommand(command);
-    this.cleanups.push(close);
-  }
-
-  registerContextProvider(provider: ContextProvider): void {
-    this.assertRegistering();
-    const close = this.registrars.registerContextProvider(provider);
-    this.cleanups.push(close);
-  }
-
-  onClose(cleanup: () => Promise<void> | void): void {
-    this.assertRegistering();
-    if (typeof cleanup !== "function") throw new Error("plugin cleanup must be a function");
-    this.cleanups.push(cleanup);
+    this.commands = Object.freeze({
+      register: (command: Command) => this.registerCommand(command),
+    });
+    this.mentions = Object.freeze({
+      register: (mention: Mention) => this.registerMention(mention),
+    });
+    this.controllers = Object.freeze({
+      register: <TSpec, TStatus>(controller: Controller<TSpec, TStatus>) =>
+        this.registerController(controller),
+    });
+    this.hooks = Object.freeze({
+      register: (hook: Hook) => this.registerHook(hook),
+    });
+    this.lifecycle = Object.freeze({
+      onClose: (cleanup: () => Promise<void> | void) =>
+        this.registerCleanup(cleanup),
+    });
   }
 
   completeActivation(): void {
@@ -268,6 +274,33 @@ export class PluginBinding implements PluginActivationContext {
   private assertRegistering(): void {
     if (this.closed) throw new Error("plugin Binding is closed");
     if (this.sealed) throw new Error("plugin Binding activation is complete");
+  }
+
+  private registerController<TSpec, TStatus>(controller: Controller<TSpec, TStatus>): void {
+    this.assertRegistering();
+    validateResourceType(controller.resourceType);
+    this.cleanups.push(this.registrars.registerController(controller));
+  }
+
+  private registerCommand(command: Command): void {
+    this.assertRegistering();
+    this.cleanups.push(this.registrars.registerCommand(command));
+  }
+
+  private registerMention(mention: Mention): void {
+    this.assertRegistering();
+    this.cleanups.push(this.registrars.registerMention(mention));
+  }
+
+  private registerHook(hook: Hook): void {
+    this.assertRegistering();
+    this.cleanups.push(this.registrars.registerHook(hook));
+  }
+
+  private registerCleanup(cleanup: () => Promise<void> | void): void {
+    this.assertRegistering();
+    if (typeof cleanup !== "function") throw new Error("plugin cleanup must be a function");
+    this.cleanups.push(cleanup);
   }
 
   private async closeAll(): Promise<void> {

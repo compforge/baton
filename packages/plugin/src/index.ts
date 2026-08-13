@@ -17,7 +17,23 @@ export type {
   ResourceCondition,
 } from "./condition.ts";
 
-export type { ContextProvider } from "./context.ts";
+export type { Mention } from "./mention.ts";
+
+export type {
+  HarnessDelivery,
+  HarnessEventDraft,
+  HarnessEventRecord,
+  Hook,
+  HookBoundary,
+  HookContext,
+  HookDirection,
+  HookPhase,
+  HookStage,
+  HookSubjectMap,
+  HumanIntent,
+  HumanIntentKind,
+  HumanPresentation,
+} from "./hook.ts";
 
 export type {
   AskChoice,
@@ -35,6 +51,7 @@ export type {
   HarnessInput,
   HarnessResult,
   HarnessValue,
+  PluginVerbs,
   ReconcileContext,
   VerbResult,
 } from "./reconcile-context.ts";
@@ -44,7 +61,9 @@ export {
 } from "./reconcile-context.ts";
 
 export type {
-  PluginActivationContext,
+  PluginContext,
+  PluginControllerRegistry,
+  PluginHookRegistry,
   PluginConfig,
   PluginDataDirectories,
   PluginInstance,
@@ -54,6 +73,8 @@ export type {
   PluginLogLevel,
   PluginLogValue,
   PluginPackage,
+  PluginLifecycle,
+  PluginRegistry,
   PluginSessionContext,
   ToastMessage,
   ToastSink,

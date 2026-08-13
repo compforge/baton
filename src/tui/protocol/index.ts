@@ -26,9 +26,9 @@ import { loadModelPreferences, saveModelPreference } from "../../config/model-pr
 import {
   expandMentions,
   parseMentions,
-  sessionContextProvider,
+  sessionMention,
 } from "../../context/mention.ts";
-import { ContextProviderRegistry } from "../../context/registry.ts";
+import { MentionRegistry } from "../../context/registry.ts";
 import { logError } from "../../logging.ts";
 import {
   textOf,
@@ -339,7 +339,7 @@ export class BatonChatProtocol implements ChatProtocol {
     else this.session.setPreviewIfEmpty(text);
     if (sessionDisplayTitle(this.session.meta) !== previousTitle) this.syncTerminalTitle();
     const legacyReferences = parseMentions(text);
-    const hasProvidedContext = this.plugins.hasContextReference(text);
+    const hasProvidedContext = this.plugins.hasMentionReference(text);
     const contextBudget = legacyReferences.length > 0 && hasProvidedContext
       ? Math.max(1, Math.floor(this.config.mentionBudgetChars / 2))
       : this.config.mentionBudgetChars;
@@ -348,7 +348,7 @@ export class BatonChatProtocol implements ChatProtocol {
       text,
       contextBudget,
     );
-    const provided = await this.plugins.provideContext(
+    const provided = await this.plugins.resolveMentions(
       text,
       contextBudget,
     );
@@ -875,7 +875,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.mentionCandidateQuery = prefix;
     this.mentionCandidateCache = [];
     const revision = ++this.mentionCandidateRevision;
-    void this.plugins.listContextCandidates(prefix)
+    void this.plugins.listMentionCandidates(prefix)
       .then((candidates) => {
         if (
           revision !== this.mentionCandidateRevision ||
@@ -925,9 +925,9 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private createPluginManager(): Manager {
     const settings = new PluginSettingsStore(this.store.rootDir);
-    const context = new ContextProviderRegistry();
-    context.registerContextProvider(
-      sessionContextProvider(this.store, {
+    const mentions = new MentionRegistry();
+    mentions.registerMention(
+      sessionMention(this.store, {
         excludeSessionId: this.session.id,
       }),
     );
@@ -992,7 +992,7 @@ export class BatonChatProtocol implements ChatProtocol {
         this.changed();
       },
       reservedCommandNames: COMMANDS.map((command) => command.name),
-      contextProviders: context,
+      mentions,
       onCommandsChanged: () => {
         this.completionsChanged();
       },

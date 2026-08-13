@@ -158,6 +158,65 @@ describe("Plugin Runner process boundary", () => {
     await manager.close();
   });
 
+  test("routes Hook notifications and verbs across the process boundary", async () => {
+    const { instances, session, entry } = stores();
+    instances.create({
+      pluginInstanceId: "process_default",
+      pluginId: "tests/process-plugin",
+      marketplace: "fixtures",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      session,
+      pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
+      async loadPackageEntry(pluginId, version) {
+        return {
+          pluginId,
+          version,
+          entryUrl: pathToFileURL(entry).href,
+        };
+      },
+    });
+    await manager.start();
+
+    const notification = manager.beforeHook("human.inbound.before", {
+      intentId: "intent_runner_hook",
+      kind: "prompt",
+      text: "ask from hook",
+    });
+    await waitFor(() => session.loadState().interactions.size === 1);
+    await Bun.sleep(300);
+    expect(manager.isInstanceActive("process_default")).toBe(true);
+    const interaction = [...session.loadState().interactions.values()][0]!
+      .interaction;
+    expect(interaction.kind).toBe("question");
+    if (interaction.kind !== "question") throw new Error("expected a question");
+    expect(interaction.questions[0]).toMatchObject({
+      header: "Hook question",
+      question: "Continue from Hook?",
+    });
+    expect(await manager.completeInteraction(interaction.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["continue"] },
+    })).toBe(true);
+    await expect(notification).resolves.toBeUndefined();
+
+    await session.flushLogs();
+    const records = readFileSync(join(session.dir, "session.log"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records).toContainEqual(expect.objectContaining({
+      source: "plugin",
+      component: "plugin.tests/process-plugin.hook",
+      message: "Process Hook observed input",
+      attributes: { intentId: "intent_runner_hook" },
+    }));
+    await manager.close();
+  });
+
   test("withdraws registrations and settles a waiting verb after a crash", async () => {
     const { root, instances, session, entry } = stores();
     session.append({
