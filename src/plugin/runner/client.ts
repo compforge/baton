@@ -36,7 +36,7 @@ interface PendingCall {
   timeout?: ReturnType<typeof setTimeout>;
 }
 
-interface ReconcileCall {
+interface ExecutionCall {
   readonly callId: number;
   blockers: number;
 }
@@ -80,7 +80,7 @@ export class PluginRunnerClient {
   private readonly callbacks: PluginRunnerCallbacks;
   private readonly requestTimeoutMs: number;
   private readonly pending = new Map<number, PendingCall>();
-  private readonly reconcileCalls = new Map<string, ReconcileCall>();
+  private readonly executionCalls = new Map<string, ExecutionCall>();
   private readonly sources = new Map<string, SourceCallbacks>();
   private nextCallId = 1;
   private nextSourceRunId = 1;
@@ -269,9 +269,9 @@ export class PluginRunnerClient {
     return new Promise((resolve, reject) => {
       const pending: PendingCall = { resolve, reject, request };
       this.pending.set(callId, pending);
-      const executionId = this.reconcileExecutionId(request);
+      const executionId = this.executionId(request);
       if (executionId) {
-        this.reconcileCalls.set(executionId, { callId, blockers: 0 });
+        this.executionCalls.set(executionId, { callId, blockers: 0 });
       }
       this.armCallTimeout(callId, pending);
       try {
@@ -283,7 +283,7 @@ export class PluginRunnerClient {
       } catch (error) {
         if (pending.timeout) clearTimeout(pending.timeout);
         this.pending.delete(callId);
-        if (executionId) this.reconcileCalls.delete(executionId);
+        if (executionId) this.executionCalls.delete(executionId);
         reject(error);
       }
     });
@@ -333,15 +333,15 @@ export class PluginRunnerClient {
     if (!pending) return;
     this.pending.delete(reply.callId);
     if (pending.timeout) clearTimeout(pending.timeout);
-    const executionId = this.reconcileExecutionId(pending.request);
-    if (executionId) this.reconcileCalls.delete(executionId);
+    const executionId = this.executionId(pending.request);
+    if (executionId) this.executionCalls.delete(executionId);
     if (reply.ok) pending.resolve(reply.value);
     else pending.reject(restoredError(reply.error));
   }
 
   private async handleChildCall(call: ChildCall): Promise<void> {
     const resumeTimeout = call.request.method === "verb.invoke"
-      ? this.pauseReconcileTimeout(call.request.context.executionId)
+      ? this.pauseExecutionTimeout(call.request.context.executionId)
       : undefined;
     try {
       const value = await this.handleHostRequest(call.request);
@@ -427,7 +427,7 @@ export class PluginRunnerClient {
       pending.reject(this.failed);
     }
     this.pending.clear();
-    this.reconcileCalls.clear();
+    this.executionCalls.clear();
     for (const source of this.sources.values()) {
       source.reportError(this.failed);
     }
@@ -445,13 +445,20 @@ export class PluginRunnerClient {
     }
   }
 
-  private reconcileExecutionId(request: RunnerRequest): string | undefined {
+  private executionId(request: RunnerRequest): string | undefined {
     if (request.method !== "invoke") return;
-    const scope = request.args[1];
-    if (!scope || typeof scope !== "object" || !("executionId" in scope)) {
-      return;
+    for (let index = request.args.length - 1; index >= 0; index -= 1) {
+      const scope = request.args[index];
+      if (
+        scope &&
+        typeof scope === "object" &&
+        "executionId" in scope &&
+        typeof scope.executionId === "string"
+      ) {
+        return scope.executionId;
+      }
     }
-    return typeof scope.executionId === "string" ? scope.executionId : undefined;
+    return undefined;
   }
 
   private armCallTimeout(callId: number, pending: PendingCall): void {
@@ -468,19 +475,19 @@ export class PluginRunnerClient {
   }
 
   /** A verb owns its timeout, so the outer Runner watchdog pauses while it waits. */
-  private pauseReconcileTimeout(executionId: string): (() => void) | undefined {
-    const reconcile = this.reconcileCalls.get(executionId);
-    const pending = reconcile
-      ? this.pending.get(reconcile.callId)
+  private pauseExecutionTimeout(executionId: string): (() => void) | undefined {
+    const execution = this.executionCalls.get(executionId);
+    const pending = execution
+      ? this.pending.get(execution.callId)
       : undefined;
-    if (!reconcile || !pending) return;
-    reconcile.blockers += 1;
-    if (reconcile.blockers === 1 && pending.timeout) {
+    if (!execution || !pending) return;
+    execution.blockers += 1;
+    if (execution.blockers === 1 && pending.timeout) {
       clearTimeout(pending.timeout);
       pending.timeout = undefined;
     }
     return () => {
-      const current = this.reconcileCalls.get(executionId);
+      const current = this.executionCalls.get(executionId);
       const active = current ? this.pending.get(current.callId) : undefined;
       if (!current || !active) return;
       current.blockers -= 1;

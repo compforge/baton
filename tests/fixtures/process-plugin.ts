@@ -16,7 +16,7 @@ const plugin: PluginPackage = {
         runtime: { isolated: true },
       },
     });
-    context.registerCommand({
+    context.commands.register({
       commandId: "process-check",
       name: "process-check",
       description: "Exercise Plugin Runner process isolation",
@@ -69,17 +69,34 @@ const plugin: PluginPackage = {
         };
       },
     });
-    context.registerController({
+    context.hooks.register({
+      hookId: "process-input",
+      stage: "human.inbound.before",
+      async run(hook) {
+        context.logger.info("Process Hook observed input", {
+          component: "hook",
+          attributes: { intentId: hook.subject.intentId },
+        });
+        if (hook.subject.text !== "ask from hook") return;
+        await hook.verbs.ask({
+          timeoutMs: 1_000,
+          title: "Hook question",
+          prompt: "Continue from Hook?",
+          allowOther: true,
+        });
+      },
+    });
+    context.controllers.register({
       resourceType: PROCESS_RESOURCE_TYPE,
       async reconcile() {},
     });
-    context.registerController({
+    context.controllers.register({
       resourceType: {
         apiVersion: "baton.dev/v1alpha1",
         kind: "Turn",
       },
       async reconcile(ctx, turn) {
-        await ctx.ask({
+        await ctx.verbs.ask({
           timeoutMs: 1_000,
           title: "Runner question",
           prompt: `Review ${turn.metadata.name}?`,

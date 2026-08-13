@@ -615,7 +615,7 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       async reconcile(ctx) {
-        await ctx.ask({
+        await ctx.verbs.ask({
           timeoutMs: 0,
           title: "Review",
           prompt: "Continue?",
@@ -630,7 +630,7 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       async reconcile(ctx) {
-        await ctx.ask({
+        await ctx.verbs.ask({
           timeoutMs: MAX_VERB_TIMEOUT_MS + 1,
           title: "Review",
           prompt: "Continue?",
@@ -645,7 +645,7 @@ describe("plugin Controller", () => {
       store: resources,
       resourceType: REQ_LOOP_RUN,
       async reconcile(ctx) {
-        await ctx.ask({
+        await ctx.verbs.ask({
           timeoutMs: 1_000,
           title: "Review",
           prompt: "Continue?",

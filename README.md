@@ -61,7 +61,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 - Generate a compact session title after the first turn, with cross-harness fallback and no native session side effects
 - Continue the latest session in a project with `baton -c`, or open one by ID with `baton -s <id>`
 - Resume or fork an existing Codex/Claude Code native session by ID, with read-only auto-detection
-- Search grouped `@` context from built-in Session and Plugin ContextProviders, then inject it into the current turn
+- Search grouped `@` context from built-in Session and Plugin Mentions, then inject it into the current turn
 - Record messages, thoughts, tool calls, file changes, plans, and token usage in a unified format
 - Preserve harness startup interactions such as Codex hook trust, reusing unchanged trusted definitions with a visible notice
 - Append events to a local `session.jsonl` for state reconstruction and future references

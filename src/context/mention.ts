@@ -1,4 +1,4 @@
-// @ 引用的急切解析：ContextProvider 统一产生当前 turn 的只读材料；
+// @ 引用的急切解析：Mention 统一产生当前 turn 的只读材料；
 // 本文件保留 Session 摘要与旧 @bs_ token 的兼容展开。
 
 import type { TurnSummary } from "../event/types.ts";
@@ -9,9 +9,9 @@ import {
   type SessionHandle,
   type SessionStore,
 } from "../store/store.ts";
-import type { ContextProvider } from "@compforge/baton-plugin";
+import type { Mention } from "@compforge/baton-plugin";
 
-/** @bs_<ULID>：ContextProvider 上线前的 Session token，继续兼容已有输入。 */
+/** @bs_<ULID>：Mention 上线前的 Session token，继续兼容已有输入。 */
 const MENTION_PATTERN = /@(bs_[0-9A-HJKMNP-TV-Z]{26})/g;
 
 // 摘要 token 预算的初值拍 4KB 字符（design 开放问题 #4），超限丢最旧的 turn
@@ -213,14 +213,14 @@ export function expandMentions(
 }
 
 /** Built-in explicit context; Plugin providers use the same registration path. */
-export function sessionContextProvider(
+export function sessionMention(
   store: SessionStore,
   options: {
     readonly excludeSessionId?: string;
   } = {},
-): ContextProvider {
+): Mention {
   return {
-    kind: "session",
+    namespace: "session",
     async search(query) {
       const normalized = query.toLowerCase();
       return store
@@ -238,10 +238,10 @@ export function sessionContextProvider(
         .map((session) => ({
           id: session.batonSessionId,
           label: `@${session.batonSessionId.slice(0, 12)}…`,
-          detail: sessionDisplayTitle(session),
+          description: sessionDisplayTitle(session),
         }));
     },
-    async provide(id, { maxChars }) {
+    async resolve(id, { maxChars }) {
       if (id === options.excludeSessionId) return undefined;
       return buildSessionContext(store, id, maxChars);
     },

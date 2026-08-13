@@ -1,14 +1,18 @@
 import type {
   Command,
-  ContextProvider,
   Controller,
   EventHandler,
-  PluginActivationContext,
+  Hook,
+  HookStage,
+  HookSubjectMap,
+  Mention,
+  PluginContext,
   PluginDataDirectories,
   PluginInstance,
   PluginLogContext,
   PluginLogLevel,
   PluginPackage,
+  ReconcileSnapshot,
   PluginSessionContext,
   Resource,
   ResourceClient,
@@ -23,7 +27,9 @@ import type {
 } from "@compforge/baton-plugin";
 import type { PluginLogRecord } from "../package.ts";
 import {
+  createHookContext,
   createReconcileContext,
+  type ExecutionScope,
   type VerbResponse,
 } from "../verb.ts";
 
@@ -173,17 +179,49 @@ function commandRegistration(command: Command): PluginRegistration {
   };
 }
 
-function contextRegistration(provider: ContextProvider): PluginRegistration {
+function mentionRegistration(mention: Mention): PluginRegistration {
   return {
-    kind: "context-provider",
-    providerKind: provider.kind,
+    kind: "mention",
+    namespace: mention.namespace,
     searchHandlerId: handler(
-      `context:${provider.kind}:search`,
-      provider.search.bind(provider) as (...args: never[]) => unknown,
+      `mention:${mention.namespace}:search`,
+      mention.search.bind(mention) as (...args: never[]) => unknown,
     ),
-    provideHandlerId: handler(
-      `context:${provider.kind}:provide`,
-      provider.provide.bind(provider) as (...args: never[]) => unknown,
+    resolveHandlerId: handler(
+      `mention:${mention.namespace}:resolve`,
+      mention.resolve.bind(mention) as (...args: never[]) => unknown,
+    ),
+  };
+}
+
+function hookRegistration(hook: Hook): PluginRegistration {
+  return {
+    kind: "hook",
+    hookId: hook.hookId,
+    stage: hook.stage,
+    ...(hook.timeoutMs === undefined ? {} : { timeoutMs: hook.timeoutMs }),
+    handlerId: handler(
+      `hook:${hook.stage}:${hook.hookId}`,
+      (async <S extends HookStage>(
+        stage: S,
+        subject: Readonly<HookSubjectMap[S]>,
+        snapshot: ReconcileSnapshot,
+        context: ExecutionScope,
+      ) =>
+        await hook.run(
+          createHookContext(
+            stage,
+            subject,
+            snapshot,
+            context,
+            async (verbContext, request) =>
+              await callHost<VerbResponse>({
+                method: "verb.invoke",
+                context: verbContext,
+                request,
+              }),
+          ),
+        )) as (...args: never[]) => unknown,
     ),
   };
 }
@@ -299,7 +337,7 @@ async function activate(
   const assertRegistering = (): void => {
     if (sealed) throw new Error("Plugin Binding activation is complete");
   };
-  const context: PluginActivationContext = Object.freeze({
+  const context: PluginContext = Object.freeze({
     instance,
     session,
     dataDirs: Object.freeze({ ...dataDirs }),
@@ -310,28 +348,38 @@ async function activate(
       },
     }),
     logger: pluginLogger(),
-    registerCommand(command: Command) {
-      assertRegistering();
-      registrations.push(commandRegistration(command));
-    },
-    registerContextProvider(provider: ContextProvider) {
-      assertRegistering();
-      registrations.push(contextRegistration(provider));
-    },
-    registerController<TSpec, TStatus>(
-      controller: Controller<TSpec, TStatus>,
-    ) {
-      assertRegistering();
-      registrations.push(
-        controllerRegistration(
-          controller as Controller<unknown, unknown>,
-        ),
-      );
-    },
-    onClose(cleanup: () => Promise<void> | void) {
-      assertRegistering();
-      cleanups.push(cleanup);
-    },
+    commands: Object.freeze({
+      register(command: Command) {
+        assertRegistering();
+        registrations.push(commandRegistration(command));
+      },
+    }),
+    mentions: Object.freeze({
+      register(mention: Mention) {
+        assertRegistering();
+        registrations.push(mentionRegistration(mention));
+      },
+    }),
+    controllers: Object.freeze({
+      register<TSpec, TStatus>(controller: Controller<TSpec, TStatus>) {
+        assertRegistering();
+        registrations.push(
+          controllerRegistration(controller as Controller<unknown, unknown>),
+        );
+      },
+    }),
+    hooks: Object.freeze({
+      register(hook: Hook) {
+        assertRegistering();
+        registrations.push(hookRegistration(hook));
+      },
+    }),
+    lifecycle: Object.freeze({
+      onClose(cleanup: () => Promise<void> | void) {
+        assertRegistering();
+        cleanups.push(cleanup);
+      },
+    }),
   });
   try {
     await plugin.activate(context);
@@ -347,7 +395,7 @@ async function activate(
   }
 }
 
-function pluginLogger(): PluginActivationContext["logger"] {
+function pluginLogger(): PluginContext["logger"] {
   const write = (
     level: PluginLogLevel,
     message: string,

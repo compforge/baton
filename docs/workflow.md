@@ -249,7 +249,7 @@ result 返回 Adapter continuation，Plugin result 返回当前 Runner 或 in-pr
 Plugin verb 的 deadline 由必填 `timeoutMs` 计算并随 Interaction 持久化；timeout、用户 Esc、执行失败
 和恢复清理都先记录终态，所有终态遵守 first-terminal-wins。
 
-`await ctx.ask(...)` 会真实等待人的结果。等待期间 Baton 保留当前 async continuation，但释放该
+`await ctx.verbs.ask(...)` 会真实等待人的结果。等待期间 Baton 保留当前 async continuation，但释放该
 Controller 的并发位和 Manager 总并发位，使其它 Resource 继续 reconcile；结果落盘后重新取得并发
 位并返回 `success / dismissed / timeout / failure`。Plugin execution 由 Core identity 关联，Resource
 不是 verb continuation key。Runner 或 Core 崩溃时进程内调用栈不重放，未完成 verb 作为

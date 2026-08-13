@@ -10,6 +10,10 @@ import {
   type DraftResult,
   type HarnessInput,
   type HarnessResult,
+  type HookContext,
+  type HookStage,
+  type HookSubjectMap,
+  type PluginVerbs,
   type ReconcileContext,
 } from "@compforge/baton-plugin";
 
@@ -75,7 +79,8 @@ export type InvokeVerb = (
   request: VerbRequest,
 ) => Promise<VerbResponse>;
 
-const scopes = new WeakMap<ReconcileContext, ExecutionScope>();
+const reconcileScopes = new WeakMap<ReconcileContext, ExecutionScope>();
+const hookScopes = new WeakMap<HookContext, ExecutionScope>();
 
 function nonEmpty(name: string, value: string): void {
   if (!value.trim()) throw new Error(`${name} must not be empty`);
@@ -151,13 +156,11 @@ function validateDraft(input: DraftInput): void {
 }
 
 /** Host and Runner use the same facade; only the invocation transport differs. */
-export function createReconcileContext(
-  snapshot: ReconcileSnapshot,
+export function createPluginVerbs(
   scope: ExecutionScope,
   invoke: InvokeVerb,
-): ReconcileContext {
-  const context = Object.freeze({
-    snapshot,
+): PluginVerbs {
+  return Object.freeze({
     async ask<const TInput extends AskInput>(input: TInput) {
       validateAsk(input);
       return await invoke(scope, {
@@ -187,18 +190,52 @@ export function createReconcileContext(
       }) as HarnessResult;
     },
   });
-  scopes.set(context, scope);
+}
+
+export function createReconcileContext(
+  snapshot: ReconcileSnapshot,
+  scope: ExecutionScope,
+  invoke: InvokeVerb,
+): ReconcileContext {
+  const context = Object.freeze({
+    snapshot,
+    verbs: createPluginVerbs(scope, invoke),
+  });
+  reconcileScopes.set(context, scope);
+  return context;
+}
+
+export function createHookContext<S extends HookStage>(
+  stage: S,
+  subject: Readonly<HookSubjectMap[S]>,
+  snapshot: ReconcileSnapshot,
+  scope: ExecutionScope,
+  invoke: InvokeVerb,
+): HookContext<S> {
+  const context = Object.freeze({
+    stage,
+    subject,
+    snapshot,
+    verbs: createPluginVerbs(scope, invoke),
+  });
+  hookScopes.set(context, scope);
   return context;
 }
 
 export function reconcileScope(context: ReconcileContext): ExecutionScope {
-  const scope = scopes.get(context);
+  const scope = reconcileScopes.get(context);
   if (!scope) throw new Error("reconcile scope is unavailable");
   return scope;
 }
 
 export function reconcileSnapshot(context: ReconcileContext): ReconcileSnapshot {
   return context.snapshot;
+}
+
+export function hookScope(context: HookContext): ExecutionScope {
+  const scope = hookScopes.get(context);
+  if (!scope) throw new Error("hook scope is unavailable");
+  return scope;
 }
 
 type VerbSession = Pick<
@@ -313,26 +350,21 @@ export class Verb {
     execute: () => Promise<T>,
   ): Promise<T> {
     return await this.capacity.run(async (globalLease) => {
-      if (this.executions.has(scope.executionId)) {
-        throw new Error(`Plugin execution already exists: ${scope.executionId}`);
-      }
-      const active: ActiveExecution = {
+      return await this.trackExecution(
         scope,
-        suspend: async <U>(wait: Promise<U>): Promise<U> =>
+        async <U>(wait: Promise<U>): Promise<U> =>
           await globalLease.suspend(localLease.suspend(wait)),
-      };
-      this.executions.set(scope.executionId, active);
-      let failure = "Plugin execution completed before its verb";
-      try {
-        return await execute();
-      } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
-        throw error;
-      } finally {
-        this.failExecution(scope.executionId, failure);
-        this.executions.delete(scope.executionId);
-      }
+        execute,
+      );
     });
+  }
+
+  /** Hook notification does not consume the reconcile workqueue capacity. */
+  async executeHook<T>(
+    scope: ExecutionScope,
+    execute: () => Promise<T>,
+  ): Promise<T> {
+    return await this.trackExecution(scope, async (wait) => await wait, execute);
   }
 
   failInstance(pluginInstanceId: string, error: string): void {
@@ -479,6 +511,27 @@ export class Verb {
         ? {}
         : { error: terminal.failure.detail }),
     });
+  }
+
+  private async trackExecution<T>(
+    scope: ExecutionScope,
+    suspend: ActiveExecution["suspend"],
+    execute: () => Promise<T>,
+  ): Promise<T> {
+    if (this.executions.has(scope.executionId)) {
+      throw new Error(`Plugin execution already exists: ${scope.executionId}`);
+    }
+    this.executions.set(scope.executionId, { scope, suspend });
+    let failure = "Plugin execution completed before its verb";
+    try {
+      return await execute();
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.failExecution(scope.executionId, failure);
+      this.executions.delete(scope.executionId);
+    }
   }
 
   private async waitForHarnessInvocation(

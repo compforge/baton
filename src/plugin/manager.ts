@@ -27,6 +27,8 @@ import {
   type CronSource,
   type PluginCommandInput,
   type PluginCommandResult,
+  type HookStage,
+  type HookSubjectMap,
   type Resource,
   type ResourceRef,
   type ResourceType,
@@ -82,7 +84,7 @@ import {
   type AvailablePluginCommand,
   PluginCommandRegistry,
 } from "./command/registry.ts";
-import { ContextProviderRegistry } from "../context/registry.ts";
+import { MentionRegistry } from "../context/registry.ts";
 import {
   type LogSink,
   logError,
@@ -90,6 +92,7 @@ import {
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
 import { Verb } from "./verb.ts";
+import { HookRegistry, HookRuntime } from "./hook.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -178,8 +181,12 @@ export interface ManagerOptions {
   onCommandsChanged?(): void;
   /** Baton core 已占用的 slash command 名称，Plugin 不得覆盖。 */
   reservedCommandNames?: readonly string[];
-  /** Baton-owned and Plugin-provided explicit context share one registry. */
-  contextProviders?: ContextProviderRegistry;
+  /** Baton-owned and Plugin-provided explicit mentions share one registry. */
+  mentions?: MentionRegistry;
+  /** Default timeout for one Hook handler. */
+  hookTimeoutMs?: number;
+  /** Maximum number of best-effort after Hook deliveries awaiting completion. */
+  afterHookQueueLimit?: number;
   /** Controller reconcile 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: Partial<ReconcileRetryBackoff>;
   now?: () => Date;
@@ -253,7 +260,9 @@ export class Manager {
   private readonly controllers = new Map<string, ManagedController>();
   private readonly board: BoardProjection;
   private readonly commandRegistry: PluginCommandRegistry;
-  private readonly contextProviders: ContextProviderRegistry;
+  private readonly mentions: MentionRegistry;
+  private readonly hooks: HookRuntime;
+  private readonly hookRegistry = new HookRegistry();
   private readonly instances: PluginInstanceRepository;
   private readonly packageLoader: PackageLoader;
   private readonly pluginSupervisor?: PluginSupervisor;
@@ -337,10 +346,21 @@ export class Manager {
       now: this.now,
       log: this.log,
     });
+    this.hooks = new HookRuntime(this.hookRegistry, {
+      snapshot: this.snapshot,
+      verb: this.verb,
+      invokeVerb: (context, request) => this.verb.invoke(context, request),
+      log: this.log,
+      ...(options.hookTimeoutMs === undefined
+        ? {}
+        : { defaultTimeoutMs: options.hookTimeoutMs }),
+      ...(options.afterHookQueueLimit === undefined
+        ? {}
+        : { afterQueueLimit: options.afterHookQueueLimit }),
+    });
     this.onToast = options.onToast;
     this.onCommandsChanged = options.onCommandsChanged;
-    this.contextProviders =
-      options.contextProviders ?? new ContextProviderRegistry();
+    this.mentions = options.mentions ?? new MentionRegistry();
     this.commandRegistry = new PluginCommandRegistry({
       reservedNames: options.reservedCommandNames,
       isInstanceActive: (pluginInstanceId) =>
@@ -515,7 +535,7 @@ export class Manager {
     const batonSession = this.snapshot().session;
     if (batonSession.batonSessionId !== this.instances.session.id) {
       throw new Error(
-        `PluginActivationContext batonSessionId must be ${this.instances.session.id}, got ${batonSession.batonSessionId}`,
+        `PluginContext batonSessionId must be ${this.instances.session.id}, got ${batonSession.batonSessionId}`,
       );
     }
 
@@ -546,10 +566,19 @@ export class Manager {
       {
         registerCommand: (command) =>
           this.commandRegistry.register(instance, command),
-        registerContextProvider: (provider) =>
-          this.contextProviders.registerContextProvider(
-            provider,
+        registerMention: (mention) =>
+          this.mentions.registerMention(
+            mention,
             pluginName(instance.pluginId),
+          ),
+        registerHook: (hook) =>
+          this.hookRegistry.register(
+            {
+              batonSessionId: instance.batonSessionId,
+              pluginInstanceId: instance.pluginInstanceId,
+              pluginId: instance.pluginId,
+            },
+            hook,
           ),
         registerController: (controller) =>
           this.bindController(instance, controller),
@@ -605,7 +634,7 @@ export class Manager {
             );
             // Register Runner cleanup first so reverse-order Binding close
             // withdraws host registrations before terminating third-party code.
-            binding.onClose(() => runner.close());
+            binding.lifecycle.onClose(() => runner.close());
             for (const registration of runner.activation.registrations) {
               installRegistration(
                 binding,
@@ -675,21 +704,35 @@ export class Manager {
     return this.instances.list();
   }
 
-  async listContextCandidates(prefix: string): ReturnType<
-    ContextProviderRegistry["candidates"]
+  async listMentionCandidates(prefix: string): ReturnType<
+    MentionRegistry["candidates"]
   > {
-    return await this.contextProviders.candidates(prefix);
+    return await this.mentions.candidates(prefix);
   }
 
-  hasContextReference(input: string): boolean {
-    return this.contextProviders.hasReference(input);
+  hasMentionReference(input: string): boolean {
+    return this.mentions.hasReference(input);
   }
 
-  provideContext(
+  resolveMentions(
     input: string,
     maxChars: number,
   ): Promise<readonly string[]> {
-    return this.contextProviders.provide(input, maxChars);
+    return this.mentions.resolve(input, maxChars);
+  }
+
+  beforeHook<S extends Extract<HookStage, `${string}.before`>>(
+    stage: S,
+    subject: Readonly<HookSubjectMap[S]>,
+  ): Promise<void> {
+    return this.hooks.before(stage, subject);
+  }
+
+  afterHook<S extends Extract<HookStage, `${string}.after`>>(
+    stage: S,
+    subject: Readonly<HookSubjectMap[S]>,
+  ): void {
+    this.hooks.after(stage, subject);
   }
 
   /**

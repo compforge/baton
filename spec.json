@@ -10,7 +10,7 @@
       }
     ]
   },
-  "packages/plugin/src/reconcile-context.ts::ReconcileContext": {
+  "packages/plugin/src/reconcile-context.ts::PluginVerbs": {
     "specs": [
       {
         "cases": [],

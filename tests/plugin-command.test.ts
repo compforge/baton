@@ -26,7 +26,7 @@ function requirementPackage(name = "requirements"): PluginPackage {
     pluginId: "qiankun/reqloop",
     version: "1.0.0",
     async activate(context) {
-      context.registerCommand({
+      context.commands.register({
         commandId: "requirements",
         name,
         description: "Browse requirements",
@@ -53,7 +53,7 @@ function searchableRequirementPackage(): PluginPackage {
     pluginId: "qiankun/searchable-reqloop",
     version: "1.0.0",
     async activate(context) {
-      context.registerCommand({
+      context.commands.register({
         commandId: "requirements",
         name: "search-requirements",
         description: "Search requirements",

@@ -105,12 +105,16 @@ export type DraftResult = VerbResult<CompletedHarnessValue>;
  * @rule Require one total timeout for every verb; draft and harness deadlines cover their Interaction gate and the resulting HarnessInvocation through terminal Turn.
  * @see {@link docs/plugin.md}
  */
-export interface ReconcileContext {
-  readonly snapshot: ReconcileSnapshot;
+export interface PluginVerbs {
   ask<const TInput extends AskInput>(
     input: TInput,
   ): Promise<AskResult<AskValue<TInput>>>;
   confirm(input: ConfirmInput): Promise<ConfirmResult>;
   draft(input: DraftInput): Promise<DraftResult>;
   harness(input: HarnessInput): Promise<HarnessResult>;
+}
+
+export interface ReconcileContext {
+  readonly snapshot: ReconcileSnapshot;
+  readonly verbs: PluginVerbs;
 }

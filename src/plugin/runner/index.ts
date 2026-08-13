@@ -13,7 +13,8 @@ export { installRegistration } from "./registration.ts";
 export type {
   ActivationResult,
   CommandRegistration,
-  ContextProviderRegistration,
+  HookRegistration,
+  MentionRegistration,
   ControllerRegistration,
   PluginRegistration,
   SourceRegistration,
