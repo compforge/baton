@@ -56,7 +56,7 @@ describe("session lifecycle", () => {
 
   test("old generated titles yield to a preview recovered from session history", () => {
     const h = store.createSession({ cwd: "/tmp/proj", title: "chat @ /tmp/proj" });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       kind: "user_message",
       harness: "codex",
@@ -65,7 +65,7 @@ describe("session lifecycle", () => {
         content: [{ type: "text", text: "Plugin-scheduled work" }],
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       harness: "codex",
@@ -83,13 +83,13 @@ describe("session lifecycle", () => {
 
   test("history backfill skips an attachment-only message", () => {
     const h = store.createSession({ cwd: "/tmp/proj", title: "chat @ /tmp/proj" });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       harness: "codex",
       payload: { messageId: "m1", content: [{ type: "text", text: "/tmp/image-123.png" }] },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       harness: "codex",
@@ -278,10 +278,39 @@ describe("session lifecycle", () => {
 });
 
 describe("event append / read", () => {
+  test("Session records and reduces an Event before notifying observers", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    let observed:
+      | { runState: string; persistedEventId: string | undefined }
+      | undefined;
+    const unsubscribe = h.subscribe((event) => {
+      observed = {
+        runState: h.projection.runState,
+        persistedEventId: h.ledger.read().at(-1)?.eventId,
+      };
+      expect(event.kind).toBe("state_update");
+    });
+
+    const event = h.appendEvent({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "codex",
+      turnId: "turn_direct_reduce",
+    });
+
+    expect(observed).toEqual({
+      runState: "running",
+      persistedEventId: event.eventId,
+    });
+    expect(h.projection.activeTurns.has("turn_direct_reduce")).toBe(true);
+    unsubscribe();
+  });
+
   test("append assigns envelope fields and seq is monotonic across reopen", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
-    const e1 = h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
-    const e2 = h.ledger.append({
+    const e1 = h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
+    const e2 = h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m1", content: { type: "text", text: "hi" } },
@@ -297,7 +326,7 @@ describe("event append / read", () => {
 
     // 重开进程（新 handle），seq 从文件续上
     const reopened = store.openSession(h.id);
-    const e3 = reopened.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
+    const e3 = reopened.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
     expect(e3.seq).toBe(3);
     expect(reopened.ledger.read()).toHaveLength(3);
   });
@@ -305,7 +334,7 @@ describe("event append / read", () => {
   test("session logs are paired with session.jsonl without entering its event stream", async () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
 
-    const event = h.ledger.append({
+    const event = h.appendEvent({
       source: { type: "baton" },
       kind: "_baton_error_update",
       harness: "codex",
@@ -359,7 +388,7 @@ describe("event append / read", () => {
   test("raw is preserved verbatim (细节保真)", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     const raw = { method: "item/agentMessage/delta", params: { weird: [1, { deep: true }] } };
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m1", content: { type: "text", text: "x" } },
@@ -371,18 +400,18 @@ describe("event append / read", () => {
 
   test("incomplete trailing line is tolerated (崩溃后可恢复)", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
     appendFileSync(join(h.dir, "session.jsonl"), '{"v":1,"ts":"2026-'); // 模拟写到一半崩溃
     const reopened = store.openSession(h.id);
     expect(reopened.ledger.read()).toHaveLength(1);
     // 追加从完好事件之后继续
-    const e = reopened.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
+    const e = reopened.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
     expect(e.seq).toBe(2);
   });
 
   test("append after a crash partial repairs the tail (截断残尾 + sidecar 留档)", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
     const partial = '{"v":1,"ts":"2026-';
     appendFileSync(join(h.dir, "session.jsonl"), partial); // 模拟写到一半崩溃
 
@@ -394,7 +423,7 @@ describe("event append / read", () => {
 
     // 首次 append 截断残尾：新事件不会拼接在残片后形成中间坏行
     const reopened = store.openSession(h.id);
-    const e = reopened.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
+    const e = reopened.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
     expect(e.seq).toBe(2); // 残行 seq 从未完整落盘，由新事件复用
     const events = store.openSession(h.id).ledger.read();
     expect(events).toHaveLength(2);
@@ -409,29 +438,29 @@ describe("event append / read", () => {
   test("crash partial with no complete line at all truncates to empty", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     writeFileSync(join(h.dir, "session.jsonl"), '{"v":1,"ts'); // 首行即残片
-    const e = store.openSession(h.id).ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
+    const e = store.openSession(h.id).appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
     expect(e.seq).toBe(1);
     expect(store.openSession(h.id).ledger.read()).toHaveLength(1);
   });
 
   test("corrupt middle line throws instead of silently skipping", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex" });
     appendFileSync(join(h.dir, "session.jsonl"), "garbage\n");
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
     expect(() => store.openSession(h.id).ledger.read()).toThrow(/corrupt/);
   });
 
   test("loadState reduces the full stream", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "claude-code" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "claude-code" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m1", content: { type: "text", text: "hello" } },
       harness: "claude-code",
     });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "claude-code" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "claude-code" });
     const state = h.loadState();
     expect(state.runState).toBe("idle");
     expect(textOf(state.messages.get("m1")!.content)).toBe("hello");
@@ -440,30 +469,30 @@ describe("event append / read", () => {
 
 describe("turn summary", () => {
   function playTurn(h: ReturnType<SessionStore["createSession"]>, turnId: string): void {
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       payload: { messageId: `${turnId}_u`, content: [{ type: "text", text: "do the thing" }] },
       harness: "codex",
       turnId,
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "tool_call_update",
       payload: { toolCallId: `${turnId}_tc`, title: "Edit file", kind: "edit", status: "completed" },
       harness: "codex",
       turnId,
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: `${turnId}_a`, content: { type: "text", text: "done" } },
       harness: "codex",
       turnId,
     });
-    h.ledger.append({ source: { type: "baton" }, kind: "usage_update", payload: { inputTokens: 100, outputTokens: 20 }, harness: "codex", turnId });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId });
+    h.appendEvent({ source: { type: "baton" }, kind: "usage_update", payload: { inputTokens: 100, outputTokens: 20 }, harness: "codex", turnId });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId });
   }
 
   test("summarizeTurn derives text, tool calls, usage, stop reason", () => {
@@ -482,7 +511,7 @@ describe("turn summary", () => {
   test("summary excludes baton-injected context while raw events retain it", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     const turnId = "t_sync";
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       harness: "claude-code",
@@ -492,7 +521,7 @@ describe("turn summary", () => {
         content: [{ type: "text", text: "<baton-sync>old history</baton-sync>\n\ncontinue" }],
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "state_update",
       harness: "claude-code",
@@ -507,7 +536,7 @@ describe("turn summary", () => {
   test("summary excludes queued and failed steers until their content is applied", () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
     const turnId = "t_queue";
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "user" },
       kind: "user_message",
       harness: "claude-code",
@@ -519,7 +548,7 @@ describe("turn summary", () => {
         deliveryState: "pending",
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude-code" },
       kind: "user_message",
       harness: "claude-code",
@@ -531,7 +560,7 @@ describe("turn summary", () => {
         deliveryState: "failed",
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude-code" },
       kind: "user_message",
       harness: "claude-code",
@@ -578,22 +607,22 @@ describe("turn summary", () => {
 
 describe("forkSession", () => {
   function playTurn(h: ReturnType<SessionStore["createSession"]>, turnId: string): void {
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       payload: { messageId: `${turnId}_u`, content: [{ type: "text", text: "do the thing" }] },
       harness: "codex",
       turnId,
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: `${turnId}_a`, content: { type: "text", text: "done" } },
       harness: "codex",
       turnId,
     });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId });
     h.summarizeTurn(turnId);
   }
 
@@ -625,7 +654,7 @@ describe("forkSession", () => {
     const userMsg = childEvents.find((e) => e.kind === "user_message");
     expect((userMsg!.payload as { messageId: string }).messageId).toBe("t1_u");
     // child 可独立续写
-    const next = child.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
+    const next = child.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle" }, harness: "codex" });
     expect(next.seq).toBe(sourceEvents.at(-1)!.seq + 1);
     // 源不受影响
     expect(source.ledger.read()).toHaveLength(sourceEvents.length);

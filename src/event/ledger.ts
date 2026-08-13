@@ -8,83 +8,46 @@ import {
 import { dirname, join } from "node:path";
 
 import {
-  ENVELOPE_VERSION,
   type AnyEventEnvelope,
   type EventEnvelope,
   type EventKind,
-  type NewEvent,
 } from "./index.ts";
-import { newId } from "./ids.ts";
 import { logError, type LogSink } from "../logging.ts";
 
 export interface EventLedgerOptions {
-  readonly batonSessionId: string;
   readonly path: string;
   readonly log?: LogSink;
 }
 
 /**
- * Baton 的统一事实账本。
+ * BatonSession 的 append-only 事实记录。
  *
- * Event 是全局协议，Ledger 是全局内核边界；实例仍然属于一个 BatonSession。
- * 所有会改变 Core 状态或触发外部动作的路径，都应先 append 对应事实，再执行动作。
+ * Ledger 是 WAL 和历史回放边界，不负责 reduce、调度或通知消费者。
+ * 实时状态由 BatonSession 直接将同一 Event reduce 为 Projection。
  */
 export class EventLedger {
-  private nextSeq: number | undefined;
-  private readonly listeners = new Set<(event: AnyEventEnvelope) => void>();
+  private ready = false;
 
   constructor(private readonly options: EventLedgerOptions) {}
 
-  subscribe(listener: (event: AnyEventEnvelope) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  /** Append 是 WAL commit 点；返回前事件已经进入 session.jsonl。 */
-  append<K extends EventKind>(event: NewEvent<K>): EventEnvelope<K> {
-    if (this.nextSeq === undefined) {
+  /** Record 是 WAL commit 点；Ledger 不负责 reduce、分发或通知消费者。 */
+  record<K extends EventKind>(event: EventEnvelope<K>): void {
+    if (!this.ready) {
       this.repairTail();
-      const events = this.read();
-      this.nextSeq = (events.at(-1)?.seq ?? 0) + 1;
     }
-    const seq = this.nextSeq;
-    const envelope: EventEnvelope<K> = {
-      v: ENVELOPE_VERSION,
-      eventId: newId("ev"),
-      ts: new Date().toISOString(),
-      seq,
-      scope: { type: "session", batonSessionId: this.options.batonSessionId },
-      ...event,
-    };
     try {
-      appendFileSync(this.options.path, `${JSON.stringify(envelope)}\n`);
+      appendFileSync(this.options.path, `${JSON.stringify(event)}\n`);
+      this.ready = true;
     } catch (error) {
       this.options.log?.({
         level: "error",
         source: "baton",
         component: "ledger",
-        message: "failed to append Event Ledger",
+        message: "failed to record Event Ledger",
         error: logError(error),
       });
       throw error;
     }
-    this.nextSeq = seq + 1;
-    for (const listener of this.listeners) {
-      try {
-        listener(envelope as AnyEventEnvelope);
-      } catch (error) {
-        // Event 已经完成 WAL commit；投影失败不能反向污染写入路径。
-        this.options.log?.({
-          level: "error",
-          source: "baton",
-          component: "ledger.listener",
-          message: "Event Ledger listener threw",
-          error: logError(error),
-          attributes: { seq: envelope.seq, kind: envelope.kind },
-        });
-      }
-    }
-    return envelope;
   }
 
   /**

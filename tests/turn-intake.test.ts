@@ -87,14 +87,14 @@ function controllerWith(adapter: HarnessAdapter): Controller {
 
 /** 直接写入一个已收口、带 summary 的 turn（另一 harness 的既有历史） */
 function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
-  handle.ledger.append({
+  handle.appendEvent({
     source: { type: "baton" },
     kind: "user_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-user`, content: [{ type: "text", text }] },
   });
-  handle.ledger.append({
+  handle.appendEvent({
     source: { type: "baton" },
     kind: "state_update",
     harness,

@@ -86,7 +86,7 @@ export type AnyBuiltinResource = {
 
 type BuiltinSession = Pick<
   SessionHandle,
-  "id" | "dir" | "ledger"
+  "id" | "dir" | "ledger" | "subscribe"
 >;
 
 export interface BatonResourceIndexOptions {
@@ -158,7 +158,7 @@ export class BatonResourceIndex {
       dir: options.session.dir,
     });
     for (const event of options.session.ledger.read()) this.project(event, false);
-    this.unsubscribeSession = options.session.ledger.subscribe((event) => {
+    this.unsubscribeSession = options.session.subscribe((event) => {
       this.project(event, true);
     });
   }

@@ -34,19 +34,19 @@ function turn(
     ...(laneId ? { laneId } : {}),
     turnId,
   };
-  h.ledger.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "user_message",
     ...coordinate,
     payload: { messageId: `${turnId}_u`, content: [{ type: "text", text: `q${i}` }] },
   });
-  h.ledger.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "agent_message",
     ...coordinate,
     payload: { messageId: `${turnId}_a`, content: [{ type: "text", text: agentText }] },
   });
-  h.ledger.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "state_update",
     ...coordinate,

@@ -128,7 +128,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   // 就已无法证明它会继续运行。悲观收口，不重投也不冒充成 applied。
   for (const message of pendingSteers) {
     const harness = message.harness ?? "baton";
-    session.ledger.append({
+    session.appendEvent({
       kind: "user_message",
       source: { type: "baton" },
       harness,
@@ -141,7 +141,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
         deliveryState: "failed",
       },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_notice",
       source: { type: "baton" },
       harness,
@@ -163,7 +163,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
         event.kind === "interaction.requested" &&
         event.payload.interactionId === interactionId,
     );
-    session.ledger.append({
+    session.appendEvent({
       kind: "interaction.cancelled",
       source: { type: "baton" },
       harness: requested?.harness ?? "baton",
@@ -186,7 +186,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
     const harness = latest?.harness || "baton";
     const harnessTargetId = latest?.harnessTargetId;
     const laneId = latest?.laneId;
-    session.ledger.append({
+    session.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness,
@@ -195,7 +195,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       turnId,
       payload: { state: "idle", stopReason: "cancelled" },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_notice",
       source: { type: "baton" },
       harness,
@@ -221,7 +221,7 @@ function recoverDeliveryAttempts(
 ): boolean {
   const attempts = new DeliveryAttempts<SessionHandle>(
     (handle, event) =>
-      handle.ledger.append({
+      handle.appendEvent({
         ...event,
         source: { type: "baton" },
       }) as EventEnvelope<"_baton_delivery_attempt_update">,

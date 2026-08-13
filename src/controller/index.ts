@@ -188,7 +188,7 @@ export const INTERRUPTED_NOTICE_TITLE = "Conversation interrupted — tell the a
 
 /**
  * 一个 BatonSession 的唯一 turn 编排入口：统一负责 harness 恢复、上下文追平与 Lane 调度。
- * UI 只提交输入和消费 Event Ledger，不能分别维护
+ * UI 只提交输入和消费 BatonSession Projection，不能分别维护
  * 各 harness 的并发状态。
  *
  * Lane 与 Turn 都只是归属边界：Lane 表达长期并发通道，Turn 表达一次 Harness loop
@@ -198,7 +198,7 @@ export const INTERRUPTED_NOTICE_TITLE = "Conversation interrupted — tell the a
  * 完成以 `state_update(idle)` 为准，经 finalize 按 baton turn id 幂等收口——
  * 重复/迟到的物理终态（reconnect、transport race）不会二次终结，也不会关闭更新的 turn。
  *
- * Event Ledger 是唯一事实源；TurnRegistry 只是按 turnId 建立的运行期 scope 索引。
+ * Event Ledger 只保留可回放的事实历史；TurnRegistry 只是按 turnId 建立的运行期 scope 索引。
  */
 export class Controller {
   /** Lane × HarnessTarget → live binding. */
@@ -318,7 +318,7 @@ export class Controller {
     update?: { turnId?: string; delivery?: QueueItem["delivery"] },
   ): void {
     const payload = harnessInputUpdate(input, status, update);
-    this.options.session.ledger.append({
+    this.options.session.appendEvent({
       kind: "harness_input.updated",
       source: eventSourceOf(input.source),
       ...(input.parentEventId === undefined ? {} : { parentEventId: input.parentEventId }),
@@ -1202,18 +1202,16 @@ export class Controller {
   }
 
   /**
-   * 所有事件的唯一入口（adapter 上报 + controller 自有：出队 user_message/running、
-   * 合成终态）：持久化（append 即广播给事件流订阅者，UI 投影由订阅侧完成，
-   * 这里不做任何转发）→ 识别 turn 边界并记账。
-   * 不变量：任何进入本方法的事件必然对订阅者可见——投影正确性由 append 广播
-   * 单通道保证，不依赖"是否有活跃 turn"。
+   * adapter 上报与 Controller 自有 Event 的统一入口。BatonSession 先完成
+   * WAL record，再直接 reduce 当前 Projection；Controller 随后只处理 Turn
+   * scope 等协调逻辑。Ledger 不在这条实时链路上广播 Event。
    */
   private appendEvent(
     binding: HarnessBinding,
     ev: AnyEventDraft,
     source: EventSource,
   ): AnyEventEnvelope {
-    const envelope = this.options.session.ledger.append({
+    const envelope = this.options.session.appendEvent({
       ...ev,
       source,
       harness: binding.adapter.harness,
@@ -1237,8 +1235,8 @@ export class Controller {
         }
       }
     }
-    // append 已同步广播给投影；普通流式事件不能再走 controller 通知，否则每个 chunk
-    // 都会重建两次完整 view。终态对 controller 私有台账的变更由 finalize 自己通知。
+    // Projection 已在 BatonSession 内同步 reduce；终态对 Controller 私有台账的
+    // 变更仍由 finalize 自己通知。
     return envelope;
   }
 
@@ -1267,7 +1265,7 @@ export class Controller {
 
     // 用户打断的 turn 在时间线留下醒目标记；排队的后续输入会自然跟在标记后面
     if (run && stopReason === "cancelled") {
-      session.ledger.append({
+      session.appendEvent({
         kind: "_baton_notice",
         source: { type: "baton" },
         harness: record.harness,
@@ -1316,7 +1314,7 @@ export class Controller {
       log: (entry) => session.log(entry),
     })
       .then((updated) => {
-        // Session metadata 不走 Event broadcast；标题落盘后显式刷新当前投影。
+        // Session metadata 不走 Event reduce；标题落盘后显式刷新当前展示。
         if (updated) {
           this.options.onSessionTitleChange?.();
           this.changed();

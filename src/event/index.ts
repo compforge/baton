@@ -485,7 +485,7 @@ export type AnyEventEnvelope = { [K in EventKind]: EventEnvelope<K> }[EventKind]
 /** NewEvent 的判别联合版本，事件 sink 的入参类型 */
 export type AnyNewEvent = { [K in EventKind]: NewEvent<K> }[EventKind];
 
-/** append 时由 Store 补齐 v/eventId/ts/seq/scope */
+/** 进入 BatonSession 时补齐 v/eventId/ts/seq/scope。 */
 export type NewEvent<K extends EventKind = EventKind> = Omit<
   EventEnvelope<K>,
   "v" | "eventId" | "ts" | "seq" | "scope"

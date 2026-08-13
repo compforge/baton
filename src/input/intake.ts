@@ -41,7 +41,7 @@ export class HumanInputIntake {
 
   async run<T>(input: HumanInput, lower: (record: HumanInputRecord) => Promise<T>): Promise<T> {
     const inputId = newId("in");
-    const received = this.options.session.ledger.append({
+    const received = this.options.session.appendEvent({
       kind: "input.received",
       source: { type: "user" },
       payload: { inputId, input },
@@ -81,7 +81,7 @@ export class HumanInputIntake {
     outcome: HumanInputSettlement["outcome"],
     detail?: string,
   ): void {
-    const settled = this.options.session.ledger.append({
+    const settled = this.options.session.appendEvent({
       kind: "input.settled",
       source: { type: "baton" },
       parentEventId: record.eventId,

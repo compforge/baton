@@ -142,6 +142,8 @@ export interface ManagerOptions {
     | "id"
     | "dir"
     | "ledger"
+    | "appendEvent"
+    | "subscribe"
     | "log"
     | "ensureMainLane"
     | "requireLane"

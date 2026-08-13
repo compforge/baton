@@ -37,6 +37,7 @@ import {
 } from "../logging.ts";
 import { newId } from "../event/ids.ts";
 import {
+  ENVELOPE_VERSION,
   textOf,
   type AnyEventDraft,
   type AnyEventEnvelope,
@@ -44,6 +45,7 @@ import {
   type ContentBlock,
   type EventEnvelope,
   type EventKind,
+  type NewEvent,
   type EventSource,
   type StopReason,
   type TurnSummary,
@@ -54,7 +56,7 @@ import { EventLedger } from "../event/ledger.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
 import type { HarnessSessionIdentity } from "../harness/adapter.ts";
 import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
-import { reduceEvents, type SessionState } from "./reduce.ts";
+import { applyEvent, reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
   harness: string;
@@ -620,7 +622,7 @@ export class SessionStore {
 
     if (turn.events) {
       for (const imported of turn.events) {
-        session.ledger.append({
+        session.appendEvent({
           ...imported.event,
           source: materializedEventSource(imported.source, harnessTargetId),
           harness,
@@ -631,7 +633,7 @@ export class SessionStore {
       }
     } else {
       if (turn.userText) {
-        session.ledger.append({
+        session.appendEvent({
           kind: "user_message",
           source: { type: "user" },
           harness,
@@ -645,7 +647,7 @@ export class SessionStore {
         });
       }
       if (turn.agentText) {
-        session.ledger.append({
+        session.appendEvent({
           kind: "agent_message",
           source: { type: "harness", harnessTargetId },
           harness,
@@ -658,7 +660,7 @@ export class SessionStore {
           },
         });
       }
-      session.ledger.append({
+      session.appendEvent({
         kind: "state_update",
         source: { type: "harness", harnessTargetId },
         harness,
@@ -948,6 +950,9 @@ export class SessionHandle {
   readonly dir: string;
   readonly logger: SessionLogger;
   readonly ledger: EventLedger;
+  private readonly eventListeners = new Set<(event: AnyEventEnvelope) => void>();
+  private state: SessionState;
+  private nextEventSeq: number;
   meta: SessionMeta;
 
   constructor(
@@ -965,10 +970,56 @@ export class SessionHandle {
       loggerOptions,
     );
     this.ledger = new EventLedger({
-      batonSessionId: this.id,
       path: join(this.dir, "session.jsonl"),
       log: (entry) => this.log(entry),
     });
+    const history = this.ledger.read();
+    this.state = reduceEvents(history);
+    this.nextEventSeq = (history.at(-1)?.seq ?? 0) + 1;
+  }
+
+  /** Current Core projection. Live events and replay both use the same reducer. */
+  get projection(): SessionState {
+    return this.state;
+  }
+
+  /** Observe accepted Session events after they have been recorded and reduced. */
+  subscribe(listener: (event: AnyEventEnvelope) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+
+  /**
+   * BatonSession 的统一 Event 入口。当前策略先完成 WAL record，再直接 reduce；
+   * Ledger 只是 Recorder，不承担实时分发。
+   */
+  appendEvent<K extends EventKind>(event: NewEvent<K>): EventEnvelope<K> {
+    const envelope: EventEnvelope<K> = {
+      v: ENVELOPE_VERSION,
+      eventId: newId("ev"),
+      ts: new Date().toISOString(),
+      seq: this.nextEventSeq,
+      scope: { type: "session", batonSessionId: this.id },
+      ...event,
+    };
+    this.ledger.record(envelope);
+    this.nextEventSeq += 1;
+    applyEvent(this.state, envelope as AnyEventEnvelope);
+    for (const listener of this.eventListeners) {
+      try {
+        listener(envelope as AnyEventEnvelope);
+      } catch (error) {
+        this.log({
+          level: "error",
+          source: "baton",
+          component: "session.event",
+          message: "BatonSession event listener threw",
+          error: logError(error),
+          attributes: { seq: envelope.seq, kind: envelope.kind },
+        });
+      }
+    }
+    return envelope;
   }
 
   /**
@@ -1281,7 +1332,7 @@ export class SessionHandle {
     const harness = turnEvents[0]?.harness ?? "baton";
     const harnessTargetId = turnEvents.find((event) => event.harnessTargetId)?.harnessTargetId;
     const laneId = turnEvents.find((event) => event.laneId)?.laneId;
-    const event = this.ledger.append({
+    const event = this.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       payload: summary,

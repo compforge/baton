@@ -408,7 +408,7 @@ describe("BatonChatProtocol status command", () => {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       session.setPreviewIfEmpty("Implement status command");
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
@@ -443,7 +443,7 @@ describe("BatonChatProtocol status command", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "claude-code",
@@ -604,7 +604,7 @@ describe("BatonChatProtocol proposed plan", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "claude" },
         harness: "claude-code",
         harnessTargetId: "claude",
@@ -685,7 +685,7 @@ describe("BatonChatProtocol streaming State", () => {
       protocol.stateStore.subscribe("timeline", () => notifications++);
 
       for (const text of ["one ", "two ", "three"]) {
-        session.ledger.append({
+        session.appendEvent({
           source: { type: "baton" },
           kind: "agent_message_chunk",
           harness: "codex",
@@ -717,14 +717,14 @@ describe("BatonChatProtocol streaming State", () => {
       let notifications = 0;
       protocol.stateStore.subscribe("timeline", () => notifications++);
 
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message_chunk",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_stream", content: { type: "text", text: "latest output" } },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -895,7 +895,7 @@ describe("BatonChatProtocol harness commands", () => {
       controller.getConfig = async () => [{ id: "fast", type: "boolean", name: "Fast", value: fast }];
       controller.setConfig = async (_target, _id, value) => {
         fast = value;
-        session.ledger.append({
+        session.appendEvent({
           kind: "config_option_update",
           source: { type: "harness", harnessTargetId: "codex" },
           harness: "codex",
@@ -997,21 +997,21 @@ describe("BatonChatProtocol State projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
         harnessTargetId: "codex",
         payload: { model: "default", contextUsed: 12_500, contextSize: 200_000 },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
         harnessTargetId: "codex-secondary",
         payload: { model: "default", contextUsed: 150_000, contextSize: 200_000 },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "claude-code",
@@ -1039,7 +1039,7 @@ describe("BatonChatProtocol State projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
@@ -1161,7 +1161,7 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         harness: "codex",
@@ -1203,7 +1203,7 @@ describe("BatonChatProtocol transcript projection", () => {
         harness: "codex",
       });
       session.ensureHarnessInvocationLane("hl_worker", "hinv_worker", MAIN_LANE_ID);
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "_baton_harness_invocation_recorded",
         payload: {
@@ -1217,7 +1217,7 @@ describe("BatonChatProtocol transcript projection", () => {
           harnessTargetId: "codex",
         },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "_baton_harness_invocation_scheduled",
         payload: {
@@ -1234,7 +1234,7 @@ describe("BatonChatProtocol transcript projection", () => {
         laneId: "hl_worker",
         turnId: "t_worker",
       } as const;
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         ...coordinate,
@@ -1243,7 +1243,7 @@ describe("BatonChatProtocol transcript projection", () => {
           content: [{ type: "text", text: "Implement REQ-1" }],
         },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "codex" },
         kind: "agent_message",
         ...coordinate,
@@ -1252,7 +1252,7 @@ describe("BatonChatProtocol transcript projection", () => {
           content: [{ type: "text", text: "Implemented and tested." }],
         },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "codex" },
         kind: "state_update",
         ...coordinate,
@@ -1293,14 +1293,14 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "tool_call_update",
         harness: "codex",
         turnId: "t1",
         payload: { toolCallId: "tc1", title: "edit src/app.ts", kind: "edit", status: "completed" },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "approval_review_update",
         harness: "codex",
@@ -1338,29 +1338,29 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_user", content: [{ type: "text", text: "## literal" }] },
       });
-      session.ledger.append({ source: { type: "baton" }, kind: "state_update", harness: "codex", turnId: "t1", payload: { state: "running" } });
-      session.ledger.append({
+      session.appendEvent({ source: { type: "baton" }, kind: "state_update", harness: "codex", turnId: "t1", payload: { state: "running" } });
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_thought",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_thought", content: [{ type: "text", text: "**Inspecting image**" }] },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message_chunk",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_stream", content: { type: "text", text: "## Streaming" } },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message",
         harness: "codex",
@@ -1641,7 +1641,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
       // 事件流是 pending 交互的唯一真相源：requested 落盘即出卡片，id = interactionId
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "claude-code",
@@ -1675,7 +1675,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       expect(protocol.stateStore.getState("footer").toast?.text).toContain("no longer pending");
 
       // cancelled 落盘 → 卡片消失
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1698,7 +1698,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -1742,7 +1742,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         answers: { q1: ["repository"] },
       });
 
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1769,7 +1769,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         { session, resumed: false },
         () => undefined,
       );
-      session.ledger.append({
+      session.appendEvent({
         source: {
           type: "plugin",
           pluginInstanceId: "reqloop_default",
@@ -1875,7 +1875,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -1920,7 +1920,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       };
       await protocol.resolveInteraction("ix_3", { kind: "approval", optionId: "trust" });
       expect(result).toEqual({ kind: "hook_trust", outcome: "trusted" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1961,13 +1961,13 @@ describe("Plugin draft projection", () => {
       internals.plugins.completeInteraction = async (id, result) => {
         submitted = { id, result };
         if (result.kind === "cancelled") {
-          session.ledger.append({
+          session.appendEvent({
             kind: "interaction.cancelled",
             source: { type: "user" },
             payload: { interactionId: id, reason: result.reason },
           });
         } else {
-          session.ledger.append({
+          session.appendEvent({
             kind: "interaction.answered",
             source: { type: "user" },
             payload: { interactionId: id, answer: result },
@@ -1975,7 +1975,7 @@ describe("Plugin draft projection", () => {
         }
         return true;
       };
-      session.ledger.append({
+      session.appendEvent({
         kind: "interaction.requested",
         source: {
           type: "plugin",
@@ -2049,7 +2049,7 @@ describe("Plugin draft projection", () => {
         completed = { id, result };
         return true;
       };
-      session.ledger.append({
+      session.appendEvent({
         kind: "interaction.requested",
         source: {
           type: "plugin",
@@ -2341,21 +2341,21 @@ describe("BatonChatProtocol input history", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "claude-code",
         turnId: "t_1",
         payload: { messageId: "m_1", content: [{ type: "text", text: "seeded one" }] },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "claude-code",
         turnId: "t_2",
         payload: { messageId: "m_2", content: [{ type: "text", text: "seeded two" }] },
       });
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         harness: "claude-code",

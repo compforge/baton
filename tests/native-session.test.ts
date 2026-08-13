@@ -416,7 +416,7 @@ describe("native session ownership", () => {
 
     const live = store.createSession({ cwd: "/repo" });
     const turnId = "t-live";
-    live.ledger.append({
+    live.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "codex",
@@ -427,7 +427,7 @@ describe("native session ownership", () => {
         content: [{ type: "text", text: "inspect the cache" }],
       },
     });
-    live.ledger.append({
+    live.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "codex",
@@ -457,7 +457,7 @@ describe("native session ownership", () => {
       turn: { id: "codex-turn-1", status: "completed" },
     });
     for (const draft of drafts) {
-      live.ledger.append({
+      live.appendEvent({
         ...draft,
         source: { type: "harness", harnessTargetId: "codex" },
         harness: "codex",
@@ -561,7 +561,7 @@ describe("native session ownership", () => {
 
     const live = store.createSession({ cwd: "/repo" });
     const turnId = "t-live";
-    live.ledger.append({
+    live.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "claude-code",
@@ -572,7 +572,7 @@ describe("native session ownership", () => {
         content: [{ type: "text", text: "inspect the cache" }],
       },
     });
-    live.ledger.append({
+    live.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "claude-code",
@@ -617,7 +617,7 @@ describe("native session ownership", () => {
       modelUsage: {},
     }, turn);
     for (const draft of drafts) {
-      live.ledger.append({
+      live.appendEvent({
         ...draft,
         source: { type: "harness", harnessTargetId: "claude" },
         harness: "claude-code",

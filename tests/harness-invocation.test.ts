@@ -62,7 +62,7 @@ describe("HarnessInvocationStore", () => {
     });
     const scheduled = store.scheduled(pending.invocationId)!;
     const result = store.wait(pending.invocationId);
-    handle.ledger.append({
+    handle.appendEvent({
       kind: "user_message",
       source: { type: "plugin", pluginInstanceId: scheduled.pluginInstanceId },
       harness: "codex",
@@ -74,7 +74,7 @@ describe("HarnessInvocationStore", () => {
         content: [...scheduled.blocks],
       },
     });
-    handle.ledger.append({
+    handle.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "codex",

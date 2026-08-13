@@ -154,8 +154,9 @@ owner、生命周期和恢复语义一致时，才考虑提升公共 Capability�
 Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、Lane、HarnessTarget、
 HarnessSession 与 Session scope。原生 wire 存入 `raw`，不能让 Adapter 自报执行归属。
 
-Harness output 先同步 append Event Ledger，再以带 `eventId/seq` 的 record 通知
-`harness.outbound.before/after`。Hook 不承担准入，不能把 Plugin 延迟传播到 EventSink；它需要动作时
+Harness output 先由 BatonSession 同步 record 到 Event Ledger 并 reduce Projection，再以带
+`eventId/seq` 的 record 通知 `harness.outbound.before/after`。Ledger 不分发事件；Hook 不承担准入，
+不能把 Plugin 延迟传播到 EventSink；它需要动作时
 通过 Verb 请求 Core。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
 
 稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID

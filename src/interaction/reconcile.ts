@@ -30,7 +30,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type InteractionSession = Pick<
   SessionHandle,
-  "id" | "ledger"
+  "id" | "ledger" | "appendEvent" | "subscribe"
 >;
 
 interface Entry {
@@ -232,7 +232,7 @@ export class ReconcileInteractionStore {
     for (const event of session.ledger.read()) this.apply(event);
     this.replaying = false;
     this.arm();
-    this.unsubscribe = session.ledger.subscribe((event) => this.apply(event));
+    this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
 
   async ask(
@@ -434,7 +434,7 @@ export class ReconcileInteractionStore {
       request,
       new Date(this.timestamp() + request.timeoutMs).toISOString(),
     );
-    this.session.ledger.append({
+    this.session.appendEvent({
       kind: "interaction.requested",
       source: {
         type: "plugin",
@@ -463,7 +463,7 @@ export class ReconcileInteractionStore {
     const entry = this.entries.get(interactionId);
     if (!entry || entry.result) return false;
     if (result.kind === "cancelled") {
-      this.session.ledger.append({
+      this.session.appendEvent({
         kind: "interaction.cancelled",
         source,
         parentEventId: entry.requested.eventId,
@@ -474,7 +474,7 @@ export class ReconcileInteractionStore {
         },
       });
     } else {
-      this.session.ledger.append({
+      this.session.appendEvent({
         kind: "interaction.answered",
         source,
         parentEventId: entry.requested.eventId,

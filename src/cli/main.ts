@@ -137,7 +137,7 @@ async function main(): Promise<void> {
 
   let sawOutput = false;
   let interactionChain = Promise.resolve();
-  const unsubscribe = session.ledger.subscribe((event) => {
+  const unsubscribe = session.subscribe((event) => {
     if (event.kind === "agent_message_chunk" && event.payload.content.type === "text") {
       if (!sawOutput) {
         stdout.write(`${event.harness ?? target.harness}> `);

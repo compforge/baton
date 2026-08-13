@@ -95,7 +95,7 @@ describe("Plugin Runner process boundary", () => {
 
   test("routes reconcile capabilities across the process boundary", async () => {
     const { instances, session, entry } = stores();
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "codex",
@@ -220,7 +220,7 @@ describe("Plugin Runner process boundary", () => {
 
   test("withdraws registrations and settles a waiting verb after a crash", async () => {
     const { root, instances, session, entry } = stores();
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "codex",

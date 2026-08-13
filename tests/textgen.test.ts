@@ -346,7 +346,7 @@ describe("maybeGenerateSessionTitle", () => {
 
   function sessionWithUserMessage(text: string) {
     const session = store.createSession({ cwd: "/repo" });
-    session.ledger.append({
+    session.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       turnId: "t_1",
@@ -369,7 +369,7 @@ describe("maybeGenerateSessionTitle", () => {
     const session = store.forkSession(source.id);
     const forkPrompt = "try the cache approach instead";
     session.setTitleIfEmpty(forkPrompt);
-    session.ledger.append({
+    session.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       turnId: "t_fork",
@@ -433,7 +433,7 @@ describe("maybeGenerateSessionTitle", () => {
 
   test("无真实用户输入（只有 Plugin prompt）不生成", async () => {
     const session = store.createSession({ cwd: "/repo" });
-    session.ledger.append({
+    session.appendEvent({
       kind: "user_message",
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       turnId: "t_plugin",

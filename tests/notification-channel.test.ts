@@ -1,8 +1,8 @@
-// 单通道视图通知契约（见 docs/kernel.md“单通道真相”：一切经
-// event → append → broadcast → reduce → projection，不允许第二条投影通道）。
+// 单通道视图通知契约：BatonSession 直接将 Event reduce 为 Projection，
+// 并在 reduce 后只通知一次消费者；Event Ledger 不承担实时分发。
 //
-// 回归背景（PR #112）：普通流式事件曾同时走两条通知——session.append 的事件流广播
-// （投影订阅）+ controller appendEvent 末尾的 changed()（onChange），导致每个
+// 回归背景（PR #112）：普通流式事件曾同时走两条通知——Session Event
+// 通知 + Controller appendEvent 末尾的 changed()（onChange），导致每个
 // streaming chunk 触发两次完整 State 投影。修复删掉了 appendEvent 末尾的 changed()，
 // 但这条"哪类变更走哪条通知通道"的分工只靠 Controller 里的一行注释守着——任何人
 // 顺手加回 changed() 就会无声复发（双重建只是性能劣化，UI 不出错，肉眼看不出来）。
@@ -79,7 +79,7 @@ class StreamingAdapter implements HarnessAdapter {
 // ---- 契约：普通流式事件 → 恰好一次视图通知 ----
 // 参数化覆盖 turn 运行中最高频的三类中间过程事件；对每一个事件断言"恰好 1"：
 // 0 = 事件到不了投影（丢更新，harness-initiated-turn.test.ts 钉住的那半边）；
-// 2 = append 广播之外又走了 controller onChange（#112 的双重建回归，这半边归本文件）。
+// 2 = Session 通知之外又走了 Controller onChange（#112 的双重建回归）。
 
 describe("single-channel State publication per streaming event", () => {
   const cases: Array<{ name: string; event: (turnId: string) => AnyEventDraft }> = [
@@ -128,14 +128,14 @@ describe("single-channel State publication per streaming event", () => {
           notifications += 1;
         },
       });
-      const unsubscribe = session.ledger.subscribe(() => {
+      const unsubscribe = session.subscribe(() => {
         notifications += 1;
       });
 
       const outcome = controller.submit("claude", [{ type: "text", text: "go" }]);
       await adapter.admission;
 
-      // 每发一个事件，通知恰好 +1（append 是同步广播，计数无需等待）
+      // 每发一个事件，reduce 后同步通知恰好 +1。
       notifications = 0;
       adapter.emit(c.event(adapter.turnId!));
       expect(notifications).toBe(1);

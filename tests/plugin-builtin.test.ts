@@ -28,7 +28,7 @@ function appendTurn(
   turnId: string,
   userText: string,
 ) {
-  return session.ledger.append({
+  return session.appendEvent({
     kind: "_baton_turn_summary",
     source: { type: "baton" },
     harness: "codex",

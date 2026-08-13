@@ -35,8 +35,9 @@ Interaction response 和 interrupt 都是输入事实；只有一部分会 lower
 mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
 Harness wire。
 
-Event Ledger 是 intake 的 WAL。Core 先 append `input.received(inputId, input)`，再以这条 durable
-record 通知 `human.inbound.before`，随后执行 lowering；lowering 返回后先 append
+Event Ledger 只记录 intake 的 WAL。BatonSession 先 record 并 reduce
+`input.received(inputId, input)`，Core 再以这条 durable record 通知
+`human.inbound.before`，随后执行 lowering；lowering 返回后先接受
 `input.settled(outcome)`，再通知 `human.inbound.after`。Hook 即使通过 Verb 发起动作，也一定能找到
 触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
 
@@ -46,7 +47,7 @@ composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `
 composer 输入路径处理。
 
 prompt lowering 时，Controller 创建 HarnessInput，为它分配稳定 `messageId` 并为可能的新 Turn
-预留 `turnId`。每次 Queue 状态迁移都先 append `harness_input.updated`，再更新内存执行索引；
+预留 `turnId`。每次 Queue 状态迁移都先 record `harness_input.updated`，再更新内存执行索引；
 `input.received` 通过 `parentEventId` 与第一个 HarnessInput 事实关联，两个对象不复用 identity。
 若 Adapter 接受 steer，HarnessInput 改为绑定实际承载它的当前 Turn。即使队列停留极短，也遵守同一状态机：
 
@@ -159,11 +160,12 @@ outcome 区分 `accepted/rejected/error`。same-turn steer 走同一 Hook 边界
 
 Adapter 消费原生 wire，把 message、thought、tool、diff、plan、task、usage、Interaction 和状态
 翻译为 Baton Event 草稿。宿主在可信入口补齐 `source:harness`、Lane、HarnessTarget、
-HarnessSession 和 Turn 坐标，Store 再补 `eventId`、scope、时间与序号。
+HarnessSession 和 Turn 坐标，BatonSession 再补 `eventId`、scope、时间与序号。
 
-Event Ledger 是 Harness output 的 WAL：宿主补齐可信坐标后立即 append，再把带 `eventId/seq` 的
-`HarnessEventRecord` 通知 `harness.outbound.before/after`。Hook 不位于事实写入前，也不串行阻塞
-Harness EventSink；它只能观察已持久化事实，并通过 typed Verb 请求后续动作。Hook 异常或超时
+Event Ledger 只记录 Harness output 的 WAL。BatonSession 补齐信任坐标后先 record，随即直接
+reduce Projection；Core 再把带 `eventId/seq` 的 `HarnessEventRecord` 通知
+`harness.outbound.before/after`。Hook 不位于事实写入前，也不串行阻塞 Harness EventSink；
+它只能观察已接受的事实，并通过 typed Verb 请求后续动作。Hook 异常或超时
 fail-open，不能让 Plugin 截断 Harness 输出。
 
 归一原则是“稳定语义 + raw 保真”：
@@ -174,15 +176,19 @@ fail-open，不能让 Plugin 截断 Harness 输出。
 - 原生粒度差异保留在 `raw`，Projection 与 Store 不出现 Harness 分支；
 - 未知终态悲观处理，未知通知进入有界诊断和原生 trace，不静默吞掉。
 
-### 3.2 append、reduce 与 Projection
+### 3.2 record、reduce 与 Projection
 
-所有事件进入同一条路径：
+所有 Event 都由 BatonSession 接受。实时数据流是 `reduce → Projection`；Ledger 是从
+Event 分出的记录支路，不是 Projection 需要经过的一站：
 
 ```text
-append → broadcast → reduce → Projection snapshot → chat-tui
+Event ── reduce ──→ Projection snapshot ──→ chat-tui
+  ├── record ──→ Event Ledger
+  └── notify ──→ Hook ──→ Plugin
 ```
 
-live 和重开 Session 使用相同 reducer。自愈也必须合成新的事实 Event 再走这条路径，不能直接
+`record` 在当前实现中作为 WAL commit 点先于 reduce，但不承担事件总线职责。live 和重开
+Session 使用相同 reducer。自愈也必须合成新的事实 Event 再走这条路径，不能直接
 修改页面状态。chat-tui 只消费 transcript、activity、Interaction、status 等 view，不解析
 Harness DTO。
 

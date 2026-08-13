@@ -201,7 +201,7 @@ describe("Harness Delivery Attempt", () => {
       cwd: "/repo",
     });
     const appendTurn = (turnId: string, attemptId: string, dispatching: boolean) => {
-      const intent = session.ledger.append({
+      const intent = session.appendEvent({
         kind: "user_message",
         source: { type: "user" },
         harness: "codex",
@@ -212,7 +212,7 @@ describe("Harness Delivery Attempt", () => {
           content: [{ type: "text", text: turnId }],
         },
       });
-      session.ledger.append({
+      session.appendEvent({
         kind: "state_update",
         source: { type: "baton" },
         harness: "codex",
@@ -220,7 +220,7 @@ describe("Harness Delivery Attempt", () => {
         turnId,
         payload: { state: "running" },
       });
-      const prepared = session.ledger.append({
+      const prepared = session.appendEvent({
         kind: "_baton_delivery_attempt_update",
         source: { type: "baton" },
         parentEventId: intent.eventId,
@@ -235,7 +235,7 @@ describe("Harness Delivery Attempt", () => {
         },
       });
       if (dispatching) {
-        session.ledger.append({
+        session.appendEvent({
           kind: "_baton_delivery_attempt_update",
           source: { type: "baton" },
           parentEventId: prepared.eventId,
@@ -249,7 +249,7 @@ describe("Harness Delivery Attempt", () => {
     appendTurn("t_prepared", "att_prepared", false);
     appendTurn("t_dispatching", "att_dispatching", true);
     appendTurn("t_receipted", "att_receipted", true);
-    const terminal = session.ledger.append({
+    const terminal = session.appendEvent({
       kind: "state_update",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -259,7 +259,7 @@ describe("Harness Delivery Attempt", () => {
       payload: { state: "idle", stopReason: "end_turn" },
     });
     // 模拟 terminal 已证明 admission、accepted 已落盘，但 finalized 尚未落盘时崩溃。
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: terminal.eventId,
@@ -290,7 +290,7 @@ describe("Harness Delivery Attempt", () => {
       harnessSessionKey: "codex",
       cwd: "/repo",
     });
-    const input = session.ledger.append({
+    const input = session.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "codex",
@@ -301,7 +301,7 @@ describe("Harness Delivery Attempt", () => {
         content: [{ type: "text", text: "old work" }],
       },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "codex",
@@ -309,7 +309,7 @@ describe("Harness Delivery Attempt", () => {
       turnId: "t_old",
       payload: { state: "running" },
     });
-    const prepared = session.ledger.append({
+    const prepared = session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: input.eventId,
@@ -323,7 +323,7 @@ describe("Harness Delivery Attempt", () => {
         launchSnapshot,
       },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: prepared.eventId,
@@ -332,7 +332,7 @@ describe("Harness Delivery Attempt", () => {
       turnId: "t_old",
       payload: { attemptId: "att_old", phase: "dispatching" },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       harness: "codex",

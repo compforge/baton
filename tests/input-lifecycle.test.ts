@@ -102,7 +102,7 @@ describe("Input lifecycle (HarnessInput)", () => {
     const adapter = new HoldingAdapter("codex");
     const controller = controllerWith(adapter);
     const queueLengthsAtCommit: number[] = [];
-    const unsubscribe = session.ledger.subscribe((event) => {
+    const unsubscribe = session.subscribe((event) => {
       if (event.kind === "harness_input.updated" && event.payload.status === "queued") {
         queueLengthsAtCommit.push(controller.harnessQueueLength);
       }
@@ -128,7 +128,7 @@ describe("Input lifecycle (HarnessInput)", () => {
   });
 
   test("restores a safely queued HarnessInput from the Event Ledger", async () => {
-    session.ledger.append({
+    session.appendEvent({
       kind: "harness_input.updated",
       source: { type: "user" },
       harness: "codex",

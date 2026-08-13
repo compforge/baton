@@ -61,8 +61,8 @@ describe("State invariant: every appended event reaches the timeline", () => {
   for (const arrival of arrivals) {
     test(arrival.name, async () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      for (const ev of arrival.before) session.ledger.append({ ...ev, source: { type: "baton" } } as never);
-      session.ledger.append({
+      for (const ev of arrival.before) session.appendEvent({ ...ev, source: { type: "baton" } } as never);
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "claude" },
         kind: "agent_message",
         harness: "claude-code",
@@ -80,7 +80,7 @@ describe("State invariant: every appended event reaches the timeline", () => {
 describe("Harness-started Turn presentation", () => {
   test("shows one busy run-status line while a Turn runs; clears it on idle", async () => {
     const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-    session.ledger.append({
+    session.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       harness: "claude-code",
@@ -98,7 +98,7 @@ describe("Harness-started Turn presentation", () => {
     // 该 Turn 没有对应 Queue run，Esc 没有可中断的队列所有权。
     expect(line?.hint).toBeUndefined();
 
-    session.ledger.append({
+    session.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       harness: "claude-code",
@@ -119,7 +119,7 @@ describe("Harness-started Turn presentation", () => {
   test("concurrent Turns still project a single latest run-status line", async () => {
     const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
     for (const turnId of ["t_obs1", "t_obs2"]) {
-      session.ledger.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "claude" },
         kind: "state_update",
         harness: "claude-code",
@@ -134,7 +134,7 @@ describe("Harness-started Turn presentation", () => {
     expect(runStatus?.[0]?.id).toBe("run:t_obs2");
 
     // 一个收口不影响另一个（单槽时代任何 idle 都会全局清空）
-    session.ledger.append({
+    session.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       harness: "claude-code",

@@ -222,21 +222,21 @@ afterEach(() => {
 });
 
 function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
-  handle.ledger.append({
+  handle.appendEvent({
     source: { type: "baton" },
     kind: "user_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-user`, content: [{ type: "text", text }] },
   });
-  handle.ledger.append({
+  handle.appendEvent({
     source: { type: "baton" },
     kind: "agent_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-agent`, content: [{ type: "text", text: `${text}-done` }] },
   });
-  handle.ledger.append({
+  handle.appendEvent({
     source: { type: "baton" },
     kind: "state_update",
     harness,
@@ -269,7 +269,7 @@ describe("Controller", () => {
   });
 
   test("links an accepted implementation turn back to its proposed plan", async () => {
-    session.ledger.append({
+    session.appendEvent({
       source: { type: "harness", harnessTargetId: "example" },
       harness: "example-harness",
       harnessTargetId: "example",
@@ -305,7 +305,7 @@ describe("Controller", () => {
   });
 
   test("admits at most one pending implementation turn per proposed plan", async () => {
-    session.ledger.append({
+    session.appendEvent({
       source: { type: "harness", harnessTargetId: "example" },
       harness: "example-harness",
       harnessTargetId: "example",
@@ -552,11 +552,11 @@ describe("Controller", () => {
     expect(adapterCreations).toBe(0);
   });
 
-  test("publishes the persisted turn summary to event-stream subscribers", async () => {
+  test("publishes the persisted turn summary to Session subscribers", async () => {
     const adapter = new FakeAdapter("codex");
     const events: AnyEventEnvelope[] = [];
-    // 投影单通道：消费者订阅事件流（append 即广播），不从 submit 的回调取事件
-    session.ledger.subscribe((event) => events.push(event));
+    // 投影单通道：Session 在 reduce 后通知消费者，不从 submit 的回调取事件。
+    session.subscribe((event) => events.push(event));
     const controller = new Controller({
       session,
       mentionBudgetChars: 4096,

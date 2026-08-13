@@ -51,7 +51,7 @@
   <text x="810" y="362" text-anchor="middle" class="tiny">turnId</text>
 
   <rect x="835" y="420" width="130" height="90" rx="12" fill="#dce4f8" class="box"/>
-  <text x="900" y="455" text-anchor="middle" class="small">append</text>
+  <text x="900" y="455" text-anchor="middle" class="small">accepted</text>
   <text x="900" y="483" text-anchor="middle" class="label">Event</text>
   <line x1="1080" y1="450" x2="980" y2="450" class="flow"/>
   <text x="1020" y="425" text-anchor="middle" class="tiny">normalized output</text>
@@ -66,6 +66,7 @@
   <path d="M835 560 H965 V690 Q900 720 835 690 Z" fill="#dce4f8" class="box"/>
   <text x="900" y="630" text-anchor="middle" class="label">session.jsonl</text>
   <line x1="900" y1="525" x2="900" y2="548" class="flow"/>
+  <text x="925" y="542" class="tiny">record</text>
 
   <text x="1400" y="72" text-anchor="middle" class="title">Harnesses</text>
   <circle cx="1400" cy="200" r="65" fill="#e7ddff" class="box"/>

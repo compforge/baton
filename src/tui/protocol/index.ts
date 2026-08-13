@@ -64,7 +64,7 @@ import {
 import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
 import { Controller } from "../../controller/index.ts";
-import { applyEvent, type SessionState } from "../../store/reduce.ts";
+import type { SessionState } from "../../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
@@ -247,9 +247,9 @@ export class BatonChatProtocol implements ChatProtocol {
       this.toast = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
     }
     this.controller = this.createController();
-    // 投影单通道：live 与 resume 走同一条 reduce 路径（loadState 补历史 + subscribe 跟增量），
-    // 不从 per-turn 回调取事件——Harness 自行开始的 Turn 没有对应的 submit 调用。
-    this.state = this.session.loadState();
+    // Projection 由 BatonSession 统一维护：打开时 replay，live Event 直接 reduce。
+    // TUI 只观察投影变化，不从 Ledger 或 per-turn 回调重建事实。
+    this.state = this.session.projection;
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(this.session);
     this.plugins = this.createPluginManager();
@@ -258,10 +258,9 @@ export class BatonChatProtocol implements ChatProtocol {
     this.startPluginManager();
   }
 
-  /** 接入事件流增量投影；调用前 state 必须已 loadState 到当前水位 */
+  /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
   private subscribeSession(session: SessionHandle): () => void {
-    return session.ledger.subscribe((envelope) => {
-      applyEvent(this.state, envelope);
+    return session.subscribe((envelope) => {
       // WAL facts still advance the reducer watermark, but do not themselves
       // create a Human presentation. Their resulting Core mutation publishes
       // through its normal owner after the commit point.
@@ -1189,7 +1188,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.syncTerminalTitle();
     this.commandOutput = null;
     this.controller = this.createController();
-    this.state = next.session.loadState();
+    this.state = next.session.projection;
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(next.session);
     this.toast = next.recovered

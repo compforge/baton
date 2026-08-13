@@ -35,7 +35,7 @@ Session、Queue、Harness 或 Plugin 生命周期，也不解释 Requirement、D
 | **Queue** | Core 的全局调度对象；当前主要承载 HarnessInput，决定等待、steer、取消和何时提交给 Harness |
 | **Lane** | BatonSession 内持久的任务线边界；Lane 内串行，不同 Lane 可以并行，可在多个 Harness 之间接力 |
 | **Turn** | Human 与 Harness 的一次交流边界；通常是一问一答，也可以只有 Harness 的回答。Turn 有稳定 `turnId` 和 start/end，但不排队、不调度，也不执行工作 |
-| **Event Ledger** | BatonSession 唯一的 append-only WAL；Event 是其中的最小事实，也是执行、恢复、Hook 因果与 Projection 的唯一真相源 |
+| **Event Ledger** | BatonSession 的 append-only WAL 和历史记录；它保存正典 Event 供审计与回放，不负责调度、reduce 或实时分发 |
 | **Interaction** | Harness 或 Plugin 等待 Human 或 policy 给出 typed decision 的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期 |
 | **Resource / reconcile** | Plugin 表达长期期望状态并主动推进领域 loop 的机制；领域事实与完成条件归 Plugin 和外部系统所有 |
 | **Hook / Verb** | Hook 把 Core 边界事实通知 Plugin；Verb 让 Plugin 请求 Core 执行 typed action。Hook 不返回控制决策，Verb 不绕过 Core |
@@ -68,13 +68,16 @@ Input 时也可以产生答案，此时仍建立普通 Turn，只是没有对应
 
 ### 3.1 Human 到 Harness
 
-Human Input 先作为事实进入 Event Ledger，再由 Core lowering。不同 Input 可以推进不同对象：
+Human Input 先由 BatonSession 接受为 Event，再由 Core lowering。当前 WAL 顺序是先
+record Event，再 reduce Projection 并继续 lowering；Ledger 只记录这个事实，不驱动后续流程。
+不同 Input 可以推进不同对象：
 
 ```text
 Human
   ↓ Input
-Event Ledger
-  ↓ lowering
+BatonSession accepts Event
+  ├─ record ─────────────────────→ Event Ledger
+  ├─ reduce ─────────────────────→ Projection
   ├── prompt/text ─────────────→ HarnessInput → Queue → Adapter → Harness
   ├── interrupt ───────────────→ 当前 Queue run / Harness cancel
   ├── Interaction response ────→ Interaction
@@ -89,12 +92,13 @@ Queue 是 Human 到 Harness 主路径上的调度者，但 Input 不等于 Harne
 
 ### 3.2 Harness 到 Human
 
-Harness output 经 Adapter 归一后先进入 Event Ledger，再驱动 Hook、Projection 和展示：
+Harness output 经 Adapter 归一为 Event，BatonSession 直接 reduce 出 Projection 供 Human 消费。
+Event 同时被 Ledger 记录、被 Hook 通知给 Plugin；两者都不是 Projection 的中转站：
 
 ```text
-Harness → Adapter normalize → append Event → Event Ledger
-                                           ├── Hook → Plugin
-                                           └── reduce → Projection → Human
+Harness → Adapter normalize → Event → reduce → Projection → Human
+                                   ├─ record ───→ Event Ledger
+                                   └─ notify ───→ Hook → Plugin
 ```
 
 Harness 不直接写 UI，也不自己宣布整个业务完成。正常完成、error、cancel、子进程退出和 transport
@@ -144,21 +148,26 @@ Harness 进程或 SDK 生命周期由 Adapter 持有；第三方 Plugin 按活�
 
 ## 5. 关键不变量
 
-### 5.1 Event Ledger 是协作事实源和 WAL
+### 5.1 Event 是事实，Ledger 是 WAL
 
-BatonSession 内一切可恢复、可展示或会触发动作的协作事实都遵循：
+BatonSession 内一切可恢复、可展示或会触发动作的协作事实都表达为 Event。
+Session 是实时入口，它用同一个 Event 同步维护 Ledger 和 Projection：
 
 ```text
-append input/prepared fact → mutate/dispatch → append outcome
-                                  ↓
-                        broadcast → reduce → Projection
+accept Event
+  ├─ record ──→ Event Ledger
+  ├─ reduce ──→ Projection
+  └─ notify ──→ Session observers
+
+prepared Event → external action → outcome Event
 ```
 
-Human Input 先 append `input.received`，再通知 Hook 或 lowering；HarnessInput 每次 Queue 迁移先 append
-`harness_input.updated`，再修改内存执行索引；Harness output 先进入 Ledger，再通知 Hook；Delivery
-Attempt 先持久化 `prepared`，再调用 Adapter。live、resume 和自愈使用同一条 reduce 路径，任何组件
-都不能另开旁路真相源。Plugin Resource 与外部系统仍拥有各自领域事实，但不能冒充 Session Event
-Ledger。无法证明副作用是否发生时保留 `uncertain`，不盲目重投。
+Human Input 先 record `input.received`，再通知 Hook 或 lowering；HarnessInput 每次 Queue 迁移先
+record `harness_input.updated`，再修改内存执行索引；Harness output 先 record 和 reduce，再通知
+Hook；Delivery Attempt 先持久化 `prepared`，再调用 Adapter。这是 write-ahead 的提交顺序，
+不表示 Ledger 驱动 Projection 或后续动作。live 与 replay 使用同一 reducer；自愈也必须
+接受新的事实 Event，不能直接改页面状态。Plugin Resource 与外部系统仍拥有各自领域事实。
+无法证明副作用是否发生时保留 `uncertain`，不盲目重投。
 
 ### 5.2 Scope 不执行工作
 

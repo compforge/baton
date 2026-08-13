@@ -66,7 +66,7 @@ describe("openBatonSession", () => {
 describe("crash recovery on open", () => {
   test("fails a native steer queue that lost its Adapter process", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "state_update",
       payload: { state: "running" },
@@ -74,7 +74,7 @@ describe("crash recovery on open", () => {
       harnessTargetId: "claude",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "user_message",
       payload: {
@@ -87,7 +87,7 @@ describe("crash recovery on open", () => {
       harnessTargetId: "claude",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       payload: { state: "idle", stopReason: "end_turn" },
@@ -124,7 +124,7 @@ describe("crash recovery on open", () => {
         data: { sessionId: "hs_runtime_only" },
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       payload: { state: "running" },
@@ -133,7 +133,7 @@ describe("crash recovery on open", () => {
       harnessSessionId: "4bc983eb-f25c-4857-9ac2-28ac6442e74c",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       payload: { state: "idle", stopReason: "end_turn" },
@@ -165,7 +165,7 @@ describe("crash recovery on open", () => {
         data: { sessionId: "hs_runtime_only" },
       },
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "state_update",
       payload: { state: "running" },
@@ -174,7 +174,7 @@ describe("crash recovery on open", () => {
       harnessSessionId: "hs_runtime_only",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "state_update",
       payload: { state: "idle", stopReason: "error" },
@@ -197,7 +197,7 @@ describe("crash recovery on open", () => {
 
   test("normalizes an interrupted turn: idle + notice + summary", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "state_update",
       payload: { state: "running" },
@@ -205,7 +205,7 @@ describe("crash recovery on open", () => {
       harnessTargetId: "codex-work",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "user_message",
       payload: { messageId: "m1", content: [{ type: "text", text: "hi" }] },
@@ -213,7 +213,7 @@ describe("crash recovery on open", () => {
       harnessTargetId: "codex-work",
       turnId: "t1",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m2", content: { type: "text", text: "partial" } },
@@ -242,22 +242,22 @@ describe("crash recovery on open", () => {
   test("concurrent interrupted turns each get idle + notice + summary", () => {
     const h = store.createSession({ cwd: "/repo" });
     // Queue-driven Turn 与同 Harness 的 Harness-started Turn 并行时崩溃。
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t_driven" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t_driven" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m1", content: { type: "text", text: "partial" } },
       harness: "codex",
       turnId: "t_driven",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "state_update",
       payload: { state: "running" },
       harness: "claude-code",
       turnId: "t_obs",
     });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message",
       payload: { messageId: "m2", content: [{ type: "text", text: "bg partial" }] },
@@ -284,7 +284,7 @@ describe("crash recovery on open", () => {
 
   test("recovery is idempotent: second open changes nothing", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
 
     openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     const count = store.openSession(h.id).ledger.read().length;
@@ -295,15 +295,15 @@ describe("crash recovery on open", () => {
 
   test("completed turn missing its summary gets one, without an interruption notice", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "agent_message_chunk",
       payload: { messageId: "m1", content: { type: "text", text: "done" } },
       harness: "codex",
       turnId: "t1",
     });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId: "t1" });
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
@@ -315,8 +315,8 @@ describe("crash recovery on open", () => {
 
   test("dangling permission Interactions are cancelled", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
       payload: {
@@ -340,8 +340,8 @@ describe("crash recovery on open", () => {
 
   test("dangling question Interactions are cancelled", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
       payload: {
@@ -364,7 +364,7 @@ describe("crash recovery on open", () => {
 
   test("dangling Plugin Interactions fail with their interrupted execution", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({
+    h.appendEvent({
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       kind: "interaction.requested",
       payload: {
@@ -401,8 +401,8 @@ describe("crash recovery on open", () => {
 
   test("dangling hook trust Interactions are cancelled", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
-    h.ledger.append({
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
       payload: {
@@ -434,8 +434,8 @@ describe("crash recovery on open", () => {
 
   test("clean session is untouched", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "idle", stopReason: "end_turn" }, harness: "codex", turnId: "t1" });
     h.summarizeTurn("t1");
     const count = h.ledger.read().length;
 
@@ -486,10 +486,10 @@ describe("lock hardening (codex review)", () => {
 
   test("recovery failure releases the lock before rethrowing", () => {
     const h = store.createSession({ cwd: "/repo" });
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
     // 中间行损坏：recovery 读取 Event Ledger 时会抛错。
     appendFileSync(join(h.dir, "session.jsonl"), "garbage\n");
-    h.ledger.append({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
+    h.appendEvent({ source: { type: "baton" }, kind: "state_update", payload: { state: "running" }, harness: "codex", turnId: "t1" });
 
     expect(() => openBatonSession(store, { cwd: "/repo", sessionId: h.id })).toThrow(/corrupt/);
     // 锁必须已释放：否则本进程存活期间该会话被永久判"在用"

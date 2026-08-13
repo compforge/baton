@@ -360,7 +360,7 @@ describe("plugin Manager", () => {
     selectedHarnessTargetId = "codex";
 
     const input = scheduled[0]!;
-    session.ledger.append({
+    session.appendEvent({
       kind: "user_message",
       source: {
         type: "plugin",
@@ -374,7 +374,7 @@ describe("plugin Manager", () => {
         content: [...input.blocks],
       },
     });
-    session.ledger.append({
+    session.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "claude",
