@@ -1,3 +1,4 @@
+export * from "./channel/index.ts";
 export * from "./event/ids.ts";
 export * from "./event/index.ts";
 export * from "./event/ledger.ts";

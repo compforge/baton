@@ -36,6 +36,7 @@
   <text x="860" y="212" text-anchor="middle" class="label">Controller</text>
   <text x="860" y="246" text-anchor="middle" class="label">+ Queue</text>
   <line x1="580" y1="222" x2="720" y2="222" class="flow"/>
+  <text x="650" y="202" text-anchor="middle" class="tiny">Channel inbound</text>
 
   <rect x="1080" y="145" width="170" height="400" rx="12" fill="#f7f8fc" class="box"/>
   <text x="1165" y="130" text-anchor="middle" class="title">Adapter</text>
@@ -62,6 +63,7 @@
   <text x="735" y="472" text-anchor="middle" class="small">reduce</text>
   <line x1="835" y1="465" x2="812" y2="465" class="flow"/>
   <line x1="670" y1="465" x2="595" y2="465" class="flow"/>
+  <text x="625" y="445" text-anchor="middle" class="tiny">Channel outbound</text>
 
   <path d="M835 560 H965 V690 Q900 720 835 690 Z" fill="#dce4f8" class="box"/>
   <text x="900" y="630" text-anchor="middle" class="label">session.jsonl</text>

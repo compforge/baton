@@ -40,7 +40,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | `docs/harness.md`、`docs/harness/` | Harness 公共抽象，以及 Codex / Claude Code 原生协议适配 |
 | `docs/plugin.md` | Plugin host、authoring 契约与长期领域 loop |
 | `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
-| `src/controller/`、`src/event/`、`src/session/`、`src/store/` | Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
+| `src/channel/`、`src/controller/`、`src/event/`、`src/session/`、`src/store/` | 双向协调边界、Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
 | `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
 | `src/plugin/` | Marketplace、Package/Instance/Binding、Manager/Supervisor/Runner、Resource/Controller 与 Board |
 | `src/context/`、`src/interaction/` | 上下文注册/交付与统一待决交互 |
@@ -74,8 +74,9 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    已交付与 Harness 已被唤醒是三个独立事实。Resource 以 `apiVersion/kind` 标识类型，以
    `namespace/name/uid` 标识对象；`labels` 是受约束、可检索的分组 metadata，`annotations`
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。
-3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关，人、Harness 和 Baton Plugin
-   通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
+3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关，`Channel` 统一承接
+   Human 与 Core 之间的 inbound/outbound 语义路径，但不代替 Queue、Controller 或 Harness 干活。
+   人、Harness 和 Baton Plugin 通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
    `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。所有发起新动作的 verb 都先持久化为
    Interaction；策略可以自动批准，但不能绕过 gate。通过后才创建 HarnessInvocation，最终 Input

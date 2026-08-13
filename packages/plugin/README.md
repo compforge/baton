@@ -173,15 +173,16 @@ The eight stages are the Cartesian product of boundary (`human` or `harness`),
 direction (`inbound` or `outbound`), and phase (`before` or `after`). A `before`
 notification waits for every matching Hook concurrently; failure or timeout is
 logged and fails open. An `after` notification is best-effort and non-blocking,
-with a bounded host queue. `human.outbound.after` means the presentation state
-was accepted by the UI store, not that a person actually saw it.
+with a bounded host queue. `human.outbound.after` means Channel delivered the
+presentation into Human surface state, not that a person actually saw it.
 
 Human inbound subjects cover prompts, commands, Harness/model/effort/mode
-configuration, Interaction responses, and interrupts. Core persists
+configuration, Interaction responses, and interrupts. Channel persists
 `input.received` before the before Hook. Prompt lowering creates a distinct
 HarnessInput/message identity linked by `parentEventId`; Core persists
 `input.settled` before the after Hook. Human outbound subjects cover
-transcript, queue, Interaction, status, toast, Board, and picker publication.
+transcript, queue, Interaction, status, toast, Board, and picker publication
+through Channel.
 Updates may coalesce while a before Hook is running. A reentrant Interaction
 opened by that Hook through a Verb is published without recursively invoking
 the same before stage, so the Hook cannot deadlock on a question hidden from
