@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -38,6 +39,7 @@ interface PendingCall {
 
 interface ExecutionCall {
   readonly callId: number;
+  readonly asyncResource: AsyncResource;
   blockers: number;
 }
 
@@ -74,6 +76,7 @@ export interface PluginRunnerClientOptions extends PluginRunnerCallbacks {
  * subprocess calls cannot occupy Baton's event loop.
  *
  * @rule Exclude a pending host-side Plugin verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply.
+ * @rule Restore the host async causal scope by executionId before handling a Runner verb callback.
  */
 export class PluginRunnerClient {
   private readonly child: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -271,7 +274,13 @@ export class PluginRunnerClient {
       this.pending.set(callId, pending);
       const executionId = this.executionId(request);
       if (executionId) {
-        this.executionCalls.set(executionId, { callId, blockers: 0 });
+        this.executionCalls.set(executionId, {
+          callId,
+          asyncResource: new AsyncResource("PluginRunnerExecution", {
+            requireManualDestroy: true,
+          }),
+          blockers: 0,
+        });
       }
       this.armCallTimeout(callId, pending);
       try {
@@ -283,7 +292,7 @@ export class PluginRunnerClient {
       } catch (error) {
         if (pending.timeout) clearTimeout(pending.timeout);
         this.pending.delete(callId);
-        if (executionId) this.executionCalls.delete(executionId);
+        if (executionId) this.deleteExecutionCall(executionId);
         reject(error);
       }
     });
@@ -334,7 +343,7 @@ export class PluginRunnerClient {
     this.pending.delete(reply.callId);
     if (pending.timeout) clearTimeout(pending.timeout);
     const executionId = this.executionId(pending.request);
-    if (executionId) this.executionCalls.delete(executionId);
+    if (executionId) this.deleteExecutionCall(executionId);
     if (reply.ok) pending.resolve(reply.value);
     else pending.reject(restoredError(reply.error));
   }
@@ -344,7 +353,16 @@ export class PluginRunnerClient {
       ? this.pauseExecutionTimeout(call.request.context.executionId)
       : undefined;
     try {
-      const value = await this.handleHostRequest(call.request);
+      const execution = call.request.method === "verb.invoke"
+        ? this.executionCalls.get(call.request.context.executionId)
+        : undefined;
+      // IPC callbacks live outside the invocation's async chain. The execution ID
+      // selects the host scope captured when that Runner invocation was sent.
+      const value = await (execution
+        ? execution.asyncResource.runInAsyncScope(
+          () => this.handleHostRequest(call.request),
+        )
+        : this.handleHostRequest(call.request));
       this.replyToChild({
         kind: "parent-reply",
         callId: call.callId,
@@ -427,6 +445,9 @@ export class PluginRunnerClient {
       pending.reject(this.failed);
     }
     this.pending.clear();
+    for (const execution of this.executionCalls.values()) {
+      execution.asyncResource.emitDestroy();
+    }
     this.executionCalls.clear();
     for (const source of this.sources.values()) {
       source.reportError(this.failed);
@@ -459,6 +480,13 @@ export class PluginRunnerClient {
       }
     }
     return undefined;
+  }
+
+  private deleteExecutionCall(executionId: string): void {
+    const execution = this.executionCalls.get(executionId);
+    if (!execution) return;
+    this.executionCalls.delete(executionId);
+    execution.asyncResource.emitDestroy();
   }
 
   private armCallTimeout(callId: number, pending: PendingCall): void {
