@@ -592,7 +592,9 @@ export class Controller {
         } else {
           // Adapter receipt 可能晚于 Esc/终态。输入已经被 Harness 接受，不能重新入队；
           // 直接继承它所绑定 Turn 的终态，避免把 Input 挂回已退休的台账记录。
-          input.status = active.stopReason === "cancelled" ? "interrupted" : "finalized";
+          const terminal = active.stopReason === "cancelled" ? "interrupted" : "finalized";
+          this.recordHarnessInputTransition(input, terminal);
+          input.status = terminal;
           input.resolve?.("completed");
         }
         this.changed();

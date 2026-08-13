@@ -6,6 +6,7 @@ import type {
   HumanInputSettlement,
   HumanPresentation,
 } from "@compforge/baton-plugin";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { newId } from "../event/ids.ts";
 import { logError } from "../logging.ts";
@@ -38,7 +39,7 @@ export interface ChannelOptions {
 export class Channel implements ChannelHookGateway {
   private hooks: ChannelHookGateway | undefined;
   private presentationRevision = 0;
-  private outboundBeforeActive = false;
+  private readonly outboundHookScope = new AsyncLocalStorage<boolean>();
 
   constructor(private readonly options: ChannelOptions) {}
 
@@ -101,13 +102,11 @@ export class Channel implements ChannelHookGateway {
       kind,
       revision: ++this.presentationRevision,
     });
-    if (!this.outboundBeforeActive && this.has("human.outbound.before")) {
-      this.outboundBeforeActive = true;
-      try {
-        await this.notifyBefore("human.outbound.before", presentation);
-      } finally {
-        this.outboundBeforeActive = false;
-      }
+    if (!this.publishingFromHook && this.has("human.outbound.before")) {
+      await this.outboundHookScope.run(
+        true,
+        () => this.notifyBefore("human.outbound.before", presentation),
+      );
     }
     const published = publish();
     if (published) this.notifyAfter("human.outbound.after", presentation);
@@ -116,7 +115,7 @@ export class Channel implements ChannelHookGateway {
 
   /** Whether outbound is inside its before coordination window. */
   get publishingFromHook(): boolean {
-    return this.outboundBeforeActive;
+    return this.outboundHookScope.getStore() === true;
   }
 
   has(stage: HookStage): boolean {

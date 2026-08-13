@@ -8,6 +8,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -433,6 +434,30 @@ describe("event append / read", () => {
     const sidecars = readdirSync(h.dir).filter((f) => f.startsWith("session.jsonl.partial-"));
     expect(sidecars).toHaveLength(1);
     expect(readFileSync(join(h.dir, sidecars[0]!), "utf8")).toBe(partial);
+  });
+
+  test("append preserves a complete Event when only its trailing newline was lost", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    h.appendEvent({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "codex",
+    });
+    const path = join(h.dir, "session.jsonl");
+    truncateSync(path, statSync(path).size - 1);
+
+    const reopened = store.openSession(h.id);
+    expect(reopened.ledger.read().map((event) => event.seq)).toEqual([1]);
+    reopened.appendEvent({
+      source: { type: "baton" },
+      kind: "state_update",
+      payload: { state: "idle" },
+      harness: "codex",
+    });
+
+    expect(store.openSession(h.id).ledger.read().map((event) => event.seq)).toEqual([1, 2]);
+    expect(readdirSync(h.dir).filter((file) => file.startsWith("session.jsonl.partial-"))).toEqual([]);
   });
 
   test("crash partial with no complete line at all truncates to empty", () => {

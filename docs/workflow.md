@@ -87,7 +87,8 @@ Channel outbound，并以 `HumanPresentation` 通知 `human.outbound.before/afte
 之前；after 只说明 surface 已接收最新 presentation，不证明终端已经绘制或用户已经看见。多个更新可在
 等待 before 时合并。若 before Hook 通过 Verb 打开 Interaction 并等待人的回答，该 Interaction
 必须立即发布而不能递归进入同一个 before Hook，否则 Hook 会等待一个尚未展示的问题而自锁；这种
-重入发布仍发送 after 通知。
+重入发布仍发送 after 通知。只有由当前 before Hook 因果链触发的发布可跳过同一 before；
+其他并发 presentation 必须各自完整通知 Hook。
 每个 Lane 同时最多一个 active Queue run，不同 Lane 可并行。Harness 也可以自行打开 Turn；
 这类 Turn 没有对应 Queue item，但与其它 Turn 使用完全相同的 Event 和终态契约。
 
