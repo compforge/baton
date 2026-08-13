@@ -8,7 +8,7 @@ import type {
   HarnessInvocationFailed,
   HarnessInvocationScheduled,
   PromptBlock,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type { ExecutionScope } from "./verb.ts";
 
@@ -49,7 +49,7 @@ export interface ReconcileHarnessInvocation {
 
 type HarnessInvocationSession = Pick<
   SessionHandle,
-  "id" | "readEvents" | "subscribe" | "append" | "requireLane"
+  "id" | "ledger" | "appendEvent" | "subscribe" | "requireLane"
 >;
 
 export interface ScheduledHarnessInvocation {
@@ -187,7 +187,7 @@ export class HarnessInvocationStore {
     private readonly session: HarnessInvocationSession,
     private readonly options: HarnessInvocationStoreOptions = {},
   ) {
-    for (const event of session.readEvents()) this.apply(event, false);
+    for (const event of session.ledger.read()) this.apply(event, false);
     this.unsubscribe = session.subscribe((event) => this.apply(event, true));
   }
 
@@ -208,7 +208,7 @@ export class HarnessInvocationStore {
     this.session.requireLane(draft.invocation.laneId);
     const invocationId = newId("hinv");
     const invocation = draft.invocation;
-    this.session.append({
+    this.session.appendEvent({
       kind: "_baton_harness_invocation_recorded",
       source: {
         type: "plugin",
@@ -295,7 +295,7 @@ export class HarnessInvocationStore {
   ): boolean {
     const state = this.states.get(invocationId);
     if (!state || state.result || state.cancelled || state.failed) return false;
-    this.session.append({
+    this.session.appendEvent({
       kind: "_baton_harness_invocation_cancelled",
       source: reason === "user" ? { type: "user" } : { type: "baton" },
       parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
@@ -315,7 +315,7 @@ export class HarnessInvocationStore {
   ): boolean {
     const state = this.states.get(invocationId);
     if (!state || state.result || state.cancelled || state.failed) return false;
-    this.session.append({
+    this.session.appendEvent({
       kind: "_baton_harness_invocation_failed",
       source: { type: "baton" },
       parentEventId: state.scheduled?.eventId ?? state.recorded.eventId,
@@ -363,7 +363,7 @@ export class HarnessInvocationStore {
       harnessTargetId: recorded.harnessTargetId,
       laneId: recorded.newLane ? newId("hl") : recorded.laneId,
     };
-    this.session.append({
+    this.session.appendEvent({
       kind: "_baton_harness_invocation_scheduled",
       source: { type: "baton" },
       parentEventId: state.recorded.eventId,

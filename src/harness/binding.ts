@@ -13,7 +13,7 @@ import {
   type ModelOption,
 } from "./adapter.ts";
 import { newId } from "../event/ids.ts";
-import type { ConfigValue, SessionConfigOption } from "../event/types.ts";
+import type { ConfigValue, SessionConfigOption } from "../event/index.ts";
 import type { SessionHandle } from "../store/store.ts";
 import { sessionIdResumeState, type HarnessResumeState } from "./resume.ts";
 import { createHarnessLaunchSnapshot, type HarnessTarget } from "./target.ts";
@@ -44,7 +44,7 @@ export class HarnessBinding {
   readonly adapter: HarnessAdapter;
   ref?: HarnessSessionHandle;
   /**
-   * setup 阶段由哪个 driven turn 触发。无显式 turnId 的 setup Interaction 由
+   * setup 阶段由哪个 Queue-driven Turn 触发。无显式 turnId 的 setup Interaction 由
    * Controller 使用它归属到触发冷启动的 turn。
    */
   setupTurnId?: string;

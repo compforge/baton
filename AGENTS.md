@@ -67,9 +67,10 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    mutable Binding 只描述当前连接，二者都不能代替 HarnessSession identity。
    Binding、上下文水位和执行投影按 `Lane × HarnessTarget` 隔离，偏好按 Target 共享；未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
-2. **事实与投影分层**：Event Ledger 是 Session 执行与感知历史的真相源，Plugin Resource
+2. **事实与投影分层**：Event 是 Session 内的正典事实，Event Ledger 只负责持久记录与回放；
+   BatonSession 直接用同一 reducer 维护 live Projection，消费者不订阅 Ledger。Plugin Resource
    `spec/status` 是领域期望与观测的真相源，外部系统继续拥有自己的事实；TUI 与 Board 都是
-   带归属的派生投影。live、resume 和自愈必须走同一条 append/reduce 路径；Board 更新、Context
+   带归属的派生投影。live、resume 和自愈必须走同一 reducer；Board 更新、Context
    已交付与 Harness 已被唤醒是三个独立事实。Resource 以 `apiVersion/kind` 标识类型，以
    `namespace/name/uid` 标识对象；`labels` 是受约束、可检索的分组 metadata，`annotations`
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。

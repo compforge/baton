@@ -11,7 +11,7 @@ import {
   textOf,
   type ApprovalReviewUpdate,
   type DiffBlock,
-} from "../../event/types.ts";
+} from "../../event/index.ts";
 import { harnessShortName } from "../../harness/registry.ts";
 import {
   isTurnRunning,

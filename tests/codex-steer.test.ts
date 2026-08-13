@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 
 import { CodexAdapter, codexPromptInput } from "../src/harness/codex/adapter.ts";
 import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 
 const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"

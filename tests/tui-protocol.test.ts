@@ -408,14 +408,14 @@ describe("BatonChatProtocol status command", () => {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       session.setPreviewIfEmpty("Implement status command");
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
         harnessTargetId: "codex",
         payload: { model: "default", contextUsed: 12_500, contextSize: 200_000 },
       });
-      const eventCount = session.readEvents().length;
+      const eventCount = session.ledger.read().length;
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       await protocol.command("status", "");
       const status = protocol.stateStore.getState("timeline").items.at(-1);
@@ -424,7 +424,10 @@ describe("BatonChatProtocol status command", () => {
         author: "baton",
         text: expect.stringContaining("Context: 12,500 / 200,000 tokens (6%)"),
       });
-      expect(session.readEvents()).toHaveLength(eventCount);
+      expect(session.ledger.read().slice(eventCount).map((event) => event.kind)).toEqual([
+        "input.received",
+        "input.settled",
+      ]);
       stubCompletedSend(protocol);
       await protocol.submit("continue");
       expect(protocol.stateStore.getState("timeline").items.some((item) => item.id === "_baton_status")).toBe(false);
@@ -440,7 +443,7 @@ describe("BatonChatProtocol status command", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "claude-code",
@@ -584,7 +587,10 @@ describe("BatonChatProtocol Board", () => {
         text: "Board has no items",
         tone: "info",
       });
-      expect(session.readEvents()).toHaveLength(0);
+      expect(session.ledger.read()).toHaveLength(10);
+      expect(session.ledger.read().every((event) =>
+        event.kind === "input.received" || event.kind === "input.settled"
+      )).toBe(true);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -598,7 +604,7 @@ describe("BatonChatProtocol proposed plan", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "claude" },
         harness: "claude-code",
         harnessTargetId: "claude",
@@ -644,7 +650,10 @@ describe("BatonChatProtocol plugins command", () => {
       await protocol.command("plugins", "");
 
       expect(opened).toBe(1);
-      expect(session.readEvents()).toHaveLength(0);
+      expect(session.ledger.read().map((event) => event.kind)).toEqual([
+        "input.received",
+        "input.settled",
+      ]);
       await expect(protocol.command("plugins", "extra")).rejects.toThrow("/plugins takes no arguments");
       await protocol.command("reload-plugins", "");
       expect(protocol.stateStore.getState("footer").toast).toEqual({
@@ -654,7 +663,10 @@ describe("BatonChatProtocol plugins command", () => {
       await expect(protocol.command("reload-plugins", "extra")).rejects.toThrow(
         "/reload-plugins takes no arguments",
       );
-      expect(session.readEvents()).toHaveLength(0);
+      expect(session.ledger.read()).toHaveLength(8);
+      expect(session.ledger.read().every((event) =>
+        event.kind === "input.received" || event.kind === "input.settled"
+      )).toBe(true);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -673,7 +685,7 @@ describe("BatonChatProtocol streaming State", () => {
       protocol.stateStore.subscribe("timeline", () => notifications++);
 
       for (const text of ["one ", "two ", "three"]) {
-        session.append({
+        session.appendEvent({
           source: { type: "baton" },
           kind: "agent_message_chunk",
           harness: "codex",
@@ -705,14 +717,14 @@ describe("BatonChatProtocol streaming State", () => {
       let notifications = 0;
       protocol.stateStore.subscribe("timeline", () => notifications++);
 
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message_chunk",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_stream", content: { type: "text", text: "latest output" } },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -883,7 +895,7 @@ describe("BatonChatProtocol harness commands", () => {
       controller.getConfig = async () => [{ id: "fast", type: "boolean", name: "Fast", value: fast }];
       controller.setConfig = async (_target, _id, value) => {
         fast = value;
-        session.append({
+        session.appendEvent({
           kind: "config_option_update",
           source: { type: "harness", harnessTargetId: "codex" },
           harness: "codex",
@@ -926,7 +938,6 @@ describe("BatonChatProtocol State projection", () => {
           turnId: string;
           harness?: string;
           harnessTargetId?: string;
-          role: "driven" | "observed";
           state: "running" | "requires_action";
           startedAt?: number;
         }
@@ -986,21 +997,21 @@ describe("BatonChatProtocol State projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
         harnessTargetId: "codex",
         payload: { model: "default", contextUsed: 12_500, contextSize: 200_000 },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
         harnessTargetId: "codex-secondary",
         payload: { model: "default", contextUsed: 150_000, contextSize: 200_000 },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "claude-code",
@@ -1028,7 +1039,7 @@ describe("BatonChatProtocol State projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "context_usage_update",
         harness: "codex",
@@ -1066,12 +1077,11 @@ describe("BatonChatProtocol State projection", () => {
       internals.state.timeline.push({ type: "plan", id: "p1" });
       // 归属查询键在统一 per-Target 槽（reduce 里由 plan_update 维护；这里直接摆内部状态）
       internals.state.perTarget.set("codex", { lastPlanId: "p1" });
-      // pin 是"现在时"层：需有回合在运行（observed run 也算）
+      // pin 是"现在时"层：只要当前 Target 有 Turn 在运行即可。
       internals.state.activeTurns.set("t_obs", {
         turnId: "t_obs",
         harness: "codex",
         harnessTargetId: "codex",
-        role: "observed",
         state: "running",
       });
       internals.changed();
@@ -1104,7 +1114,6 @@ describe("BatonChatProtocol State projection", () => {
         turnId: "t_sibling",
         harness: "codex",
         harnessTargetId: "codex-secondary",
-        role: "observed",
         state: "running",
       });
       internals.changed();
@@ -1117,7 +1126,6 @@ describe("BatonChatProtocol State projection", () => {
         turnId: "t_obs",
         harness: "codex",
         harnessTargetId: "codex",
-        role: "observed",
         state: "running",
       });
       internals.changed();
@@ -1153,7 +1161,7 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         harness: "codex",
@@ -1195,7 +1203,7 @@ describe("BatonChatProtocol transcript projection", () => {
         harness: "codex",
       });
       session.ensureHarnessInvocationLane("hl_worker", "hinv_worker", MAIN_LANE_ID);
-      session.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "_baton_harness_invocation_recorded",
         payload: {
@@ -1209,7 +1217,7 @@ describe("BatonChatProtocol transcript projection", () => {
           harnessTargetId: "codex",
         },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "_baton_harness_invocation_scheduled",
         payload: {
@@ -1226,7 +1234,7 @@ describe("BatonChatProtocol transcript projection", () => {
         laneId: "hl_worker",
         turnId: "t_worker",
       } as const;
-      session.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         ...coordinate,
@@ -1235,7 +1243,7 @@ describe("BatonChatProtocol transcript projection", () => {
           content: [{ type: "text", text: "Implement REQ-1" }],
         },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "codex" },
         kind: "agent_message",
         ...coordinate,
@@ -1244,7 +1252,7 @@ describe("BatonChatProtocol transcript projection", () => {
           content: [{ type: "text", text: "Implemented and tested." }],
         },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "harness", harnessTargetId: "codex" },
         kind: "state_update",
         ...coordinate,
@@ -1285,14 +1293,14 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "tool_call_update",
         harness: "codex",
         turnId: "t1",
         payload: { toolCallId: "tc1", title: "edit src/app.ts", kind: "edit", status: "completed" },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "approval_review_update",
         harness: "codex",
@@ -1330,29 +1338,29 @@ describe("BatonChatProtocol transcript projection", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_user", content: [{ type: "text", text: "## literal" }] },
       });
-      session.append({ source: { type: "baton" }, kind: "state_update", harness: "codex", turnId: "t1", payload: { state: "running" } });
-      session.append({
+      session.appendEvent({ source: { type: "baton" }, kind: "state_update", harness: "codex", turnId: "t1", payload: { state: "running" } });
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_thought",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_thought", content: [{ type: "text", text: "**Inspecting image**" }] },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message_chunk",
         harness: "codex",
         turnId: "t1",
         payload: { messageId: "m_stream", content: { type: "text", text: "## Streaming" } },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "agent_message",
         harness: "codex",
@@ -1569,7 +1577,7 @@ describe("runStatusLabel", () => {
   const base = { activeTurns: new Map(), toolCalls: new Map(), lastError: undefined, lastSeq: 5 };
   const withPhase = (turnId: string, phase: { phase: string; title?: string }) => ({
     ...base,
-    activeTurns: new Map([[turnId, { turnId, role: "driven" as const, state: "running" as const, phase }]]),
+    activeTurns: new Map([[turnId, { turnId, state: "running" as const, phase }]]),
   });
 
   test("defaults to thinking", () => {
@@ -1633,7 +1641,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
       // 事件流是 pending 交互的唯一真相源：requested 落盘即出卡片，id = interactionId
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "claude-code",
@@ -1667,7 +1675,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       expect(protocol.stateStore.getState("footer").toast?.text).toContain("no longer pending");
 
       // cancelled 落盘 → 卡片消失
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1690,7 +1698,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -1734,7 +1742,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         answers: { q1: ["repository"] },
       });
 
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1761,7 +1769,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         { session, resumed: false },
         () => undefined,
       );
-      session.append({
+      session.appendEvent({
         source: {
           type: "plugin",
           pluginInstanceId: "reqloop_default",
@@ -1867,7 +1875,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
         harness: "codex",
@@ -1912,7 +1920,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       };
       await protocol.resolveInteraction("ix_3", { kind: "approval", optionId: "trust" });
       expect(result).toEqual({ kind: "hook_trust", outcome: "trusted" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
@@ -1953,13 +1961,13 @@ describe("Plugin draft projection", () => {
       internals.plugins.completeInteraction = async (id, result) => {
         submitted = { id, result };
         if (result.kind === "cancelled") {
-          session.append({
+          session.appendEvent({
             kind: "interaction.cancelled",
             source: { type: "user" },
             payload: { interactionId: id, reason: result.reason },
           });
         } else {
-          session.append({
+          session.appendEvent({
             kind: "interaction.answered",
             source: { type: "user" },
             payload: { interactionId: id, answer: result },
@@ -1967,7 +1975,7 @@ describe("Plugin draft projection", () => {
         }
         return true;
       };
-      session.append({
+      session.appendEvent({
         kind: "interaction.requested",
         source: {
           type: "plugin",
@@ -2041,7 +2049,7 @@ describe("Plugin draft projection", () => {
         completed = { id, result };
         return true;
       };
-      session.append({
+      session.appendEvent({
         kind: "interaction.requested",
         source: {
           type: "plugin",
@@ -2333,21 +2341,21 @@ describe("BatonChatProtocol input history", () => {
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "claude-code",
         turnId: "t_1",
         payload: { messageId: "m_1", content: [{ type: "text", text: "seeded one" }] },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "baton" },
         kind: "user_message",
         harness: "claude-code",
         turnId: "t_2",
         payload: { messageId: "m_2", content: [{ type: "text", text: "seeded two" }] },
       });
-      session.append({
+      session.appendEvent({
         source: { type: "plugin", pluginInstanceId: "reqloop_default" },
         kind: "user_message",
         harness: "claude-code",

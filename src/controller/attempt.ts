@@ -3,7 +3,7 @@ import type {
   AnyEventEnvelope,
   EventDraft,
   EventEnvelope,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
 
 export type DeliveryAttemptPhase =

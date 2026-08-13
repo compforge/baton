@@ -24,7 +24,7 @@
   <text x="365" y="72" class="title">chat-tui</text>
   <rect x="330" y="100" width="250" height="540" rx="12" fill="#eee8ff" class="box"/>
   <rect x="365" y="180" width="180" height="85" rx="42" fill="#e1d8ff" class="box"/>
-  <text x="455" y="232" text-anchor="middle" class="label">intent</text>
+  <text x="455" y="232" text-anchor="middle" class="label">Human Input</text>
   <rect x="365" y="485" width="180" height="85" rx="42" fill="#e1d8ff" class="box"/>
   <text x="455" y="537" text-anchor="middle" class="label">render</text>
   <line x1="455" y1="475" x2="455" y2="280" class="flow"/>
@@ -34,7 +34,7 @@
 
   <rect x="735" y="165" width="250" height="110" rx="12" fill="#e7edf8" class="box"/>
   <text x="860" y="212" text-anchor="middle" class="label">Controller</text>
-  <text x="860" y="246" text-anchor="middle" class="label">+ queue</text>
+  <text x="860" y="246" text-anchor="middle" class="label">+ Queue</text>
   <line x1="580" y1="222" x2="720" y2="222" class="flow"/>
 
   <rect x="1080" y="145" width="170" height="400" rx="12" fill="#f7f8fc" class="box"/>
@@ -46,11 +46,16 @@
   <text x="1165" y="460" text-anchor="middle" class="small">Normalize</text>
   <line x1="1000" y1="220" x2="1065" y2="220" class="flow"/>
 
-  <rect x="835" y="420" width="130" height="90" rx="45" fill="#dfbd59" class="box"/>
-  <text x="900" y="455" text-anchor="middle" class="label" fill="#ffffff">Event</text>
-  <text x="900" y="485" text-anchor="middle" class="label" fill="#ffffff">Turn</text>
+  <rect x="735" y="315" width="150" height="60" rx="30" fill="#dce4f8" class="box" stroke-dasharray="8 6"/>
+  <text x="810" y="340" text-anchor="middle" class="small">Turn scope</text>
+  <text x="810" y="362" text-anchor="middle" class="tiny">turnId</text>
+
+  <rect x="835" y="420" width="130" height="90" rx="12" fill="#dce4f8" class="box"/>
+  <text x="900" y="455" text-anchor="middle" class="small">accepted</text>
+  <text x="900" y="483" text-anchor="middle" class="label">Event</text>
   <line x1="1080" y1="450" x2="980" y2="450" class="flow"/>
-  <text x="1020" y="425" text-anchor="middle" class="tiny">driven + observed</text>
+  <text x="1020" y="425" text-anchor="middle" class="tiny">normalized output</text>
+  <line x1="835" y1="375" x2="875" y2="410" fill="none" stroke="#6b7280" stroke-width="2" stroke-dasharray="7 6"/>
   <line x1="900" y1="405" x2="900" y2="290" class="flow"/>
 
   <polygon points="670,465 735,420 800,465 735,510" fill="#fff0bf" class="box"/>
@@ -61,6 +66,7 @@
   <path d="M835 560 H965 V690 Q900 720 835 690 Z" fill="#dce4f8" class="box"/>
   <text x="900" y="630" text-anchor="middle" class="label">session.jsonl</text>
   <line x1="900" y1="525" x2="900" y2="548" class="flow"/>
+  <text x="925" y="542" class="tiny">record</text>
 
   <text x="1400" y="72" text-anchor="middle" class="title">Harnesses</text>
   <circle cx="1400" cy="200" r="65" fill="#e7ddff" class="box"/>

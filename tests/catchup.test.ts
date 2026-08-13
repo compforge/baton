@@ -34,19 +34,19 @@ function turn(
     ...(laneId ? { laneId } : {}),
     turnId,
   };
-  h.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "user_message",
     ...coordinate,
     payload: { messageId: `${turnId}_u`, content: [{ type: "text", text: `q${i}` }] },
   });
-  h.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "agent_message",
     ...coordinate,
     payload: { messageId: `${turnId}_a`, content: [{ type: "text", text: agentText }] },
   });
-  h.append({
+  h.appendEvent({
     source: { type: "baton" },
     kind: "state_update",
     ...coordinate,
@@ -66,12 +66,12 @@ describe("buildTargetCatchUpContext", () => {
     });
     expect(result?.text).toContain("codex history");
     expect(result?.text).toContain("other history");
-    expect(result?.throughSeq).toBe(h.readEvents().at(-1)?.seq);
+    expect(result?.throughSeq).toBe(h.ledger.read().at(-1)?.seq);
   });
 
   test("resumed native session excludes only its own Target, not a sibling using the same Harness", () => {
     turn({ id: "codex-a", harness: "codex" }, 1, "already native");
-    const watermark = h.readEvents().at(-1)!.seq;
+    const watermark = h.ledger.read().at(-1)!.seq;
     turn({ id: "codex-a", harness: "codex" }, 2, "also native");
     turn({ id: "codex-b", harness: "codex" }, 3, "sibling target context");
     turn({ id: "claude", harness: "claude-code" }, 4, "other harness context");
@@ -92,7 +92,7 @@ describe("buildTargetCatchUpContext", () => {
     const sideLaneId = "hl_side";
     h.ensureHarnessInvocationLane(sideLaneId, "trq_1", mainLaneId);
     turn(target, 1, "already native", mainLaneId);
-    const watermark = h.readEvents().at(-1)!.seq;
+    const watermark = h.ledger.read().at(-1)!.seq;
     turn(target, 2, "same binding output", mainLaneId);
     turn({ id: "claude", harness: "claude-code" }, 3, "previous harness handoff", mainLaneId);
     turn(target, 4, "side lane result", sideLaneId);

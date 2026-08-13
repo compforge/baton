@@ -17,7 +17,7 @@ import {
   type ReconcileContext,
 } from "@compforge/baton-plugin";
 
-import type { PromptBlock } from "../event/types.ts";
+import type { PromptBlock } from "../event/index.ts";
 import type { InteractionResult } from "../interaction/types.ts";
 import {
   ReconcileInteractionStore,
@@ -240,7 +240,7 @@ export function hookScope(context: HookContext): ExecutionScope {
 
 type VerbSession = Pick<
   SessionHandle,
-  "id" | "readEvents" | "subscribe" | "append" | "requireLane"
+  "id" | "ledger" | "appendEvent" | "subscribe" | "requireLane"
 >;
 
 interface ActiveExecution {

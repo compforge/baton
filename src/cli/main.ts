@@ -9,6 +9,7 @@ import { stdin, stdout } from "node:process";
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import { expandMentions } from "../context/mention.ts";
 import { Controller } from "../controller/index.ts";
+import { HumanInputIntake } from "../input/intake.ts";
 import {
   createHarnessAdapter,
   parseHarness,
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
     ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
     ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
   });
+  const inputIntake = new HumanInputIntake({ session });
 
   let sawOutput = false;
   let interactionChain = Promise.resolve();
@@ -182,15 +184,23 @@ async function main(): Promise<void> {
 
     sawOutput = false;
     try {
-      const sent = await controller.sendTurn(target.id, [{ type: "text", text: prompt }]);
+      const sent = await inputIntake.run({
+        kind: "prompt",
+        text: line,
+        harnessTargetId: target.id,
+      }, async (record) => await controller.sendTurn(
+        target.id,
+        [{ type: "text", text: prompt }],
+        { parentEventId: record.eventId },
+      ));
       if (sent.effective === "new_turn") await sent.outcome;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       stdout.write(`\nerror: ${message}\n`);
       continue;
     }
-    const summary = session
-      .readEvents()
+    const summary = session.ledger
+      .read()
       .findLast((event) => event.kind === "_baton_turn_summary")?.payload;
     stdout.write(
       `\n— turn done (${summary?.stopReason ?? "?"}, in:${summary?.usage?.inputTokens ?? 0} out:${summary?.usage?.outputTokens ?? 0})\n\n`,

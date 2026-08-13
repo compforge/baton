@@ -95,7 +95,7 @@ describe("Plugin Runner process boundary", () => {
 
   test("routes reconcile capabilities across the process boundary", async () => {
     const { instances, session, entry } = stores();
-    session.append({
+    session.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "codex",
@@ -181,9 +181,10 @@ describe("Plugin Runner process boundary", () => {
     await manager.start();
 
     const notification = manager.beforeHook("human.inbound.before", {
-      intentId: "intent_runner_hook",
-      kind: "prompt",
-      text: "ask from hook",
+      inputId: "in_runner_hook",
+      eventId: "ev_runner_hook",
+      seq: 1,
+      input: { kind: "prompt", text: "ask from hook", harnessTargetId: "codex" },
     });
     await waitFor(() => session.loadState().interactions.size === 1);
     await Bun.sleep(300);
@@ -212,14 +213,14 @@ describe("Plugin Runner process boundary", () => {
       source: "plugin",
       component: "plugin.tests/process-plugin.hook",
       message: "Process Hook observed input",
-      attributes: { intentId: "intent_runner_hook" },
+      attributes: { inputId: "in_runner_hook" },
     }));
     await manager.close();
   });
 
   test("withdraws registrations and settles a waiting verb after a crash", async () => {
     const { root, instances, session, entry } = stores();
-    session.append({
+    session.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "codex",

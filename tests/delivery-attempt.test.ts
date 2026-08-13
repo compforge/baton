@@ -88,7 +88,7 @@ function controllerWith(
 
 function updates(handle: SessionHandle): HarnessDeliveryAttemptUpdate[] {
   return handle
-    .readEvents()
+    .ledger.read()
     .filter((event) => event.kind === "_baton_delivery_attempt_update")
     .map((event) => event.payload as HarnessDeliveryAttemptUpdate);
 }
@@ -106,7 +106,7 @@ describe("Harness Delivery Attempt", () => {
     const adapter = new DeliveryAdapter("complete");
     await controllerWith(adapter).submit("codex", [{ type: "text", text: "ship it" }]);
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const attemptUpdates = updates(session);
     expect(attemptUpdates.map((update) => update.phase)).toEqual([
       "prepared",
@@ -160,7 +160,7 @@ describe("Harness Delivery Attempt", () => {
     ).toBe("not_accepted");
     expect(
       session
-        .readEvents()
+        .ledger.read()
         .find(
           (event) =>
             event.kind === "state_update" &&
@@ -177,12 +177,12 @@ describe("Harness Delivery Attempt", () => {
 
     await controller.control({ kind: "interrupt" });
     await outcome;
-    let state = reduceDeliveryAttempts(session.readEvents()).values().next().value!;
+    let state = reduceDeliveryAttempts(session.ledger.read()).values().next().value!;
     expect(state.phase).toBe("uncertain");
     expect(state.accepted).toBe(true);
 
     adapter.finish(adapter.submission!.turnId, "cancelled");
-    state = reduceDeliveryAttempts(session.readEvents()).get(state.attemptId)!;
+    state = reduceDeliveryAttempts(session.ledger.read()).get(state.attemptId)!;
     expect(state.phase).toBe("finalized");
     expect(state.outcome).toBe("cancelled");
     expect(updates(session).map((update) => update.phase)).toEqual([
@@ -201,7 +201,7 @@ describe("Harness Delivery Attempt", () => {
       cwd: "/repo",
     });
     const appendTurn = (turnId: string, attemptId: string, dispatching: boolean) => {
-      const intent = session.append({
+      const intent = session.appendEvent({
         kind: "user_message",
         source: { type: "user" },
         harness: "codex",
@@ -212,7 +212,7 @@ describe("Harness Delivery Attempt", () => {
           content: [{ type: "text", text: turnId }],
         },
       });
-      session.append({
+      session.appendEvent({
         kind: "state_update",
         source: { type: "baton" },
         harness: "codex",
@@ -220,7 +220,7 @@ describe("Harness Delivery Attempt", () => {
         turnId,
         payload: { state: "running" },
       });
-      const prepared = session.append({
+      const prepared = session.appendEvent({
         kind: "_baton_delivery_attempt_update",
         source: { type: "baton" },
         parentEventId: intent.eventId,
@@ -235,7 +235,7 @@ describe("Harness Delivery Attempt", () => {
         },
       });
       if (dispatching) {
-        session.append({
+        session.appendEvent({
           kind: "_baton_delivery_attempt_update",
           source: { type: "baton" },
           parentEventId: prepared.eventId,
@@ -249,7 +249,7 @@ describe("Harness Delivery Attempt", () => {
     appendTurn("t_prepared", "att_prepared", false);
     appendTurn("t_dispatching", "att_dispatching", true);
     appendTurn("t_receipted", "att_receipted", true);
-    const terminal = session.append({
+    const terminal = session.appendEvent({
       kind: "state_update",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -259,7 +259,7 @@ describe("Harness Delivery Attempt", () => {
       payload: { state: "idle", stopReason: "end_turn" },
     });
     // 模拟 terminal 已证明 admission、accepted 已落盘，但 finalized 尚未落盘时崩溃。
-    session.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: terminal.eventId,
@@ -272,7 +272,7 @@ describe("Harness Delivery Attempt", () => {
 
     const opened = openBatonSession(store, { cwd: "/repo", sessionId: session.id });
     expect(opened.recovered).toBe(true);
-    const attempts = reduceDeliveryAttempts(opened.session.readEvents());
+    const attempts = reduceDeliveryAttempts(opened.session.ledger.read());
     expect(attempts.get("att_prepared")?.phase).toBe("finalized");
     expect(attempts.get("att_prepared")?.outcome).toBe("not_accepted");
     expect(attempts.get("att_dispatching")?.phase).toBe("uncertain");
@@ -290,7 +290,7 @@ describe("Harness Delivery Attempt", () => {
       harnessSessionKey: "codex",
       cwd: "/repo",
     });
-    const input = session.append({
+    const input = session.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "codex",
@@ -301,7 +301,7 @@ describe("Harness Delivery Attempt", () => {
         content: [{ type: "text", text: "old work" }],
       },
     });
-    session.append({
+    session.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "codex",
@@ -309,7 +309,7 @@ describe("Harness Delivery Attempt", () => {
       turnId: "t_old",
       payload: { state: "running" },
     });
-    const prepared = session.append({
+    const prepared = session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: input.eventId,
@@ -323,7 +323,7 @@ describe("Harness Delivery Attempt", () => {
         launchSnapshot,
       },
     });
-    session.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       parentEventId: prepared.eventId,
@@ -332,7 +332,7 @@ describe("Harness Delivery Attempt", () => {
       turnId: "t_old",
       payload: { attemptId: "att_old", phase: "dispatching" },
     });
-    session.append({
+    session.appendEvent({
       kind: "_baton_delivery_attempt_update",
       source: { type: "baton" },
       harness: "codex",
@@ -343,7 +343,7 @@ describe("Harness Delivery Attempt", () => {
 
     const opened = openBatonSession(store, { cwd: "/repo", sessionId: session.id });
     expect(
-      reduceDeliveryAttempts(opened.session.readEvents()).get("att_old")?.phase,
+      reduceDeliveryAttempts(opened.session.ledger.read()).get("att_old")?.phase,
     ).toBe("uncertain");
 
     const adapter = new DeliveryAdapter("hold");
@@ -356,7 +356,7 @@ describe("Harness Delivery Attempt", () => {
 
     adapter.finish("t_old", "end_turn");
     expect(
-      reduceDeliveryAttempts(opened.session.readEvents()).get("att_old")?.phase,
+      reduceDeliveryAttempts(opened.session.ledger.read()).get("att_old")?.phase,
     ).toBe("finalized");
 
     adapter.finish(currentTurnId, "end_turn");

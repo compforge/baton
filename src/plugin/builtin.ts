@@ -2,7 +2,7 @@ import type {
   AnyEventEnvelope,
   EventEnvelope,
   TurnSummary,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type {
   ReconcileContext,
   ResourceRef,
@@ -86,7 +86,7 @@ export type AnyBuiltinResource = {
 
 type BuiltinSession = Pick<
   SessionHandle,
-  "id" | "dir" | "readEvents" | "subscribe"
+  "id" | "dir" | "ledger" | "subscribe"
 >;
 
 export interface BatonResourceIndexOptions {
@@ -157,7 +157,7 @@ export class BatonResourceIndex {
       id: options.session.id,
       dir: options.session.dir,
     });
-    for (const event of options.session.readEvents()) this.project(event, false);
+    for (const event of options.session.ledger.read()) this.project(event, false);
     this.unsubscribeSession = options.session.subscribe((event) => {
       this.project(event, true);
     });

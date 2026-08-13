@@ -3,7 +3,7 @@ import type {
   AnyEventEnvelope,
   EventDraft,
   EventEnvelope,
-} from "../event/types.ts";
+} from "../event/index.ts";
 
 /**
  * ContextSource 先只承载已经被两种内置 Harness 共同使用的 BatonSession 历史。

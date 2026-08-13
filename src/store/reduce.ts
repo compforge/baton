@@ -25,7 +25,7 @@ import type {
   ToolCallStatus,
   TurnSummary,
   UsageUpdate,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type {
   Interaction,
   InteractionResult,
@@ -163,8 +163,6 @@ export interface ActiveTurnState {
   harness?: string;
   harnessTargetId?: string;
   laneId?: string;
-  /** driven 由 Baton admit；observed 由 Harness 自发开界（见 docs/workflow.md）。 */
-  role: "driven" | "observed";
   /** 本 turn 当前非 idle 态（running / requires_action）：保真透传，不折叠成 running */
   state: Exclude<SessionRunState, "idle">;
   startedAt?: number;
@@ -186,7 +184,7 @@ export interface SessionState {
   runState: SessionRunState;
   lastStopReason?: StopReason;
   /**
-   * running 且尚未收到本 turn idle 的 turns。driven 与 observed 并发时各占一席，
+   * running 且尚未收到本 turn idle 的 turns。并发 Turn 各占一席，
    * 任何一个收口只清自己——busy/流式/运行行等呈现一律从这里聚合派生。
    */
   activeTurns: Map<string, ActiveTurnState>;
@@ -432,14 +430,14 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       }
       if (p.state === "idle") {
         if (ev.turnId) {
-          // 只收本 turn 的口：并发的 driven/observed turn 互不误清
+          // 只收本 turn 的口：并发 Turn 互不误清
           state.activeTurns.delete(ev.turnId);
         } else {
           // 向后兼容：旧 jsonl / 旧版 crash recovery 的无 turnId idle 是全局收口语义
           state.activeTurns.clear();
         }
       } else if (ev.turnId) {
-        // 非 idle 态（running / requires_action）：turn 在场。startedAt/role
+        // 非 idle 态（running / requires_action）：turn 在场。startedAt
         // 以首个 running 为准，重复 running（reconnect 重放）不重置起点；
         // state 保真透传（requires_action ↔ running 可来回迁移），但 pending blocking
         // request 在场时钉在 requires_action——重放的 running 不得掩盖未决审批卡片。
@@ -449,7 +447,6 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
           harness: ev.harness ?? existing?.harness,
           harnessTargetId: eventTargetId(ev) ?? existing?.harnessTargetId,
           laneId: ev.laneId ?? existing?.laneId,
-          role: existing?.role ?? (ev.source.type === "harness" ? "observed" : "driven"),
           state: hasPendingBlocking(state, ev.turnId) ? "requires_action" : p.state,
           startedAt: existing?.startedAt ?? (ev.ts ? Date.parse(ev.ts) || undefined : undefined),
           phase: existing?.phase,

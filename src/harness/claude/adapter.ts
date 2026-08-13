@@ -32,8 +32,8 @@ import type {
   PlanEntry,
   PromptBlock,
   SessionConfigOption,
-} from "../../event/types.ts";
-import { textOf } from "../../event/types.ts";
+} from "../../event/index.ts";
+import { textOf } from "../../event/index.ts";
 import type {
   InteractionDraft,
   PermissionOption,
@@ -514,12 +514,12 @@ interface ClaudeTurn {
 }
 
 /**
- * result 之后同一条消息流上再出现的活动消息，属于 harness 自发回合（observed turn）：
+ * result 之后同一条消息流上再出现的活动消息，属于 Harness 自行开始的新 Turn：
  * 后台任务（Agent tool 等）完成时 harness 会在无用户输入的情况下重新唤起模型，
  * 新回合的消息继续从同一条 SDK 流上到达。这里判定"该为它开一个新 turn 了"。
  * system/result 不开界：前者是瞬时相位（不构成回合），后者无活动时只是迟到终态。
  */
-export function startsObservedTurn(msgType: string, current: { finalized: boolean }): boolean {
+export function startsHarnessTurn(msgType: string, current: { finalized: boolean }): boolean {
   return current.finalized && (msgType === "stream_event" || msgType === "assistant" || msgType === "user");
 }
 
@@ -537,7 +537,7 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   promptChannel?: ClaudePromptChannel;
   /** 当前被接受、尚未逻辑终结的 turn */
   activeTurn?: ClaudeTurn;
-  /** query 消费循环当前归属的 turn；包含不占 admission 槽的 observed turn。 */
+  /** query 消费循环当前归属的 Turn；包含没有 Queue item 的 Harness-started Turn。 */
   currentTurn?: ClaudeTurn;
   /** effort 无动态控制接口；变更后在下个新 turn 前重建 streaming query。 */
   queryOptionsDirty?: boolean;
@@ -568,7 +568,7 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   pendingOfferUuids?: Map<string, {
     turnId: string;
     messageId: string;
-    /** started 可能落在后续 observed turn；保留正文，让该 turn 的 summary 能准确承接。 */
+    /** started 可能落在后续 harnessTurn turn；保留正文，让该 turn 的 summary 能准确承接。 */
     blocks: PromptBlock[];
   }>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
@@ -1172,11 +1172,11 @@ export class ClaudeAdapter implements HarnessAdapter {
       return { accepted: true, effective: "steer" };
     }
 
-    // observed turn 不占 admission 槽；用户新输入到达时先明确收口，避免后续消息与
-    // 新 driven turn 共用 currentTurn 而发生归属混淆。
+    // 没有对应 Queue item 的 Turn 仍需先明确收口，避免后续消息与新 Queue-driven Turn
+    // 共用 currentTurn 而发生归属混淆。
     if (rt.currentTurn && !rt.currentTurn.finalized) {
-      const observed = rt.currentTurn;
-      this.finishTurn(rt, (ev) => this.emit(rt, ev, observed), observed, "end_turn");
+      const harnessTurn = rt.currentTurn;
+      this.finishTurn(rt, (ev) => this.emit(rt, ev, harnessTurn), harnessTurn, "end_turn");
     }
     if (rt.queryOptionsDirty) this.closeStreamingQuery(rt);
 
@@ -1276,8 +1276,8 @@ export class ClaudeAdapter implements HarnessAdapter {
           msg.type === "command_lifecycle" &&
           msg.state === "started" &&
           rt.pendingOfferUuids?.has(msg.uuid) === true;
-        if (startsObservedTurn(msg.type, current) || startsQueuedTurn) {
-          current = this.mintObservedTurn(rt);
+        if (startsHarnessTurn(msg.type, current) || startsQueuedTurn) {
+          current = this.mintHarnessTurn(rt);
           rt.currentTurn = current;
         }
         const emit: EventSink = (ev) => this.emit(rt, ev, current);
@@ -1371,18 +1371,18 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   /**
-   * 铸造 observed turn 并以 harness 来源的 running 开界（见 docs/workflow.md）。
-   * 刻意不写 rt.activeTurn：observed turn 不占 admission 槽；新 driven turn 到达时
+   * 铸造 Harness 自行开始的 Turn，并以 Harness 来源的 running 开界。
+   * 刻意不写 rt.activeTurn：它没有对应 Queue item；新 Queue-driven Turn 到达时
    * sendTurn 会先将它收口，再把用户输入送进同一个 streaming query。
    */
-  private mintObservedTurn(rt: ClaudeRuntime): ClaudeTurn {
-    const observed: ClaudeTurn = { turnId: newId("t"), finalized: false, cancelRequested: false };
+  private mintHarnessTurn(rt: ClaudeRuntime): ClaudeTurn {
+    const harnessTurn: ClaudeTurn = { turnId: newId("t"), finalized: false, cancelRequested: false };
     this.emit(
       rt,
       { kind: "state_update", payload: { state: "running" } },
-      observed,
+      harnessTurn,
     );
-    return observed;
+    return harnessTurn;
   }
 
   /**

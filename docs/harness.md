@@ -55,7 +55,7 @@ BatonSession 的 `main` Lane 是默认主线；其它 Lane 表达异步支线。
 HarnessInvocation 用 `laneId` 继续既有 Lane；`newLane:true` 才在准备执行时创建
 `createdFor:harness_invocation` 支线。
 
-每个 Lane 同时最多一个 driven Turn。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
+每个 Lane 同时最多一个 active Queue run。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
 Handle 和原生 Session；Binding 索引必须使用 `(laneId, harnessTargetId)`，不能只用其中一个。
 
 ### 2.3 Session、Binding 与 Handle
@@ -96,7 +96,7 @@ interface HarnessAdapter {
 hook trust、配置读取或原生 resume；这些 I/O 必须有显式 timeout 和失败清理。身份如果只能从
 首个原生事件获得，则在获得时立即发布 Binding。
 
-setup 不自成 Turn。冷启动由某个 driven Turn 触发时，期间打开的 Interaction 归属该 Turn；
+setup 不自成 Turn。冷启动由某个 Queue item 触发时，期间打开的 Interaction 归属对应 Turn；
 open 尚未返回 handle 前创建的进程、query 或连接必须由 Adapter 自己在失败路径回收。
 
 ### 3.2 sendTurn
@@ -115,7 +115,8 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 有活跃 Turn 时，Adapter 不得擅自并行开启新 Turn。throw 只允许发生在接受责任之前；accepted
 后的失败通过 Event sink 报告终态。
 
-Controller 在实际调用 `sendTurn` 前后发送 `harness.outbound.before/after` Hook。新 Turn 的
+Controller 在实际调用 `sendTurn` 前后发送 `harness.inbound.before/after` Hook。方向沿
+Human→Harness 定义，因此 Core 向 Harness 投递属于 inbound。新 Turn 的
 before 位于持久 Delivery Attempt 的 `prepared` 与 `dispatching` 之间；after 携带 Adapter admission
 的 `accepted/rejected/error` 结果，但不等待 Turn 终态。steer 也使用相同 notification shape，
 其 attempt identity 只关联这次 same-turn send。
@@ -153,10 +154,10 @@ owner、生命周期和恢复语义一致时，才考虑提升公共 Capability�
 Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、Lane、HarnessTarget、
 HarnessSession 与 Session scope。原生 wire 存入 `raw`，不能让 Adapter 自报执行归属。
 
-`harness.inbound.before` 观察补齐执行坐标但尚无 `eventId/seq` 的 draft；Hook settled 后宿主才
-append，`harness.inbound.after` 再观察 ledger record。存在 before 订阅时，宿主按
-`Lane × HarnessTarget` 串行这段 intake，保持同一 Adapter 的事件顺序；无订阅时 Event sink 仍同步
-append。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
+Harness output 先由 BatonSession 同步 record 到 Event Ledger 并 reduce Projection，再以带
+`eventId/seq` 的 record 通知 `harness.outbound.before/after`。Ledger 不分发事件；Hook 不承担准入，
+不能把 Plugin 延迟传播到 EventSink；它需要动作时
+通过 Verb 请求 Core。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
 
 稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID
 upsert，completed 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一；未知
@@ -168,8 +169,8 @@ upsert，completed 全量内容是流式丢包的自愈点。开放 wire enum �
 路径都必须报告或合成一次 `state_update(idle)`；错误先发 `_baton_error_update`。重复或迟到的
 物理终态允许存在，Controller 按 Baton turn ID 幂等 finalize。
 
-Harness 自发活动由 Adapter 铸造 observed Turn，以 Harness 来源的 running/idle 划界，不占
-Controller 的 driven admission 队列。
+Harness 自发活动由 Adapter 铸造普通 Turn，以 Harness 来源的 running/idle 划界。它没有对应
+Queue item，因此不占用 Queue；Turn 本身没有另一种 role。
 
 ### 5.3 Interaction
 

@@ -18,7 +18,6 @@ import {
   rmSync,
   rmdirSync,
   statSync,
-  truncateSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -46,17 +45,18 @@ import {
   type ContentBlock,
   type EventEnvelope,
   type EventKind,
-  type EventSource,
   type NewEvent,
+  type EventSource,
   type StopReason,
   type TurnSummary,
   type TurnSummaryToolCall,
   type UsageUpdate,
-} from "../event/types.ts";
+} from "../event/index.ts";
+import { EventLedger } from "../event/ledger.ts";
 import type { HarnessLaunchSnapshot } from "../harness/target.ts";
 import type { HarnessSessionIdentity } from "../harness/adapter.ts";
 import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
-import { reduceEvents, type SessionState } from "./reduce.ts";
+import { applyEvent, reduceEvents, type SessionState } from "./reduce.ts";
 
 export interface HarnessSessionMeta {
   harness: string;
@@ -523,8 +523,8 @@ export class SessionStore {
     source: HarnessSessionAdoptionSource,
   ): void {
     const { harnessTargetId, harness, identity } = source.session;
-    const summaries = session
-      .readEvents()
+    const summaries = session.ledger
+      .read()
       .filter(
         (event): event is EventEnvelope<"_baton_turn_summary"> =>
           event.kind === "_baton_turn_summary" &&
@@ -622,7 +622,7 @@ export class SessionStore {
 
     if (turn.events) {
       for (const imported of turn.events) {
-        session.append({
+        session.appendEvent({
           ...imported.event,
           source: materializedEventSource(imported.source, harnessTargetId),
           harness,
@@ -633,7 +633,7 @@ export class SessionStore {
       }
     } else {
       if (turn.userText) {
-        session.append({
+        session.appendEvent({
           kind: "user_message",
           source: { type: "user" },
           harness,
@@ -647,7 +647,7 @@ export class SessionStore {
         });
       }
       if (turn.agentText) {
-        session.append({
+        session.appendEvent({
           kind: "agent_message",
           source: { type: "harness", harnessTargetId },
           harness,
@@ -660,7 +660,7 @@ export class SessionStore {
           },
         });
       }
-      session.append({
+      session.appendEvent({
         kind: "state_update",
         source: { type: "harness", harnessTargetId },
         harness,
@@ -786,8 +786,8 @@ export class SessionStore {
     opts: { title?: string; throughSeq?: number; cwd?: string } = {},
   ): SessionHandle {
     const source = this.openSession(sourceSessionId);
-    const events = source
-      .readEvents()
+    const events = source.ledger
+      .read()
       .filter((ev) => opts.throughSeq === undefined || ev.seq <= opts.throughSeq);
     const id = newId("bs");
     // 落盘目录与 meta.cwd 必须同源：listSessions({cwd}) 按目录扫描，两者不一致会漏掉该会话
@@ -949,9 +949,11 @@ export class SessionHandle {
   readonly id: string;
   readonly dir: string;
   readonly logger: SessionLogger;
+  readonly ledger: EventLedger;
+  private readonly eventListeners = new Set<(event: AnyEventEnvelope) => void>();
+  private state: SessionState;
+  private nextEventSeq: number;
   meta: SessionMeta;
-  private nextSeq: number | undefined;
-  private listeners = new Set<(ev: AnyEventEnvelope) => void>();
 
   constructor(
     id: string,
@@ -967,20 +969,57 @@ export class SessionHandle {
       this.id,
       loggerOptions,
     );
+    this.ledger = new EventLedger({
+      path: join(this.dir, "session.jsonl"),
+      log: (entry) => this.log(entry),
+    });
+    const history = this.ledger.read();
+    this.state = reduceEvents(history);
+    this.nextEventSeq = (history.at(-1)?.seq ?? 0) + 1;
+  }
+
+  /** Current Core projection. Live events and replay both use the same reducer. */
+  get projection(): SessionState {
+    return this.state;
+  }
+
+  /** Observe accepted Session events after they have been recorded and reduced. */
+  subscribe(listener: (event: AnyEventEnvelope) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   /**
-   * 订阅本 handle 的事件追加。事件流是唯一合并真相源，UI 投影必须从这里走
-   * （而不是 per-turn 回调）——harness 自发回合（后台唤醒等）没有对应的
-   * submit 调用，任何旁路投影通道都会漏掉它们。返回取消订阅函数。
+   * BatonSession 的统一 Event 入口。当前策略先完成 WAL record，再直接 reduce；
+   * Ledger 只是 Recorder，不承担实时分发。
    */
-  subscribe(listener: (ev: AnyEventEnvelope) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private jsonlPath(): string {
-    return join(this.dir, "session.jsonl");
+  appendEvent<K extends EventKind>(event: NewEvent<K>): EventEnvelope<K> {
+    const envelope: EventEnvelope<K> = {
+      v: ENVELOPE_VERSION,
+      eventId: newId("ev"),
+      ts: new Date().toISOString(),
+      seq: this.nextEventSeq,
+      scope: { type: "session", batonSessionId: this.id },
+      ...event,
+    };
+    this.ledger.record(envelope);
+    this.nextEventSeq += 1;
+    applyEvent(this.state, envelope as AnyEventEnvelope);
+    for (const listener of this.eventListeners) {
+      try {
+        listener(envelope as AnyEventEnvelope);
+      } catch (error) {
+        this.log({
+          level: "error",
+          source: "baton",
+          component: "session.event",
+          message: "BatonSession event listener threw",
+          error: logError(error),
+          attributes: { seq: envelope.seq, kind: envelope.kind },
+        });
+      }
+    }
+    return envelope;
   }
 
   /**
@@ -1091,97 +1130,8 @@ export class SessionHandle {
     }
   }
 
-  /**
-   * 崩溃残尾修复：上个进程在 append 中途死掉会留下无换行的半行。此时若直接追加，
-   * 新事件会拼接在残片之后形成"中间坏行"，readEvents 对中间坏行抛错（末行残缺
-   * 可容忍，中间坏行不可）——会话从此永久不可读。所以首次写入前必须把文件截断回
-   * 最后一个完整换行。注意不能用"补一个换行"代替截断：那只会把残片固化成独立的
-   * 中间坏行，照样抛错。残片写入 sidecar 留档审计（可能含半条有价值的事件）。
-   * 只挂写路径：只读消费方（session picker、mention 展开）不应产生写副作用。
-   * 残行的 seq 从未完整落盘，由下一条新事件复用，主文件内 seq 仍严格单调。
-   */
-  private repairTail(): void {
-    const path = this.jsonlPath();
-    if (!existsSync(path)) return;
-    const buf = readFileSync(path);
-    if (buf.length === 0 || buf[buf.length - 1] === 0x0a) return;
-    const cut = buf.lastIndexOf(0x0a) + 1; // 文件里没有换行时为 0：整个文件都是残片
-    writeFileSync(join(this.dir, `session.jsonl.partial-${Date.now()}`), buf.subarray(cut));
-    truncateSync(path, cut);
-  }
-
-  /** 补齐 v/eventId/ts/seq/scope 并追加一行。seq 以文件为准（重开进程后继续单调）。 */
-  append<K extends EventKind>(ev: NewEvent<K>): EventEnvelope<K> {
-    if (this.nextSeq === undefined) {
-      this.repairTail();
-      const events = this.readEvents();
-      const last = events[events.length - 1];
-      this.nextSeq = (last?.seq ?? 0) + 1;
-    }
-    const envelope: EventEnvelope<K> = {
-      v: ENVELOPE_VERSION,
-      eventId: newId("ev"),
-      ts: new Date().toISOString(),
-      seq: this.nextSeq++,
-      scope: { type: "session", batonSessionId: this.id },
-      ...ev,
-    };
-    const line = `${JSON.stringify(envelope)}\n`;
-    try {
-      appendFileSync(this.jsonlPath(), line);
-    } catch (error) {
-      this.log({
-        level: "error",
-        source: "baton",
-        component: "store.session",
-        message: "failed to append session.jsonl",
-        error: logError(error),
-      });
-      throw error;
-    }
-    for (const listener of this.listeners) {
-      try {
-        listener(envelope as AnyEventEnvelope);
-      } catch (error) {
-        // 投影侧异常不能污染写入路径：事件已落盘，订阅者自己负责健壮性
-        this.log({
-          level: "error",
-          source: "baton",
-          component: "store.listener",
-          message: "session event listener threw",
-          error: logError(error),
-          attributes: { seq: envelope.seq, kind: envelope.kind },
-        });
-      }
-    }
-    return envelope;
-  }
-
-  /**
-   * 读全部事件。末行允许不完整（崩溃时写了半行），静默丢弃；
-   * 中间行损坏说明文件被外部破坏，直接抛错而不是悄悄跳过。
-   */
-  readEvents(): AnyEventEnvelope[] {
-    const path = this.jsonlPath();
-    if (!existsSync(path)) return [];
-    const lines = readFileSync(path, "utf8").split("\n");
-    const out: AnyEventEnvelope[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] as string;
-      if (line === "") continue;
-      try {
-        out.push(JSON.parse(line) as AnyEventEnvelope);
-      } catch (err) {
-        const isLast = lines.slice(i + 1).every((l) => l === "");
-        if (isLast) break;
-        throw new Error(`corrupt session.jsonl at line ${i + 1} in ${path}: ${err}`);
-      }
-    }
-    return out;
-  }
-
   loadState(): SessionState {
-    return reduceEvents(this.readEvents());
+    return reduceEvents(this.ledger.read());
   }
 
   updateMeta(patch: Partial<Omit<SessionMeta, "batonSessionId">>): void {
@@ -1333,7 +1283,7 @@ export class SessionHandle {
 
   /** 与 summarizeTurn 相同，但返回 envelope，供 live reducer 消费实际落盘事件。 */
   summarizeTurnEvent(turnId: string): EventEnvelope<"_baton_turn_summary"> {
-    const events = this.readEvents();
+    const events = this.ledger.read();
     const existing = events.find(
       (e): e is EventEnvelope<"_baton_turn_summary"> =>
         e.kind === "_baton_turn_summary" && e.payload.turnId === turnId,
@@ -1382,7 +1332,7 @@ export class SessionHandle {
     const harness = turnEvents[0]?.harness ?? "baton";
     const harnessTargetId = turnEvents.find((event) => event.harnessTargetId)?.harnessTargetId;
     const laneId = turnEvents.find((event) => event.laneId)?.laneId;
-    const event = this.append({
+    const event = this.appendEvent({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       payload: summary,
@@ -1487,7 +1437,7 @@ function materializedHistoryTurns(
   session: SessionHandle,
   summaries: readonly EventEnvelope<"_baton_turn_summary">[],
 ): HarnessHistoryTurn[] {
-  const events = session.readEvents();
+  const events = session.ledger.read();
   return summaries.map((summary) => ({
     turnId: summary.turnId,
     userText: summary.payload.userText,

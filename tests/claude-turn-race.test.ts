@@ -6,7 +6,7 @@ import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
 
 import { ClaudeAdapter } from "../src/harness/claude/adapter.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 
 const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"

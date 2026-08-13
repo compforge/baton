@@ -58,17 +58,6 @@
       }
     ]
   },
-  "src/controller/input.ts::InputQueue.claimFirstForSteer": {
-    "specs": [
-      {
-        "cases": [],
-        "links": [
-          "../../docs/workflow.md"
-        ],
-        "spec": "只有仍位于队头的 Input 才能被 same-turn dispatch claim；claim 后不可被 composer recall。"
-      }
-    ]
-  },
   "src/interaction/reconcile.ts::ReconcileInteractionStore": {
     "specs": [
       {
@@ -98,6 +87,17 @@
         "rules": [
           "Exclude a pending host-side Plugin verb from the generic Runner watchdog because the verb owns that wait's timeout; re-arm the watchdog after the host reply."
         ]
+      }
+    ]
+  },
+  "src/queue.ts::Queue.claimFirstForSteer": {
+    "specs": [
+      {
+        "cases": [],
+        "links": [
+          "../docs/workflow.md"
+        ],
+        "spec": "只有仍位于队头的 HarnessInput 才能被 same-turn dispatch claim；claim 后不可被 composer recall。"
       }
     ]
   },

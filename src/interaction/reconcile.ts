@@ -14,7 +14,7 @@ import type {
   AnyEventEnvelope,
   EventEnvelope,
   EventSource,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type { PromptBlock } from "../input/blocks.ts";
 import type { ExecutionScope } from "../plugin/verb.ts";
 import type { SessionHandle } from "../store/store.ts";
@@ -30,7 +30,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type InteractionSession = Pick<
   SessionHandle,
-  "id" | "readEvents" | "subscribe" | "append"
+  "id" | "ledger" | "appendEvent" | "subscribe"
 >;
 
 interface Entry {
@@ -229,7 +229,7 @@ export class ReconcileInteractionStore {
     this.now = options.now ?? (() => new Date());
     this.harnessInvocationGate = options.harnessInvocationGate ??
       (() => "auto_approve");
-    for (const event of session.readEvents()) this.apply(event);
+    for (const event of session.ledger.read()) this.apply(event);
     this.replaying = false;
     this.arm();
     this.unsubscribe = session.subscribe((event) => this.apply(event));
@@ -434,7 +434,7 @@ export class ReconcileInteractionStore {
       request,
       new Date(this.timestamp() + request.timeoutMs).toISOString(),
     );
-    this.session.append({
+    this.session.appendEvent({
       kind: "interaction.requested",
       source: {
         type: "plugin",
@@ -463,7 +463,7 @@ export class ReconcileInteractionStore {
     const entry = this.entries.get(interactionId);
     if (!entry || entry.result) return false;
     if (result.kind === "cancelled") {
-      this.session.append({
+      this.session.appendEvent({
         kind: "interaction.cancelled",
         source,
         parentEventId: entry.requested.eventId,
@@ -474,7 +474,7 @@ export class ReconcileInteractionStore {
         },
       });
     } else {
-      this.session.append({
+      this.session.appendEvent({
         kind: "interaction.answered",
         source,
         parentEventId: entry.requested.eventId,

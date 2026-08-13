@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
-import { textOf, type AnyEventDraft } from "../src/event/types.ts";
+import { textOf, type AnyEventDraft } from "../src/event/index.ts";
 import { ClaudeAdapter } from "../src/harness/claude/adapter.ts";
 import { claudeNativeTurns } from "../src/harness/claude/native-session.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
@@ -235,7 +235,7 @@ describe("native session ownership", () => {
     expect(first.session.meta.preview).toBe("investigate the cache");
     expect(first.session.meta.harnessSessions.codex?.harnessSessionId).toBe("thread-1");
     expect(first.session.meta.harnessSessions.codex?.syncedSeq).toBe(
-      first.session.readEvents().at(-1)?.seq,
+      first.session.ledger.read().at(-1)?.seq,
     );
     expect(first.session.loadState().turnSummaries).toEqual([
       expect.objectContaining({
@@ -249,7 +249,7 @@ describe("native session ownership", () => {
     ]);
     expect(
       first.session
-        .readEvents()
+        .ledger.read()
         .filter((event) => event.kind === "_baton_turn_summary")
         .every((event) => event.harnessTargetId === "codex"),
     ).toBe(true);
@@ -416,7 +416,7 @@ describe("native session ownership", () => {
 
     const live = store.createSession({ cwd: "/repo" });
     const turnId = "t-live";
-    live.append({
+    live.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "codex",
@@ -427,7 +427,7 @@ describe("native session ownership", () => {
         content: [{ type: "text", text: "inspect the cache" }],
       },
     });
-    live.append({
+    live.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "codex",
@@ -457,7 +457,7 @@ describe("native session ownership", () => {
       turn: { id: "codex-turn-1", status: "completed" },
     });
     for (const draft of drafts) {
-      live.append({
+      live.appendEvent({
         ...draft,
         source: { type: "harness", harnessTargetId: "codex" },
         harness: "codex",
@@ -561,7 +561,7 @@ describe("native session ownership", () => {
 
     const live = store.createSession({ cwd: "/repo" });
     const turnId = "t-live";
-    live.append({
+    live.appendEvent({
       kind: "user_message",
       source: { type: "user" },
       harness: "claude-code",
@@ -572,7 +572,7 @@ describe("native session ownership", () => {
         content: [{ type: "text", text: "inspect the cache" }],
       },
     });
-    live.append({
+    live.appendEvent({
       kind: "state_update",
       source: { type: "baton" },
       harness: "claude-code",
@@ -617,7 +617,7 @@ describe("native session ownership", () => {
       modelUsage: {},
     }, turn);
     for (const draft of drafts) {
-      live.append({
+      live.appendEvent({
         ...draft,
         source: { type: "harness", harnessTargetId: "claude" },
         harness: "claude-code",

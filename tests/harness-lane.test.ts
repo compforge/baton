@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Controller } from "../src/controller/index.ts";
-import { textOf, type PromptBlock } from "../src/event/types.ts";
+import { textOf, type PromptBlock } from "../src/event/index.ts";
 import type {
   AdapterCapabilities,
   EventSink,
@@ -133,7 +133,7 @@ describe("Baton Lane scheduling", () => {
     });
     await until(() => adapters[0]?.prompts.length === 1);
     expect(controller.sideRunCount).toBe(0);
-    expect(controller.inputs[0]).toMatchObject({
+    expect(controller.harnessInputs[0]).toMatchObject({
       laneId: MAIN_LANE_ID,
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       harnessInvocationId: "trq_main_plugin",
@@ -153,7 +153,7 @@ describe("Baton Lane scheduling", () => {
       blocks: blocks("edited input"),
     });
     await until(() => adapters[0]!.prompts.length === 2);
-    const editedEvent = session.readEvents().find((event) =>
+    const editedEvent = session.ledger.read().find((event) =>
       event.kind === "user_message" && event.payload.messageId === "m_main_user"
     );
     expect(editedEvent).toMatchObject({
@@ -209,7 +209,7 @@ describe("Baton Lane scheduling", () => {
       (lane) => Object.values(lane.harnessSessions).map((binding) => binding.harnessSessionId),
     )).size).toBe(3);
 
-    const inputFacts = session.readEvents().filter((event) => event.kind === "user_message");
+    const inputFacts = session.ledger.read().filter((event) => event.kind === "user_message");
     expect(inputFacts.map((event) => [event.payload.messageId, event.laneId])).toEqual([
       ["m_worker_1", "hl_worker_1"],
       ["m_worker_2", "hl_worker_2"],
@@ -254,7 +254,7 @@ describe("Baton Lane scheduling", () => {
 
     await until(() => adapters[0]?.prompts.length === 1);
     expect(adapters).toHaveLength(1);
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
     adapters[0]!.finish();
     expect(await first).toBe("completed");
 
@@ -284,7 +284,7 @@ describe("Baton Lane scheduling", () => {
 
     const mainLane = session.meta.lanes[MAIN_LANE_ID]!;
     expect(Object.keys(mainLane.harnessSessions).sort()).toEqual(["claude", "codex"]);
-    expect(new Set(session.readEvents().flatMap((event) => event.laneId ? [event.laneId] : [])))
+    expect(new Set(session.ledger.read().flatMap((event) => event.laneId ? [event.laneId] : [])))
       .toEqual(new Set([MAIN_LANE_ID]));
   });
 
@@ -347,7 +347,7 @@ describe("Baton Lane scheduling", () => {
     });
     await until(() => adapters[0]?.prompts.length === 1);
     expect(adapters).toHaveLength(1);
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
 
     const main = controller.submit("codex", blocks("main"));
     await until(() => adapters[1]?.prompts.length === 1);

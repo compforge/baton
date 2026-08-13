@@ -31,12 +31,13 @@ import {
 import { MentionRegistry } from "../../context/registry.ts";
 import { logError } from "../../logging.ts";
 import { newId } from "../../event/ids.ts";
+import { HumanInputIntake } from "../../input/intake.ts";
 import {
   textOf,
   type ContentBlock,
   type EventKind,
   type PromptBlock,
-} from "../../event/types.ts";
+} from "../../event/index.ts";
 import {
   createHarnessAdapter,
   HARNESS_REGISTRY,
@@ -49,7 +50,7 @@ import { createReconcileSnapshot } from "../../plugin/reconcile-snapshot.ts";
 import { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
 import type {
-  HumanIntent,
+  HumanInput,
   HumanPresentation,
   PluginCommandInput,
   PluginCommandResult,
@@ -63,7 +64,7 @@ import {
 import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
 import { Controller } from "../../controller/index.ts";
-import { applyEvent, type SessionState } from "../../store/reduce.ts";
+import type { SessionState } from "../../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
@@ -101,6 +102,11 @@ const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "agent_thought_chunk",
   "tool_call_content_chunk",
   "usage_update",
+]);
+const NON_PRESENTATION_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
+  "input.received",
+  "input.settled",
+  "harness_input.updated",
 ]);
 
 function publishChatState(
@@ -190,6 +196,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private state: SessionState;
   private controller: Controller;
   private plugins: Manager;
+  private inputIntake: HumanInputIntake;
   /** 当前输入与控制命令的具体配置目标；默认 Target ID 与 Harness ID 相同。 */
   private harnessTargetId: string;
   private toast: ToastMessage | null = null;
@@ -240,20 +247,24 @@ export class BatonChatProtocol implements ChatProtocol {
       this.toast = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
     }
     this.controller = this.createController();
-    // 投影单通道：live 与 resume 走同一条 reduce 路径（loadState 补历史 + subscribe 跟增量），
-    // 不从 per-turn 回调取事件——harness 自发回合（observed turn）没有对应的 submit 调用。
-    this.state = this.session.loadState();
+    // Projection 由 BatonSession 统一维护：打开时 replay，live Event 直接 reduce。
+    // TUI 只观察投影变化，不从 Ledger 或 per-turn 回调重建事实。
+    this.state = this.session.projection;
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(this.session);
     this.plugins = this.createPluginManager();
+    this.inputIntake = this.createHumanInputIntake();
     this.stateStore = createChatStore(this.buildState());
     this.startPluginManager();
   }
 
-  /** 接入事件流增量投影；调用前 state 必须已 loadState 到当前水位 */
+  /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
   private subscribeSession(session: SessionHandle): () => void {
     return session.subscribe((envelope) => {
-      applyEvent(this.state, envelope);
+      // WAL facts still advance the reducer watermark, but do not themselves
+      // create a Human presentation. Their resulting Core mutation publishes
+      // through its normal owner after the commit point.
+      if (NON_PRESENTATION_EVENT_KINDS.has(envelope.kind)) return;
       if (COALESCED_STREAM_EVENT_KINDS.has(envelope.kind)) this.scheduleStreamStateChanged();
       else this.changed();
     });
@@ -335,22 +346,19 @@ export class BatonChatProtocol implements ChatProtocol {
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
     const target = this.harnessTargetId;
-    const messageId = newId("m");
-    const intent: HumanIntent = Object.freeze({
-      intentId: messageId,
+    const sent = await this.inputIntake.run(Object.freeze({
       kind: "prompt",
       text,
       harnessTargetId: target,
-    });
-    await this.plugins.beforeHook("human.inbound.before", intent);
-    const blocks = await this.prepareComposerInput(text);
+    }), async (record) => {
+      const blocks = await this.prepareComposerInput(text);
 
-    // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
-    // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
-    const sent = await this.controller.sendTurn(target, blocks, {
-      ...options,
-      identity: { messageId, turnId: newId("t") },
-      onEnqueued: () => this.plugins.afterHook("human.inbound.after", intent),
+      // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
+      // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
+      return await this.controller.sendTurn(target, blocks, {
+        ...options,
+        parentEventId: record.eventId,
+      });
     });
     if (sent.effective === "steer") {
       this.toast = { text: `${target} steer queued for the current turn`, tone: "info" };
@@ -413,14 +421,13 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   async command(name: string, argument: string): Promise<void> {
-    const intent: HumanIntent = Object.freeze({
-      intentId: newId("hint"),
+    const input: HumanInput = Object.freeze({
       kind: "command",
       command: name,
       argument,
       harnessTargetId: this.harnessTargetId,
     });
-    return await this.runHumanIntent(intent, async () =>
+    return await this.inputIntake.run(input, async () =>
       await this.executeCommand(name, argument)
     );
   }
@@ -652,12 +659,11 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   cancel(): void {
-    const intent: HumanIntent = Object.freeze({
-      intentId: newId("hint"),
+    const input: HumanInput = Object.freeze({
       kind: "interrupt",
       harnessTargetId: this.controller.activeHarnessTargetId ?? this.harnessTargetId,
     });
-    void this.runHumanIntent(intent, async () => {
+    void this.inputIntake.run(input, async () => {
       await this.controller.control({ kind: "interrupt" });
     });
   }
@@ -782,12 +788,11 @@ export class BatonChatProtocol implements ChatProtocol {
     id: string,
     response: InteractionResponse,
   ): Promise<void> {
-    const intent: HumanIntent = Object.freeze({
-      intentId: newId("hint"),
+    const input: HumanInput = Object.freeze({
       kind: "interaction_response",
       interactionId: id,
     });
-    return await this.runHumanIntent(intent, async () =>
+    return await this.inputIntake.run(input, async () =>
       await this.applyInteractionResponse(id, response)
     );
   }
@@ -1024,7 +1029,7 @@ export class BatonChatProtocol implements ChatProtocol {
           batonSessionId: this.session.id,
           cwd: this.session.meta.cwd,
           state: this.state,
-          inputs: this.controller.inputs,
+          harnessInputs: this.controller.harnessInputs,
           harnessTargets: HARNESS_REGISTRY.map((definition) => ({
             id: definition.id,
             harness: definition.id,
@@ -1132,6 +1137,16 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
+  private createHumanInputIntake(): HumanInputIntake {
+    return new HumanInputIntake({
+      session: this.session,
+      hooks: {
+        before: (stage, subject) => this.plugins.beforeHook(stage, subject),
+        after: (stage, subject) => this.plugins.afterHook(stage, subject),
+      },
+    });
+  }
+
   private startPluginManager(): void {
     void this.plugins.start().catch((error) => {
       this.toast = {
@@ -1153,7 +1168,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private async switchSession(
     open: () => { session: SessionHandle; recovered?: boolean },
   ): Promise<void> {
-    if (this.controller.isBusy || this.controller.queueLength > 0) {
+    if (this.controller.isBusy || this.controller.harnessQueueLength > 0) {
       throw new Error("Wait for the current turn to finish before switching BatonSession");
     }
     const next = open();
@@ -1173,37 +1188,26 @@ export class BatonChatProtocol implements ChatProtocol {
     this.syncTerminalTitle();
     this.commandOutput = null;
     this.controller = this.createController();
-    this.state = next.session.loadState();
+    this.state = next.session.projection;
     this.seedHistoryFromState();
     this.unsubscribeSession = this.subscribeSession(next.session);
     this.toast = next.recovered
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.createPluginManager();
+    this.inputIntake = this.createHumanInputIntake();
     this.completionsChanged();
     this.startPluginManager();
     this.changed();
   }
 
-  private async runHumanIntent<T>(
-    intent: HumanIntent,
-    action: () => Promise<T>,
-  ): Promise<T> {
-    const plugins = this.plugins;
-    await plugins.beforeHook("human.inbound.before", intent);
-    const result = await action();
-    plugins.afterHook("human.inbound.after", intent);
-    return result;
-  }
-
   private async runHumanConfiguration(
-    setting: NonNullable<HumanIntent["setting"]>,
+    setting: Extract<HumanInput, { kind: "configuration" }>["setting"],
     target: string,
     value: string | null,
     action: () => Promise<void>,
   ): Promise<void> {
-    await this.runHumanIntent(Object.freeze({
-      intentId: newId("hint"),
+    await this.inputIntake.run(Object.freeze({
       kind: "configuration",
       harnessTargetId: target,
       setting,
@@ -1286,7 +1290,7 @@ export class BatonChatProtocol implements ChatProtocol {
       `Context: ${contextText}`,
       `Targets: ${targets}`,
       `Turns: ${this.state.turnSummaries.length} - tokens in ${this.state.usage.inputTokens} / out ${this.state.usage.outputTokens}`,
-      `State: ${activeTargetId ? `running (${activeTargetId})` : "idle"} - queue ${this.controller.queueLength}`,
+      `State: ${activeTargetId ? `running (${activeTargetId})` : "idle"} - queue ${this.controller.harnessQueueLength}`,
     ].join("\n");
     return this.batonTranscriptItem("_baton_status", text);
   }

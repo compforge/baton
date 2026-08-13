@@ -156,10 +156,10 @@ context.hooks.register({
   hookId: "observe-human-input",
   stage: "human.inbound.before",
   async run(hook) {
-    if (hook.subject.kind !== "prompt") return;
+    if (hook.subject.input.kind !== "prompt") return;
     const decision = await hook.verbs.confirm({
       title: "Autopilot",
-      prompt: `Inspect ${hook.subject.intentId}?`,
+      prompt: `Inspect ${hook.subject.inputId}?`,
       timeoutMs: 30_000,
     });
     // The Hook itself returns no decision or replacement payload.
@@ -177,24 +177,23 @@ with a bounded host queue. `human.outbound.after` means the presentation state
 was accepted by the UI store, not that a person actually saw it.
 
 Human inbound subjects cover prompts, commands, Harness/model/effort/mode
-configuration, Interaction responses, and interrupts. A prompt receives its
-stable `intentId` before the before Hook and reuses it as the queued Input's
-`messageId`; the after Hook runs once that Input is visible to Core, without
-waiting for steer admission or Turn completion. Human outbound subjects cover
+configuration, Interaction responses, and interrupts. Core persists
+`input.received` before the before Hook. Prompt lowering creates a distinct
+HarnessInput/message identity linked by `parentEventId`; Core persists
+`input.settled` before the after Hook. Human outbound subjects cover
 transcript, queue, Interaction, status, toast, Board, and picker publication.
 Updates may coalesce while a before Hook is running. A reentrant Interaction
 opened by that Hook through a Verb is published without recursively invoking
 the same before stage, so the Hook cannot deadlock on a question hidden from
 the human; the reentrant publication still emits an after notification.
 
-Harness outbound subjects describe one prepared Adapter send. New turns reuse
+Direction follows the Human-to-Harness path. Harness inbound subjects describe one prepared Adapter send. New turns reuse
 the durable Delivery Attempt identity; a steer identity only correlates that
 same-turn send. The before stage precedes the Adapter call. The after stage
 reports `accepted`, `rejected`, or `error` admission without waiting for Turn
-completion. Harness inbound before receives a normalized event draft without
-ledger identity. Core then preserves native order within the same
-`Lane × HarnessTarget`, appends the event, and emits after with its `eventId` and
-`seq`. When no inbound before Hook is registered, event append stays synchronous.
+completion. Harness outbound receives a normalized Event record only after it
+has been appended to the Event Ledger. Both phases carry its `eventId` and `seq`;
+Hooks cannot delay or replace the durable Harness output.
 
 Controller Sources have two narrow roles:
 
@@ -369,7 +368,7 @@ in-memory continuation is not replayed and its unfinished verb becomes
 `failure`.
 
 A Controller uses `ctx.verbs.draft` to let the user edit a prompt, or `ctx.verbs.harness`
-to request a driven Turn with a ready prompt. Both pass through Interaction;
+to enqueue a ready prompt for Harness execution. Both pass through Interaction;
 only an approved/submitted result creates the HarnessInvocation. The Plugin
 explicitly declares the Lane for execution:
 

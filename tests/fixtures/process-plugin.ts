@@ -75,9 +75,9 @@ const plugin: PluginPackage = {
       async run(hook) {
         context.logger.info("Process Hook observed input", {
           component: "hook",
-          attributes: { intentId: hook.subject.intentId },
+          attributes: { inputId: hook.subject.inputId },
         });
-        if (hook.subject.text !== "ask from hook") return;
+        if (hook.subject.input.kind !== "prompt" || hook.subject.input.text !== "ask from hook") return;
         await hook.verbs.ask({
           timeoutMs: 1_000,
           title: "Hook question",

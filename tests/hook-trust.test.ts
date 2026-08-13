@@ -14,7 +14,7 @@ import {
   hookStatePath,
   type HookTrustStore,
 } from "../src/config/hook.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 import type { HookTrustCandidate } from "../src/interaction/types.ts";
 
 const roots: string[] = [];
