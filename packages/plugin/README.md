@@ -176,6 +176,17 @@ logged and fails open. An `after` notification is best-effort and non-blocking,
 with a bounded host queue. `human.outbound.after` means the presentation state
 was accepted by the UI store, not that a person actually saw it.
 
+Human inbound subjects cover prompts, commands, Harness/model/effort/mode
+configuration, Interaction responses, and interrupts. A prompt receives its
+stable `intentId` before the before Hook and reuses it as the queued Input's
+`messageId`; the after Hook runs once that Input is visible to Core, without
+waiting for steer admission or Turn completion. Human outbound subjects cover
+transcript, queue, Interaction, status, toast, Board, and picker publication.
+Updates may coalesce while a before Hook is running. A reentrant Interaction
+opened by that Hook through a Verb is published without recursively invoking
+the same before stage, so the Hook cannot deadlock on a question hidden from
+the human; the reentrant publication still emits an after notification.
+
 Controller Sources have two narrow roles:
 
 - A `Source` performs initial discovery, installs live subscriptions,

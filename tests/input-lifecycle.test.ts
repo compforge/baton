@@ -161,9 +161,18 @@ describe("Input lifecycle (InputRecord)", () => {
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
 
-    const sending = controller.sendTurn("codex", text("prefer B"));
+    let enqueuedMessageId: string | undefined;
+    const sending = controller.sendTurn("codex", text("prefer B"), {
+      onEnqueued: () => {
+        enqueuedMessageId = controller.inputs.find(
+          (input) => input.status === "queued",
+        )?.messageId;
+      },
+    });
+    expect(enqueuedMessageId).toMatch(/^m_/);
     await until(() => controller.inputs.some((input) => input.status === "dispatching"));
     const dispatching = controller.inputs.find((input) => input.status === "dispatching");
+    expect(dispatching?.messageId).toBe(enqueuedMessageId);
     expect(dispatching?.messageId).toMatch(/^m_/);
     expect(controller.recallLatestQueued()).toBeUndefined();
     expect(adapter.received[1]?.messageId).toBe(dispatching?.messageId);

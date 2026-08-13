@@ -203,6 +203,13 @@ direction 始终以 Baton Core 为参照：human inbound 是人进入 Core 的 i
 不阻断用户输入或 Harness 主链路。`after` 进入有界、best-effort 的异步队列，不延长主链路。
 `human.outbound.after` 只表示 chat-tui state store 已接收 presentation，不代表用户真实看见。
 
+Human inbound 的 typed subject 覆盖 prompt、command、Harness/model/effort/mode configuration、
+Interaction response 与 interrupt。prompt 在 before 前已有稳定 `intentId`，入队时复用为
+`messageId`；after 在 Input 已可从 queue/snapshot 观察时触发，不等待 steer 或 Turn 结果。
+Human outbound 覆盖 transcript、queue、Interaction、status、toast、Board 与 picker 的 state
+publication。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
+Interaction 会直接发布并只发送 after，避免 Hook 等待尚未展示给人的问题而自锁。
+
 ### 4.3 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、

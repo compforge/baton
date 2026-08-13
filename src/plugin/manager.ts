@@ -735,6 +735,10 @@ export class Manager {
     this.hooks.after(stage, subject);
   }
 
+  hasHook(stage: HookStage): boolean {
+    return this.hookRegistry.has(stage);
+  }
+
   /**
    * Instance 先以 disabled 落盘，再显式启用；激活失败时仍保留一份可诊断、可重试的配置。
    */
