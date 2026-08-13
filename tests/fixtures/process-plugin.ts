@@ -86,6 +86,19 @@ const plugin: PluginPackage = {
         });
       },
     });
+    context.hooks.register({
+      hookId: "process-output",
+      stage: "human.outbound.before",
+      async run(hook) {
+        if (hook.subject.kind !== "transcript") return;
+        await hook.verbs.ask({
+          timeoutMs: 1_000,
+          title: "Outbound Hook question",
+          prompt: "Continue outbound publication?",
+          allowOther: true,
+        });
+      },
+    });
     context.controllers.register({
       resourceType: PROCESS_RESOURCE_TYPE,
       async reconcile() {},

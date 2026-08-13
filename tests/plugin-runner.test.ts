@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import type { HookStage, HookSubjectMap } from "@compforge/baton-plugin";
+
+import { Channel } from "../src/channel/index.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager, type PluginRunnerFailure } from "../src/plugin/manager.ts";
 import { PluginSupervisor } from "../src/plugin/runner/index.ts";
@@ -216,6 +219,70 @@ describe("Plugin Runner process boundary", () => {
       attributes: { inputId: "in_runner_hook" },
     }));
     await manager.close();
+  });
+
+  test("restores outbound Hook causality for Runner verb IPC", async () => {
+    const { instances, session, entry } = stores();
+    instances.create({
+      pluginInstanceId: "process_default",
+      pluginId: "tests/process-plugin",
+      marketplace: "fixtures",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      session,
+      pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
+      async loadPackageEntry(pluginId, version) {
+        return {
+          pluginId,
+          version,
+          entryUrl: pathToFileURL(entry).href,
+        };
+      },
+    });
+    await manager.start();
+
+    const channel = new Channel({ session });
+    const beforeKinds: string[] = [];
+    channel.connect({
+      has: (stage) => manager.hasHook(stage),
+      before: async <S extends Extract<HookStage, `${string}.before`>>(
+        stage: S,
+        subject: Readonly<HookSubjectMap[S]>,
+      ) => {
+        if (stage === "human.outbound.before") {
+          beforeKinds.push((
+            subject as unknown as HookSubjectMap["human.outbound.before"]
+          ).kind);
+        }
+        await manager.beforeHook(stage, subject);
+      },
+      after: <S extends Extract<HookStage, `${string}.after`>>(
+        stage: S,
+        subject: Readonly<HookSubjectMap[S]>,
+      ) => manager.afterHook(stage, subject),
+    });
+    const unsubscribe = session.subscribe((event) => {
+      if (event.kind !== "interaction.requested") return;
+      void channel.outbound("interaction", () => true);
+    });
+
+    const publication = channel.outbound("transcript", () => true);
+    await waitFor(() => session.loadState().interactions.size === 1, 1_000);
+    const interaction = [...session.loadState().interactions.values()][0]!
+      .interaction;
+    expect(await manager.completeInteraction(interaction.interactionId, {
+      kind: "question",
+      outcome: "answered",
+      answers: { decision: ["continue"] },
+    })).toBe(true);
+    await expect(publication).resolves.toBe(true);
+
+    unsubscribe();
+    channel.disconnect();
+    await manager.close();
+    expect(beforeKinds).toEqual(["transcript"]);
   });
 
   test("withdraws registrations and settles a waiting verb after a crash", async () => {

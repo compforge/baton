@@ -273,6 +273,8 @@ Source 和 Board，并把该 Runner 尚未完成的 verb 以 `failure` 收口。
 HarnessInvocation 和日志保留为事实，但进程内 continuation 不恢复。当前不自动重启失败 Runner，
 因为外部副作用可能已经生效却没有回执。Runner 的一般调用 watchdog 在 verb 等待期间暂停；该段
 等待由 verb 自己的必填 timeout 约束。
+Runner invocation 以 `executionId` 关联 child-call；宿主处理 `verb.invoke` 时必须恢复该 execution
+的异步因果作用域，不能依赖进程间自动传播。
 
 ## 6. Plugin authoring 约束
 
