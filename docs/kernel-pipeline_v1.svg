@@ -50,7 +50,7 @@
   <text x="900" y="455" text-anchor="middle" class="label" fill="#ffffff">Event</text>
   <text x="900" y="485" text-anchor="middle" class="label" fill="#ffffff">Turn</text>
   <line x1="1080" y1="450" x2="980" y2="450" class="flow"/>
-  <text x="1020" y="425" text-anchor="middle" class="tiny">driven + observed</text>
+  <text x="1020" y="425" text-anchor="middle" class="tiny">one Turn model</text>
   <line x1="900" y1="405" x2="900" y2="290" class="flow"/>
 
   <polygon points="670,465 735,420 800,465 735,510" fill="#fff0bf" class="box"/>

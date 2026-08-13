@@ -1,5 +1,5 @@
-import type { InputSnapshot as ControllerInputSnapshot } from "../controller/input.ts";
-import type { TurnSummary } from "../event/types.ts";
+import type { HarnessInputSnapshot as ControllerInputSnapshot } from "../harness/input.ts";
+import type { TurnSummary } from "../event/index.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import type {
   Interaction,
@@ -28,7 +28,6 @@ export interface SessionSnapshot {
 
 export interface ActiveTurnSnapshot {
   readonly turnId: string;
-  readonly role: "driven" | "observed";
   readonly state: "running" | "requires_action";
   readonly harness?: string;
   readonly harnessTargetId?: string;
@@ -36,7 +35,7 @@ export interface ActiveTurnSnapshot {
   readonly startedAt?: number;
 }
 
-export interface InputSnapshot {
+export interface HarnessInputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
@@ -70,7 +69,7 @@ export interface PendingInteractionSnapshot {
 export interface ReconcileSnapshot {
   readonly session: SessionSnapshot;
   readonly activeTurns: readonly ActiveTurnSnapshot[];
-  readonly inputs: readonly InputSnapshot[];
+  readonly harnessInputs: readonly HarnessInputSnapshot[];
   readonly harnessTargets: readonly HarnessTargetSnapshot[];
   readonly pendingInteractions: readonly PendingInteractionSnapshot[];
   readonly latestTurn?: SnapshotReadonly<TurnSummary>;
@@ -84,7 +83,7 @@ interface CreateReconcileSnapshotOptions {
     SessionState,
     "runState" | "lastSeq" | "activeTurns" | "interactions" | "turnSummaries"
   >;
-  readonly inputs?: readonly ControllerInputSnapshot[];
+  readonly harnessInputs?: readonly ControllerInputSnapshot[];
   readonly harnessTargets?: readonly (HarnessTarget & { readonly label?: string })[];
 }
 
@@ -107,7 +106,6 @@ export function createReconcileSnapshot(options: CreateReconcileSnapshotOptions)
     },
     activeTurns: [...options.state.activeTurns.values()].map((turn) => ({
       turnId: turn.turnId,
-      role: turn.role,
       state: turn.state,
       ...(turn.harness === undefined ? {} : { harness: turn.harness }),
       ...(turn.harnessTargetId === undefined
@@ -118,7 +116,7 @@ export function createReconcileSnapshot(options: CreateReconcileSnapshotOptions)
         : { laneId: turn.laneId }),
       ...(turn.startedAt === undefined ? {} : { startedAt: turn.startedAt }),
     })),
-    inputs: (options.inputs ?? []).map((input) => ({ ...input })),
+    harnessInputs: (options.harnessInputs ?? []).map((input) => ({ ...input })),
     harnessTargets: (options.harnessTargets ?? []).map((target) => ({
       id: target.id,
       harness: target.harness,
@@ -157,7 +155,7 @@ export function emptyReconcileSnapshot(batonSessionId: string): ReconcileSnapsho
       revision: 0,
     },
     activeTurns: [],
-    inputs: [],
+    harnessInputs: [],
     harnessTargets: [],
     pendingInteractions: [],
     turns: [],

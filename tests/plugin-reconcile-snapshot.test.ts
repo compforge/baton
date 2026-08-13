@@ -10,7 +10,6 @@ describe("ReconcileSnapshot", () => {
     state.lastSeq = 12;
     state.activeTurns.set("t_latest", {
       turnId: "t_latest",
-      role: "driven",
       state: "running",
       harness: "codex",
       harnessTargetId: "codex",
@@ -43,7 +42,7 @@ describe("ReconcileSnapshot", () => {
       batonSessionId: "bs_test",
       cwd: "/tmp/project",
       state,
-      inputs: [{
+      harnessInputs: [{
         messageId: "m_1",
         turnId: "t_queued",
         harnessTargetId: "claude",
@@ -67,13 +66,12 @@ describe("ReconcileSnapshot", () => {
     });
     expect(snapshot.activeTurns).toEqual([{
       turnId: "t_latest",
-      role: "driven",
       state: "running",
       harness: "codex",
       harnessTargetId: "codex",
       startedAt: 1_000,
     }]);
-    expect(snapshot.inputs.map((input) => input.turnId)).toEqual(["t_queued"]);
+    expect(snapshot.harnessInputs.map((input) => input.turnId)).toEqual(["t_queued"]);
     expect(snapshot.harnessTargets.map((target) => target.id)).toEqual([
       "codex",
       "claude",

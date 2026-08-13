@@ -17,8 +17,8 @@ import type {
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
-import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/types.ts";
-import { textOf } from "../src/event/types.ts";
+import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/index.ts";
+import { textOf } from "../src/event/index.ts";
 import { Controller, type HarnessAdapterPorts } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -222,21 +222,21 @@ afterEach(() => {
 });
 
 function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "user_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-user`, content: [{ type: "text", text }] },
   });
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "agent_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-agent`, content: [{ type: "text", text: `${text}-done` }] },
   });
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "state_update",
     harness,
@@ -269,7 +269,7 @@ describe("Controller", () => {
   });
 
   test("links an accepted implementation turn back to its proposed plan", async () => {
-    session.append({
+    session.ledger.append({
       source: { type: "harness", harnessTargetId: "example" },
       harness: "example-harness",
       harnessTargetId: "example",
@@ -292,7 +292,7 @@ describe("Controller", () => {
     );
 
     const link = session
-      .readEvents()
+      .ledger.read()
       .find((event) => event.kind === "proposed_plan_implementation_started");
     expect(link).toMatchObject({
       source: { type: "baton" },
@@ -305,7 +305,7 @@ describe("Controller", () => {
   });
 
   test("admits at most one pending implementation turn per proposed plan", async () => {
-    session.append({
+    session.ledger.append({
       source: { type: "harness", harnessTargetId: "example" },
       harness: "example-harness",
       harnessTargetId: "example",
@@ -365,7 +365,7 @@ describe("Controller", () => {
 
     await controller.submit("example", [{ type: "text", text: "hello" }]);
 
-    const event = session.readEvents().find(
+    const event = session.ledger.read().find(
       (candidate) => candidate.kind === "agent_message" && candidate.payload.messageId === "forged",
     );
     expect(event).toMatchObject({
@@ -500,11 +500,11 @@ describe("Controller", () => {
     });
 
     const summaries = session
-      .readEvents()
+      .ledger.read()
       .filter((event) => event.kind === "_baton_turn_summary");
     expect(summaries.map((event) => event.harnessTargetId)).toEqual(["codex-a", "codex-b"]);
     const harnessSources = session
-      .readEvents()
+      .ledger.read()
       .filter((event) => event.kind === "agent_message")
       .map((event) => event.source);
     expect(harnessSources).toEqual([
@@ -556,7 +556,7 @@ describe("Controller", () => {
     const adapter = new FakeAdapter("codex");
     const events: AnyEventEnvelope[] = [];
     // 投影单通道：消费者订阅事件流（append 即广播），不从 submit 的回调取事件
-    session.subscribe((event) => events.push(event));
+    session.ledger.subscribe((event) => events.push(event));
     const controller = new Controller({
       session,
       mentionBudgetChars: 4096,
@@ -621,10 +621,10 @@ describe("Controller", () => {
     const queued = controller.submit("codex", [{ type: "text", text: "two" }]);
     const latest = controller.submit("claude", [{ type: "text", text: "three" }]);
 
-    expect(controller.queuedTurns.map((turn) => textOf(turn.blocks))).toEqual(["two", "three"]);
+    expect(controller.queuedHarnessInputs.map((turn) => textOf(turn.blocks))).toEqual(["two", "three"]);
     const recalled = controller.recallLatestQueued();
     expect(recalled && textOf(recalled.blocks)).toBe("three");
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
     expect(await latest).toBe("recalled");
     expect(await active).toBe("completed");
     expect(await queued).toBe("completed");
@@ -680,7 +680,7 @@ describe("Controller", () => {
 
   test("resumes native session, restores config, and syncs only other-harness progress", async () => {
     completedTurn(session, "codex", "t_codex", "old codex work");
-    const watermark = session.readEvents().at(-1)?.seq ?? 0;
+    const watermark = session.ledger.read().at(-1)?.seq ?? 0;
     session.setHarnessSession("codex", {
       harnessTargetId: "codex",
       harness: "codex",
@@ -764,7 +764,7 @@ describe("Controller", () => {
     await controller.compactContext("codex");
 
     expect(adapter.compactCalls).toHaveLength(1);
-    const events = session.readEvents();
+    const events = session.ledger.read();
     expect(events.filter((event) => event.kind === "user_message")).toHaveLength(0);
     expect(events.filter((event) => event.kind === "state_update").map((event) => event.payload)).toEqual([
       { state: "running" },
@@ -782,7 +782,7 @@ describe("Controller", () => {
     });
 
     await expect(controller.compactContext("example")).rejects.toThrow("does not support /compact");
-    expect(session.readEvents()).toHaveLength(0);
+    expect(session.ledger.read()).toHaveLength(0);
   });
 });
 
@@ -847,7 +847,7 @@ describe("interaction completion registry", () => {
       outcome: "selected",
       optionId: "allow",
     })).toBe(false);
-    const permission = session.readEvents().find(
+    const permission = session.ledger.read().find(
       (event) => event.kind === "interaction.requested" && event.payload.kind === "permission",
     );
     expect(permission?.kind).toBe("interaction.requested");
@@ -864,7 +864,7 @@ describe("interaction completion registry", () => {
     })).toBe(false); // completion 一次性
 
     await Bun.sleep(5); // question Interaction 已落盘
-    const question = session.readEvents().find(
+    const question = session.ledger.read().find(
       (event) => event.kind === "interaction.requested" && event.payload.kind === "question",
     );
     const questionId = question?.kind === "interaction.requested" ? question.payload.interactionId : "";
@@ -875,7 +875,7 @@ describe("interaction completion registry", () => {
     })).toBe(true);
     await turn;
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     expect(events.find(
       (event) => event.kind === "interaction.answered" && event.payload.interactionId === permissionId,
     )?.payload).toMatchObject({
@@ -939,7 +939,7 @@ describe("interaction completion registry", () => {
     });
     const outcome = controller.submit("codex", [{ type: "text", text: "go" }]);
     await Bun.sleep(5);
-    const interaction = session.readEvents().find(
+    const interaction = session.ledger.read().find(
       (event) => event.kind === "interaction.requested" && event.payload.kind === "hook_trust",
     );
     expect(interaction?.turnId).toBeDefined();
@@ -999,7 +999,7 @@ describe("interaction completion registry", () => {
     });
     const outcome = controller.submit("codex", [{ type: "text", text: "go" }]);
     await Bun.sleep(5);
-    const interaction = session.readEvents().find(
+    const interaction = session.ledger.read().find(
       (event) => event.kind === "interaction.requested" && event.payload.kind === "permission",
     );
     expect(interaction?.turnId).toBeDefined();

@@ -28,7 +28,7 @@ function appendTurn(
   turnId: string,
   userText: string,
 ) {
-  return session.append({
+  return session.ledger.append({
     kind: "_baton_turn_summary",
     source: { type: "baton" },
     harness: "codex",
@@ -149,7 +149,7 @@ describe("Baton Resource index", () => {
           revision: session.loadState().lastSeq,
         },
         activeTurns: [],
-        inputs: [],
+        harnessInputs: [],
         harnessTargets: [{ id: "codex_default", harness: "codex" }],
         pendingInteractions: [],
         turns: [],

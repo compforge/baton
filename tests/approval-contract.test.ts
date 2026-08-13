@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ClaudeAdapter } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter, codexLaunchCommand, codexToolTerminalStatus } from "../src/harness/codex/adapter.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
 
 function codexServerRequestHarness(optionId: string) {

@@ -130,7 +130,7 @@ export function claudeHistoryTurns(messages: SessionMessage[]): HarnessHistoryTu
             block.type === "tool_use"
           )
         : blocks.some((block) => block.type === "tool_result");
-    // 纯注入上下文在剥离后可能为空；不能为它伪造一个空 observed turn。
+    // 纯注入上下文在剥离后可能为空；不能为它伪造一个空 Turn。
     if (!userText && !hasDurableActivity) continue;
 
     const turn = ensureTurn(message.uuid);

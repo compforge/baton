@@ -1,6 +1,5 @@
 import type {
   HarnessDelivery,
-  HarnessEventDraft,
   HarnessEventRecord,
   HookStage,
   HookSubjectMap,
@@ -11,7 +10,7 @@ import type {
   PromptInput,
   SendTurnReceipt,
 } from "../harness/adapter.ts";
-import type { AnyEventDraft, AnyEventEnvelope } from "../event/types.ts";
+import type { AnyEventDraft, AnyEventEnvelope } from "../event/index.ts";
 import type { HarnessBinding } from "../harness/binding.ts";
 import { logError, type LogSink } from "../logging.ts";
 
@@ -41,8 +40,6 @@ interface HarnessHookCoordinatorOptions {
 
 /** Owns Harness Hook correlation, fail-open delivery, and ordered event intake. */
 export class HarnessHookCoordinator {
-  private readonly inboundQueues = new Map<string, Promise<void>>();
-
   constructor(private readonly options: HarnessHookCoordinatorOptions) {}
 
   delivery(
@@ -62,8 +59,8 @@ export class HarnessHookCoordinator {
   }
 
   beforeDelivery(delivery: HarnessDelivery): Promise<void> | undefined {
-    if (!this.has("harness.outbound.before")) return undefined;
-    return this.before("harness.outbound.before", delivery);
+    if (!this.has("harness.inbound.before")) return undefined;
+    return this.before("harness.inbound.before", delivery);
   }
 
   async send(
@@ -79,14 +76,14 @@ export class HarnessHookCoordinator {
     if (before) await before;
     try {
       const receipt = await binding.adapter.sendTurn(ref, input);
-      this.after("harness.outbound.after", Object.freeze({
+      this.after("harness.inbound.after", Object.freeze({
         ...delivery,
         outcome: receipt.accepted ? "accepted" : "rejected",
         ...(receipt.accepted || !receipt.reason ? {} : { reason: receipt.reason }),
       }));
       return receipt;
     } catch (error) {
-      this.after("harness.outbound.after", Object.freeze({
+      this.after("harness.inbound.after", Object.freeze({
         ...delivery,
         outcome: "error",
         reason: error instanceof Error ? error.message : String(error),
@@ -96,66 +93,27 @@ export class HarnessHookCoordinator {
   }
 
   acceptEvent(binding: HarnessBinding, event: AnyEventDraft): void {
-    const draft: HarnessEventDraft = Object.freeze({
+    // The Event Ledger is the WAL: persist Harness output before any Plugin
+    // notification. Hooks can emit Verbs, so notifying them first would allow
+    // durable effects whose triggering Harness fact was lost on crash.
+    const envelope = this.options.append(binding, event);
+    const record: HarnessEventRecord = Object.freeze({
       kind: event.kind,
       harnessTargetId: binding.target.id,
       laneId: binding.laneId,
       ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
-    });
-    if (!this.has("harness.inbound.before")) {
-      this.persistEvent(binding, event, draft);
-      return;
-    }
-
-    // EventSink stays synchronous for Adapter authors. Preserve native order
-    // with one bounded async chain per binding; unrelated Lanes remain independent.
-    const key = `${binding.laneId}\0${binding.target.id}`;
-    const previous = this.inboundQueues.get(key) ?? Promise.resolve();
-    const queued = previous
-      .catch(() => {})
-      .then(async () => {
-        await this.before("harness.inbound.before", draft);
-        this.persistEvent(binding, event, draft);
-      });
-    this.inboundQueues.set(key, queued);
-    void queued.then(
-      () => this.finishInbound(key, queued),
-      (error) => {
-        this.options.log({
-          level: "error",
-          source: "baton",
-          component: "controller.hook",
-          harness: binding.adapter.harness,
-          harnessTargetId: binding.target.id,
-          message: "harness inbound event persistence failed",
-          error: logError(error),
-        });
-        this.finishInbound(key, queued);
-      },
-    );
-  }
-
-  async close(): Promise<void> {
-    await Promise.allSettled([...this.inboundQueues.values()]);
-  }
-
-  private persistEvent(
-    binding: HarnessBinding,
-    event: AnyEventDraft,
-    draft: HarnessEventDraft,
-  ): void {
-    const envelope = this.options.append(binding, event);
-    const record: HarnessEventRecord = Object.freeze({
-      ...draft,
       eventId: envelope.eventId,
       seq: envelope.seq,
     });
-    this.after("harness.inbound.after", record);
+    if (!this.has("harness.outbound.before")) {
+      this.after("harness.outbound.after", record);
+      return;
+    }
+    void this.before("harness.outbound.before", record)
+      .finally(() => this.after("harness.outbound.after", record));
   }
 
-  private finishInbound(key: string, queued: Promise<void>): void {
-    if (this.inboundQueues.get(key) === queued) this.inboundQueues.delete(key);
-  }
+  async close(): Promise<void> {}
 
   private has(stage: HarnessHookStage): boolean {
     try {

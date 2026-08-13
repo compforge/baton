@@ -1,4 +1,4 @@
-// Input 一等抽象（InputRecord）（见 docs/workflow.md“采集与准入”）：
+// Input 一等抽象（HarnessInput）（见 docs/workflow.md“采集与准入”）：
 // 每条输入身份即其 messageId（m_）+ 显式 status；queued/dispatching/admitted/accepted_steer 可查，
 // recall→recalled、cancel→interrupted（S3：不静默丢、不自动重发）。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -15,7 +15,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import { textOf, type PromptBlock } from "../src/event/types.ts";
+import { textOf, type PromptBlock } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -97,21 +97,84 @@ async function until(cond: () => boolean): Promise<void> {
   expect(cond()).toBe(true);
 }
 
-describe("Input lifecycle (InputRecord)", () => {
+describe("Input lifecycle (HarnessInput)", () => {
+  test("commits each queued transition before mutating the in-memory Queue", async () => {
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+    const queueLengthsAtCommit: number[] = [];
+    const unsubscribe = session.ledger.subscribe((event) => {
+      if (event.kind === "harness_input.updated" && event.payload.status === "queued") {
+        queueLengthsAtCommit.push(controller.harnessQueueLength);
+      }
+    });
+
+    const turn = controller.submit("codex", text("build it"));
+    await until(() => adapter.prompts.length === 1);
+    expect(queueLengthsAtCommit[0]).toBe(0);
+    const events = session.ledger.read();
+    const queued = events.find((event) =>
+      event.kind === "harness_input.updated" && event.payload.status === "queued"
+    );
+    const admitted = events.find((event) =>
+      event.kind === "harness_input.updated" && event.payload.status === "admitted"
+    );
+    const message = events.find((event) => event.kind === "user_message");
+    expect(queued!.seq).toBeLessThan(admitted!.seq);
+    expect(admitted!.seq).toBeLessThan(message!.seq);
+
+    unsubscribe();
+    adapter.finish("end_turn");
+    await turn;
+  });
+
+  test("restores a safely queued HarnessInput from the Event Ledger", async () => {
+    session.ledger.append({
+      kind: "harness_input.updated",
+      source: { type: "user" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId: "t_restored",
+      payload: {
+        queueId: 7,
+        messageId: "m_restored",
+        turnId: "t_restored",
+        harnessTargetId: "codex",
+        laneId: MAIN_LANE_ID,
+        blocks: text("resume me"),
+        source: { type: "user" },
+        status: "queued",
+        delivery: "prompt",
+      },
+    });
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+
+    await until(() => adapter.prompts.length === 1);
+    expect(adapter.received[0]).toMatchObject({
+      messageId: "m_restored",
+      turnId: "t_restored",
+    });
+    expect(adapter.prompts).toEqual(["resume me"]);
+
+    adapter.finish("end_turn");
+    await until(() => controller.harnessInputs.length === 0);
+  });
+
   test("admitted input is identified by its messageId with admitted status", async () => {
     const adapter = new HoldingAdapter("codex");
     const controller = controllerWith(adapter);
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
 
-    const inputs = controller.inputs;
+    const inputs = controller.harnessInputs;
     expect(inputs).toHaveLength(1);
     expect(inputs[0]?.messageId).toMatch(/^m_/);
     expect(inputs[0]).toMatchObject({ status: "admitted", delivery: "prompt", harness: "codex" });
 
     adapter.finish("end_turn");
     await turn;
-    expect(controller.inputs).toHaveLength(0); // finalized 输入不驻内存
+    expect(controller.harnessInputs).toHaveLength(0); // finalized 输入不驻内存
   });
 
   test("a second input while busy is a queued entity; recall marks it recalled and drops it", async () => {
@@ -120,14 +183,14 @@ describe("Input lifecycle (InputRecord)", () => {
     const first = controller.submit("codex", text("first"));
     await until(() => adapter.prompts.length === 1);
     const second = controller.submit("codex", text("second"));
-    await until(() => controller.queueLength === 1);
+    await until(() => controller.harnessQueueLength === 1);
 
-    const statuses = controller.inputs.map((i) => i.status).sort();
+    const statuses = controller.harnessInputs.map((i) => i.status).sort();
     expect(statuses).toEqual(["admitted", "queued"]);
 
     const recalled = controller.recallLatestQueued();
     expect(recalled?.blocks && textOf(recalled.blocks)).toBe("second");
-    expect(controller.inputs.map((i) => i.status)).toEqual(["admitted"]); // queued 已移除
+    expect(controller.harnessInputs.map((i) => i.status)).toEqual(["admitted"]); // queued 已移除
     expect(await second).toBe("recalled");
 
     adapter.finish("end_turn");
@@ -143,7 +206,7 @@ describe("Input lifecycle (InputRecord)", () => {
     const outcome = await controller.sendTurn("codex", text("prefer B"));
     expect(outcome.effective).toBe("steer");
 
-    const steer = controller.inputs.find((i) => i.delivery === "steer");
+    const steer = controller.harnessInputs.find((i) => i.delivery === "steer");
     expect(steer?.messageId).toMatch(/^m_/);
     expect(steer?.status).toBe("accepted_steer");
 
@@ -164,14 +227,14 @@ describe("Input lifecycle (InputRecord)", () => {
     let enqueuedMessageId: string | undefined;
     const sending = controller.sendTurn("codex", text("prefer B"), {
       onEnqueued: () => {
-        enqueuedMessageId = controller.inputs.find(
+        enqueuedMessageId = controller.harnessInputs.find(
           (input) => input.status === "queued",
         )?.messageId;
       },
     });
     expect(enqueuedMessageId).toMatch(/^m_/);
-    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
-    const dispatching = controller.inputs.find((input) => input.status === "dispatching");
+    await until(() => controller.harnessInputs.some((input) => input.status === "dispatching"));
+    const dispatching = controller.harnessInputs.find((input) => input.status === "dispatching");
     expect(dispatching?.messageId).toBe(enqueuedMessageId);
     expect(dispatching?.messageId).toMatch(/^m_/);
     expect(controller.recallLatestQueued()).toBeUndefined();
@@ -192,7 +255,7 @@ describe("Input lifecycle (InputRecord)", () => {
 
     const outcome = await controller.sendTurn("codex", text("two"));
     expect(outcome.effective).toBe("new_turn");
-    const queued = controller.inputs.find((input) => input.status === "queued");
+    const queued = controller.harnessInputs.find((input) => input.status === "queued");
     expect(queued?.messageId).toBe(adapter.received[1]?.messageId);
 
     adapter.finish("end_turn");
@@ -214,10 +277,10 @@ describe("Input lifecycle (InputRecord)", () => {
     await until(() => adapter.prompts.length === 1);
 
     const steering = controller.sendTurn("codex", text("two"));
-    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
+    await until(() => controller.harnessInputs.some((input) => input.status === "dispatching"));
     const later = await controller.sendTurn("codex", text("three"));
     expect(later).toMatchObject({ effective: "new_turn", queued: true });
-    expect(controller.inputs.map((input) => input.status).sort()).toEqual([
+    expect(controller.harnessInputs.map((input) => input.status).sort()).toEqual([
       "admitted",
       "dispatching",
       "queued",
@@ -244,13 +307,13 @@ describe("Input lifecycle (InputRecord)", () => {
     await until(() => adapter.prompts.length === 1);
 
     const steering = controller.sendTurn("codex", text("two"));
-    await until(() => controller.inputs.some((input) => input.status === "dispatching"));
+    await until(() => controller.harnessInputs.some((input) => input.status === "dispatching"));
     await controller.control({ kind: "interrupt" });
     await turn;
 
     releaseSteer();
     expect((await steering).effective).toBe("steer");
-    expect(controller.inputs).toEqual([]);
+    expect(controller.harnessInputs).toEqual([]);
     const messages = [...session.loadState().messages.values()]
       .filter((message) => message.role === "user")
       .map((message) => textOf(message.content));
@@ -263,13 +326,13 @@ describe("Input lifecycle (InputRecord)", () => {
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
     await controller.sendTurn("codex", text("also do B"));
-    expect(controller.inputs.some((i) => i.status === "accepted_steer")).toBe(true);
+    expect(controller.harnessInputs.some((i) => i.status === "accepted_steer")).toBe(true);
 
     await controller.control({ kind: "interrupt" });
     expect(await turn).toBe("completed");
 
     // 无悬挂输入实体，且 steer 文本仍在事件历史里（不静默丢；不自动重发 → 只有一条 steer prompt）
-    expect(controller.inputs).toHaveLength(0);
+    expect(controller.harnessInputs).toHaveLength(0);
     const state = session.loadState();
     const userTexts = [...state.messages.values()]
       .filter((m) => m.role === "user")
@@ -304,15 +367,15 @@ describe("Input lifecycle (InputRecord)", () => {
     });
     await until(() => sideAdapter.prompts.length === 1);
     const user = controller.submit("codex", text("user follow-up"));
-    await until(() => controller.queueLength === 1);
+    await until(() => controller.harnessQueueLength === 1);
 
     expect(controller.recallLatestQueued()?.source).toEqual({ type: "user" });
     expect(await user).toBe("recalled");
-    expect(controller.queuedTurns).toEqual([]);
+    expect(controller.queuedHarnessInputs).toEqual([]);
 
     mainAdapter.finish("end_turn");
     await active;
-    const pluginMessage = session.readEvents().find((event) =>
+    const pluginMessage = session.ledger.read().find((event) =>
       event.kind === "user_message" && event.payload.messageId === "m_plugin"
     );
     expect(pluginMessage?.source).toEqual({

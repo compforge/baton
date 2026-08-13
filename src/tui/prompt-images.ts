@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ContentBlock, PromptBlock } from "../event/types.ts";
+import type { ContentBlock, PromptBlock } from "../event/index.ts";
 
 const ATTACHMENT_DIRECTORY = "attachments";
 const IMAGE_TOKEN_SOURCE = String.raw`\[Image #(\d+)\]`;

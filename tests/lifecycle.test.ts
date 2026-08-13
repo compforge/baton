@@ -17,7 +17,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import type { AnyEventEnvelope, AnyEventDraft, StopReason } from "../src/event/types.ts";
+import type { AnyEventEnvelope, AnyEventDraft, StopReason } from "../src/event/index.ts";
 import { Controller, INTERRUPTED_NOTICE_TITLE } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -109,7 +109,7 @@ describe("idempotent turn finalize", () => {
     adapter.idle(turnId, "end_turn"); // 物理终态重复到达（reconnect/race）
     expect(await outcome).toBe("completed");
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     expect(events.filter((ev) => ev.kind === "_baton_turn_summary")).toHaveLength(1);
     expect(controller.isBusy).toBe(false);
   });
@@ -134,7 +134,7 @@ describe("idempotent turn finalize", () => {
 
     adapter.idle(turn2, "end_turn");
     expect(await second).toBe("completed");
-    expect(session.readEvents().filter((ev) => ev.kind === "_baton_turn_summary")).toHaveLength(2);
+    expect(session.ledger.read().filter((ev) => ev.kind === "_baton_turn_summary")).toHaveLength(2);
   });
 });
 
@@ -156,7 +156,7 @@ describe("cancel", () => {
     adapter.idle(adapter.submits[1]!.turnId, "end_turn");
     expect(await queued).toBe("completed");
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const notice = events.find((ev) => ev.kind === "_baton_notice");
     expect(notice?.payload).toMatchObject({ level: "warning", title: INTERRUPTED_NOTICE_TITLE });
     // 时间线顺序：打断标记在被打断 turn 的终态之后、排队 follow-up 的 user_message 之前
@@ -180,7 +180,7 @@ describe("cancel", () => {
     await controller.control({ kind: "interrupt" });
     expect(await outcome).toBe("completed");
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const error = events.find((ev) => ev.kind === "_baton_error_update");
     expect(error?.payload).toMatchObject({ retryable: false });
     expect(String((error?.payload as { message: string }).message)).toContain("grace period expired");

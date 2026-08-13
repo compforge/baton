@@ -1,7 +1,7 @@
 # Baton Kernel
 
 本文定义 Baton 的稳定内核：它解决什么问题、核心对象由谁拥有、依赖如何流动，以及所有
-Harness 和 Plugin 都不能绕过的约束。一次 Input 如何到达 Harness、Harness 结果如何返回
+Harness 和 Plugin 都不能绕过的约束。一次 Human Input 如何 lowering 为 HarnessInput、Harness 结果如何返回
 用户，统一见 [工作流](./workflow.md)；适配协议见 [Harness](./harness.md)，长期领域 loop 见
 [Plugin](./plugin.md)。
 
@@ -18,12 +18,12 @@ Baton core 位于三类参与者之间：
 3. **Baton Plugin** 以 Resource 的 `spec/status` 表达长期领域 loop，由 Controller reconcile；
    通过 `ReconcileContext` 请求人的决定、准备草稿或发起 Harness Turn，不能直接调用 Harness。
 
-Core 接受三方的 typed intent/verb，并将它们物化为有身份、owner、状态机和恢复语义的 Input、
+Core 接受 Human Input、Harness Event 和 Plugin Verb，并将它们物化为有身份、owner、状态机和恢复语义的 HarnessInput、
 Interaction、HarnessInvocation 与 Event。它负责路由、权限、调度、取消、恢复和 Projection，
 但不提供任意 payload 的 publish/subscribe，也不理解 Requirement、Deployment、Review 等领域语义。
 devloop 等 Harness Plugin 只约束 Harness 内部的小闭环，不成为 Baton Plugin 的私有执行接口。
 
-chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 Session、队列、Harness 或 Plugin
+chat-tui 位于内核之外：它消费展示快照并产生 Human Input，不拥有 Session、队列、Harness 或 Plugin
 生命周期，也不解释领域语义。
 
 ## 2. 核心模型
@@ -34,12 +34,12 @@ chat-tui 位于内核之外：它消费展示快照并产生 intent，不拥有 
 
 | 参与者 | 通过 Core 表达 | 自己负责 |
 |---|---|---|
-| **人** | Input、Interaction answer/cancel、control intent | 目标、编辑内容与最终决议 |
+| **人** | Human Input（prompt、command、configuration、Interaction response、interrupt） | 目标、编辑内容与最终决议 |
 | **Harness** | Interaction request、执行 Event、状态与回执 | 推理、工具调用和原生 Session |
 | **Baton Plugin** | reconcile verbs、Resource、Context 与 presentation | 领域 loop、Connector 和完成条件 |
 
 ```text
-Human  ── Input ────────────────────────────────> Harness
+Human  ── Human Input ──> HarnessInput ─────────> Harness
 Human  <─ Interaction <── Core <── request ───── Harness
 Human  <─ Interaction <── Core <── ask/confirm ─ Plugin
 Plugin ── draft/harness ─> Interaction gate ──> HarnessInvocation ──> Harness
@@ -49,8 +49,9 @@ Harness ── Event ────────> Core Projection ────> Hum
 Core 拥有这些箭头的稳定语义，而不是端点的业务。三方不能互持进程句柄、私建回调通道或绕过
 Core 直接改变另一方状态。
 
-Hook 不是第四类参与者，也不是新的消息通道。它只是 Plugin 对上述 human/Harness inbound、
-outbound 边界的 typed 通知；Hook 没有控制流返回值，需要行动时仍通过 Core verbs 物化为
+Hook 不是第四类参与者，也不是新的消息通道。方向始终沿 Human→Harness：进入 Harness 的路径是
+inbound，返回 Human 的路径是 outbound。Hook 只是 Plugin 对两条路径边界的 typed 通知；
+Hook 没有控制流返回值，需要行动时仍通过 Core verbs 物化为
 Interaction、HarnessInvocation 等既有对象。
 
 ### 2.2 身份、owner 与生命周期
@@ -64,12 +65,15 @@ Interaction、HarnessInvocation 等既有对象。
 | **HarnessSession** | Harness 在某个 `Lane × HarnessTarget` 下持有的持久原生执行会话；缺失只影响恢复优化，不阻止 Lane 继续 |
 | **HarnessSessionBinding** | 当前 `Lane × HarnessTarget` 到 HarnessSession 的可重建连接；由 Adapter 在 identity 可知时主动发布 |
 | **HarnessSessionHandle** | 进程内调用路由句柄；不能持久化，也不能代替 HarnessSession identity |
-| **Input** | Controller 拥有的待处理刺激；prompt 带 user/plugin source、稳定 message identity、路由确定的 Turn 坐标和可查询消费状态 |
+| **Human Input** | 人向 Baton 提交的原始输入事实；并非所有 Input 都会进入 Harness |
+| **HarnessInput** | Controller 准备交给 Harness 的工作；带 source、稳定 message identity、Lane/Turn 坐标和可查询消费状态 |
+| **Queue** | Core 全局调度对象；当前主要承载 HarnessInput，内存只保留执行索引，可恢复真相是 Event Ledger 中的 `harness_input.updated` |
 | **Plugin execution** | Core 为一次 live reconcile 签发的进程内 continuation identity；verb 关联 execution 而不绑定 Resource，崩溃后以 failure 收口而不重放调用栈 |
-| **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin execution、Input、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
-| **Delivery Attempt** | 一次已准入 Input 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
-| **Turn** | 一段有始有终的 Harness 活动；driven/observed 是发起角色，不影响“必须收口”的契约 |
-| **Event** | append-only 的最小执行事实；Event Ledger 是 Session 执行与感知历史的真相源 |
+| **HarnessInvocation** | `draft` / `harness` 的 Interaction gate 通过后创建的 Core-owned 持久执行记录；关联 Plugin execution、HarnessInput、Lane、Turn 与结果，不是 Plugin API 或授权对象 |
+| **Delivery Attempt** | 一次已准入 HarnessInput 向 Harness 投递的持久记录；先 `prepared` 再 dispatch，无法证明结果时保留 `uncertain` |
+| **Turn** | 一次 Harness loop 的临时归属边界；用 `turnId` 关联本轮 Event、Attempt、Interaction 等对象，只表达 start/end，不负责排队、调度或执行 |
+| **Event** | append-only 的最小事实；全局协议定义在 `src/event/index.ts` |
+| **Event Ledger** | Session-scoped WAL；实现位于 `src/event/ledger.ts`，是执行、恢复、Hook 因果与 Projection 的唯一真相源 |
 | **Interaction** | Harness 或 Plugin requester 等待 typed decision 的持久协作对象；人或宿主 policy 可以给出结果，Core 拥有 requested/answered/cancelled 生命周期，并按 requester 恢复当前 Harness 或 Plugin execution continuation |
 | **Context delivery** | 有 owner/key 的 ContextSource 被组装为 Snapshot，并向具体 HarnessSession 交付；Receipt 才推进 Epoch |
 | **Projection** | Event reduce 得到的派生展示快照；不是新的事实来源 |
@@ -77,6 +81,9 @@ Interaction、HarnessInvocation 等既有对象。
 `Event.scope` 回答事实属于哪条 ledger，`Event.source` 回答谁报告事实，Lane、HarnessTarget、
 HarnessSession 和 Turn 则是执行坐标。这些维度正交，不能从 Harness 名、alias 或 wire key
 猜测彼此。
+
+`EventLedger` 是 Core 唯一的 Ledger。`TurnRegistry` 只是可丢弃、可由 Event 重建的运行期 scope
+索引，不保存 Input、Queue、取消、投递或释放状态，也不是第二份事实源。
 
 Baton 签发的 Event、Interaction、Context Snapshot/Epoch、Session、Turn、Message、Tool Call、
 Attempt 和 live Plugin execution 使用带前缀的稳定 ULID。HarnessTarget、PluginInstance 等配置
@@ -87,8 +94,8 @@ Attempt 和 live Plugin execution 使用带前缀的稳定 ULID。HarnessTarget�
 
 ```text
                             Baton host process
-┌──────────┐ typed intent  ┌──────────────────────────────────────┐
-│  Human   │◀─────────────▶│ Input / Interaction / Invocation     │
+┌──────────┐ Human Input   ┌──────────────────────────────────────┐
+│  Human   │◀─────────────▶│ HumanInput / HarnessInput / Interaction│
 │ via TUI  │  projection   │ Session / Event Ledger / Policy      │
 └──────────┘               │ Routing / Scheduling / Recovery      │
                            └──────────────┬───────────────┬────────┘
@@ -108,7 +115,7 @@ I/O 使用 async API；三方 Plugin 按活动 Binding 运行在独立 Runner �
 
 进程边界按故障与 owner 划分，不按页面区域划分。chat-tui 的 composer、timeline、footer、
 sidecar 只是 surface 订阅边界，共享一条终端焦点和一条 host event loop。进程关闭按 owner
-反向进行：停止接收 intent → cancel/close Harness → 关闭 Plugin Binding/Runner → flush Session
+反向进行：停止接收 Input → cancel/close Harness → 关闭 Plugin Binding/Runner → flush Session
 → destroy renderer。
 
 内核只有一条双向流水线。这里仅给出拓扑；admission、Context、Attempt、Interaction 和终态的
@@ -120,7 +127,7 @@ sidecar 只是 surface 订阅边界，共享一条终端焦点和一条 host eve
 
 ### 4.1 单通道真相
 
-一切可恢复、可展示的执行事实都经过：
+一切可恢复、可展示或会触发动作的事实都经过：
 
 ```text
 Event → append → broadcast → reduce → Projection
@@ -141,7 +148,7 @@ finalize。
 
 ### 4.3 Core 无 Harness 分支
 
-Harness 差异只能存在于 Adapter、Definition、Inspector 和 Capability。Session、Event Store、
+Harness 差异只能存在于 Adapter、Definition、Inspector 和 Capability。Session、Event Ledger、
 reduce、Projection 与 chat-tui 不出现 `if harness === ...`。新增 Harness 默认只修改：
 
 ```text
@@ -152,9 +159,12 @@ src/harness/ids.ts
 
 只有被多个 Harness 共同印证、且确实改变稳定契约的能力，才可提升为新的 Capability 或内核概念。
 
-### 4.4 事实先于副作用和投影
+### 4.4 Event Ledger 是 WAL
 
-获准执行的 prompt Input 先成为 BatonSession 事实，再尝试 dispatch；Delivery Attempt 先持久化 `prepared`，
+顺序不变量是：`append input/prepared fact → mutate/dispatch → append outcome`。Human Input 先
+append `input.received`，再通知 Hook 或 lowering；HarnessInput 的每次 Queue 迁移先 append
+`harness_input.updated`，再修改内存执行索引；Harness output 先进入 Ledger，再通知 Hook。
+Delivery Attempt 先持久化 `prepared`，
 再调用 Adapter。`ask/confirm/draft/harness` 都先持久化 Interaction；只有 `draft/harness` 的 gate
 通过后才持久化 HarnessInvocation，
 再产生 UI 或执行副作用。Context Snapshot 只说明准备送什么，只有
@@ -167,7 +177,7 @@ Baton core 不内建 Requirement、Deployment、Review 或通用 LoopRun。领�
 Connector、完成条件和 reconcile；Harness Plugin 拥有 agent 内部开发约束。Plugin 用 `ask` /
 `confirm` 组织 human-in-the-loop，用 `draft` 交给用户修改，用 `harness` 请求执行。Core 把所有
 能力调用先物化为持久 Interaction；policy 可以自动批准 Harness gate，但不能跳过这条事实边界。
-gate 通过后再创建 HarnessInvocation，并让最终 Input 继续走统一的 Context、Permission、Attempt
+gate 通过后再创建 HarnessInvocation，并让最终 HarnessInput 继续走统一的 Context、Permission、Attempt
 和 Harness routing 主路径。Plugin 决定业务步骤，Core 始终拥有授权与执行。
 
 ### 4.6 单 Ledger、多 Lane
@@ -178,9 +188,9 @@ Harness 执行事实必须带 `laneId`；缺失该坐标的事件不属于当前
 
 BatonSession 的保留 Lane ID `main` 是默认主线（概念上的 lane0），其它 Lane 是可异步推进的
 支线任务。Lane 的发起者可以是人或 Plugin，`createdFor` 与 `parentLaneId` 只记录创建来源，不定义
-后续调用权限；主/支角色只由 Lane ID 是否为 `main` 判断。每个 Lane 同时最多一个 driven Turn，
+后续调用权限；主/支角色只由 Lane ID 是否为 `main` 判断。每个 Lane 同时最多一个 active Queue run，
 Lane 内即使切换 HarnessTarget 也保持串行；不同 Lane 可以并行。支线有独立并发上限，不能占住
-主线 admission。新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与
+主线 Queue。新 Lane 的原始事件仍在 ledger 中可审计，默认 timeline 只展示其卡片与
 TurnSummary。
 
 ### 4.7 Typed coordination，不是通用消息总线
@@ -200,7 +210,7 @@ Core 对外暴露 `submit`、`answer`、`cancel`、`ask`、`confirm`、`draft`�
 1. 它的事实由谁拥有，生命周期由谁收口？
 2. 它是单个 Harness 的协议差异，还是多个 Harness 共享的稳定语义？
 3. 它是否需要持久身份、恢复和对账，还是仅是短寿命 signal/view？
-4. 是否可以通过现有 Input、Interaction、Event、Context 或 Capability 表达？
+4. 是否可以通过现有 HumanInput、HarnessInput、Interaction、Event、Context 或 Capability 表达？
 5. 提升内核后，能否保持新增 Harness 不修改 Session/store/projection/chat-tui？
 
 signal 只提示重新读取权威状态，不能冒充 Event；Board 更新、Context 已交付和 Harness 已被唤醒
@@ -209,7 +219,7 @@ signal 只提示重新读取权威状态，不能冒充 Event；Board 更新、C
 
 ## 6. References
 
-- [工作流](./workflow.md) — Input 发起、Harness 执行、事件投影与 Interaction 闭环
+- [工作流](./workflow.md) — Human Input、HarnessInput、Harness 执行与 Interaction 闭环
 - [Harness](./harness.md) — Target、Session、Adapter、Capability 与扩展契约
 - [Plugin](./plugin.md) — Resource/Controller、Runner、Board、Context 与长期 loop
 - [审批生命周期](./approval-lifecycle.md) — permission、授权方与 auto-review 回执

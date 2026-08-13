@@ -18,8 +18,8 @@ import type {
   SessionConfigOption,
   StopReason,
   ToolCallStatus,
-} from "../../event/types.ts";
-import { textOf } from "../../event/types.ts";
+} from "../../event/index.ts";
+import { textOf } from "../../event/index.ts";
 import type {
   HookTrustCandidate,
   InteractionDraft,

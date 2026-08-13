@@ -15,7 +15,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import type { PromptBlock } from "../src/event/types.ts";
+import type { PromptBlock } from "../src/event/index.ts";
 import { Controller, type HarnessAdapterPorts } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -92,7 +92,7 @@ describe("cancel cascades to pending Interactions", () => {
     await Bun.sleep(5); // 让 adapter 的 await 续跑
     expect(await turn).toBe("completed");
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const cancelled = events.find((e) => e.kind === "interaction.cancelled");
     expect(cancelled?.payload.reason).toBe("turn");
 

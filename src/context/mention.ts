@@ -1,7 +1,7 @@
 // @ 引用的急切解析：Mention 统一产生当前 turn 的只读材料；
 // 本文件保留 Session 摘要与旧 @bs_ token 的兼容展开。
 
-import type { TurnSummary } from "../event/types.ts";
+import type { TurnSummary } from "../event/index.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import {
   MAIN_LANE_ID,
@@ -103,8 +103,8 @@ export function buildSessionContext(
 }
 
 function turnSummaries(handle: SessionHandle): TurnSummaryRecord[] {
-  return handle
-    .readEvents()
+  return handle.ledger
+    .read()
     .filter((e) => e.kind === "_baton_turn_summary")
     .map((e) => ({
       harness: e.harness ?? "baton",

@@ -21,7 +21,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -128,7 +128,7 @@ describe("single-channel State publication per streaming event", () => {
           notifications += 1;
         },
       });
-      const unsubscribe = session.subscribe(() => {
+      const unsubscribe = session.ledger.subscribe(() => {
         notifications += 1;
       });
 

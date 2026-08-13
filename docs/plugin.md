@@ -194,9 +194,9 @@ Hook 让 Core 把 human、Plugin、Harness 协调路径上的事实通知 Plugin
 | `human` | `inbound` / `outbound` | `before` / `after` | `human.inbound.before/after`、`human.outbound.before/after` |
 | `harness` | `inbound` / `outbound` | `before` / `after` | `harness.inbound.before/after`、`harness.outbound.before/after` |
 
-direction 始终以 Baton Core 为参照：human inbound 是人进入 Core 的 intent，human outbound 是 Core
-向人发布 presentation；harness outbound 是 Core 向 Harness 发送，harness inbound 是 Harness 事件
-进入 Core。Hook 回调返回 `void`，没有 replacement、allow/deny 或控制流返回值；需要副作用时只能调用
+direction 沿 Human→Harness 定义：Human 输入和 Core→Harness delivery 属于 inbound，Harness output
+和 Core→Human presentation 属于 outbound。Hook 回调返回 `void`，没有 replacement、allow/deny
+或控制流返回值；需要副作用时只能调用
 `HookContext.verbs`。因此 Hook 是通知面，Verb 是动作面。
 
 `before` 同一 stage 的回调并发执行，Core 等待全部 settled；单个回调抛错或超时只记录结构化日志，
@@ -204,18 +204,18 @@ direction 始终以 Baton Core 为参照：human inbound 是人进入 Core 的 i
 `human.outbound.after` 只表示 chat-tui state store 已接收 presentation，不代表用户真实看见。
 
 Human inbound 的 typed subject 覆盖 prompt、command、Harness/model/effort/mode configuration、
-Interaction response 与 interrupt。prompt 在 before 前已有稳定 `intentId`，入队时复用为
-`messageId`；after 在 Input 已可从 queue/snapshot 观察时触发，不等待 steer 或 Turn 结果。
+Interaction response 与 interrupt。Core 先把 `input.received` 写入 Event Ledger，再把带稳定
+`inputId/eventId` 的 record 交给 before；lowering 完成后先写 `input.settled`，再触发 after。
+prompt lowering 出来的 HarnessInput 使用独立 `messageId`，通过 `parentEventId` 关联 Human Input。
 Human outbound 覆盖 transcript、queue、Interaction、status、toast、Board 与 picker 的 state
 publication。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
 Interaction 会直接发布并只发送 after，避免 Hook 等待尚未展示给人的问题而自锁。
 
-Harness outbound 的 subject 是一次准备发送的 `HarnessDelivery`。新 Turn 复用持久 Delivery
+Harness inbound 的 subject 是一次准备发送的 `HarnessDelivery`。新 Turn 复用持久 Delivery
 Attempt 的 identity；steer 的 identity 只关联本次 same-turn send。before 位于 Adapter 调用之前，
 after 在 admission receipt 或 throw 后发送，并区分 `accepted/rejected/error`，不等待 Turn 完成。
-Harness inbound 的 before subject 是尚未分配 ledger identity 的 `HarnessEventDraft`；同一
-`Lane × HarnessTarget` 内按原生顺序等待后 append，after subject 才是带 `eventId/seq` 的
-`HarnessEventRecord`。未注册 inbound before 时，Core 保留同步 append 快路径。
+Harness outbound 的 subject 是已进入 Event Ledger、带 `eventId/seq` 的 `HarnessEventRecord`。
+before/after 都发生在 WAL commit 之后，不阻塞 Harness EventSink，也不提供事件替换能力。
 
 ### 4.3 Board
 

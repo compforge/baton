@@ -3,6 +3,8 @@
 // baton 自有扩展事件用 _baton_ 前缀；公共归一契约见 docs/harness.md。
 
 import type { HarnessDeliveryAttemptUpdate } from "../controller/attempt.ts";
+import type { HarnessInputUpdate } from "../harness/input.ts";
+import type { HumanInput, HumanInputOutcome } from "@compforge/baton-plugin";
 import type {
   ContextDeliveryReceipt,
   ContextSnapshot,
@@ -394,7 +396,21 @@ export interface HarnessInvocationFailed {
   detail: string;
 }
 
+export interface HumanInputReceived {
+  inputId: string;
+  input: HumanInput;
+}
+
+export interface HumanInputSettled {
+  inputId: string;
+  outcome: HumanInputOutcome;
+  detail?: string;
+}
+
 export type EventPayloadMap = {
+  "input.received": HumanInputReceived;
+  "input.settled": HumanInputSettled;
+  "harness_input.updated": HarnessInputUpdate;
   state_update: StateUpdate;
   user_message: UserMessageUpsert;
   user_message_chunk: MessageChunk;

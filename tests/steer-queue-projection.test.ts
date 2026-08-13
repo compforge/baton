@@ -34,7 +34,7 @@ function project(controller: Controller) {
 describe("steer queue projection", () => {
   test("keeps a pending native steer in Queue until the correlated apply receipt", () => {
     const turnId = "t_active";
-    session.append({
+    session.ledger.append({
       kind: "state_update",
       source: { type: "baton" },
       harness: "codex",
@@ -43,7 +43,7 @@ describe("steer queue projection", () => {
       turnId,
       payload: { state: "running" },
     });
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -61,13 +61,13 @@ describe("steer queue projection", () => {
       activeHarnessTargetId: "codex",
       activeTurnId: turnId,
       activeStartedAt: Date.now(),
-      queuedTurns: [],
+      queuedHarnessInputs: [],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
       approvalRoute: () => null,
       isBusy: true,
-      queueLength: 0,
+      harnessQueueLength: 0,
     } as unknown as Controller;
 
     const pending = project(controller);
@@ -83,7 +83,7 @@ describe("steer queue projection", () => {
 
     // Claude may keep a steer in its native queue after the turn it was offered to has ended.
     // Pending delivery remains future state until the lifecycle reports started/completed.
-    session.append({
+    session.ledger.append({
       kind: "state_update",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -105,7 +105,7 @@ describe("steer queue projection", () => {
       ),
     ).toBe(false);
 
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -131,7 +131,7 @@ describe("steer queue projection", () => {
 
   test("removes failed native steer without presenting it as applied history", () => {
     const turnId = "t_failed";
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -145,7 +145,7 @@ describe("steer queue projection", () => {
         deliveryState: "pending",
       },
     });
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
@@ -161,13 +161,13 @@ describe("steer queue projection", () => {
     const controller = {
       activeHarnessTargetId: undefined,
       activeTurnId: undefined,
-      queuedTurns: [],
+      queuedHarnessInputs: [],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
       approvalRoute: () => null,
       isBusy: false,
-      queueLength: 0,
+      harnessQueueLength: 0,
     } as unknown as Controller;
 
     const failed = project(controller);

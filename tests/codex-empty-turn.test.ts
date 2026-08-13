@@ -12,7 +12,7 @@ import { expect, test } from "bun:test";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import { JsonRpcPeer } from "../src/harness/codex/jsonrpc.ts";
 import type { PromptInput, HarnessSessionHandle } from "../src/harness/adapter.ts";
-import type { AnyEventDraft, Notice } from "../src/event/types.ts";
+import type { AnyEventDraft, Notice } from "../src/event/index.ts";
 
 const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"

@@ -15,7 +15,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import { textOf, type PromptBlock } from "../src/event/types.ts";
+import { textOf, type PromptBlock } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -131,7 +131,7 @@ describe("Controller.sendTurn", () => {
     const outcome = await controller.sendTurn("codex", text("prefer approach B"));
 
     expect(outcome.effective).toBe("steer");
-    expect(controller.queueLength).toBe(0);
+    expect(controller.harnessQueueLength).toBe(0);
     expect(adapter.steers).toHaveLength(1);
     // expectedTurnId 与消息归属 turn 都是当前 active 的 baton turn id
     expect(adapter.steers[0]?.expectedTurnId).toBe(adapter.steers[0]?.turnId as string);
@@ -158,7 +158,7 @@ describe("Controller.sendTurn", () => {
     const outcome = await controller.sendTurn("codex", text("two"));
 
     expect(outcome.effective).toBe("new_turn");
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
     adapter.finish(); // 结束 turn one → 降级的 follow-up 开始执行
     await first;
     await until(() => adapter.prompts.length === 2);
@@ -177,7 +177,7 @@ describe("Controller.sendTurn", () => {
     const outcome = await controller.sendTurn("codex", text("two"));
 
     expect(outcome.effective).toBe("new_turn");
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
   });
 
   test("degrades when the adapter rejects same-turn send", async () => {
@@ -188,7 +188,7 @@ describe("Controller.sendTurn", () => {
     await until(() => adapter.prompts.length === 1);
     const outcome = await controller.sendTurn("claude", text("two"));
     expect(outcome.effective).toBe("new_turn");
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
   });
 
   test("degrades when idle (no active turn to steer)", async () => {
@@ -221,6 +221,6 @@ describe("Controller.sendTurn", () => {
     const outcome = await controller.sendTurn("claude", text("two"));
     expect(outcome.effective).toBe("new_turn");
     expect(claude.steers).toHaveLength(0);
-    expect(controller.queueLength).toBe(1);
+    expect(controller.harnessQueueLength).toBe(1);
   });
 });

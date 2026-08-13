@@ -11,7 +11,7 @@ import type {
 
 import type { BatonConfig } from "../../config/config.ts";
 import type { Controller } from "../../controller/index.ts";
-import { textOf } from "../../event/types.ts";
+import { textOf } from "../../event/index.ts";
 import {
   harnessDefinitionFor,
   harnessShortName,
@@ -383,35 +383,34 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
-  const hasRecallableQueuedInput = controller.queuedTurns.some(
+  const hasRecallableQueuedInput = controller.queuedHarnessInputs.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
   const interactions: InteractionView[] = [...state.interactions.values()]
     .filter((item) => !item.result)
     .map((item) => interactionView(item.interaction));
-  const observedRuns = [...state.activeTurns.values()].filter(
+  const mainRuns = [...state.activeTurns.values()].filter(
     (turn) =>
-      turn.role === "observed" &&
       (!turn.laneId || turn.laneId === MAIN_LANE_ID),
   );
   const sideRuns = [...state.activeTurns.values()].filter(
     (turn) =>
       turn.laneId !== undefined && turn.laneId !== MAIN_LANE_ID,
   );
-  const observedRun = observedRuns.at(-1);
+  const mainRun = mainRuns.at(-1);
   const activeTurnId = controller.activeTurnId;
   const activeTurn = activeTurnId
     ? state.activeTurns.get(activeTurnId)
     : undefined;
   const statusTargetId =
-    activeTargetId ?? observedRun?.harnessTargetId ?? harnessTargetId;
+    activeTargetId ?? mainRun?.harnessTargetId ?? harnessTargetId;
   const statusLaneId = MAIN_LANE_ID;
   const targetState =
     state.perLaneTarget.get(laneTargetStateKey(statusLaneId, statusTargetId)) ??
     state.perTarget.get(statusTargetId);
   const statusHarness =
     activeTurn?.harness ??
-    observedRun?.harness ??
+    mainRun?.harness ??
     targetState?.harness ??
     harnessDefinitionFor(statusTargetId)?.sessionKey ??
     statusTargetId;
@@ -461,12 +460,12 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         label: `${harnessConfigStatus} · ${runStatusLabel(state, activeTurnId)}`,
         startedAt: controller.activeStartedAt,
       }
-    : observedRun
+    : mainRun
       ? {
-          id: `run:observed:${observedRun.turnId}`,
+          id: `run:${mainRun.turnId}`,
           author: harnessAuthor(statusHarness),
-          label: `${harnessConfigStatus} · ${runStatusLabel(state, observedRun.turnId)} · observed`,
-          startedAt: observedRun.startedAt,
+          label: `${harnessConfigStatus} · ${runStatusLabel(state, mainRun.turnId)}`,
+          startedAt: mainRun.startedAt,
         }
       : {
           id: `agent:${harnessTargetId}`,
@@ -495,7 +494,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         ]
       : []),
   ];
-  const busy = activeTargetId !== undefined || observedRuns.length > 0;
+  const busy = activeTargetId !== undefined || mainRuns.length > 0;
 
   const selectedLaneId = MAIN_LANE_ID;
   const selectedState =
@@ -533,7 +532,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
           : "native queue"
       }`,
     })),
-    ...controller.queuedTurns.map((turn) => ({
+    ...controller.queuedHarnessInputs.map((turn) => ({
       id: String(turn.id),
       text: userVisibleText(composerTextOf(turn.blocks)),
       tag:

@@ -1,4 +1,4 @@
-// driven turn 的用户事实由 controller 出队即落盘（owner 边界，见 docs/workflow.md）：
+// Queue-driven Turn 的用户事实由 controller 出队即落盘（owner 边界，见 docs/workflow.md）：
 // - user_message/running 不等 harness 冷启动——首启延迟不能绑住 Transcript；
 // - 正典 user_message 是原始输入，<baton-sync> prepend 只进 harness transport；
 // - preparing（冷启动中）可取消：Esc 立即合成 cancelled 终态 + notice + summary；
@@ -17,7 +17,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import { textOf } from "../src/event/types.ts";
+import { textOf } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -87,14 +87,14 @@ function controllerWith(adapter: HarnessAdapter): Controller {
 
 /** 直接写入一个已收口、带 summary 的 turn（另一 harness 的既有历史） */
 function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "user_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-user`, content: [{ type: "text", text }] },
   });
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "state_update",
     harness,
@@ -112,7 +112,7 @@ describe("controller-owned user_message at dequeue", () => {
     const outcome = controller.submit("codex", [{ type: "text", text: "hello" }]);
     await Bun.sleep(5); // open() 仍被 gate 挡住
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const userMessages = events.filter((ev) => ev.kind === "user_message");
     expect(userMessages).toHaveLength(1);
     expect(userMessages[0]!.source).toEqual({ type: "user" });
@@ -132,7 +132,7 @@ describe("controller-owned user_message at dequeue", () => {
     adapter.openGate();
     expect(await outcome).toBe("completed");
     // adapter 不再重复发用户消息：正典历史里恰好一条
-    const completedEvents = session.readEvents();
+    const completedEvents = session.ledger.read();
     expect(completedEvents.filter((ev) => ev.kind === "user_message")).toHaveLength(1);
     expect(completedEvents.find((ev) => ev.kind === "agent_message")?.source).toEqual({
       type: "harness",
@@ -157,7 +157,7 @@ describe("controller-owned user_message at dequeue", () => {
     expect(adapter.prompts[0]).toContain("next step");
     // 正典 user_message 是原始输入，且 catch-up 注入不含本 turn 自己的输入（无自回声）
     const userMessage = session
-      .readEvents()
+      .ledger.read()
       .filter((ev) => ev.kind === "user_message" && ev.harness === "codex")
       .at(-1)!;
     expect(textOf((userMessage.payload as { content: Array<{ type: string; text: string }> }).content)).toBe(
@@ -175,7 +175,7 @@ describe("controller-owned user_message at dequeue", () => {
     await controller.control({ kind: "interrupt" });
 
     // Esc 立即生效：cancelled 终态 + 打断 notice + summary，全部不等 open() 完成
-    const events = session.readEvents();
+    const events = session.ledger.read();
     const idles = events.filter(
       (ev) => ev.kind === "state_update" && (ev.payload as { state: string }).state === "idle",
     );
@@ -204,7 +204,7 @@ describe("controller-owned user_message at dequeue", () => {
     adapter.openFail(new Error("spawn blew up"));
     await expect(outcome).rejects.toThrow(/spawn blew up/);
 
-    const events = session.readEvents();
+    const events = session.ledger.read();
     expect(events.filter((ev) => ev.kind === "user_message")).toHaveLength(1);
     const error = events.find((ev) => ev.kind === "_baton_error_update");
     expect(String((error?.payload as { message: string }).message)).toContain("spawn blew up");

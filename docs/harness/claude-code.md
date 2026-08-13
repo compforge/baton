@@ -60,8 +60,8 @@ Claude CLI 的 `command_lifecycle` 是 Queue 事实源：`queued` 仍留在 Comp
 更新为 `failed` 并生成 warning。CLI 可能让 queued command 跨过当前 Turn 才启动，
 所以 Turn 收口不清理该 UUID，也不把 pending 乐观放入 Transcript。
 
-observed Turn 不占 driven admission 槽。后台消息在上一 driven Turn 结束后到达时，Adapter 铸造
-新的 observed Turn；下一条用户 Input 到达前会先明确收口该 observed Turn，避免两类消息共用
+Harness 自行开始的 Turn 没有对应 Queue item。后台消息在上一 Queue-driven Turn 结束后到达时，
+Adapter 铸造新的普通 Turn；下一条 Human Input 到达前会先明确收口该 Turn，避免两类消息共用
 `currentTurn` 发生归属混淆。
 
 cancel 调用 SDK `interrupt()`，但保持 streaming query 存活，等待 SDK result 或消费循环给出

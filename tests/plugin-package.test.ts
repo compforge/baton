@@ -678,7 +678,7 @@ describe("Plugin Package lifecycle", () => {
         path: "/repo/.devloop/pr.json",
       },
     });
-    expect(session.readEvents()).toEqual([]);
+    expect(session.ledger.read()).toEqual([]);
 
     await manager.close();
   });

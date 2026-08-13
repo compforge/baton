@@ -8,7 +8,7 @@ import {
   type EventKind,
   type EventPayloadMap,
   type EventSource,
-} from "../src/event/types.ts";
+} from "../src/event/index.ts";
 import {
   applyEvent,
   emptySessionState,
@@ -734,7 +734,7 @@ describe("per-turn run state aggregation", () => {
       ev("state_update", { state: "running" }, "t1", { type: "harness", harnessTargetId: "test" }),
       ev("state_update", { state: "running" }, "t1"),
     ]);
-    expect(state.activeTurns.get("t1")?.role).toBe("observed");
+    expect(state.activeTurns.get("t1")?.turnId).toBe("t1");
   });
 });
 

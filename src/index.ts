@@ -1,5 +1,6 @@
 export * from "./event/ids.ts";
-export * from "./event/types.ts";
+export * from "./event/index.ts";
+export * from "./event/ledger.ts";
 export * from "./interaction/types.ts";
 export * from "./plugin/reconcile-snapshot.ts";
 export {
@@ -19,5 +20,7 @@ export * from "./plugin/resource.ts";
 export * from "./plugin/resource-client.ts";
 export * from "./plugin/settings.ts";
 export * from "./plugin/reconcile-scope.ts";
+export * from "./queue.ts";
 export * from "./store/reduce.ts";
 export * from "./store/store.ts";
+export * from "./turn.ts";

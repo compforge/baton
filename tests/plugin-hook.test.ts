@@ -53,7 +53,7 @@ describe("Plugin Hook runtime", () => {
         stage: "human.inbound.before",
         async run(hook) {
           await Bun.sleep(10);
-          observations.push(`${hook.stage}:${hook.subject.intentId}`);
+          observations.push(`${hook.stage}:${hook.subject.inputId}`);
         },
       });
       context.hooks.register({
@@ -67,11 +67,12 @@ describe("Plugin Hook runtime", () => {
     await manager.start();
 
     await expect(manager.beforeHook("human.inbound.before", {
-      intentId: "intent_1",
-      kind: "prompt",
-      text: "implement this",
+      inputId: "in_1",
+      eventId: "ev_1",
+      seq: 1,
+      input: { kind: "prompt", text: "implement this", harnessTargetId: "codex" },
     })).resolves.toBeUndefined();
-    expect(observations).toEqual(["human.inbound.before:intent_1"]);
+    expect(observations).toEqual(["human.inbound.before:in_1"]);
     await manager.close();
   });
 
@@ -88,9 +89,10 @@ describe("Plugin Hook runtime", () => {
     await manager.start();
 
     await expect(manager.beforeHook("human.inbound.before", {
-      intentId: "intent_2",
-      kind: "prompt",
-      text: "do not block",
+      inputId: "in_2",
+      eventId: "ev_2",
+      seq: 2,
+      input: { kind: "prompt", text: "do not block", harnessTargetId: "codex" },
     })).resolves.toBeUndefined();
     await manager.close();
   });
@@ -114,14 +116,16 @@ describe("Plugin Hook runtime", () => {
     await manager.start();
 
     manager.afterHook("human.inbound.after", {
-      intentId: "intent_3",
-      kind: "prompt",
-      text: "first",
+      inputId: "in_3",
+      eventId: "ev_3",
+      seq: 3,
+      outcome: "succeeded",
     });
     manager.afterHook("human.inbound.after", {
-      intentId: "intent_4",
-      kind: "prompt",
-      text: "second",
+      inputId: "in_4",
+      eventId: "ev_4",
+      seq: 4,
+      outcome: "succeeded",
     });
     expect(calls).toBe(1);
 

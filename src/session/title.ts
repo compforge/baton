@@ -1,10 +1,10 @@
 // Session 标题的 LLM 生成编排（fire-and-forget 旁路）：
-// 首个 driven turn 收口后由 controller 触发一次，从事件流取第一条用户输入，
+// 首个主 Queue Turn 收口后由 controller 触发一次，从事件流取第一条用户输入，
 // 经 textgen 路由器跨 harness 降级生成标题。护栏：title 非空且不等于机械 preview
 // 视为用户/adopted 命名，绝不覆盖（对齐 t3code canReplaceThreadTitle）。
 // 任何失败都静默降级为 sessionPreview——标题是增强，不是主流程。
 
-import { textOf } from "../event/types.ts";
+import { textOf } from "../event/index.ts";
 import { HARNESSES, resolveDefaultHarnessTarget } from "../harness/registry.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import {
@@ -31,7 +31,7 @@ export function bundledTextgenTargets(): HarnessTarget[] {
  */
 function firstUserText(session: SessionHandle): string | undefined {
   const forkBoundary = session.meta.forkedFrom?.throughSeq;
-  for (const event of session.readEvents()) {
+  for (const event of session.ledger.read()) {
     if (forkBoundary !== undefined && event.seq <= forkBoundary) continue;
     if (event.kind !== "user_message" || event.source.type === "plugin") {
       continue;

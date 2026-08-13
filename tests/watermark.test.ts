@@ -1,7 +1,7 @@
 // ContextEpoch 契约：只有 ContextDeliveryReceipt 才把水位推进到本批 throughSeq；
 // meta.syncedSeq 只是同一结果的兼容缓存。
-// 回归背景（bug#5）：finalize 曾把水位无条件推到文件尾——driven turn 运行期间
-// 其它 harness 落盘的 summary（如并发 observed turn）被越过且永不回补，
+// 回归背景（bug#5）：finalize 曾把水位无条件推到文件尾——Queue-driven Turn 运行期间
+// 其它 harness 落盘的 summary（如并发 Harness-started turn）被越过且永不回补，
 // 跨 harness 接力对这段进展永久盲区。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -19,8 +19,8 @@ import type {
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
-import type { PromptBlock } from "../src/event/types.ts";
-import { textOf } from "../src/event/types.ts";
+import type { PromptBlock } from "../src/event/index.ts";
+import { textOf } from "../src/event/index.ts";
 import { ContextDeliveryLedger } from "../src/context/delivery.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
@@ -116,21 +116,21 @@ afterEach(() => {
 
 /** 直接写入一个已收口、带 summary 的 turn（模拟另一 harness 的并发产出） */
 function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
-  handle.append({
+  handle.ledger.append({
     source: { type: "baton" },
     kind: "agent_message",
     harness,
     turnId,
     payload: { messageId: `${turnId}-agent`, content: [{ type: "text", text }] },
   });
-  handle.append({ source: { type: "baton" }, kind: "state_update", harness, turnId, payload: { state: "idle", stopReason: "end_turn" } });
+  handle.ledger.append({ source: { type: "baton" }, kind: "state_update", harness, turnId, payload: { state: "idle", stopReason: "end_turn" } });
   handle.summarizeTurn(turnId);
 }
 
 function lastSummarySeq(handle: SessionHandle): number {
   return (
     handle
-      .readEvents()
+      .ledger.read()
       .filter((ev) => ev.kind === "_baton_turn_summary")
       .at(-1)?.seq ?? 0
   );
@@ -149,13 +149,13 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     // turn 1：无历史可注入
     const first = controller.submit("codex", [{ type: "text", text: "one" }]);
     await Bun.sleep(1);
-    // driven turn 运行期间，另一 harness 的进展落盘（并发 observed turn 的等价形态）
+    // Queue-driven Turn 运行期间，另一 Harness 的进展落盘（并发 Harness-started Turn 的等价形态）。
     completedTurn(session, "claude-code", "t_claude", "claude progress landed mid-turn");
     adapter.finish();
     await first;
 
     // 收口不推水位：不越过尚未注入的 claude summary
-    const tailSeq = session.readEvents().at(-1)!.seq;
+    const tailSeq = session.ledger.read().at(-1)!.seq;
     expect(session.meta.harnessSessions["codex"]?.syncedSeq ?? 0).toBeLessThan(tailSeq);
 
     // turn 2：注入补上并发期间的 claude 进展，且不复读自己的 turn
@@ -168,10 +168,10 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     const throughSeq = lastSummarySeq(session);
     expect(session.meta.harnessSessions["codex"]?.syncedSeq).toBe(throughSeq);
     const snapshot = session
-      .readEvents()
+      .ledger.read()
       .find((event) => event.kind === "_baton_context_snapshot");
     const receipt = session
-      .readEvents()
+      .ledger.read()
       .find((event) => event.kind === "_baton_context_delivery_receipt");
     expect(snapshot?.payload).toMatchObject({
       source: {
@@ -191,7 +191,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     expect(receipt?.parentEventId).toBe(snapshot?.eventId);
     const epochId = session.meta.harnessSessions.codex?.contextEpochId;
     expect(epochId).toMatch(/^ctxe_/);
-    expect(new ContextDeliveryLedger(session.readEvents()).epoch(epochId!)?.throughSeq).toBe(
+    expect(new ContextDeliveryLedger(session.ledger.read()).epoch(epochId!)?.throughSeq).toBe(
       throughSeq,
     );
     adapter.finish();
@@ -238,7 +238,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     expect(session.meta.harnessSessions["codex"]?.syncedSeq).toBe(injectionTail);
     expect(
       session
-        .readEvents()
+        .ledger.read()
         .find((event) => event.kind === "_baton_context_delivery_receipt")
         ?.payload.transport,
     ).toBe("prompt_prepend");
@@ -273,12 +273,12 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     expect(session.meta.harnessSessions["codex"]?.syncedSeq ?? 0).toBe(0);
     expect(
       session
-        .readEvents()
+        .ledger.read()
         .filter((event) => event.kind === "_baton_context_snapshot"),
     ).toHaveLength(1);
     expect(
       session
-        .readEvents()
+        .ledger.read()
         .filter((event) => event.kind === "_baton_context_delivery_receipt"),
     ).toHaveLength(0);
 
@@ -292,7 +292,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     expect(adapter.syncPayloads[0]).toContain("earlier claude work");
     expect(session.meta.harnessSessions["codex"]?.syncedSeq).toBe(injectionTail);
     const receipts = session
-      .readEvents()
+      .ledger.read()
       .filter((event) => event.kind === "_baton_context_delivery_receipt");
     expect(receipts).toHaveLength(1);
     expect(receipts[0]?.payload.transport).toBe("submit_side_channel");

@@ -20,8 +20,14 @@ export type {
 export type { Mention } from "./mention.ts";
 
 export type {
+  HumanInput,
+  HumanInputOutcome,
+  HumanInputRecord,
+  HumanInputSettlement,
+} from "./input.ts";
+
+export type {
   HarnessDelivery,
-  HarnessEventDraft,
   HarnessEventRecord,
   Hook,
   HookBoundary,
@@ -30,8 +36,6 @@ export type {
   HookPhase,
   HookStage,
   HookSubjectMap,
-  HumanIntent,
-  HumanIntentKind,
   HumanPresentation,
 } from "./hook.ts";
 
@@ -126,12 +130,12 @@ export type {
 export type {
   ActiveTurnSnapshot,
   HarnessTargetSnapshot,
-  InputSnapshot,
+  HarnessInputSnapshot,
   PendingInteractionSnapshot,
   SessionSnapshot,
   ReconcileSnapshot,
-  InputSource,
-  InputStatus,
+  HarnessInputSource,
+  HarnessInputStatus,
   InteractionRequester,
   SessionRunState,
   TurnSummary,

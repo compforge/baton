@@ -166,7 +166,7 @@ describe("ReconcileInteractionStore", () => {
       timeoutMs: 1_000,
       laneId: "main",
     })).resolves.toEqual({ state: "success", value: "approved" });
-    expect(autoHandle.readEvents().filter((event) =>
+    expect(autoHandle.ledger.read().filter((event) =>
       event.kind === "interaction.requested" ||
       event.kind === "interaction.answered"
     ).map((event) => event.kind)).toEqual([

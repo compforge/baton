@@ -72,7 +72,7 @@ class PlainAdapter extends StubAdapter {
   }
 }
 
-/** 运行一个真实 Controller driven turn，但不启动外部 Harness。 */
+/** 运行一个真实 Controller Queue-driven Turn，但不启动外部 Harness。 */
 class CompletingTextgenAdapter extends StubAdapter {
   private sink?: EventSink;
 
@@ -346,7 +346,7 @@ describe("maybeGenerateSessionTitle", () => {
 
   function sessionWithUserMessage(text: string) {
     const session = store.createSession({ cwd: "/repo" });
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "user" },
       turnId: "t_1",
@@ -369,7 +369,7 @@ describe("maybeGenerateSessionTitle", () => {
     const session = store.forkSession(source.id);
     const forkPrompt = "try the cache approach instead";
     session.setTitleIfEmpty(forkPrompt);
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "user" },
       turnId: "t_fork",
@@ -433,7 +433,7 @@ describe("maybeGenerateSessionTitle", () => {
 
   test("无真实用户输入（只有 Plugin prompt）不生成", async () => {
     const session = store.createSession({ cwd: "/repo" });
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       turnId: "t_plugin",
@@ -453,7 +453,7 @@ describe("maybeGenerateSessionTitle", () => {
     expect(stub.requests).toHaveLength(0);
   });
 
-  test("Controller 首个 driven turn 触发一次，遵循 prefer 并在落盘后刷新投影", async () => {
+  test("Controller 首个主 Queue Turn 触发一次，遵循 prefer 并在落盘后刷新投影", async () => {
     const session = store.createSession({ cwd: "/repo" });
     let finishTitle!: (value: unknown) => void;
     const titleResult = new Promise<unknown>((resolve) => {

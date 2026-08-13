@@ -345,7 +345,7 @@ describe("plugin Manager", () => {
       },
       result: { kind: "harness_invocation", outcome: "approved" },
     }]);
-    expect(session.readEvents().filter((event) =>
+    expect(session.ledger.read().filter((event) =>
       event.kind === "interaction.requested" ||
       event.kind === "interaction.answered" ||
       event.kind === "_baton_harness_invocation_recorded" ||
@@ -360,7 +360,7 @@ describe("plugin Manager", () => {
     selectedHarnessTargetId = "codex";
 
     const input = scheduled[0]!;
-    session.append({
+    session.ledger.append({
       kind: "user_message",
       source: {
         type: "plugin",
@@ -374,7 +374,7 @@ describe("plugin Manager", () => {
         content: [...input.blocks],
       },
     });
-    session.append({
+    session.ledger.append({
       kind: "_baton_turn_summary",
       source: { type: "baton" },
       harness: "claude",

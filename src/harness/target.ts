@@ -1,4 +1,4 @@
-import type { AvailableCommand } from "../event/types.ts";
+import type { AvailableCommand } from "../event/index.ts";
 import type { EffortOption, ModelOption } from "./adapter.ts";
 
 /**

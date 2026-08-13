@@ -1,5 +1,6 @@
 import type { ReconcileSnapshot } from "./snapshot.ts";
 import type { PluginVerbs } from "./reconcile-context.ts";
+import type { HumanInputRecord, HumanInputSettlement } from "./input.ts";
 
 export type HookBoundary = "human" | "harness";
 export type HookDirection = "inbound" | "outbound";
@@ -14,26 +15,6 @@ export type HookStage =
   | "harness.inbound.after"
   | "harness.outbound.before"
   | "harness.outbound.after";
-
-export type HumanIntentKind =
-  | "prompt"
-  | "command"
-  | "configuration"
-  | "interaction_response"
-  | "interrupt";
-
-/** Core-owned Human intent after it has a stable intake identity. */
-export interface HumanIntent {
-  readonly intentId: string;
-  readonly kind: HumanIntentKind;
-  readonly text?: string;
-  readonly command?: string;
-  readonly argument?: string;
-  readonly harnessTargetId?: string;
-  readonly setting?: "harness" | "model" | "effort" | "mode";
-  readonly value?: string | null;
-  readonly interactionId?: string;
-}
 
 /** A Core presentation update; this deliberately does not expose a TUI DTO. */
 export interface HumanPresentation {
@@ -61,29 +42,25 @@ export interface HarnessDelivery {
   readonly reason?: string;
 }
 
-/** Normalized Harness input before it receives ledger identity. */
-export interface HarnessEventDraft {
+/** Normalized Harness output after it is durable in the Event Ledger. */
+export interface HarnessEventRecord {
   readonly kind: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
   readonly turnId?: string;
-}
-
-/** Normalized Harness input after it is persisted in the Session ledger. */
-export interface HarnessEventRecord extends HarnessEventDraft {
   readonly eventId: string;
   readonly seq: number;
 }
 
 export interface HookSubjectMap {
-  readonly "human.inbound.before": HumanIntent;
-  readonly "human.inbound.after": HumanIntent;
+  readonly "human.inbound.before": HumanInputRecord;
+  readonly "human.inbound.after": HumanInputSettlement;
   readonly "human.outbound.before": HumanPresentation;
   readonly "human.outbound.after": HumanPresentation;
-  readonly "harness.inbound.before": HarnessEventDraft;
-  readonly "harness.inbound.after": HarnessEventRecord;
-  readonly "harness.outbound.before": HarnessDelivery;
-  readonly "harness.outbound.after": HarnessDelivery;
+  readonly "harness.inbound.before": HarnessDelivery;
+  readonly "harness.inbound.after": HarnessDelivery;
+  readonly "harness.outbound.before": HarnessEventRecord;
+  readonly "harness.outbound.after": HarnessEventRecord;
 }
 
 /**

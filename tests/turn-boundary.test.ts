@@ -1,7 +1,7 @@
-// TurnLedger 契约测试：终态一律按 baton turn id 查表路由（不看 binding）。
-// 回归背景（bug#2）：旧路由先判"active 的 binding 是否命中"，同 harness 的 driven turn
-// 运行期间，observed turn 的 idle 会进 driven 分支、被 turnId 守卫拒绝后不再 fallthrough——
-// observed turn 永远得不到 summary，跨 harness catch-up 对它永久盲区。
+// Turn scope 契约测试：终态一律按 baton turn id 查表路由（不看 binding）。
+// 回归背景（bug#2）：旧路由先判"active 的 binding 是否命中"，同 Harness 的 Queue Turn
+// 运行期间，Harness-started Turn 的 idle 会被活跃 Queue Turn 截获——
+// Harness-started turn 永远得不到 summary，跨 harness catch-up 对它永久盲区。
 // 另钉住（bug#4）：codex fast-submit 窗口内（codexTurnId 未就位）的 cancel 不得静默丢弃。
 import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,7 +20,7 @@ import type {
   SendTurnReceipt,
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
@@ -44,21 +44,21 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** 只做 admission + 报 running 的 fake adapter；后续事件由测试直接经 sink 注入 */
+/** 只接收 prompt 的 fake adapter；后续事件由测试直接经 sink 注入。 */
 class OverlapAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
   sink?: EventSink;
-  driven?: PromptInput;
+  submitted?: PromptInput;
 
   async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "ov1", resumed: false };
   }
 
-  // 新契约：user_message / running 由 controller 出队时落盘，adapter submit 只做 admission
+  // user_message / running 由 Controller 出队时落盘，Adapter 只接收 prompt。
   async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
-    this.driven = input;
+    this.submitted = input;
     return { accepted: true, effective: "new_turn" };
   }
 
@@ -68,13 +68,13 @@ class OverlapAdapter implements HarnessAdapter {
 
 function summaryTurnIds(): string[] {
   return session
-    .readEvents()
+    .ledger.read()
     .filter((ev) => ev.kind === "_baton_turn_summary")
     .map((ev) => (ev.payload as { turnId: string }).turnId);
 }
 
 describe("terminal routing by turnId (bug#2 regression)", () => {
-  test("observed idle during a same-harness driven turn still closes the observed turn", async () => {
+  test("Harness-started idle during a same-harness Queue Turn still closes its own Turn", async () => {
     const adapter = new OverlapAdapter();
     const controller = new Controller({
       session,
@@ -84,9 +84,9 @@ describe("terminal routing by turnId (bug#2 regression)", () => {
     });
 
     const submitted = controller.submit("claude", [{ type: "text", text: "go" }]);
-    await Bun.sleep(1); // driven turn admission + running 就位
+    await Bun.sleep(1); // Queue Turn 的 running 已就位
 
-    // 同一 binding 上 observed turn 开界 → 收界，此刻 driven turn 仍在运行
+    // 同一 binding 上 Harness-started Turn 开界 → 收界，此刻 Queue Turn 仍在运行。
     adapter.sink?.({
       kind: "state_update",
       turnId: "t_obs",
@@ -103,20 +103,20 @@ describe("terminal routing by turnId (bug#2 regression)", () => {
       payload: { state: "idle", stopReason: "end_turn" },
     });
 
-    // bug#2 钉子：observed turn 立即拿到 summary，不等 driven 收口
+    // Harness-started Turn 立即拿到 summary，不等 Queue Turn 收口。
     expect(summaryTurnIds()).toEqual(["t_obs"]);
 
-    // driven turn 不受影响，照常收口
+    // Queue Turn 不受影响，照常收口。
     adapter.sink?.({
       kind: "state_update",
-      turnId: adapter.driven!.turnId,
+      turnId: adapter.submitted!.turnId,
       payload: { state: "idle", stopReason: "end_turn" },
     });
     await expect(submitted).resolves.toBe("completed");
-    expect(summaryTurnIds().sort()).toEqual(["t_obs", adapter.driven!.turnId].sort());
+    expect(summaryTurnIds().sort()).toEqual(["t_obs", adapter.submitted!.turnId].sort());
   });
 
-  test("driven idle does not close a still-running observed turn (reverse ordering)", async () => {
+  test("Queue Turn idle does not close a still-running Harness-started Turn", async () => {
     const adapter = new OverlapAdapter();
     const controller = new Controller({
       session,
@@ -133,22 +133,22 @@ describe("terminal routing by turnId (bug#2 regression)", () => {
       turnId: "t_obs",
       payload: { state: "running" },
     });
-    // driven 先收口
+    // Queue Turn 先收口。
     adapter.sink?.({
       kind: "state_update",
-      turnId: adapter.driven!.turnId,
+      turnId: adapter.submitted!.turnId,
       payload: { state: "idle", stopReason: "end_turn" },
     });
     await expect(submitted).resolves.toBe("completed");
-    expect(summaryTurnIds()).toEqual([adapter.driven!.turnId]); // observed 仍开界，未被误关
+    expect(summaryTurnIds()).toEqual([adapter.submitted!.turnId]);
 
-    // observed 随后收口，恰好一次
+    // Harness-started 随后收口，恰好一次
     adapter.sink?.({
       kind: "state_update",
       turnId: "t_obs",
       payload: { state: "idle", stopReason: "end_turn" },
     });
-    expect(summaryTurnIds().sort()).toEqual(["t_obs", adapter.driven!.turnId].sort());
+    expect(summaryTurnIds().sort()).toEqual(["t_obs", adapter.submitted!.turnId].sort());
   });
 
   test("an idle without turnId is persisted but drives no lifecycle", async () => {
@@ -167,19 +167,19 @@ describe("terminal routing by turnId (bug#2 regression)", () => {
     });
     await Bun.sleep(1);
 
-    // 无 turnId 的终态：留痕，但不能终结 driven turn
+    // 无 turnId 的终态：留痕，但不能终结活跃 Turn。
     adapter.sink?.({ kind: "state_update", payload: { state: "idle" } });
     await Bun.sleep(1);
     expect(done).toBe(false);
     expect(summaryTurnIds()).toEqual([]);
     expect(
-      session.readEvents().filter((ev) => ev.kind === "state_update" && ev.turnId === undefined),
+      session.ledger.read().filter((ev) => ev.kind === "state_update" && ev.turnId === undefined),
     ).toHaveLength(1); // 已持久化
 
     // 带 turnId 的正确终态仍能收口
     adapter.sink?.({
       kind: "state_update",
-      turnId: adapter.driven!.turnId,
+      turnId: adapter.submitted!.turnId,
       payload: { state: "idle", stopReason: "end_turn" },
     });
     await expect(submitted).resolves.toBe("completed");
@@ -188,8 +188,8 @@ describe("terminal routing by turnId (bug#2 regression)", () => {
 
 // ---- finalized 记录瘦身：幂等判定只留骨架，重负载（PromptBlock[]/闭包）必须释放 ----
 
-describe("finalized turn records are retired (memory retention regression)", () => {
-  test("finalize drops the queued prompt and release closure but keeps idempotency", async () => {
+describe("Turn scope and Queue runtime have separate lifetimes", () => {
+  test("finalize retains a thin Turn scope and retires its Queue run", async () => {
     const adapter = new OverlapAdapter();
     const controller = new Controller({
       session,
@@ -197,16 +197,18 @@ describe("finalized turn records are retired (memory retention regression)", () 
       resolveTarget: resolveTestTarget,
       createAdapter: () => adapter,
     });
-    const ledger = (
+    const internals = (
       controller as unknown as {
-        turns: Map<string, { status: string; turn?: unknown; release?: unknown; cancelGraceTimer?: unknown }>;
+        turns: { get(turnId: string): { status: string } | undefined };
+        mainQueue: { run(turnId: string): unknown };
       }
-    ).turns;
+    );
 
     const submitted = controller.submit("claude", [{ type: "text", text: "go" }]);
     await Bun.sleep(1);
-    const turnId = adapter.driven!.turnId;
-    expect(ledger.get(turnId)?.turn).toBeDefined(); // active 期间入队原件在场（same-turn send 依赖）
+    const turnId = adapter.submitted!.turnId;
+    expect(internals.turns.get(turnId)?.status).toBe("active");
+    expect(internals.mainQueue.run(turnId)).toBeDefined();
 
     adapter.sink?.({
       kind: "state_update",
@@ -216,12 +218,10 @@ describe("finalized turn records are retired (memory retention regression)", () 
     await expect(submitted).resolves.toBe("completed");
 
     // 骨架保留：迟到终态仍能按 turnId 幂等判定
-    const record = ledger.get(turnId);
+    const record = internals.turns.get(turnId);
     expect(record?.status).toBe("finalized");
-    // 重负载释放：PromptBlock[] 与 release 闭包不随 finalized 记录线性累积
-    expect(record?.turn).toBeUndefined();
-    expect(record?.release).toBeUndefined();
-    expect(record?.cancelGraceTimer).toBeUndefined();
+    // Queue run（PromptBlock[] 与 release 闭包）不随已结束 Turn 线性累积。
+    expect(internals.mainQueue.run(turnId)).toBeUndefined();
 
     // 幂等钉子：重复终态 inert，不产生第二份 summary
     adapter.sink?.({

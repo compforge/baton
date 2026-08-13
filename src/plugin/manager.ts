@@ -141,9 +141,7 @@ export interface ManagerOptions {
     SessionHandle,
     | "id"
     | "dir"
-    | "readEvents"
-    | "subscribe"
-    | "append"
+    | "ledger"
     | "log"
     | "ensureMainLane"
     | "requireLane"
@@ -169,7 +167,7 @@ export interface ManagerOptions {
   enqueueHarnessInvocation?(
     request: ScheduledHarnessInvocation,
   ): Promise<unknown> | void;
-  /** Cancels a queued Request or interrupts its admitted Turn. */
+  /** Cancels a queued Request or interrupts its active Queue run. */
   cancelHarnessInvocation?(
     harnessInvocationId: string,
   ): "queued" | "running" | undefined;

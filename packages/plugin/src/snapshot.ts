@@ -1,6 +1,6 @@
 export type SessionRunState = "running" | "idle" | "requires_action";
 
-export type InputStatus =
+export type HarnessInputStatus =
   | "queued"
   | "dispatching"
   | "admitted"
@@ -10,7 +10,7 @@ export type InputStatus =
   | "interrupted";
 
 /** Identifies the actor that submitted a prompt Input to Baton. */
-export type InputSource =
+export type HarnessInputSource =
   | { readonly type: "user" }
   | {
       readonly type: "plugin";
@@ -60,7 +60,6 @@ export interface SessionSnapshot {
 
 export interface ActiveTurnSnapshot {
   readonly turnId: string;
-  readonly role: "driven" | "observed";
   readonly state: "running" | "requires_action";
   readonly harness?: string;
   readonly harnessTargetId?: string;
@@ -68,15 +67,15 @@ export interface ActiveTurnSnapshot {
   readonly startedAt?: number;
 }
 
-export interface InputSnapshot {
+export interface HarnessInputSnapshot {
   readonly messageId: string;
   readonly turnId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
   readonly harness: string;
-  readonly status: InputStatus;
+  readonly status: HarnessInputStatus;
   readonly delivery: "prompt" | "steer";
-  readonly source: InputSource;
+  readonly source: HarnessInputSource;
   readonly harnessInvocationId?: string;
 }
 
@@ -101,7 +100,7 @@ export interface PendingInteractionSnapshot {
 export interface ReconcileSnapshot {
   readonly session: SessionSnapshot;
   readonly activeTurns: readonly ActiveTurnSnapshot[];
-  readonly inputs: readonly InputSnapshot[];
+  readonly harnessInputs: readonly HarnessInputSnapshot[];
   readonly harnessTargets: readonly HarnessTargetSnapshot[];
   readonly pendingInteractions: readonly PendingInteractionSnapshot[];
   readonly latestTurn?: TurnSummary;

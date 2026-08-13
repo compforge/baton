@@ -1,7 +1,7 @@
 import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { expect, test } from "bun:test";
 
-import type { AnyEventDraft } from "../src/event/types.ts";
+import type { AnyEventDraft } from "../src/event/index.ts";
 import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "../src/harness/claude/adapter.ts";
 
@@ -142,7 +142,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   );
 });
 
-test("Claude lifecycle start moves a delayed steer into a new observed turn", async () => {
+test("Claude lifecycle start moves a delayed steer into a new Harness-started turn", async () => {
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   let releaseOutput: ((message: unknown) => void) | undefined;
   let finishOutput: (() => void) | undefined;

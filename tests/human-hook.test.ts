@@ -6,13 +6,14 @@ import { join } from "node:path";
 import type {
   HookStage,
   HookSubjectMap,
-  HumanIntent,
+  HumanInputRecord,
+  HumanInputSettlement,
 } from "@compforge/baton-plugin";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { SendTurnOptions } from "../src/controller/index.ts";
-import type { PromptBlock } from "../src/event/types.ts";
-import { SessionStore } from "../src/store/store.ts";
+import type { PromptBlock } from "../src/event/index.ts";
+import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { BatonChatProtocol } from "../src/tui/protocol/index.ts";
 
 const roots: string[] = [];
@@ -40,7 +41,8 @@ describe("Human Hook integration", () => {
     const chat = protocol();
     await chat.pluginManager.start();
     const calls: string[] = [];
-    let intentId = "";
+    let inputId = "";
+    let inputEventId = "";
     const plugins = chat.pluginManager as typeof chat.pluginManager & {
       beforeHook<S extends Extract<HookStage, `${string}.before`>>(
         stage: S,
@@ -53,19 +55,26 @@ describe("Human Hook integration", () => {
     };
     plugins.beforeHook = async (stage, subject) => {
       if (stage !== "human.inbound.before") return;
-      const intent = subject as unknown as HumanIntent;
+      const record = subject as unknown as HumanInputRecord;
       calls.push("before");
-      intentId = intent.intentId;
-      expect(intent).toMatchObject({
-        kind: "prompt",
-        text: "ship it",
-        harnessTargetId: "codex",
+      inputId = record.inputId;
+      inputEventId = record.eventId;
+      expect(record.input).toMatchObject({
+        kind: "prompt", text: "ship it", harnessTargetId: "codex",
       });
+      expect(record.eventId).toMatch(/^ev_/);
+      const durable = (chat as unknown as { session: SessionHandle })
+        .session.ledger.read()
+        .find((event) => event.eventId === record.eventId);
+      expect(durable?.kind).toBe("input.received");
     };
     plugins.afterHook = (stage, subject) => {
       if (stage !== "human.inbound.after") return;
       calls.push("after");
-      expect((subject as unknown as HumanIntent).intentId).toBe(intentId);
+      expect(subject as unknown as HumanInputSettlement).toMatchObject({
+        inputId,
+        outcome: "succeeded",
+      });
     };
     const controller = (chat as unknown as {
       controller: {
@@ -82,9 +91,7 @@ describe("Human Hook integration", () => {
     }).controller;
     controller.sendTurn = async (_target, _blocks, options) => {
       calls.push("enqueue");
-      expect(options?.identity?.messageId).toBe(intentId);
-      expect(options?.identity?.turnId).toMatch(/^t_/);
-      options?.onEnqueued?.();
+      expect(options?.parentEventId).toBe(inputEventId);
       return {
         effective: "new_turn",
         queued: false,
@@ -104,7 +111,7 @@ describe("Human Hook integration", () => {
     const plugins = chat.pluginManager;
     plugins.beforeHook = async (stage, subject) => {
       if (stage === "human.inbound.before") {
-        kinds.push((subject as unknown as HumanIntent).kind);
+        kinds.push((subject as unknown as HumanInputRecord).input.kind);
       }
     };
     plugins.afterHook = () => {};

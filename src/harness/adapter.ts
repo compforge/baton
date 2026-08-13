@@ -7,7 +7,7 @@ import type {
   ConfigValue,
   PromptBlock,
   SessionConfigOption,
-} from "../event/types.ts";
+} from "../event/index.ts";
 import type {
   InteractionDraft,
   InteractionResult,
@@ -86,7 +86,7 @@ export interface PromptInput {
   syncBlocks?: PromptBlock[];
 }
 
-/** control turn admission 的回执：只代表请求被接受，不代表 turn 完成（见 docs/workflow.md） */
+/** Turn submit 回执：只代表请求被接受，不代表 Turn 完成（见 docs/workflow.md）。 */
 export interface PromptReceipt {
   accepted: true;
 }
