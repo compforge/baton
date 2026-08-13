@@ -115,6 +115,11 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 有活跃 Turn 时，Adapter 不得擅自并行开启新 Turn。throw 只允许发生在接受责任之前；accepted
 后的失败通过 Event sink 报告终态。
 
+Controller 在实际调用 `sendTurn` 前后发送 `harness.outbound.before/after` Hook。新 Turn 的
+before 位于持久 Delivery Attempt 的 `prepared` 与 `dispatching` 之间；after 携带 Adapter admission
+的 `accepted/rejected/error` 结果，但不等待 Turn 终态。steer 也使用相同 notification shape，
+其 attempt identity 只关联这次 same-turn send。
+
 ### 3.3 cancel 与 close
 
 `cancel` 只是请求中断，确认以最终 `idle/cancelled` Event 为准，发出后仍接收在途 update。
@@ -147,6 +152,11 @@ owner、生命周期和恢复语义一致时，才考虑提升公共 Capability�
 
 Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、Lane、HarnessTarget、
 HarnessSession 与 Session scope。原生 wire 存入 `raw`，不能让 Adapter 自报执行归属。
+
+`harness.inbound.before` 观察补齐执行坐标但尚无 `eventId/seq` 的 draft；Hook settled 后宿主才
+append，`harness.inbound.after` 再观察 ledger record。存在 before 订阅时，宿主按
+`Lane × HarnessTarget` 串行这段 intake，保持同一 Adapter 的事件顺序；无订阅时 Event sink 仍同步
+append。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
 
 稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID
 upsert，completed 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一；未知

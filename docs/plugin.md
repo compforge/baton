@@ -210,6 +210,13 @@ Human outbound 覆盖 transcript、queue、Interaction、status、toast、Board 
 publication。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
 Interaction 会直接发布并只发送 after，避免 Hook 等待尚未展示给人的问题而自锁。
 
+Harness outbound 的 subject 是一次准备发送的 `HarnessDelivery`。新 Turn 复用持久 Delivery
+Attempt 的 identity；steer 的 identity 只关联本次 same-turn send。before 位于 Adapter 调用之前，
+after 在 admission receipt 或 throw 后发送，并区分 `accepted/rejected/error`，不等待 Turn 完成。
+Harness inbound 的 before subject 是尚未分配 ledger identity 的 `HarnessEventDraft`；同一
+`Lane × HarnessTarget` 内按原生顺序等待后 append，after subject 才是带 `eventId/seq` 的
+`HarnessEventRecord`。未注册 inbound before 时，Core 保留同步 append 快路径。
+
 ### 4.3 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、

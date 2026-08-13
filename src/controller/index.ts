@@ -9,6 +9,7 @@ import {
   type OpenInteraction,
   type ModelOption,
   type NativeEventSink,
+  type PromptInput,
   type SendTurnReceipt,
 } from "../harness/adapter.ts";
 import { buildTargetCatchUpContext } from "../context/mention.ts";
@@ -54,6 +55,12 @@ import {
 } from "./input.ts";
 import { HarnessInteractionContinuations } from "../interaction/harness.ts";
 import { TurnLedger, type TurnRecord } from "./turn.ts";
+import {
+  HarnessHookCoordinator,
+  type HarnessHookGateway,
+} from "./hook.ts";
+
+export type { HarnessHookGateway } from "./hook.ts";
 
 export type {
   InputSource,
@@ -136,6 +143,8 @@ export interface ControllerOptions {
   effortPreferences?: Readonly<Record<string, string>>;
   /** 工厂按 target.harness 选择 Adapter，并可使用 target.id lowering 实例级配置。 */
   createAdapter(target: HarnessTarget, handlers: HarnessAdapterPorts): HarnessAdapter;
+  /** Optional Plugin notification surface for Harness send and ledger intake boundaries. */
+  hooks?: HarnessHookGateway;
   /** HarnessTarget identity 的唯一 owner；未知 id 必须返回 undefined，不能反推 Harness。 */
   resolveTarget(harnessTargetId: string): HarnessTarget | undefined;
   /** 不创建 HarnessSession 的 Target 级只读发现；缺省时兼容回落到 live binding。 */
@@ -196,6 +205,7 @@ export class Controller {
   private readonly deliveryAttempts: DeliveryAttempts<HarnessBinding>;
   private readonly contextDeliveries: ContextDeliveries<HarnessBinding>;
   private readonly harnessInteractions: HarnessInteractionContinuations<HarnessBinding>;
+  private readonly harnessHooks: HarnessHookCoordinator;
   private drainingMain = false;
   private activeSideRuns = 0;
   /** driven 工作从 Harness setup 开始即对 UI 可见。 */
@@ -224,6 +234,15 @@ export class Controller {
       (binding, event, source) => this.appendEvent(binding, event, source),
       () => this.changed(),
     );
+    this.harnessHooks = new HarnessHookCoordinator({
+      gateway: options.hooks,
+      append: (binding, event) =>
+        this.appendEvent(binding, event, {
+          type: "harness",
+          harnessTargetId: binding.target.id,
+        }),
+      log: (entry) => options.session.log(entry),
+    });
   }
 
   /**
@@ -461,12 +480,19 @@ export class Controller {
     ) {
       this.changed();
       let receipt: SendTurnReceipt;
+      const attemptId = newId("att");
       try {
-        receipt = await active.binding.adapter.sendTurn(active.binding.ref, {
-          turnId: active.turnId,
-          messageId: input.messageId,
-          blocks: input.blocks,
-        });
+        receipt = await this.harnessHooks.send(
+          active.binding,
+          active.binding.ref,
+          {
+            turnId: active.turnId,
+            messageId: input.messageId,
+            blocks: input.blocks,
+          },
+          attemptId,
+          "steer",
+        );
       } catch (error) {
         receipt = {
           accepted: false,
@@ -745,6 +771,7 @@ export class Controller {
       }
     }
     await Promise.all(closing);
+    await this.harnessHooks.close();
   }
 
   private async drainMain(): Promise<void> {
@@ -952,18 +979,35 @@ export class Controller {
         launchSnapshot: meta.launchSnapshot,
         harnessSessionId: meta.harnessSessionId ?? binding.sessionIdentity()?.id,
       });
+      const promptInput: PromptInput = {
+        turnId: turn.turnId,
+        messageId: turn.messageId,
+        blocks,
+        ...(syncBlocks ? { syncBlocks } : {}),
+      };
+      const beforeDelivery = this.harnessHooks.beforeDelivery(
+        this.harnessHooks.delivery(
+          binding,
+          promptInput,
+          attempt.attemptId,
+          "new_turn",
+        ),
+      );
+      if (beforeDelivery) await beforeDelivery;
       this.deliveryAttempts.markDispatching(binding, attempt);
 
       // sendTurn 回执只确认 Adapter 接受本次投递责任；Harness 终态仍由 idle Event 收口。
       // Adapter 契约规定：throw 只发生在接受责任之前；接受后即使原生 transport 失败，
       // 也必须经事件流报告终态，不能把不确定性藏进一个迟到 rejection。
       try {
-        const receipt = await binding.adapter.sendTurn(binding.ref, {
-          turnId: turn.turnId,
-          messageId: turn.messageId,
-          blocks,
-          ...(syncBlocks ? { syncBlocks } : {}),
-        });
+        const receipt = await this.harnessHooks.send(
+          binding,
+          binding.ref,
+          promptInput,
+          attempt.attemptId,
+          "new_turn",
+          false,
+        );
         if (receipt.effective !== "new_turn") {
           const reason =
             receipt.effective === "rejected" && receipt.reason
@@ -1322,11 +1366,7 @@ export class Controller {
         setupTurnId,
         modelPreference: this.options.modelPreferences?.[target.id],
         effortPreference: this.options.effortPreferences?.[target.id],
-        eventSink: (event) =>
-          this.appendEvent(created, event, {
-            type: "harness",
-            harnessTargetId: created.target.id,
-          }),
+        eventSink: (event) => this.harnessHooks.acceptEvent(created, event),
       });
       binding = created;
       this.bindings.set(key, created);
