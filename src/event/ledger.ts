@@ -79,9 +79,20 @@ export class EventLedger {
     const buffer = readFileSync(this.options.path);
     if (buffer.length === 0 || buffer[buffer.length - 1] === 0x0a) return;
     const cut = buffer.lastIndexOf(0x0a) + 1;
+    const tail = buffer.subarray(cut);
+    try {
+      JSON.parse(tail.toString("utf8"));
+      // The Event is complete; only the record separator was lost. Preserve
+      // the durable fact and restore the separator before appending.
+      appendFileSync(this.options.path, "\n");
+      return;
+    } catch {
+      // A genuinely partial Event cannot be replayed and must not be joined
+      // with the next append. Preserve it in a diagnostic sidecar below.
+    }
     writeFileSync(
       join(dirname(this.options.path), `session.jsonl.partial-${Date.now()}`),
-      buffer.subarray(cut),
+      tail,
     );
     truncateSync(this.options.path, cut);
   }

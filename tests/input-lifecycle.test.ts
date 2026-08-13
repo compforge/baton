@@ -314,6 +314,14 @@ describe("Input lifecycle (HarnessInput)", () => {
     releaseSteer();
     expect((await steering).effective).toBe("steer");
     expect(controller.harnessInputs).toEqual([]);
+    const durableSteer = session.ledger.read().findLast((event) =>
+      event.kind === "harness_input.updated" && event.payload.delivery === "steer"
+    );
+    expect(durableSteer?.kind).toBe("harness_input.updated");
+    if (durableSteer?.kind !== "harness_input.updated") {
+      throw new Error("missing durable steer transition");
+    }
+    expect(durableSteer.payload.status).toBe("interrupted");
     const messages = [...session.loadState().messages.values()]
       .filter((message) => message.role === "user")
       .map((message) => textOf(message.content));

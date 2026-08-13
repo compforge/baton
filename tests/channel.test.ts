@@ -79,6 +79,69 @@ describe("Channel", () => {
 
     expect(calls).toEqual(["before", "publish", "after"]);
   });
+
+  test("runs before Hooks for unrelated concurrent outbound presentations", async () => {
+    const fixture = channel();
+    let releaseTranscript!: () => void;
+    const transcriptGate = new Promise<void>((resolve) => {
+      releaseTranscript = resolve;
+    });
+    let transcriptStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      transcriptStarted = resolve;
+    });
+    const beforeKinds: string[] = [];
+    fixture.channel.connect(gateway({
+      has: () => true,
+      before: async (_stage, subject) => {
+        const kind = (subject as { kind?: string }).kind;
+        if (!kind) return;
+        beforeKinds.push(kind);
+        if (kind === "transcript") {
+          transcriptStarted();
+          await transcriptGate;
+        }
+      },
+    }));
+
+    const transcript = fixture.channel.outbound("transcript", () => true);
+    await started;
+    const board = fixture.channel.outbound("board", () => true);
+    await board;
+    releaseTranscript();
+    await transcript;
+
+    expect(beforeKinds).toEqual(["transcript", "board"]);
+  });
+
+  test("skips the same before Hook only for causally reentrant publication", async () => {
+    const fixture = channel();
+    const calls: string[] = [];
+    fixture.channel.connect(gateway({
+      has: () => true,
+      before: async (_stage, subject) => {
+        const kind = (subject as { kind?: string }).kind;
+        calls.push(`before:${kind}`);
+        if (kind === "transcript") {
+          await fixture.channel.outbound("interaction", () => {
+            calls.push("publish:interaction");
+            return true;
+          });
+        }
+      },
+    }));
+
+    await fixture.channel.outbound("transcript", () => {
+      calls.push("publish:transcript");
+      return true;
+    });
+
+    expect(calls).toEqual([
+      "before:transcript",
+      "publish:interaction",
+      "publish:transcript",
+    ]);
+  });
 });
 
 function gateway(overrides: {
