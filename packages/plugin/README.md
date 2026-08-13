@@ -187,6 +187,15 @@ opened by that Hook through a Verb is published without recursively invoking
 the same before stage, so the Hook cannot deadlock on a question hidden from
 the human; the reentrant publication still emits an after notification.
 
+Harness outbound subjects describe one prepared Adapter send. New turns reuse
+the durable Delivery Attempt identity; a steer identity only correlates that
+same-turn send. The before stage precedes the Adapter call. The after stage
+reports `accepted`, `rejected`, or `error` admission without waiting for Turn
+completion. Harness inbound before receives a normalized event draft without
+ledger identity. Core then preserves native order within the same
+`Lane × HarnessTarget`, appends the event, and emits after with its `eventId` and
+`seq`. When no inbound before Hook is registered, event append stays synchronous.
+
 Controller Sources have two narrow roles:
 
 - A `Source` performs initial discovery, installs live subscriptions,

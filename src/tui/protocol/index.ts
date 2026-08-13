@@ -984,6 +984,11 @@ export class BatonChatProtocol implements ChatProtocol {
           config: this.config,
           rootDir: this.store.rootDir,
         }),
+      hooks: {
+        has: (stage) => this.plugins.hasHook(stage),
+        before: (stage, subject) => this.plugins.beforeHook(stage, subject),
+        after: (stage, subject) => this.plugins.afterHook(stage, subject),
+      },
       resolveTarget: resolveDefaultHarnessTarget,
       textgenTargets: bundledTextgenTargets(),
       ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),

@@ -127,7 +127,8 @@ Lane 是并行进展，两者都必须以已完成 TurnSummary 注入。
 
 Harness 已打开、Context 已组装后，Controller 先 append
 `_baton_delivery_attempt_update(prepared)`，记录 Input、Target 和不可变
-`HarnessLaunchSnapshot`；随后把 Attempt 推到 `dispatching`，再调用：
+`HarnessLaunchSnapshot`。若存在 `harness.outbound.before` Hook，Core 此时以
+`HarnessDelivery` 通知 Plugin；全部 settled 后才把 Attempt 推到 `dispatching` 并调用：
 
 ```ts
 adapter.sendTurn(handle, promptInput)
@@ -142,7 +143,9 @@ Adapter 根据自己的权威运行态返回：
 
 Receipt 只确认 Adapter 接受了投递责任，不代表 Harness 已完成。accepted 后的错误必须通过事件流
 终结 Turn；throw 只能表示 Adapter 尚未接受。Controller 据此持久化 Attempt 的 `accepted`、
-`uncertain` 或最终 outcome。
+`uncertain` 或最终 outcome，并以同一个 `attemptId` 发送非阻塞的 `harness.outbound.after`，其中
+outcome 区分 `accepted/rejected/error`。same-turn steer 走同一 Hook 边界，但其 `attemptId` 只关联
+本次 Adapter send，不会冒充新的持久 Delivery Attempt。
 
 ## 3. Harness 输出到用户
 
@@ -151,6 +154,12 @@ Receipt 只确认 Adapter 接受了投递责任，不代表 Harness 已完成。
 Adapter 消费原生 wire，把 message、thought、tool、diff、plan、task、usage、Interaction 和状态
 翻译为 Baton Event 草稿。宿主在可信入口补齐 `source:harness`、Lane、HarnessTarget、
 HarnessSession 和 Turn 坐标，Store 再补 `eventId`、scope、时间与序号。
+
+若存在 `harness.inbound.before` Hook，Core 先发送不含 ledger identity 的
+`HarnessEventDraft`，再按 `Lane × HarnessTarget` 保持 Adapter 原生事件顺序 append；其它 Lane
+不被这条等待链阻塞。append 成功后，`harness.inbound.after` 收到带 `eventId/seq` 的
+`HarnessEventRecord`。没有 before 订阅时保留原来的同步 append 快路径。Hook 异常或超时 fail-open，
+不能让一个 Plugin 截断 Harness 事件流。
 
 归一原则是“稳定语义 + raw 保真”：
 
