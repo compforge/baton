@@ -6,10 +6,10 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
+import { Channel } from "../channel/index.ts";
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import { expandMentions } from "../context/mention.ts";
 import { Controller } from "../controller/index.ts";
-import { HumanInputIntake } from "../input/intake.ts";
 import {
   createHarnessAdapter,
   parseHarness,
@@ -119,6 +119,7 @@ async function main(): Promise<void> {
 
   const target = resolveDefaultHarnessTarget(agentName);
   if (!target) throw new Error(`No default HarnessTarget registered for Harness: ${agentName}`);
+  const channel = new Channel({ session });
   const controller = new Controller({
     session,
     mentionBudgetChars: config.mentionBudgetChars,
@@ -129,11 +130,11 @@ async function main(): Promise<void> {
         rootDir: store.rootDir,
       }),
     resolveTarget: resolveDefaultHarnessTarget,
+    hooks: channel,
     textgenTargets: bundledTextgenTargets(),
     ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
     ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
   });
-  const inputIntake = new HumanInputIntake({ session });
 
   let sawOutput = false;
   let interactionChain = Promise.resolve();
@@ -184,7 +185,7 @@ async function main(): Promise<void> {
 
     sawOutput = false;
     try {
-      const sent = await inputIntake.run({
+      const sent = await channel.inbound({
         kind: "prompt",
         text: line,
         harnessTargetId: target.id,
@@ -210,6 +211,7 @@ async function main(): Promise<void> {
   await interactionChain;
   unsubscribe();
   await controller.close();
+  channel.disconnect();
   session.log({
     level: "info",
     source: "baton",

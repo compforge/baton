@@ -20,6 +20,7 @@ import {
   parseHarnessRoute,
   type CommandName,
 } from "../../commands/registry.ts";
+import { Channel } from "../../channel/index.ts";
 import type { BatonConfig } from "../../config/config.ts";
 import { loadEffortPreferences, saveEffortPreference } from "../../config/effort-preferences.ts";
 import { loadModelPreferences, saveModelPreference } from "../../config/model-preferences.ts";
@@ -30,12 +31,9 @@ import {
 } from "../../context/mention.ts";
 import { MentionRegistry } from "../../context/registry.ts";
 import { logError } from "../../logging.ts";
-import { newId } from "../../event/ids.ts";
-import { HumanInputIntake } from "../../input/intake.ts";
 import {
   textOf,
   type ContentBlock,
-  type EventKind,
   type PromptBlock,
 } from "../../event/index.ts";
 import {
@@ -51,7 +49,6 @@ import { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
 import type {
   HumanInput,
-  HumanPresentation,
   PluginCommandInput,
   PluginCommandResult,
   ToastMessage,
@@ -84,6 +81,7 @@ import {
   type BoardMode,
   type BoardViewProjection,
 } from "./state.ts";
+import { ChatPresentation } from "./presentation.ts";
 
 export {
   thoughtDisplayBlocks,
@@ -92,85 +90,7 @@ export {
 } from "./transcript.ts";
 export { runStatusLabel } from "./state.ts";
 
-// transcript 重排与终端整帧写入比 composer 的局部绘制重；若也按 renderer 的 30 FPS 持续
-// 发布，终端背压会让已进入 textarea buffer 的按键延迟显示。流式输出限制为 10 FPS，给输入
-// 绘制留出帧间空隙；Interaction、终态和完整快照仍立即发布，并冲刷此前积累的 chunk。
-const STREAM_STATE_FRAME_MS = 100;
 const PICKER_SEARCH_DEBOUNCE_MS = 250;
-const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
-  "agent_message_chunk",
-  "agent_thought_chunk",
-  "tool_call_content_chunk",
-  "usage_update",
-]);
-const NON_PRESENTATION_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
-  "input.received",
-  "input.settled",
-  "harness_input.updated",
-]);
-
-function publishChatState(
-  store: WritableChatStore,
-  next: ChatState,
-): void {
-  const timeline = store.getState("timeline");
-  const composer = store.getState("composer");
-  const activity = store.getState("activity");
-  const footer = store.getState("footer");
-  store.commit({
-    ...(timeline.items === next.timeline.items &&
-    timeline.plan === next.timeline.plan &&
-    timeline.header === next.timeline.header &&
-    timeline.showThoughts === next.timeline.showThoughts
-      ? {}
-      : { timeline: next.timeline }),
-    ...(composer.busy === next.composer.busy &&
-    composer.queued === next.composer.queued &&
-    composer.picker === next.composer.picker &&
-    composer.interactions === next.composer.interactions &&
-    composer.placeholder === next.composer.placeholder
-      ? {}
-      : { composer: next.composer }),
-    ...(activity.items === next.activity.items
-      ? {}
-      : { activity: next.activity }),
-    ...(footer.toast === next.footer.toast && footer.text === next.footer.text
-      ? {}
-      : { footer: next.footer }),
-    ...(store.getState("sidecar") === next.sidecar
-      ? {}
-      : { sidecar: next.sidecar }),
-  });
-}
-
-function chatPresentationKind(
-  store: WritableChatStore,
-  next: ChatState,
-): HumanPresentation["kind"] | undefined {
-  const timeline = store.getState("timeline");
-  const composer = store.getState("composer");
-  const activity = store.getState("activity");
-  const footer = store.getState("footer");
-  if (composer.interactions !== next.composer.interactions) return "interaction";
-  if (composer.picker !== next.composer.picker) return "picker";
-  if (composer.queued !== next.composer.queued) return "queue";
-  if (store.getState("sidecar") !== next.sidecar) return "board";
-  if (footer.toast !== next.footer.toast) return "toast";
-  if (timeline.items !== next.timeline.items || timeline.plan !== next.timeline.plan) {
-    return "transcript";
-  }
-  if (
-    timeline.header !== next.timeline.header ||
-    timeline.showThoughts !== next.timeline.showThoughts ||
-    composer.busy !== next.composer.busy ||
-    composer.placeholder !== next.composer.placeholder ||
-    activity.items !== next.activity.items ||
-    footer.text !== next.footer.text
-  ) {
-    return "status";
-  }
-  return undefined;
-}
 
 export interface BatonNavigation {
   openPlugins(): void;
@@ -194,9 +114,10 @@ export class BatonChatProtocol implements ChatProtocol {
   readonly stateStore: WritableChatStore;
   private session: SessionHandle;
   private state: SessionState;
+  private channel: Channel;
+  private presentation: ChatPresentation;
   private controller: Controller;
   private plugins: Manager;
-  private inputIntake: HumanInputIntake;
   /** 当前输入与控制命令的具体配置目标；默认 Target ID 与 Harness ID 相同。 */
   private harnessTargetId: string;
   private toast: ToastMessage | null = null;
@@ -212,7 +133,6 @@ export class BatonChatProtocol implements ChatProtocol {
   private mentionCandidateCache: Candidate[] = [];
   private mentionCandidateRevision = 0;
   private unsubscribeSession: () => void;
-  private streamStateTimer: ReturnType<typeof setTimeout> | undefined;
   // 输入历史（shell 式 ↑/↓ 回溯）：会话级，从事件流的 user 消息种入、提交时追加。
   // 事件流是真相源——不另存磁盘文件；resume/切换会话后 loadState 重建 state 即可重新种入。
   private history: Array<{ text: string; imagePaths: string[] }> = [];
@@ -222,10 +142,6 @@ export class BatonChatProtocol implements ChatProtocol {
   private composerImagePaths: string[] = [];
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
-  private humanOutboundBeforeActive = false;
-  private humanStatePublicationPending = false;
-  private humanStatePublicationRunning = false;
-  private humanPresentationRevision = 0;
 
   constructor(
     private readonly store: SessionStore,
@@ -246,28 +162,27 @@ export class BatonChatProtocol implements ChatProtocol {
     if (opened.recovered) {
       this.toast = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
     }
+    this.channel = new Channel({ session: this.session });
     this.controller = this.createController();
     // Projection 由 BatonSession 统一维护：打开时 replay，live Event 直接 reduce。
     // TUI 只观察投影变化，不从 Ledger 或 per-turn 回调重建事实。
     this.state = this.session.projection;
     this.seedHistoryFromState();
-    this.unsubscribeSession = this.subscribeSession(this.session);
     this.plugins = this.createPluginManager();
-    this.inputIntake = this.createHumanInputIntake();
+    this.connectChannel();
     this.stateStore = createChatStore(this.buildState());
+    this.presentation = new ChatPresentation(
+      this.channel,
+      this.stateStore,
+      () => this.buildState(),
+    );
+    this.unsubscribeSession = this.subscribeSession(this.session);
     this.startPluginManager();
   }
 
   /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
   private subscribeSession(session: SessionHandle): () => void {
-    return session.subscribe((envelope) => {
-      // WAL facts still advance the reducer watermark, but do not themselves
-      // create a Human presentation. Their resulting Core mutation publishes
-      // through its normal owner after the commit point.
-      if (NON_PRESENTATION_EVENT_KINDS.has(envelope.kind)) return;
-      if (COALESCED_STREAM_EVENT_KINDS.has(envelope.kind)) this.scheduleStreamStateChanged();
-      else this.changed();
-    });
+    return session.subscribe((envelope) => this.presentation.event(envelope.kind));
   }
 
   // ===== 输出：baton → TUI =====
@@ -346,7 +261,7 @@ export class BatonChatProtocol implements ChatProtocol {
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
     const target = this.harnessTargetId;
-    const sent = await this.inputIntake.run(Object.freeze({
+    const sent = await this.channel.inbound(Object.freeze({
       kind: "prompt",
       text,
       harnessTargetId: target,
@@ -427,7 +342,7 @@ export class BatonChatProtocol implements ChatProtocol {
       argument,
       harnessTargetId: this.harnessTargetId,
     });
-    return await this.inputIntake.run(input, async () =>
+    return await this.channel.inbound(input, async () =>
       await this.executeCommand(name, argument)
     );
   }
@@ -663,7 +578,7 @@ export class BatonChatProtocol implements ChatProtocol {
       kind: "interrupt",
       harnessTargetId: this.controller.activeHarnessTargetId ?? this.harnessTargetId,
     });
-    void this.inputIntake.run(input, async () => {
+    void this.channel.inbound(input, async () => {
       await this.controller.control({ kind: "interrupt" });
     });
   }
@@ -680,6 +595,8 @@ export class BatonChatProtocol implements ChatProtocol {
     this.changed();
     await this.controller.close();
     await this.plugins.close();
+    this.presentation.close();
+    this.channel.disconnect();
     this.marketplace.close();
     this.unsubscribeSession();
     this.session.log({
@@ -792,7 +709,7 @@ export class BatonChatProtocol implements ChatProtocol {
       kind: "interaction_response",
       interactionId: id,
     });
-    return await this.inputIntake.run(input, async () =>
+    return await this.channel.inbound(input, async () =>
       await this.applyInteractionResponse(id, response)
     );
   }
@@ -989,11 +906,7 @@ export class BatonChatProtocol implements ChatProtocol {
           config: this.config,
           rootDir: this.store.rootDir,
         }),
-      hooks: {
-        has: (stage) => this.plugins.hasHook(stage),
-        before: (stage, subject) => this.plugins.beforeHook(stage, subject),
-        after: (stage, subject) => this.plugins.afterHook(stage, subject),
-      },
+      hooks: this.channel,
       resolveTarget: resolveDefaultHarnessTarget,
       textgenTargets: bundledTextgenTargets(),
       ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),
@@ -1137,13 +1050,11 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  private createHumanInputIntake(): HumanInputIntake {
-    return new HumanInputIntake({
-      session: this.session,
-      hooks: {
-        before: (stage, subject) => this.plugins.beforeHook(stage, subject),
-        after: (stage, subject) => this.plugins.afterHook(stage, subject),
-      },
+  private connectChannel(): void {
+    this.channel.connect({
+      has: (stage) => this.plugins.hasHook(stage),
+      before: (stage, subject) => this.plugins.beforeHook(stage, subject),
+      after: (stage, subject) => this.plugins.afterHook(stage, subject),
     });
   }
 
@@ -1174,6 +1085,8 @@ export class BatonChatProtocol implements ChatProtocol {
     const next = open();
     await this.controller.close();
     await this.plugins.close();
+    this.presentation.close();
+    this.channel.disconnect();
     this.unsubscribeSession();
     this.session.log({
       level: "info",
@@ -1187,15 +1100,21 @@ export class BatonChatProtocol implements ChatProtocol {
     this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;
+    this.channel = new Channel({ session: this.session });
     this.controller = this.createController();
     this.state = next.session.projection;
     this.seedHistoryFromState();
-    this.unsubscribeSession = this.subscribeSession(next.session);
     this.toast = next.recovered
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.createPluginManager();
-    this.inputIntake = this.createHumanInputIntake();
+    this.connectChannel();
+    this.presentation = new ChatPresentation(
+      this.channel,
+      this.stateStore,
+      () => this.buildState(),
+    );
+    this.unsubscribeSession = this.subscribeSession(next.session);
     this.completionsChanged();
     this.startPluginManager();
     this.changed();
@@ -1207,7 +1126,7 @@ export class BatonChatProtocol implements ChatProtocol {
     value: string | null,
     action: () => Promise<void>,
   ): Promise<void> {
-    await this.inputIntake.run(Object.freeze({
+    await this.channel.inbound(Object.freeze({
       kind: "configuration",
       harnessTargetId: target,
       setting,
@@ -1438,154 +1357,14 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  /** 高频流式事件按 renderer 帧合并；领域 state 已同步 reduce，这里只延迟 UI State 投影。 */
-  private scheduleStreamStateChanged(): void {
-    if (this.streamStateTimer !== undefined) return;
-    this.streamStateTimer = setTimeout(() => {
-      this.streamStateTimer = undefined;
-      this.changed();
-    }, STREAM_STATE_FRAME_MS);
-  }
-
-  /** 通用状态更新按 State 发布；Store 只通知真正变化的数据单元。 */
+  /** 通用状态更新统一走 Channel outbound。 */
   private changed(): void {
-    if (this.streamStateTimer !== undefined) {
-      clearTimeout(this.streamStateTimer);
-      this.streamStateTimer = undefined;
-    }
-    // A before Hook may open an Interaction through a Verb and wait for the
-    // answer. Publish that reentrant state without nesting the same Hook, or
-    // the Interaction needed to unblock it would remain hidden.
-    if (
-      this.humanOutboundBeforeActive ||
-      !this.plugins.hasHook("human.outbound.before")
-    ) {
-      this.publishCurrentChatState();
-      return;
-    }
-    this.humanStatePublicationPending = true;
-    void this.flushHumanStatePublication();
+    this.presentation.changed();
   }
 
-  private publishCurrentChatState(): void {
-    const next = this.buildState();
-    const kind = chatPresentationKind(this.stateStore, next);
-    if (!kind) return;
-    const presentation = this.newHumanPresentation(kind);
-    publishChatState(this.stateStore, next);
-    this.plugins.afterHook("human.outbound.after", presentation);
-  }
-
-  private async flushHumanStatePublication(): Promise<void> {
-    if (this.humanStatePublicationRunning) return;
-    this.humanStatePublicationRunning = true;
-    try {
-      while (this.humanStatePublicationPending) {
-        this.humanStatePublicationPending = false;
-        const kind = chatPresentationKind(this.stateStore, this.buildState());
-        if (!kind) continue;
-        const presentation = this.newHumanPresentation(kind);
-        const plugins = this.plugins;
-        this.humanOutboundBeforeActive = true;
-        try {
-          await plugins.beforeHook("human.outbound.before", presentation);
-        } finally {
-          this.humanOutboundBeforeActive = false;
-        }
-        const next = this.buildState();
-        if (chatPresentationKind(this.stateStore, next)) {
-          publishChatState(this.stateStore, next);
-          plugins.afterHook("human.outbound.after", presentation);
-        }
-      }
-    } finally {
-      this.humanStatePublicationRunning = false;
-      if (this.humanStatePublicationPending) {
-        void this.flushHumanStatePublication();
-      }
-    }
-  }
-
-  private newHumanPresentation(
-    kind: HumanPresentation["kind"],
-  ): HumanPresentation {
-    return Object.freeze({
-      presentationId: newId("hp"),
-      kind,
-      revision: ++this.humanPresentationRevision,
-    });
-  }
-
-  /** Board keeps its narrow sidecar/footer publication path to avoid unrelated redraws. */
+  /** Board 与其他可见状态共用同一条 outbound 路径。 */
   private boardChanged(): void {
-    if (
-      !this.boardPublicationChanged() ||
-      this.humanOutboundBeforeActive ||
-      !this.plugins.hasHook("human.outbound.before")
-    ) {
-      this.publishBoard();
-      return;
-    }
-    const presentation = this.newHumanPresentation("board");
-    const plugins = this.plugins;
-    void (async () => {
-      this.humanOutboundBeforeActive = true;
-      try {
-        await plugins.beforeHook("human.outbound.before", presentation);
-      } finally {
-        this.humanOutboundBeforeActive = false;
-      }
-      this.publishBoard(presentation, plugins);
-    })();
-  }
-
-  private boardPublicationChanged(): boolean {
-    const board = this.boardView();
-    const currentFooter = this.stateStore.getState("footer");
-    return (
-      this.stateStore.getState("sidecar") !== board.sidecar ||
-      currentFooter.toast !== this.toast ||
-      currentFooter.text !== this.boardFooterText(currentFooter.text, board)
-    );
-  }
-
-  private publishBoard(
-    presentation = this.newHumanPresentation("board"),
-    plugins = this.plugins,
-  ): void {
-    const board = this.boardView();
-    const currentFooter = this.stateStore.getState("footer");
-    const footer = this.boardFooterText(currentFooter.text, board);
-    const changed =
-      this.stateStore.getState("sidecar") !== board.sidecar ||
-      currentFooter.toast !== this.toast ||
-      currentFooter.text !== footer;
-    if (!changed) return;
-    this.stateStore.commit({
-      sidecar: board.sidecar,
-      ...(currentFooter.toast === this.toast && currentFooter.text === footer
-        ? {}
-        : { footer: { toast: this.toast, text: footer } }),
-    });
-    plugins.afterHook("human.outbound.after", presentation);
-  }
-
-  private boardFooterText(
-    current: string | undefined,
-    board: BoardViewProjection,
-  ): string {
-    const footerWithoutBoard = (current ?? "").replace(
-      /  board:\d+(?=  cwd:)/,
-      "",
-    );
-    return (
-      board.items.length > 0
-        ? footerWithoutBoard.replace(
-          /  cwd:/,
-          `  board:${board.items.length}  cwd:`,
-        )
-        : footerWithoutBoard
-    );
+    this.presentation.boardChanged();
   }
 
   private completionsChanged(invalidateMentions = true): void {

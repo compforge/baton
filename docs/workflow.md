@@ -12,7 +12,8 @@ Human  ─ submit ────────────────────�
 Harness ─ native permission/question verb ─────→ Adapter lowering ─┐
 Plugin  ─ ask/confirm reconcile verb ──────────→ Host lowering ────┴─→ Interaction ─→ Human
 Plugin  ─ draft/harness reconcile verb ─→ Interaction gate ─→ HarnessInvocation ─→ Input ─→ Harness
-Harness ─ native output ─→ Adapter normalize ─→ Event / Projection ───→ Human / Plugin
+Harness ─ native output ─→ Adapter normalize ─→ Event / Projection ─→ Channel outbound ─→ Human
+                                                    └─ Hook ─→ Plugin
 ```
 
 Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core
@@ -29,15 +30,15 @@ Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；�
 
 ### 2.1 采集与准入
 
-chat-tui 把 Human Input 交给 Baton。Input 是判别联合：prompt、command、configuration、
-Interaction response 和 interrupt 都是输入事实；只有一部分会 lowering 为 HarnessInput，另一部分
+chat-tui 把键盘、文本和页面操作翻译成 Human Input，再交给 Core `Channel`。Input 是判别联合：
+prompt、command、configuration、Interaction response 和 interrupt 都是输入事实；只有一部分会 lowering 为 HarnessInput，另一部分
 操作 Core 的 Queue、配置或 Interaction。
 mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
 Harness wire。
 
-Event Ledger 只记录 intake 的 WAL。BatonSession 先 record 并 reduce
-`input.received(inputId, input)`，Core 再以这条 durable record 通知
-`human.inbound.before`，随后执行 lowering；lowering 返回后先接受
+Event Ledger 只记录 intake 的 WAL。Channel 让 BatonSession 先 record 并 reduce
+`input.received(inputId, input)`，再以这条 durable record 通知
+`human.inbound.before`，随后调用末端 handler 执行 lowering；lowering 返回后先接受
 `input.settled(outcome)`，再通知 `human.inbound.after`。Hook 即使通过 Verb 发起动作，也一定能找到
 触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
 
@@ -81,9 +82,9 @@ HarnessInput source 调度：
 Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代表是否调用 Harness。人或 Plugin
 发起的异步任务都可以使用新 Lane。
 
-Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，以
-`HumanPresentation` 通知 `human.outbound.before/after`。before 位于 chat state store commit
-之前；after 只说明 store 已接收最新 presentation，不证明终端已经绘制或用户已经看见。多个更新可在
+Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，统一走
+Channel outbound，并以 `HumanPresentation` 通知 `human.outbound.before/after`。before 位于 surface state commit
+之前；after 只说明 surface 已接收最新 presentation，不证明终端已经绘制或用户已经看见。多个更新可在
 等待 before 时合并。若 before Hook 通过 Verb 打开 Interaction 并等待人的回答，该 Interaction
 必须立即发布而不能递归进入同一个 before Hook，否则 Hook 会等待一个尚未展示的问题而自锁；这种
 重入发布仍发送 after 通知。
@@ -182,7 +183,7 @@ fail-open，不能让 Plugin 截断 Harness 输出。
 Event 分出的记录支路，不是 Projection 需要经过的一站：
 
 ```text
-Event ── reduce ──→ Projection snapshot ──→ chat-tui
+Event ── reduce ──→ Projection snapshot ──→ Channel outbound ──→ surface
   ├── record ──→ Event Ledger
   └── notify ──→ Hook ──→ Plugin
 ```
@@ -267,7 +268,7 @@ Harness native verb → Adapter lowering ┐
 Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
   → Core signs interactionId + requester
   → interaction.requested persisted
-  → chat-tui presents to user, or host policy resolves it
+  → Channel outbound presents to a Human surface, or host policy resolves it
   → user/policy answers, or request is cancelled
   → interaction.answered / interaction.cancelled persisted
   → waiting Adapter or Plugin execution continuation resumes
@@ -322,6 +323,7 @@ BatonSession；此后 resume/fork 只走 BatonSession 主路径。详细边界�
 
 ## 7. 代码与测试锚点
 
+- `src/channel/`、`src/tui/protocol/presentation.ts` — Human/Core 双向边界与 chat-tui outbound 适配
 - `src/controller/input.ts`、`turn.ts`、`attempt.ts` — Input、Turn 与 Delivery Attempt owner
 - `src/context/delivery.ts` — Snapshot、Receipt 与 Epoch
 - `src/interaction/types.ts`、`harness.ts`、`reconcile.ts` — Interaction 公共模型与两种 continuation

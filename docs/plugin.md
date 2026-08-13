@@ -201,14 +201,14 @@ direction 沿 Human→Harness 定义：Human 输入和 Core→Harness delivery �
 
 `before` 同一 stage 的回调并发执行，Core 等待全部 settled；单个回调抛错或超时只记录结构化日志，
 不阻断用户输入或 Harness 主链路。`after` 进入有界、best-effort 的异步队列，不延长主链路。
-`human.outbound.after` 只表示 chat-tui state store 已接收 presentation，不代表用户真实看见。
+`human.outbound.after` 只表示 Channel 已把 presentation 交给 Human surface state，不代表用户真实看见。
 
 Human inbound 的 typed subject 覆盖 prompt、command、Harness/model/effort/mode configuration、
-Interaction response 与 interrupt。Core 先把 `input.received` 写入 Event Ledger，再把带稳定
+Interaction response 与 interrupt。Channel 先把 `input.received` 写入 Event Ledger，再把带稳定
 `inputId/eventId` 的 record 交给 before；lowering 完成后先写 `input.settled`，再触发 after。
 prompt lowering 出来的 HarnessInput 使用独立 `messageId`，通过 `parentEventId` 关联 Human Input。
 Human outbound 覆盖 transcript、queue、Interaction、status、toast、Board 与 picker 的 state
-publication。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
+publication，统一经 Channel 返回 surface。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
 Interaction 会直接发布并只发送 after，避免 Hook 等待尚未展示给人的问题而自锁。
 
 Harness inbound 的 subject 是一次准备发送的 `HarnessDelivery`。新 Turn 复用持久 Delivery

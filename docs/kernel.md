@@ -18,9 +18,14 @@ Baton Core 位于三类参与者之间：
 | **Harness** | 推理、工具调用和原生执行会话 | 接收 HarnessInput，产生 Interaction request、Event 和 receipt |
 | **Plugin** | 领域 loop、Connector 和完成条件 | 通过 Hook 或 reconcile 被唤醒，通过 Verb 请求 Core 行动 |
 
-Core 是三方的协调者，不代替任何一方完成其工作。它接收 Human Input、Harness output 和 Plugin Verb，
+Core 是三方的协调者，不代替任何一方完成其工作。`Channel` 是 Human 与 Core 之间的双向协调边界：
+inbound 承接已类型化的 Human Input，outbound 承接面向 surface 的 Projection 发布。Core 内部仍由 Queue、
+Controller、Session 和 Adapter 各自拥有调度与执行职责。Core 接收 Human Input、Harness output 和 Plugin Verb，
 负责持久化、路由、权限、调度、取消、恢复与 Projection。参与者不能互持进程句柄、私建回调通道，
 也不能绕过 Core 直接改变另一方状态。
+
+Channel 只借用网络框架中 request inbound、response outbound 的方向感；它是 Baton 的固定 typed path，
+不复制可任意挂载 handler 的通用 pipeline。Plugin 扩展点仍是 Hook 通知与 Verb 请求。
 
 chat-tui 位于内核之外：它把键盘、文本和页面操作变成 Human Input，并展示 Core Projection；它不拥有
 Session、Queue、Harness 或 Plugin 生命周期，也不解释 Requirement、Deployment、Review 等领域语义。
@@ -30,6 +35,7 @@ Session、Queue、Harness 或 Plugin 生命周期，也不解释 Requirement、D
 | 概念 | 语义与 owner |
 |---|---|
 | **BatonSession** | Human 拥有的持久协作空间；承载 Event Ledger、Lane 与 session-scoped Plugin 数据 |
+| **Channel** | Human 与 Core 的双向协调边界；inbound 遵守 Input WAL 后调用末端 handler，outbound 把 Projection 发布给 surface；它不调度、不 reduce、不执行 Harness |
 | **Input** | Human 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
 | **HarnessInput** | Core lowering 后准备交给 Harness 的输入；具有稳定 message identity、目标 Lane 和可查询消费状态 |
 | **Queue** | Core 的全局调度对象；当前主要承载 HarnessInput，决定等待、steer、取消和何时提交给 Harness |
@@ -68,13 +74,15 @@ Input 时也可以产生答案，此时仍建立普通 Turn，只是没有对应
 
 ### 3.1 Human 到 Harness
 
-Human Input 先由 BatonSession 接受为 Event，再由 Core lowering。当前 WAL 顺序是先
+Human Input 先进入 Channel，由 BatonSession 接受为 Event，再交给末端 Core handler lowering。当前 WAL 顺序是先
 record Event，再 reduce Projection 并继续 lowering；Ledger 只记录这个事实，不驱动后续流程。
 不同 Input 可以推进不同对象：
 
 ```text
 Human
   ↓ Input
+Channel inbound
+  ↓
 BatonSession accepts Event
   ├─ record ─────────────────────→ Event Ledger
   ├─ reduce ─────────────────────→ Projection
@@ -92,11 +100,11 @@ Queue 是 Human 到 Harness 主路径上的调度者，但 Input 不等于 Harne
 
 ### 3.2 Harness 到 Human
 
-Harness output 经 Adapter 归一为 Event，BatonSession 直接 reduce 出 Projection 供 Human 消费。
+Harness output 经 Adapter 归一为 Event，BatonSession 直接 reduce 出 Projection，再经 Channel outbound 交给 Human surface。
 Event 同时被 Ledger 记录、被 Hook 通知给 Plugin；两者都不是 Projection 的中转站：
 
 ```text
-Harness → Adapter normalize → Event → reduce → Projection → Human
+Harness → Adapter normalize → Event → reduce → Projection → Channel outbound → Human
                                    ├─ record ───→ Event Ledger
                                    └─ notify ───→ Hook → Plugin
 ```
@@ -126,7 +134,7 @@ Plugin 决定领域下一步，Core 决定协作动作如何授权、持久化�
 ```text
                             Baton host process
 ┌──────────┐ Human Input   ┌──────────────────────────────────────┐
-│  Human   │◀─────────────▶│ Input / Queue / Interaction          │
+│  Human   │◀─────────────▶│ Channel → Input / Queue / Interaction │
 │ via TUI  │  Projection   │ Session / Event Ledger / Policy      │
 └──────────┘               │ Routing / Scheduling / Recovery      │
                            └──────────────┬───────────────┬────────┘
