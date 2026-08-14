@@ -17,7 +17,8 @@ import type {
 } from "../src/harness/adapter.ts";
 import { textOf, type PromptBlock } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
-import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
@@ -136,7 +137,6 @@ describe("Input lifecycle (HarnessInput)", () => {
       laneId: MAIN_LANE_ID,
       turnId: "t_restored",
       payload: {
-        queueId: 7,
         messageId: "m_restored",
         turnId: "t_restored",
         harnessTargetId: "codex",

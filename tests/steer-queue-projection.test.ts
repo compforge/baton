@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import type { Controller } from "../src/controller/index.ts";
 import { projectChatState } from "../src/tui/protocol/state.ts";
-import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 
 let root: string;
 let session: SessionHandle;
@@ -32,6 +33,47 @@ function project(controller: Controller) {
 }
 
 describe("steer queue projection", () => {
+  test("uses message identity for queued Inputs from different Lane Queues", () => {
+    const controller = {
+      activeHarnessTargetId: undefined,
+      activeTurnId: undefined,
+      queuedHarnessInputs: [
+        {
+          messageId: "m_main",
+          enqueueSeq: 1,
+          turnId: "t_main",
+          harnessTargetId: "codex",
+          laneId: MAIN_LANE_ID,
+          harness: "codex",
+          blocks: [{ type: "text", text: "main follow-up" }],
+          source: { type: "user" },
+        },
+        {
+          messageId: "m_side",
+          enqueueSeq: 2,
+          turnId: "t_side",
+          harnessTargetId: "codex",
+          laneId: "hl_side",
+          harness: "codex",
+          blocks: [{ type: "text", text: "side follow-up" }],
+          source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+          harnessInvocationId: "hinv_side",
+        },
+      ],
+      currentModel: () => null,
+      currentEffort: () => null,
+      currentMode: () => "default",
+      approvalRoute: () => null,
+      isBusy: false,
+      harnessQueueLength: 2,
+    } as unknown as Controller;
+
+    expect(project(controller).composer.queued?.map((item) => item.id)).toEqual([
+      "m_main",
+      "m_side",
+    ]);
+  });
+
   test("keeps a pending native steer in Queue until the correlated apply receipt", () => {
     const turnId = "t_active";
     session.appendEvent({

@@ -4,7 +4,8 @@ import type { HarnessTarget } from "./harness/target.ts";
 import type { HarnessInput, HarnessInputSource, HarnessInputStatus } from "./harness/input.ts";
 
 export interface QueueSnapshot {
-  id: number;
+  messageId: string;
+  enqueueSeq: number;
   turnId: string;
   harnessTargetId: string;
   laneId: string;
@@ -18,6 +19,8 @@ export type QueueOutcome = "completed" | "recalled";
 
 /** Queue-private continuation; it is never persisted or exposed to Harnesses. */
 export interface QueueItem extends HarnessInput {
+  /** First queued Event seq; orders Queue heads without creating another identity. */
+  enqueueSeq: number;
   resolve?: (outcome: QueueOutcome) => void;
   reject?: (error: unknown) => void;
 }
@@ -53,20 +56,22 @@ type BeforeInputTransition = (
   input: QueueItem,
   status: HarnessInputStatus,
   update?: { turnId?: string; delivery?: HarnessInput["delivery"] },
-) => void;
+) => number;
 
 /**
- * In-memory execution index for Harness Inputs. Durable queue truth lives in
- * `harness_input.updated` Events; every mutation calls `beforeTransition` first.
+ * One Lane's in-memory execution index for Harness Inputs. Durable queue truth
+ * lives in `harness_input.updated` Events; every mutation calls
+ * `beforeTransition` first.
  */
 export class Queue<TBinding extends QueueBinding> {
   private readonly queue: QueueItem[] = [];
-  private readonly dispatching = new Map<string, QueueItem>();
-  private readonly runsByTurn = new Map<string, QueueRun<TBinding>>();
-  private readonly activeRunByLane = new Map<string, string>();
-  private nextId = 1;
+  private dispatching: QueueItem | undefined;
+  private currentRun: QueueRun<TBinding> | undefined;
 
-  constructor(private readonly beforeTransition?: BeforeInputTransition) {}
+  constructor(
+    readonly laneId: string,
+    private readonly beforeTransition: BeforeInputTransition,
+  ) {}
 
   get length(): number {
     return this.queue.length;
@@ -76,8 +81,12 @@ export class Queue<TBinding extends QueueBinding> {
     return this.queue;
   }
 
+  get head(): QueueItem | undefined {
+    return this.queue[0];
+  }
+
   get claimed(): readonly QueueItem[] {
-    return [...this.dispatching.values()];
+    return this.dispatching ? [this.dispatching] : [];
   }
 
   get snapshots(): QueueSnapshot[] {
@@ -85,18 +94,15 @@ export class Queue<TBinding extends QueueBinding> {
   }
 
   runs(): IterableIterator<QueueRun<TBinding>> {
-    return this.runsByTurn.values();
+    return (this.currentRun ? [this.currentRun] : []).values();
   }
 
   run(turnId: string): QueueRun<TBinding> | undefined {
-    return this.runsByTurn.get(turnId);
+    return this.currentRun?.turnId === turnId ? this.currentRun : undefined;
   }
 
-  activeRun(laneId: string): QueueRun<TBinding> | undefined {
-    const turnId = this.activeRunByLane.get(laneId);
-    if (!turnId) return undefined;
-    const run = this.runsByTurn.get(turnId);
-    return run?.status === "active" ? run : undefined;
+  get activeRun(): QueueRun<TBinding> | undefined {
+    return this.currentRun?.status === "active" ? this.currentRun : undefined;
   }
 
   startRun(
@@ -104,8 +110,13 @@ export class Queue<TBinding extends QueueBinding> {
     turnId: string,
     input?: QueueItem,
   ): { run: QueueRun<TBinding>; settled: Promise<void> } {
-    if (this.activeRun(binding.laneId)) {
-      throw new Error(`Lane ${binding.laneId} already has an active Queue run`);
+    if (binding.laneId !== this.laneId) {
+      throw new Error(
+        `Queue ${this.laneId} cannot start a run for Lane ${binding.laneId}`,
+      );
+    }
+    if (this.activeRun) {
+      throw new Error(`Lane ${this.laneId} already has an active Queue run`);
     }
     let release!: () => void;
     const settled = new Promise<void>((resolve) => {
@@ -120,8 +131,7 @@ export class Queue<TBinding extends QueueBinding> {
       release,
       status: "active",
     };
-    this.runsByTurn.set(turnId, run);
-    this.activeRunByLane.set(binding.laneId, turnId);
+    this.currentRun = run;
     return { run, settled };
   }
 
@@ -135,10 +145,7 @@ export class Queue<TBinding extends QueueBinding> {
       steer.status = terminal;
       steer.resolve?.("completed");
     }
-    if (this.activeRunByLane.get(run.laneId) === run.turnId) {
-      this.activeRunByLane.delete(run.laneId);
-    }
-    this.runsByTurn.delete(run.turnId);
+    if (this.currentRun?.turnId === run.turnId) this.currentRun = undefined;
     if (run.cancelGraceTimer) clearTimeout(run.cancelGraceTimer);
     run.cancelGraceTimer = undefined;
     run.release();
@@ -147,7 +154,6 @@ export class Queue<TBinding extends QueueBinding> {
 
   enqueue(
     target: HarnessTarget,
-    laneId: string,
     blocks: PromptBlock[],
     options?: {
       source?: HarnessInputSource;
@@ -155,7 +161,7 @@ export class Queue<TBinding extends QueueBinding> {
       sourceProposedPlanId?: string;
       identity?: { messageId: string; turnId: string };
       parentEventId?: string;
-      queueId?: number;
+      enqueueSeq?: number;
       restore?: boolean;
     },
   ): QueueSubmission {
@@ -166,11 +172,11 @@ export class Queue<TBinding extends QueueBinding> {
       reject = rejectOutcome;
     });
     const input: QueueItem = {
-      id: options?.queueId ?? this.nextId++,
+      enqueueSeq: options?.enqueueSeq ?? 0,
       turnId: options?.identity?.turnId ?? newId("t"),
       messageId: options?.identity?.messageId ?? newId("m"),
       target,
-      laneId,
+      laneId: this.laneId,
       blocks,
       source: options?.source ?? { type: "user" },
       ...(options?.harnessInvocationId === undefined
@@ -187,8 +193,13 @@ export class Queue<TBinding extends QueueBinding> {
       resolve,
       reject,
     };
-    this.nextId = Math.max(this.nextId, input.id + 1);
-    if (!options?.restore) this.beforeTransition?.(input, "queued");
+    if (options?.restore) {
+      if (input.enqueueSeq < 1) {
+        throw new Error(`restored Input ${input.messageId} is missing its queued Event seq`);
+      }
+    } else {
+      input.enqueueSeq = this.beforeTransition(input, "queued");
+    }
     this.queue.push(input);
     return { input, outcome };
   }
@@ -198,47 +209,48 @@ export class Queue<TBinding extends QueueBinding> {
    * @see {@link ../docs/workflow.md}
    */
   claimFirstForSteer(input: QueueItem): boolean {
-    if (this.dispatching.size > 0 || this.queue[0] !== input) return false;
-    this.beforeTransition?.(input, "dispatching", { delivery: "steer" });
+    if (this.dispatching || this.queue[0] !== input) return false;
+    this.beforeTransition(input, "dispatching", { delivery: "steer" });
     this.queue.shift();
     input.status = "dispatching";
     input.delivery = "steer";
-    this.dispatching.set(input.messageId, input);
+    this.dispatching = input;
     return true;
   }
 
   acceptClaimedSteer(input: QueueItem, turnId: string): void {
-    if (!this.dispatching.delete(input.messageId)) {
+    if (this.dispatching !== input) {
       throw new Error(`Input ${input.messageId} is not dispatching`);
     }
-    this.beforeTransition?.(input, "accepted_steer", { turnId, delivery: "steer" });
+    this.beforeTransition(input, "accepted_steer", { turnId, delivery: "steer" });
+    this.dispatching = undefined;
     input.turnId = turnId;
     input.status = "accepted_steer";
   }
 
   requeueClaimed(input: QueueItem): void {
-    if (!this.dispatching.delete(input.messageId)) {
+    if (this.dispatching !== input) {
       throw new Error(`Input ${input.messageId} is not dispatching`);
     }
-    this.beforeTransition?.(input, "queued", { delivery: "prompt" });
+    this.beforeTransition(input, "queued", { delivery: "prompt" });
+    this.dispatching = undefined;
     input.status = "queued";
     input.delivery = "prompt";
     this.queue.unshift(input);
   }
 
   abandonClaimed(input: QueueItem): void {
-    if (!this.dispatching.delete(input.messageId)) return;
-    this.beforeTransition?.(input, "interrupted");
+    if (this.dispatching !== input) return;
+    this.beforeTransition(input, "interrupted");
+    this.dispatching = undefined;
     input.status = "interrupted";
     input.resolve?.("completed");
   }
 
-  dequeue(predicate?: (input: QueueItem) => boolean): QueueItem | undefined {
-    const index = predicate ? this.queue.findIndex(predicate) : 0;
-    if (index < 0) return;
-    const input = this.queue[index];
-    if (input) this.beforeTransition?.(input, "admitted");
-    const [removed] = this.queue.splice(index, 1);
+  dequeue(): QueueItem | undefined {
+    const input = this.queue[0];
+    if (input) this.beforeTransition(input, "admitted");
+    const [removed] = this.queue.splice(0, 1);
     if (removed) removed.status = "admitted";
     return removed;
   }
@@ -249,7 +261,7 @@ export class Queue<TBinding extends QueueBinding> {
     );
     if (index < 0) return undefined;
     const input = this.queue[index];
-    if (input) this.beforeTransition?.(input, "recalled");
+    if (input) this.beforeTransition(input, "recalled");
     const [removed] = this.queue.splice(index, 1);
     if (!removed) return undefined;
     removed.status = "recalled";
@@ -263,7 +275,7 @@ export class Queue<TBinding extends QueueBinding> {
     );
     if (index < 0) return undefined;
     const input = this.queue[index];
-    if (input) this.beforeTransition?.(input, "recalled");
+    if (input) this.beforeTransition(input, "recalled");
     const [removed] = this.queue.splice(index, 1);
     if (!removed) return undefined;
     removed.status = "recalled";
@@ -274,7 +286,8 @@ export class Queue<TBinding extends QueueBinding> {
 
 function queueSnapshot(input: QueueItem): QueueSnapshot {
   return {
-    id: input.id,
+    messageId: input.messageId,
+    enqueueSeq: input.enqueueSeq,
     turnId: input.turnId,
     harnessTargetId: input.target.id,
     laneId: input.laneId,

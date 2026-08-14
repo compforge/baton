@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import type { ReconcileHarnessInvocation } from "../src/plugin/harness-invocation.ts";
 import { HarnessInvocationStore } from "../src/plugin/harness-invocation.ts";
-import { MAIN_LANE_ID, SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
 

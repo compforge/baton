@@ -24,10 +24,6 @@ import {
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
-import { MAIN_LANE_ID } from "@compforge/baton-plugin";
-
-export { MAIN_LANE_ID } from "@compforge/baton-plugin";
-
 import {
   type LogEntry,
   type LogLevel,
@@ -53,29 +49,16 @@ import {
   type UsageUpdate,
 } from "../event/index.ts";
 import { EventLedger } from "../event/ledger.ts";
-import type { HarnessLaunchSnapshot } from "../harness/target.ts";
 import type { HarnessSessionIdentity } from "../harness/adapter.ts";
 import { sessionIdResumeState, type HarnessResumeState } from "../harness/resume.ts";
+import {
+  createLaneMeta,
+  createMainLaneMeta,
+  MAIN_LANE_ID,
+  type HarnessSessionMeta,
+  type LaneMeta,
+} from "../lane.ts";
 import { applyEvent, reduceEvents, type SessionState } from "./reduce.ts";
-
-export interface HarnessSessionMeta {
-  harness: string;
-  /** 当前原生 session 最近一次 create/resume 实际采用的配置快照。 */
-  launchSnapshot?: HarnessLaunchSnapshot;
-  harnessSessionId?: string;
-  /** Adapter 拥有的版本化 checkpoint；Baton 只保存并在下次 open 时原样回传。 */
-  resumeState?: HarnessResumeState;
-  /** harness 侧恢复所需的游标（如 Claude SDK resume cursor），语义归 adapter */
-  resumeCursor?: string;
-  /**
-   * 当前原生会话的 ContextEpoch identity：resume 保留，fresh session 重新签发。
-   * 已接受的 revision 由 ContextDeliveryReceipt 重放；syncedSeq 只是兼容缓存。
-   */
-  contextEpochId?: string;
-  /** 该 ContextEpoch 已同步到的 BatonSession 事件序号（Receipt 的缓存，不是真相源）。 */
-  syncedSeq?: number;
-  parentSessionId?: string;
-}
 
 /** HarnessTarget-scoped preferences are shared across Lanes, not by native sessions. */
 export interface HarnessTargetMeta {
@@ -84,25 +67,6 @@ export interface HarnessTargetMeta {
   model?: string;
   effort?: string;
   mode?: string;
-}
-
-export type LaneCreatedFor =
-  | { type: "session" }
-  | { type: "harness_invocation"; invocationId: string }
-  /** Reserved for the direct human “start this asynchronously” intake path. */
-  | { type: "user_request"; requestId: string };
-
-/**
- * Baton-owned task line. A Lane is independent from Harness selection and can
- * hand work between Targets while remaining serial within the Lane.
- */
-export interface LaneMeta {
-  laneId: string;
-  createdFor: LaneCreatedFor;
-  /** Creation provenance for a side Lane; it does not constrain later use. */
-  parentLaneId?: string;
-  /** harnessTargetId → native binding used by that Target within this Lane. */
-  harnessSessions: Record<string, HarnessSessionMeta>;
 }
 
 /** 0.2.21 and earlier stored Target preferences and one native binding together. */
@@ -232,11 +196,7 @@ export function sessionDisplayTitle(meta: SessionMeta): string {
 function normalizeSessionMeta(meta: SessionMeta): SessionMeta {
   const harnessTargets = { ...(meta.harnessTargets ?? {}) };
   const lanes = { ...(meta.lanes ?? {}) };
-  const mainLane = lanes[MAIN_LANE_ID] ?? {
-    laneId: MAIN_LANE_ID,
-    createdFor: { type: "session" as const },
-    harnessSessions: {},
-  };
+  const mainLane = lanes[MAIN_LANE_ID] ?? createMainLaneMeta();
   lanes[MAIN_LANE_ID] = mainLane;
 
   for (const [harnessTargetId, legacy] of Object.entries(meta.harnessSessions ?? {})) {
@@ -423,11 +383,7 @@ export class SessionStore {
       updatedAt: new Date().toISOString(),
       harnessTargets: {},
       lanes: {
-        [MAIN_LANE_ID]: {
-          laneId: MAIN_LANE_ID,
-          createdFor: { type: "session" },
-          harnessSessions: {},
-        },
+        [MAIN_LANE_ID]: createMainLaneMeta(),
       },
       harnessSessions: {},
     };
@@ -816,12 +772,11 @@ export class SessionStore {
     const lanes = Object.fromEntries(
       Object.entries(source.meta.lanes).map(([laneId, lane]) => [
         laneId,
-        {
+        createLaneMeta({
           laneId,
           createdFor: lane.createdFor,
-          ...(lane.parentLaneId === undefined ? {} : { parentLaneId: lane.parentLaneId }),
-          harnessSessions: {},
-        } satisfies LaneMeta,
+          parentLaneId: lane.parentLaneId,
+        }),
       ]),
     );
     const meta: SessionMeta = {
@@ -1263,12 +1218,11 @@ export class SessionHandle {
       }
       return existing;
     }
-    const lane: LaneMeta = {
+    const lane = createLaneMeta({
       laneId,
       createdFor: { type: "harness_invocation", invocationId },
       parentLaneId,
-      harnessSessions: {},
-    };
+    });
     this.setLane(laneId, lane);
     return lane;
   }

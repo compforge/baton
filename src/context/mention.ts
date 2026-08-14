@@ -3,8 +3,8 @@
 
 import type { TurnSummary } from "../event/index.ts";
 import type { HarnessTarget } from "../harness/target.ts";
+import { MAIN_LANE_ID } from "../lane.ts";
 import {
-  MAIN_LANE_ID,
   sessionDisplayTitle,
   type SessionHandle,
   type SessionStore,

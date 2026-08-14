@@ -22,6 +22,7 @@ import type {
 } from "../src/harness/adapter.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
@@ -200,7 +201,7 @@ describe("Turn scope and Queue runtime have separate lifetimes", () => {
     const internals = (
       controller as unknown as {
         turns: { get(turnId: string): { status: string } | undefined };
-        mainQueue: { run(turnId: string): unknown };
+        queues: Map<string, { run(turnId: string): unknown }>;
       }
     );
 
@@ -208,7 +209,7 @@ describe("Turn scope and Queue runtime have separate lifetimes", () => {
     await Bun.sleep(1);
     const turnId = adapter.submitted!.turnId;
     expect(internals.turns.get(turnId)?.status).toBe("active");
-    expect(internals.mainQueue.run(turnId)).toBeDefined();
+    expect(internals.queues.get(MAIN_LANE_ID)?.run(turnId)).toBeDefined();
 
     adapter.sink?.({
       kind: "state_update",
@@ -221,7 +222,7 @@ describe("Turn scope and Queue runtime have separate lifetimes", () => {
     const record = internals.turns.get(turnId);
     expect(record?.status).toBe("finalized");
     // Queue run（PromptBlock[] 与 release 闭包）不随已结束 Turn 线性累积。
-    expect(internals.mainQueue.run(turnId)).toBeUndefined();
+    expect(internals.queues.get(MAIN_LANE_ID)?.run(turnId)).toBeUndefined();
 
     // 幂等钉子：重复终态 inert，不产生第二份 summary
     adapter.sink?.({

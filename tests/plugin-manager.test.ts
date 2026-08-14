@@ -12,7 +12,8 @@ import { Manager } from "../src/plugin/manager.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import type { ScheduledHarnessInvocation } from "../src/plugin/harness-invocation.ts";
-import { MAIN_LANE_ID, SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { SessionStore } from "../src/store/store.ts";
 
 interface Spec {
   value: string;

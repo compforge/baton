@@ -16,7 +16,8 @@ import type {
   SendTurnReceipt,
 } from "../src/harness/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
-import { MAIN_LANE_ID, SessionStore, type SessionHandle } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 class LaneAdapter implements HarnessAdapter {
@@ -266,6 +267,103 @@ describe("Baton Lane scheduling", () => {
     });
     adapters[0]!.finish();
     expect(await second).toBe("completed");
+  });
+
+  test("a busy side Lane does not block another Lane Queue", async () => {
+    const adapters: LaneAdapter[] = [];
+    const controller = laneController(adapters, 2);
+    const first = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "hinv_lane_a_first",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId: "hl_lane_a",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_lane_a_first",
+      turnId: "t_lane_a_first",
+      blocks: blocks("lane A first"),
+    });
+    await until(() => adapters[0]?.prompts.length === 1);
+
+    const second = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "hinv_lane_a_second",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId: "hl_lane_a",
+      newLane: false,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_lane_a_second",
+      turnId: "t_lane_a_second",
+      blocks: blocks("lane A second"),
+    });
+    const otherLane = controller.enqueueHarnessInvocation({
+      harnessInvocationId: "hinv_lane_b",
+      pluginInstanceId: "reqloop_default",
+      harnessTargetId: "codex",
+      laneId: "hl_lane_b",
+      newLane: true,
+      parentLaneId: MAIN_LANE_ID,
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      messageId: "m_lane_b",
+      turnId: "t_lane_b",
+      blocks: blocks("lane B"),
+    });
+
+    await until(() => adapters[1]?.prompts.length === 1);
+    expect(textOf(adapters[1]!.prompts[0]!.blocks)).toBe("lane B");
+    expect(controller.queuedHarnessInputs.map((input) => input.messageId)).toEqual([
+      "m_lane_a_second",
+    ]);
+
+    adapters[1]!.finish();
+    expect(await otherLane).toBe("completed");
+    adapters[0]!.finish();
+    expect(await first).toBe("completed");
+    await until(() => adapters[0]!.prompts.length === 2);
+    adapters[0]!.finish();
+    expect(await second).toBe("completed");
+  });
+
+  test("restores queued Human Inputs into their Lane Queues by first queued Event seq", async () => {
+    session.ensureHarnessInvocationLane("hl_restore_old", "hinv_restore_old", MAIN_LANE_ID);
+    session.ensureHarnessInvocationLane("hl_restore_new", "hinv_restore_new", MAIN_LANE_ID);
+    const recordQueued = (messageId: string, turnId: string, laneId: string, text: string) =>
+      session.appendEvent({
+        kind: "harness_input.updated",
+        source: { type: "user" },
+        harness: "codex",
+        harnessTargetId: "codex",
+        laneId,
+        turnId,
+        payload: {
+          messageId,
+          turnId,
+          harnessTargetId: "codex",
+          laneId,
+          blocks: blocks(text),
+          source: { type: "user" },
+          status: "queued",
+          delivery: "prompt",
+        },
+      });
+    recordQueued("m_restore_old", "t_restore_old", "hl_restore_old", "older");
+    recordQueued("m_restore_new", "t_restore_new", "hl_restore_new", "newer");
+
+    const adapters: LaneAdapter[] = [];
+    const controller = laneController(adapters, 1);
+    expect(controller.queuedHarnessInputs.map((input) => input.messageId)).toEqual([
+      "m_restore_old",
+      "m_restore_new",
+    ]);
+
+    await until(() => adapters[0]?.prompts.length === 1);
+    expect(textOf(adapters[0]!.prompts[0]!.blocks)).toBe("older");
+    adapters[0]!.finish();
+    await until(() => adapters[1]?.prompts.length === 1);
+    expect(textOf(adapters[1]!.prompts[0]!.blocks)).toContain("newer");
+    adapters[1]!.finish();
+    await until(() => controller.harnessInputs.length === 0);
   });
 
   test("one Lane can hand off serially across HarnessTargets", async () => {

@@ -39,7 +39,7 @@ chat-tui 位于内核之外：它把键盘、文本和页面操作变成 Human I
 | **Channel** | BatonSession 的 active composition root 与 typed coordination facade；拥有进程期组件引用、订阅和 `open/closing/closed`，不拥有任何可恢复业务状态或状态机 |
 | **Input** | Human 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
 | **HarnessInput** | Core lowering 后准备交给 Harness 的输入；具有稳定 message identity、目标 Lane 和可查询消费状态 |
-| **Queue** | Core 的全局调度对象；当前主要承载 HarnessInput，决定等待、steer、取消和何时提交给 Harness |
+| **Queue** | 一条 Lane 的 HarnessInput 背压缓冲；Lane 内按入队顺序串行，决定等待、steer、取消和何时提交给 Harness |
 | **Lane** | BatonSession 内持久的任务线边界；Lane 内串行，不同 Lane 可以并行，可在多个 Harness 之间接力 |
 | **Turn** | Human 与 Harness 的一次交流边界；通常是一问一答，也可以只有 Harness 的回答。Turn 有稳定 `turnId` 和 start/end，但不排队、不调度，也不执行工作 |
 | **Event Ledger** | BatonSession 的 append-only WAL 和历史记录；它保存正典 Event 供审计与回放，不负责调度、reduce 或实时分发 |
@@ -97,7 +97,7 @@ Channel typed dispatch
 BatonSession accepts Event
   ├─ record ─────────────────────→ Event Ledger
   ├─ reduce ─────────────────────→ Projection
-  ├── prompt/text ─────────────→ HarnessInput → Queue → Adapter → Harness
+  ├── prompt/text ─────────────→ HarnessInput → target Lane Queue → Adapter → Harness
   ├── interrupt ───────────────→ 当前 Queue run / Harness cancel
   ├── Interaction response ────→ Interaction
   └── command/configuration ───→ 对应 Core 或 surface 操作
@@ -208,9 +208,9 @@ typed Verb 回到 Core；Core 再执行 WAL、权限和生命周期规则。
 
 ### 5.5 单 Ledger、多 Lane
 
-一个 BatonSession 只有一份 Event Ledger。`seq` 只表示 append 的全局观测顺序，不表示跨 Lane 因果；
-因果由 `turnId`、`parentEventId` 和领域 identity 表达。每个 Lane 同时最多一个 active Queue run，
-Lane 内保持串行，不同 Lane 可以并行。
+一个 BatonSession 只有一份 Event Ledger，但每条 Lane 拥有自己的 Queue。`seq` 只表示 append 的全局
+观测顺序，不表示跨 Lane 因果；因果由 `turnId`、`parentEventId` 和领域 identity 表达。每个 Lane
+同时最多一个 active Queue run，Lane 内保持串行，不同 Lane 可以并行。
 
 ### 5.6 Core 不理解端点业务
 

@@ -27,7 +27,8 @@ import {
   laneTargetStateKey,
   type SessionState,
 } from "../../store/reduce.ts";
-import { MAIN_LANE_ID, type SessionHandle } from "../../store/store.ts";
+import { MAIN_LANE_ID } from "../../lane.ts";
+import type { SessionHandle } from "../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
 import {
   buildTranscript,
@@ -533,7 +534,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       }`,
     })),
     ...controller.queuedHarnessInputs.map((turn) => ({
-      id: String(turn.id),
+      id: turn.messageId,
       text: userVisibleText(composerTextOf(turn.blocks)),
       tag:
         turn.source.type === "plugin"
