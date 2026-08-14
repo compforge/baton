@@ -13,6 +13,7 @@ import { createCliRenderer, RGBA } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { createRef } from "react";
 
+import { installTerminationHandlers } from "../cli/termination.ts";
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import { openBatonSession, type OpenBatonSessionResult } from "../session/open.ts";
 import { SessionStore } from "../store/store.ts";
@@ -82,21 +83,46 @@ const batonTheme = batonThemeFor(detectedMode, terminalPalette?.defaultBackgroun
 // 也不再把整个 viewport 强制染成 Tokyo Night 的 #24283b。
 renderer.setBackgroundColor(RGBA.defaultBackground(terminalPalette?.defaultBackground ?? undefined));
 const root = createRoot(renderer);
-const quit = (sessionId?: string) => {
+let activeProtocol: BatonChatProtocol | undefined;
+let removeTerminationHandlers: () => void = () => {};
+const exitProcess = (exitCode: number, sessionId?: string) => {
+  removeTerminationHandlers();
   // OpenTUI owns raw mode and mouse tracking; restore both before process.exit,
   // whose forced exit does not run OpenTUI's beforeExit cleanup handler.
-  renderer.destroy();
+  try {
+    renderer.destroy();
+  } catch {
+    // SIGHUP can leave stdout/stderr unusable; process cleanup must still finish.
+  }
   if (sessionId) {
     console.log(`\nResume this session with:\nbaton resume ${sessionId}\n\nFork this session with:\nbaton fork ${sessionId}`);
   }
-  process.exit(0);
+  process.exit(exitCode);
 };
+const quit = (sessionId?: string) => exitProcess(0, sessionId);
+
+removeTerminationHandlers = installTerminationHandlers({
+  process,
+  timeoutMs: 10_000,
+  shutdown: async () => {
+    await activeProtocol?.shutdown();
+  },
+  exit: (code) => exitProcess(code),
+  onError: (error) => {
+    try {
+      console.error(`baton shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
+      // Dead terminal: there is nowhere safe to report the failure.
+    }
+  },
+});
 
 function startChat(opened: OpenBatonSessionResult): void {
   const tui = createRef<BatonTuiHandle>();
   const protocol = new BatonChatProtocol(store, config, opened, quit, {
     openPlugins: () => tui.current?.openPlugins(),
   });
+  activeProtocol = protocol;
   root.render(<BatonTui ref={tui} protocol={protocol} theme={batonTheme} />);
 }
 

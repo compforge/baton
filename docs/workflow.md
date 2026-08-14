@@ -253,9 +253,11 @@ Composer Queue，收到 `applied` 回执后再投影到 Transcript；`failed` �
 已经丢弃的指令提前污染下一棒上下文。
 
 Esc 只打断主 Lane 当前 active Queue run 所关联的 Turn，不影响支线 Lane。已经 `applied` 的 steer
-与该 Turn 共命运；仍是 `pending` 的 steer 以 Harness 原生 lifecycle 为准，interrupt 若保留
-它就继续留在 Queue，不静默重发也不伪造取消。仍在 queue 的 follow-up 保留并在当前
-Turn 收口后继续。cancel 请求本身不等于完成，
+与该 Turn 共命运；仍是 `pending` 的 steer 由 Adapter 声明 cancel 后的所有权：原生队列能继续时
+仍由 Harness lifecycle 报告 applied/failed；interrupt 会让它不可达时，Controller 在发 cancel 前
+用同一个 `messageId` 和原先保留的 Turn identity 把它收回 Baton Queue，并把旧 steer delivery
+标成 failed。它随后以 `follow_up` 开启新 Turn，不会因 Esc 丢失，也不会与 Harness 原生队列
+双重执行。仍在 queue 的 follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
 最终以 Harness 的 `idle/cancelled` 为准；超过 cancel 宽限且 transport 状态足够明确时，Controller
 可以合成终态兜底。
 HarnessInvocation 只用 invocation identity 定向取消自己的 queued HarnessInput 或 active Queue run，不论它位于主 Lane

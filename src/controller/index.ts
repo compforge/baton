@@ -211,8 +211,12 @@ export class Controller {
   private readonly contextDeliveries: ContextDeliveries<HarnessBinding>;
   private readonly harnessInteractions: HarnessInteractionContinuations<HarnessBinding>;
   private readonly harnessHooks: HarnessHookCoordinator;
+  private lifecycleState: "open" | "closing" | "closed" = "open";
+  private closePromise?: Promise<void>;
   private drainingMain = false;
+  private mainDrainPromise?: Promise<void>;
   private activeSideRuns = 0;
+  private readonly sideRunPromises = new Set<Promise<void>>();
   /** 已开始处理的 Queue item 从 Harness setup 起即对 UI 可见。 */
   private readonly processing = new Map<
     string,
@@ -436,6 +440,13 @@ export class Controller {
       .sort((left, right) => left.enqueueSeq - right.enqueueSeq);
   }
 
+  /** Whether an inactive Turn's pending steer can still be owned by the native Harness queue. */
+  preservesPendingSteers(harnessTargetId: string): boolean {
+    const target = this.options.resolveTarget(harnessTargetId);
+    if (!target) return false;
+    return this.bindingFor(MAIN_LANE_ID, target.id).adapter.cancelPendingSteers !== "requeue";
+  }
+
   get sideRunCount(): number {
     return this.activeSideRuns;
   }
@@ -468,6 +479,7 @@ export class Controller {
     blocks: PromptBlock[],
     options?: { sourceProposedPlanId?: string },
   ): Promise<QueueOutcome> {
+    this.assertOpen();
     const submission = this.enqueueMainInput(harnessTargetId, blocks, options);
     this.changed();
     void this.drainMain();
@@ -504,6 +516,7 @@ export class Controller {
 
   /** Materializes a scheduled HarnessInvocation without inferring Lane from source. */
   async enqueueHarnessInvocation(input: HarnessInvocationInput): Promise<QueueOutcome> {
+    this.assertOpen();
     if (
       this.harnessInputs.some(
         (candidate) => candidate.harnessInvocationId === input.harnessInvocationId,
@@ -574,6 +587,7 @@ export class Controller {
     blocks: PromptBlock[],
     options?: SendTurnOptions,
   ): Promise<SendTurnOutcome> {
+    this.assertOpen();
     const laneId = this.mainLaneId();
     const queue = this.queueForLane(laneId);
     const active = queue.activeRun;
@@ -615,6 +629,25 @@ export class Controller {
         };
       }
       if (receipt.effective === "steer") {
+        if (
+          active.status === "finalized" &&
+          active.stopReason === "cancelled" &&
+          active.binding.adapter.cancelPendingSteers === "requeue" &&
+          this.options.session.loadState().messages.get(input.messageId)?.deliveryState !== "applied"
+        ) {
+          // The admission receipt lost the race with Esc. This Adapter cannot
+          // carry native pending input across cancel, so the still-unapplied
+          // claimed Input returns to Baton's queue instead of being attached
+          // to an already retired Turn.
+          queue.requeueClaimed(input);
+          this.changed();
+          void this.drainMain();
+          return {
+            effective: "new_turn",
+            queued: true,
+            outcome: submission.outcome,
+          };
+        }
         queue.acceptClaimedSteer(input, active.turnId);
         if (active.status === "active") {
           // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
@@ -741,6 +774,7 @@ export class Controller {
    * 仍走统一 running → harness events → idle 流水线，因此 TUI、持久化与崩溃恢复不会旁路。
    */
   async compactContext(harnessTargetId: string): Promise<void> {
+    this.assertOpen();
     const queue = this.queueForLane(MAIN_LANE_ID);
     if (this.drainingMain || queue.length > 0) {
       throw new Error("/compact requires an idle session");
@@ -848,6 +882,7 @@ export class Controller {
       });
     }, this.options.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS);
     try {
+      this.reclaimPendingSteers(active);
       await active.binding.adapter.cancel(active.binding.ref);
     } catch (error) {
       this.options.session.log({
@@ -868,65 +903,132 @@ export class Controller {
     }
   }
 
-  async close(): Promise<void> {
-    const closing: Promise<void>[] = [];
-    for (const binding of this.bindings.values()) {
-      if (binding.ref) {
-        closing.push(
-          binding.close().catch((error) => {
-            this.options.session.log({
-              level: "warn",
-              source: "baton",
-              component: "controller.close",
-              harness: binding.adapter.harness,
-              harnessTargetId: binding.target.id,
-              message: "harness close failed",
-              error: logError(error),
-            });
-          }),
-        );
-      }
+  /**
+   * Some Harnesses bind pending steer input to the active native Turn. Once
+   * that Turn is interrupted the input is provably unapplied and unreachable;
+   * reclaim it into Baton's Queue before cancel can synchronously emit idle.
+   */
+  private reclaimPendingSteers(active: QueueRun<HarnessBinding>): void {
+    if (active.binding.adapter.cancelPendingSteers !== "requeue") return;
+    const messages = this.options.session.loadState().messages;
+    const pendingIds = new Set(
+      active.steers
+        .filter((input) => messages.get(input.messageId)?.deliveryState === "pending")
+        .map((input) => input.messageId),
+    );
+    if (pendingIds.size === 0) return;
+    const reclaimed = this.queueForLane(active.laneId).requeueSteers(active, pendingIds);
+    for (const input of reclaimed) {
+      this.appendEvent(
+        active.binding,
+        {
+          kind: "user_message",
+          turnId: active.turnId,
+          payload: {
+            messageId: input.messageId,
+            delivery: "steer",
+            deliveryState: "failed",
+          },
+        },
+        { type: "baton" },
+      );
     }
-    await Promise.all(closing);
-    await this.harnessHooks.close();
+    this.changed();
   }
 
-  private async drainMain(): Promise<void> {
-    if (this.drainingMain) return;
-    this.drainingMain = true;
-    const queue = this.queueForLane(MAIN_LANE_ID);
-    try {
-      while (queue.length > 0) {
-        const input = queue.dequeue() as QueueItem;
-        this.changed();
-        try {
-          await this.runQueueItem(input);
-          input.resolve?.("completed");
-        } catch (error) {
-          input.reject?.(error);
-        }
-      }
-    } finally {
-      this.drainingMain = false;
-      this.changed();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.lifecycleState = "closing";
+    this.closePromise = this.closeActive();
+    return this.closePromise;
+  }
+
+  private async closeActive(): Promise<void> {
+    const closing: Promise<void>[] = [];
+    for (const binding of this.bindings.values()) {
+      closing.push(
+        binding.close().catch((error) => {
+          this.options.session.log({
+            level: "warn",
+            source: "baton",
+            component: "controller.close",
+            harness: binding.adapter.harness,
+            harnessTargetId: binding.target.id,
+            message: "harness close failed",
+            error: logError(error),
+          });
+        }),
+      );
     }
+    await Promise.all(closing);
+    // Adapter.close owns native resource teardown, while Controller owns the
+    // accepted-Turn invariant. A buggy/failed Adapter close must not leave a
+    // Queue run or Interaction continuation hanging during host shutdown.
+    for (const turn of this.turns.values()) {
+      if (turn.status === "active") {
+        this.synthesizeTerminal(turn, { stopReason: "cancelled" });
+      }
+    }
+    await Promise.allSettled([
+      ...(this.mainDrainPromise ? [this.mainDrainPromise] : []),
+      ...this.sideRunPromises,
+    ]);
+    await this.harnessHooks.close();
+    this.lifecycleState = "closed";
+  }
+
+  private drainMain(): Promise<void> {
+    if (this.mainDrainPromise) return this.mainDrainPromise;
+    const queue = this.queueForLane(MAIN_LANE_ID);
+    if (this.lifecycleState !== "open" || queue.length === 0) return Promise.resolve();
+    this.drainingMain = true;
+    const draining = (async () => {
+      try {
+        while (this.lifecycleState === "open" && queue.length > 0) {
+          const input = queue.dequeue() as QueueItem;
+          this.changed();
+          try {
+            await this.runQueueItem(input);
+            input.resolve?.("completed");
+          } catch (error) {
+            input.reject?.(error);
+          }
+        }
+      } finally {
+        this.drainingMain = false;
+        this.mainDrainPromise = undefined;
+        this.changed();
+      }
+    })();
+    this.mainDrainPromise = draining;
+    return draining;
   }
 
   private drainSideLanes(): void {
+    if (this.lifecycleState !== "open") return;
     const concurrency = this.options.sideLaneConcurrency ?? DEFAULT_SIDE_LANE_CONCURRENCY;
-    while (this.activeSideRuns < concurrency) {
+    while (this.lifecycleState === "open" && this.activeSideRuns < concurrency) {
       const queue = this.nextRunnableSideQueue();
       const input = queue?.dequeue();
       if (!input) return;
       this.activeSideRuns++;
       this.changed();
-      void this.runQueueItem(input)
+      const running = this.runQueueItem(input)
         .then(() => input.resolve?.("completed"), (error) => input.reject?.(error))
         .finally(() => {
+          this.sideRunPromises.delete(running);
           this.activeSideRuns--;
           this.changed();
           this.drainSideLanes();
         });
+      this.sideRunPromises.add(running);
+      void running;
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.lifecycleState !== "open") {
+      throw new Error(`Controller is ${this.lifecycleState}`);
     }
   }
 
@@ -949,7 +1051,13 @@ export class Controller {
             : { parentEventId: opts.input.parentEventId }),
           harnessSessionId: opts.harnessSessionId,
           turnId: opts.turnId,
-          payload: { messageId: opts.input.messageId, content: opts.input.blocks },
+          payload: {
+            messageId: opts.input.messageId,
+            content: opts.input.blocks,
+            ...(opts.input.requeuedFromSteer
+              ? { delivery: "follow_up", deliveryState: "applied" }
+              : {}),
+          },
         },
         eventSourceOf(opts.input.source),
       );
@@ -1019,6 +1127,13 @@ export class Controller {
 
     try {
       await this.ensureHarness(input.laneId, input.target.id);
+      // A cold open can finish after close() has frozen scheduling. The Binding
+      // has already released that late handle; close the accepted Baton Turn as
+      // cancelled and leave later queued Inputs durable for the next resume.
+      if (this.lifecycleState !== "open") {
+        this.synthesizeTerminal(record, { stopReason: "cancelled" });
+        return;
+      }
       // preparing 期间被取消：终态已合成、summary 已落，不再向 harness 提交
       if (record.status === "finalized") return;
       if (!binding.ref) throw new Error(`${targetKey} failed to start`);

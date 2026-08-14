@@ -21,6 +21,10 @@ export type QueueOutcome = "completed" | "recalled";
 export interface QueueItem extends HarnessInput {
   /** First queued Event seq; orders Queue heads without creating another identity. */
   enqueueSeq: number;
+  /** Reserved new-Turn identity retained while the Input is temporarily a steer. */
+  reservedTurnId: string;
+  /** A pending steer reclaimed by Esc is delivered as a visible follow-up Turn. */
+  requeuedFromSteer?: boolean;
   resolve?: (outcome: QueueOutcome) => void;
   reject?: (error: unknown) => void;
 }
@@ -171,9 +175,11 @@ export class Queue<TBinding extends QueueBinding> {
       resolve = resolveOutcome;
       reject = rejectOutcome;
     });
+    const reservedTurnId = options?.identity?.turnId ?? newId("t");
     const input: QueueItem = {
       enqueueSeq: options?.enqueueSeq ?? 0,
-      turnId: options?.identity?.turnId ?? newId("t"),
+      turnId: reservedTurnId,
+      reservedTurnId,
       messageId: options?.identity?.messageId ?? newId("m"),
       target,
       laneId: this.laneId,
@@ -202,6 +208,31 @@ export class Queue<TBinding extends QueueBinding> {
     }
     this.queue.push(input);
     return { input, outcome };
+  }
+
+  /**
+   * Reclaim native steers which the Adapter guarantees cancel will orphan.
+   * They keep message identity and their original reserved Turn identity, and
+   * move ahead of later follow-ups in the same order the user submitted them.
+   */
+  requeueSteers(run: QueueRun<TBinding>, messageIds: ReadonlySet<string>): QueueItem[] {
+    const reclaimed: QueueItem[] = [];
+    for (let index = run.steers.length - 1; index >= 0; index--) {
+      const input = run.steers[index];
+      if (!input || !messageIds.has(input.messageId)) continue;
+      this.beforeTransition(input, "queued", {
+        turnId: input.reservedTurnId,
+        delivery: "prompt",
+      });
+      input.turnId = input.reservedTurnId;
+      input.status = "queued";
+      input.delivery = "prompt";
+      input.requeuedFromSteer = true;
+      reclaimed.unshift(input);
+      run.steers.splice(index, 1);
+    }
+    this.queue.unshift(...reclaimed);
+    return reclaimed;
   }
 
   /**

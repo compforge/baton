@@ -76,6 +76,7 @@ interface CodexTurn {
 interface ThreadRuntime {
   child: ChildProcessWithoutNullStreams;
   peer: JsonRpcPeer;
+  closing?: boolean;
   threadId: string;
   /** codex 回吐的生效审批路由（权威）；null = 本次没问出来，投影据此静默。 */
   approvalRoute: ApprovalRoute | null;
@@ -91,6 +92,10 @@ interface ThreadRuntime {
   codexTurnId?: string;
   /** turn/steer 已接受、但尚未收到 Codex userMessage 消费回执的 Baton messageId。 */
   pendingSteerMessageIds?: Set<string>;
+  /** userMessage 回执可能先于 turn/steer RPC；保留到 admission waiter 消费。 */
+  appliedSteerMessageIds?: Set<string>;
+  /** 只为仍在等待 turn/steer RPC 的消息保留 applied race receipt。 */
+  inFlightSteerMessageIds?: Set<string>;
   /**
    * cancel 早于 codexTurnId 就位（fast-submit 后 turn/start 响应与 turn/started
    * 通知都未回）时挂起的取消意图；id 就位后由 flushPendingCancel 补发 interrupt。
@@ -98,6 +103,8 @@ interface ThreadRuntime {
    * 并推进队列，而原生 codex turn 仍在继续跑。
    */
   pendingCancel?: boolean;
+  /** Live unified-exec PTY processes reported by commandExecution items. */
+  activeCommandProcesses?: Map<string, number>;
   /** 用户在 baton 中选择的模型；作为下一次 turn/start override。 */
   model?: string;
   /** 下一次 turn/start 使用的实际 effort；default 会先解析成当前模型的默认值。 */
@@ -734,6 +741,8 @@ export interface CodexAdapterOptions {
   command?: string[];
   /** 用户审过的精确 hook 指纹；缺省落 ~/.baton/state/hook.json 的 trust 区。 */
   hookTrustStore?: HookTrustStore;
+  /** Adapter close 等待 SIGTERM 的时间；仅测试需要覆盖。 */
+  shutdownGraceMs?: number;
 }
 
 /**
@@ -743,6 +752,75 @@ export interface CodexAdapterOptions {
  */
 const STARTUP_REQUEST_TIMEOUT_MS = 30_000;
 const RECONCILE_REQUEST_TIMEOUT_MS = 10_000;
+const SHUTDOWN_GRACE_MS = 2_000;
+
+function waitForChildClose(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (closed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("close", onClose);
+      resolve(closed);
+    };
+    const onClose = (): void => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+    child.once("close", onClose);
+  });
+}
+
+function signalProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The process may have changed state between the check and group signal;
+      // fall back to ChildProcess.kill for platforms without a live group.
+    }
+  }
+  child.kill(signal);
+}
+
+/** Esc is Ctrl-C for a live Codex command; keep app-server and its thread alive. */
+function interruptCommandProcess(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, "SIGINT");
+      return;
+    } catch {
+      // Older Codex versions may report a PID which is not the process-group leader.
+    }
+  }
+  try {
+    process.kill(pid, "SIGINT");
+  } catch {
+    // The command may have completed between its last item update and Esc.
+  }
+}
+
+async function terminateCodexProcess(
+  child: ChildProcessWithoutNullStreams,
+  graceMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  const graceful = waitForChildClose(child, graceMs);
+  signalProcessTree(child, "SIGTERM");
+  if (await graceful) return true;
+  const forced = waitForChildClose(child, graceMs);
+  signalProcessTree(child, "SIGKILL");
+  return forced;
+}
 
 /** 只翻译 thread/read 的 live status；未知状态保守返回 unknown。 */
 export function mapThreadStatus(
@@ -886,6 +964,7 @@ export function codexPromptInput(blocks: PromptBlock[]): CodexPromptItem[] {
 
 export class CodexAdapter implements HarnessAdapter {
   readonly harness = "codex";
+  readonly cancelPendingSteers = "requeue";
   // 可选能力接口落地并验证后才声明对应 marker——契约测试钉住
   // "声明支持就必须实现对应接口"。
   // sync：catch-up 走 turn/start.additionalContext（experimental API，initialize 已声明
@@ -922,6 +1001,9 @@ export class CodexAdapter implements HarnessAdapter {
       // 继承 HOME 等本机环境：凭证零持有，复用 ~/.codex 登录态（见 docs/harness/codex.md）
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
+      // A dedicated process group lets close() reap app-server descendants too
+      // instead of only terminating the immediate child.
+      detached: process.platform !== "win32",
     });
     const log = this.options.log ?? (() => {});
     const peer = new JsonRpcPeer((line) => child.stdin.write(line), log);
@@ -952,7 +1034,7 @@ export class CodexAdapter implements HarnessAdapter {
     // transport 终结 = 该 session 所有在途工作的终结点：pending JSON-RPC request 全部 reject，
     // 活跃 turn 必须在此合成终态，否则 controller 永远等不到 idle（见 docs/harness.md）。
     child.on("close", (code) => {
-      if (code !== 0) {
+      if (!rt.closing && code !== 0) {
         log({
           level: "error",
           source: "harness",
@@ -962,7 +1044,9 @@ export class CodexAdapter implements HarnessAdapter {
         });
       }
       peer.close(`codex app-server exited (${code})`);
-      this.failTurn(rt, rt.activeTurn, `codex app-server exited (code ${code})`);
+      if (!rt.closing) {
+        this.failTurn(rt, rt.activeTurn, `codex app-server exited (code ${code})`);
+      }
     });
     child.on("error", (error) => {
       log({
@@ -1045,7 +1129,12 @@ export class CodexAdapter implements HarnessAdapter {
         if (trustAll) {
           // app-server 没有写 trust 的 RPC。Baton 已持久校验精确 hash 后，用官方 bypass 参数
           // 重启；旧进程尚未创建 thread/turn，退出不会丢 harness 状态。
-          rt.child.kill();
+          rt.closing = true;
+          rt.peer.close("codex app-server restarting with trusted hooks");
+          await terminateCodexProcess(
+            rt.child,
+            this.options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS,
+          );
           rt = this.launch(codexCommandWithHookTrustBypass(command), opts, sink);
           await this.initialize(rt);
         }
@@ -1067,7 +1156,12 @@ export class CodexAdapter implements HarnessAdapter {
       return { harness: this.harness, handleId: threadId, resumed: opened.resumed };
     } catch (error) {
       // open() 尚未返回 HarnessSessionHandle，controller 无法调用 close()；adapter 必须清掉自己已启动的进程。
-      rt.child.kill();
+      rt.closing = true;
+      rt.peer.close("codex app-server open failed");
+      await terminateCodexProcess(
+        rt.child,
+        this.options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS,
+      );
       throw error;
     }
   }
@@ -1311,7 +1405,13 @@ export class CodexAdapter implements HarnessAdapter {
         return { accepted: false, effective: "rejected" };
       }
       const pendingSteers = (rt.pendingSteerMessageIds ??= new Set<string>());
+      const inFlightSteers = (rt.inFlightSteerMessageIds ??= new Set<string>());
       pendingSteers.add(input.messageId);
+      inFlightSteers.add(input.messageId);
+      const settleAdmission = (receipt: SendTurnReceipt): SendTurnReceipt => {
+        inFlightSteers.delete(input.messageId);
+        return receipt;
+      };
       try {
         await rt.peer.request("turn/steer", {
           threadId: rt.threadId,
@@ -1322,29 +1422,26 @@ export class CodexAdapter implements HarnessAdapter {
       } catch (error) {
         // userMessage 原生回执比 RPC 错误更强：这种竞态下不能再降级成
         // follow-up，否则同一条用户输入会被执行两次。
-        if (!pendingSteers.has(input.messageId)) {
-          this.emit(
-            rt,
-            {
-              kind: "user_message",
-              payload: {
-                messageId: input.messageId,
-                content: input.blocks,
-                delivery: "steer",
-                deliveryState: "applied",
-              },
-            },
-            undefined,
-            activeTurn,
-          );
-          return { accepted: true, effective: "steer" };
+        if (rt.appliedSteerMessageIds?.delete(input.messageId)) {
+          return settleAdmission({ accepted: true, effective: "steer" });
         }
         pendingSteers.delete(input.messageId);
-        return {
+        return settleAdmission({
           accepted: false,
           effective: "rejected",
           reason: error instanceof Error ? error.message : String(error),
-        };
+        });
+      }
+      if (rt.appliedSteerMessageIds?.delete(input.messageId)) {
+        return settleAdmission({ accepted: true, effective: "steer" });
+      }
+      if (activeTurn.finalized || rt.activeTurn !== activeTurn) {
+        pendingSteers.delete(input.messageId);
+        return settleAdmission({
+          accepted: false,
+          effective: "rejected",
+          reason: "active Codex turn completed before steer admission settled",
+        });
       }
       // RPC 成功只证明进入 Codex pending_input；userMessage 通知才证明
       // 它已经在下一次 sampling 前写入模型上下文。
@@ -1362,7 +1459,7 @@ export class CodexAdapter implements HarnessAdapter {
         undefined,
         activeTurn,
       );
-      return { accepted: true, effective: "steer" };
+      return settleAdmission({ accepted: true, effective: "steer" });
     }
 
     const turn: CodexTurn = { turnId: input.turnId, finalized: false };
@@ -1422,6 +1519,9 @@ export class CodexAdapter implements HarnessAdapter {
       rt.pendingCancel = true;
       return;
     }
+    for (const pid of rt.activeCommandProcesses?.values() ?? []) {
+      interruptCommandProcess(pid);
+    }
     await rt.peer.request("turn/interrupt", { threadId: rt.threadId, turnId: rt.codexTurnId });
   }
 
@@ -1438,7 +1538,21 @@ export class CodexAdapter implements HarnessAdapter {
     this.threads.delete(ref.handleId);
     // 宿主主动关闭：活跃 turn 读作 cancelled；先终结再 kill，child close 回调就不会再合成 failed
     this.finishTurn(rt, rt.activeTurn, "interrupted");
-    rt.child.kill();
+    rt.closing = true;
+    rt.peer.close("codex app-server closed by Baton");
+    const closed = await terminateCodexProcess(
+      rt.child,
+      this.options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS,
+    );
+    if (!closed) {
+      this.options.log?.({
+        level: "warn",
+        source: "harness",
+        component: "codex.process",
+        harness: this.harness,
+        message: "codex app-server did not exit after SIGKILL",
+      });
+    }
   }
 
   private mustThread(ref: HarnessSessionHandle): ThreadRuntime {
@@ -1495,6 +1609,7 @@ export class CodexAdapter implements HarnessAdapter {
     if (rt.activeTurn === turn) {
       rt.activeTurn = undefined;
       rt.codexTurnId = undefined;
+      rt.activeCommandProcesses?.clear();
       rt.pendingSteerMessageIds?.clear();
       rt.pendingCancel = undefined; // turn 已终结，挂起的取消意图随之失效
     }
@@ -1600,9 +1715,23 @@ export class CodexAdapter implements HarnessAdapter {
         const item = (p.item ?? {}) as Record<string, unknown>;
         const itemType = String(item.type ?? "");
         const lifecycle = method === "item/started" ? "started" : "completed";
+        if (itemType === "commandExecution" && item.id != null) {
+          const itemId = String(item.id);
+          if (lifecycle === "started") {
+            const pid = Number(item.processId);
+            if (Number.isSafeInteger(pid) && pid > 0) {
+              (rt.activeCommandProcesses ??= new Map()).set(itemId, pid);
+            }
+          } else {
+            rt.activeCommandProcesses?.delete(itemId);
+          }
+        }
         if (itemType === "userMessage" && lifecycle === "completed") {
           const clientId = typeof item.clientId === "string" ? item.clientId : undefined;
           if (clientId && rt.pendingSteerMessageIds?.delete(clientId)) {
+            if (rt.inFlightSteerMessageIds?.has(clientId)) {
+              (rt.appliedSteerMessageIds ??= new Set()).add(clientId);
+            }
             this.emit(
               rt,
               {

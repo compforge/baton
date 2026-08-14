@@ -147,6 +147,8 @@ export class BatonChatProtocol implements ChatProtocol {
   private composerImagePaths: string[] = [];
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
+  private shutdownPromise?: Promise<void>;
+  private exitPromise?: Promise<void>;
 
   constructor(
     private readonly store: SessionStore,
@@ -615,16 +617,39 @@ export class BatonChatProtocol implements ChatProtocol {
     this.boardChanged();
   }
 
-  /** 优雅退出：先关掉 agent 子进程再退（对应 /exit、双击 Ctrl+C、Ctrl+D） */
-  async exit(): Promise<void> {
+  /** 只释放 Baton 运行时；信号路径用它避免向已经断开的终端继续渲染。 */
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = this.shutdownActive();
+    return this.shutdownPromise;
+  }
+
+  private async shutdownActive(): Promise<void> {
     this.cancelPickerSearch();
-    this.toast = { text: "Exiting…", tone: "info" };
-    this.changed();
     this.presentation.close();
     this.unsubscribeSession();
-    await this.channel.close();
-    this.marketplace.close();
-    this.quit(this.session.id);
+    try {
+      await this.channel.close();
+    } finally {
+      this.marketplace.close();
+    }
+  }
+
+  /** 优雅退出：先关掉 agent 子进程再退（对应 /exit、双击 Ctrl+C、Ctrl+D） */
+  exit(): Promise<void> {
+    if (this.exitPromise) return this.exitPromise;
+    this.toast = { text: "Exiting…", tone: "info" };
+    this.changed();
+    this.exitPromise = this.exitActive();
+    return this.exitPromise;
+  }
+
+  private async exitActive(): Promise<void> {
+    try {
+      await this.shutdown();
+    } finally {
+      this.quit(this.session.id);
+    }
   }
 
   resolvePicker(id: string, value: string | null): void {

@@ -355,6 +355,22 @@ function applyMessageUpsert(
     const delivery = userMessage.delivery;
     if (delivery !== undefined) msg.delivery = delivery;
     if (userMessage.deliveryState !== undefined) msg.deliveryState = userMessage.deliveryState;
+    if (delivery === "follow_up") {
+      // Esc may reclaim an unapplied native steer without changing messageId.
+      // Its eventual prompt belongs to the new Turn and should appear after the
+      // interrupted Turn, not at the hidden pending steer's original position.
+      msg.turnId = ev.turnId;
+      msg.harness = ev.harness;
+      msg.harnessTargetId = eventTargetId(ev);
+      msg.laneId = ev.laneId;
+      const timelineIndex = state.timeline.findIndex(
+        (item) => item.type === "message" && item.id === msg.messageId,
+      );
+      if (timelineIndex >= 0) {
+        const [item] = state.timeline.splice(timelineIndex, 1);
+        if (item) state.timeline.push(item);
+      }
+    }
   }
   if (role !== "user") msg.streamStatus = "completed";
 }

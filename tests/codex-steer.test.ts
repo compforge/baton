@@ -22,7 +22,7 @@ interface FakeRt {
   sink: (ev: AnyEventDraft) => void;
 }
 
-function harness(opts: { requestError?: Error } = {}) {
+function harness(opts: { requestError?: Error; requestGate?: Promise<void> } = {}) {
   const adapter = new CodexAdapter({ openInteraction });
   const events: Array<AnyEventDraft & { turnId?: string }> = [];
   const requests: Array<{ method: string; params: unknown }> = [];
@@ -34,6 +34,7 @@ function harness(opts: { requestError?: Error } = {}) {
     peer: {
       request: async (method, params) => {
         requests.push({ method, params });
+        await opts.requestGate;
         if (opts.requestError) throw opts.requestError;
         return {};
       },
@@ -143,6 +144,29 @@ test("codex steer: wire rejection (stale turn on codex side) maps to rejected, n
     reason: "turn already completed",
   });
   expect(events).toHaveLength(0);
+});
+
+test("codex steer: interrupt wins an in-flight admission receipt", async () => {
+  let release!: () => void;
+  const requestGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { adapter, events, ref, rt } = harness({ requestGate });
+
+  const sending = adapter.sendTurn(ref, input);
+  await Bun.sleep(0);
+  const seams = adapter as unknown as {
+    finishTurn(runtime: FakeRt, turn: FakeRt["activeTurn"], status: string): void;
+  };
+  seams.finishTurn(rt, rt.activeTurn, "interrupted");
+  release();
+
+  expect(await sending).toEqual({
+    accepted: false,
+    effective: "rejected",
+    reason: "active Codex turn completed before steer admission settled",
+  });
+  expect(events.some((event) => event.kind === "user_message")).toBe(false);
 });
 
 test("codex steer: unsupported prompt blocks fail admission before the wire", async () => {

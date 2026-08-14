@@ -271,7 +271,7 @@ describe("adapter contract: terminal state_update carries a turnId", () => {
     const events: Array<{ kind: string; turnId?: string; payload: Record<string, unknown> }> = [];
     const rt = {
       child: { kill() {} },
-      peer: { request: () => Promise.resolve({}) },
+      peer: { request: () => Promise.resolve({}), close() {} },
       threadId: "th1",
       turnId: undefined as string | undefined,
       activeTurn: undefined as { turnId: string; finalized: boolean } | undefined,

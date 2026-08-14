@@ -66,7 +66,13 @@ turn/steer(threadId, expectedTurnId, input)
 `rejected`，由 Controller 排成 follow-up；不能向未知 Turn 注入，也不能并行 `turn/start`。
 
 cancel 映射 `turn/interrupt`。fast-submit 窗口里原生 turn ID 可能尚未返回，Adapter 先记录
-pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最终兜底。
+pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最终兜底。Codex interrupt
+不会把未消费的 `turn/steer` 变成后续 Turn，因此 Adapter 声明 pending steer 由 Controller 收回
+Baton Queue。
+
+运行中的 unified-exec 可能脱离 Turn cancellation 继续执行。Adapter 从 `commandExecution`
+生命周期追踪原生 PTY `processId`，Esc 对仍在运行的命令发送 Ctrl-C，同时保留 app-server 和
+thread；关闭 Baton 才回收整个 app-server 进程组。
 
 ## 5. Interaction 与输出
 

@@ -27,6 +27,7 @@ class GatedOpenAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
   sink?: EventSink;
   prompts: string[] = [];
+  closes = 0;
   openGate!: () => void;
   openFail!: (error: Error) => void;
   private readonly gate = new Promise<void>((resolve, reject) => {
@@ -61,7 +62,9 @@ class GatedOpenAdapter implements HarnessAdapter {
   }
 
   async cancel(_ref: HarnessSessionHandle): Promise<void> {}
-  async close(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {
+    this.closes++;
+  }
 }
 
 let root: string;
@@ -105,6 +108,25 @@ function completedTurn(handle: SessionHandle, harness: string, turnId: string, t
 }
 
 describe("controller-owned user_message at dequeue", () => {
+  test("close waits for a cold open and releases the late Adapter handle", async () => {
+    const adapter = new GatedOpenAdapter("codex");
+    const controller = controllerWith(adapter);
+    void controller.submit("codex", [{ type: "text", text: "cold start" }]);
+    await Bun.sleep(5);
+
+    let closed = false;
+    const closing = controller.close().then(() => {
+      closed = true;
+    });
+    await Bun.sleep(5);
+    expect(closed).toBe(false);
+
+    adapter.openGate();
+    await closing;
+    expect(adapter.closes).toBe(1);
+    expect(adapter.prompts).toHaveLength(0);
+  });
+
   test("user_message and running are persisted before the harness finishes opening", async () => {
     const adapter = new GatedOpenAdapter("codex");
     const controller = controllerWith(adapter);

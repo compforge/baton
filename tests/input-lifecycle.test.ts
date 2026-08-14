@@ -24,6 +24,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
 class HoldingAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
+  readonly cancelPendingSteers?: "requeue";
   sink?: EventSink;
   prompts: string[] = [];
   received: PromptInput[] = [];
@@ -31,7 +32,9 @@ class HoldingAdapter implements HarnessAdapter {
   steerResult: SendTurnReceipt = { accepted: true, effective: "steer" };
   private active?: PromptInput;
 
-  constructor(readonly harness: string) {}
+  constructor(readonly harness: string, options?: { requeuePendingSteers?: boolean }) {
+    if (options?.requeuePendingSteers) this.cancelPendingSteers = "requeue";
+  }
 
   async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
@@ -49,7 +52,12 @@ class HoldingAdapter implements HarnessAdapter {
       this.sink?.({
         kind: "user_message",
         turnId: input.turnId,
-        payload: { messageId: input.messageId, content: input.blocks, delivery: "steer" },
+        payload: {
+          messageId: input.messageId,
+          content: input.blocks,
+          delivery: "steer",
+          ...(this.cancelPendingSteers ? { deliveryState: "pending" as const } : {}),
+        },
       });
       return this.steerResult;
     }
@@ -72,7 +80,9 @@ class HoldingAdapter implements HarnessAdapter {
   async cancel(_ref: HarnessSessionHandle): Promise<void> {
     this.finish("cancelled");
   }
-  async close(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {
+    this.finish("cancelled");
+  }
 }
 
 let root: string;
@@ -99,6 +109,30 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("Input lifecycle (HarnessInput)", () => {
+  test("close cancels the active turn without draining queued input", async () => {
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("active"));
+    const queued = controller.submit("codex", text("resume later"));
+    await until(() => adapter.prompts.length === 1 && controller.harnessQueueLength === 1);
+
+    const closing = controller.close();
+    expect(controller.close()).toBe(closing);
+    await closing;
+
+    expect(await first).toBe("completed");
+    expect(adapter.prompts).toEqual(["active"]);
+    expect(controller.harnessQueueLength).toBe(1);
+    expect(controller.queuedHarnessInputs.map((input) => textOf(input.blocks))).toEqual([
+      "resume later",
+    ]);
+    expect(() => controller.submit("codex", text("too late"))).toThrow("Controller is closed");
+
+    // The in-memory waiter is intentionally abandoned with the process. The
+    // durable queued fact remains the resume contract.
+    void queued;
+  });
+
   test("commits each queued transition before mutating the in-memory Queue", async () => {
     const adapter = new HoldingAdapter("codex");
     const controller = controllerWith(adapter);
@@ -328,6 +362,29 @@ describe("Input lifecycle (HarnessInput)", () => {
     expect(messages.filter((message) => message === "two")).toHaveLength(1);
   });
 
+  test("requeues a pending steer whose admission receipt loses the race with Esc", async () => {
+    const adapter = new HoldingAdapter("codex", { requeuePendingSteers: true });
+    let releaseSteer!: () => void;
+    adapter.steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("one"));
+    await until(() => adapter.prompts.length === 1);
+
+    const steering = controller.sendTurn("codex", text("two"));
+    await until(() => controller.harnessInputs.some((input) => input.status === "dispatching"));
+    await controller.control({ kind: "interrupt" });
+    await first;
+
+    releaseSteer();
+    expect(await steering).toMatchObject({ effective: "new_turn", queued: true });
+    await until(() => adapter.prompts.length === 2);
+    expect(adapter.prompts).toEqual(["one", "two"]);
+    adapter.finish("end_turn");
+    await until(() => controller.harnessInputs.length === 0);
+  });
+
   test("Esc after an accepted steer interrupts the turn without silently dropping the steer", async () => {
     const adapter = new HoldingAdapter("codex");
     const controller = controllerWith(adapter);
@@ -347,6 +404,35 @@ describe("Input lifecycle (HarnessInput)", () => {
       .map((m) => textOf(m.content));
     expect(userTexts).toContain("also do B");
     expect(userTexts.filter((t) => t === "also do B")).toHaveLength(1);
+  });
+
+  test("Esc reclaims an unapplied steer when the Adapter cannot preserve its native queue", async () => {
+    const adapter = new HoldingAdapter("codex", { requeuePendingSteers: true });
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("build it"));
+    await until(() => adapter.prompts.length === 1);
+
+    const followUp = await controller.sendTurn("codex", text("use the lighter approach"));
+    expect(followUp.effective).toBe("steer");
+    const steer = controller.harnessInputs.find((input) => input.delivery === "steer")!;
+    const messageId = steer.messageId;
+
+    await controller.control({ kind: "interrupt" });
+    expect(await first).toBe("completed");
+    await until(() => adapter.prompts.length === 2);
+
+    const replay = adapter.received.at(-1)!;
+    expect(replay.messageId).toBe(messageId);
+    expect(textOf(replay.blocks)).toBe("use the lighter approach");
+    expect(session.loadState().messages.get(messageId)).toMatchObject({
+      turnId: replay.turnId,
+      delivery: "follow_up",
+      deliveryState: "applied",
+    });
+
+    adapter.finish("end_turn");
+    if (followUp.effective === "new_turn") await followUp.outcome;
+    await until(() => controller.harnessInputs.length === 0);
   });
 
   test("keeps Plugin Inputs out of user recall and persists Plugin provenance", async () => {

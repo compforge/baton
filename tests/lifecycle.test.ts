@@ -139,6 +139,21 @@ describe("idempotent turn finalize", () => {
 });
 
 describe("cancel", () => {
+  test("host close synthesizes cancelled when an Adapter omits its terminal event", async () => {
+    const adapter = new ScriptedAdapter();
+    const controller = makeController(adapter);
+    const outcome = controller.submit("scripted", [{ type: "text", text: "stuck" }]);
+    await until(() => adapter.submits.length === 1);
+
+    await controller.close();
+
+    expect(await outcome).toBe("completed");
+    const terminal = session.ledger.read().find(
+      (event) => event.kind === "state_update" && event.payload.state === "idle",
+    );
+    expect(terminal?.payload).toMatchObject({ stopReason: "cancelled" });
+  });
+
   test("harness-confirmed cancel leaves an interrupted notice and advances the queue", async () => {
     const adapter = new ScriptedAdapter();
     const controller = makeController(adapter);
