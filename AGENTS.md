@@ -74,8 +74,10 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
    已交付与 Harness 已被唤醒是三个独立事实。Resource 以 `apiVersion/kind` 标识类型，以
    `namespace/name/uid` 标识对象；`labels` 是受约束、可检索的分组 metadata，`annotations`
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。
-3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关，`Channel` 统一承接
-   Human 与 Core 之间的 inbound/outbound 语义路径，但不代替 Queue、Controller 或 Harness 干活。
+3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关；一个 BatonSession lease 同时只有一个
+   active `Channel`，由它装配 Controller、Plugin Manager、Interaction 路由和订阅，并统一承接
+   Human 与 Core 之间的 typed dispatch/outbound 路径。Channel 只拥有进程期生命周期，不复制任何可恢复
+   状态，也不代替 Queue、Controller、Interaction domain 或 Harness 干活。
    人、Harness 和 Baton Plugin 通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
    `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。所有发起新动作的 verb 都先持久化为

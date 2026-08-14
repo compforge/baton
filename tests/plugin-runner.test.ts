@@ -243,25 +243,34 @@ describe("Plugin Runner process boundary", () => {
     });
     await manager.start();
 
-    const channel = new Channel({ session });
     const beforeKinds: string[] = [];
-    channel.connect({
-      has: (stage) => manager.hasHook(stage),
-      before: async <S extends Extract<HookStage, `${string}.before`>>(
-        stage: S,
-        subject: Readonly<HookSubjectMap[S]>,
-      ) => {
-        if (stage === "human.outbound.before") {
-          beforeKinds.push((
-            subject as unknown as HookSubjectMap["human.outbound.before"]
-          ).kind);
-        }
-        await manager.beforeHook(stage, subject);
+    const channel = new Channel({
+      session,
+      controller: {
+        mentionBudgetChars: 1_000,
+        createAdapter: () => {
+          throw new Error("unused test adapter");
+        },
+        resolveTarget: () => undefined,
       },
-      after: <S extends Extract<HookStage, `${string}.after`>>(
-        stage: S,
-        subject: Readonly<HookSubjectMap[S]>,
-      ) => manager.afterHook(stage, subject),
+      hooks: {
+        has: (stage) => manager.hasHook(stage),
+        before: async <S extends Extract<HookStage, `${string}.before`>>(
+          stage: S,
+          subject: Readonly<HookSubjectMap[S]>,
+        ) => {
+          if (stage === "human.outbound.before") {
+            beforeKinds.push((
+              subject as unknown as HookSubjectMap["human.outbound.before"]
+            ).kind);
+          }
+          await manager.beforeHook(stage, subject);
+        },
+        after: <S extends Extract<HookStage, `${string}.after`>>(
+          stage: S,
+          subject: Readonly<HookSubjectMap[S]>,
+        ) => manager.afterHook(stage, subject),
+      },
     });
     const unsubscribe = session.subscribe((event) => {
       if (event.kind !== "interaction.requested") return;
@@ -280,8 +289,8 @@ describe("Plugin Runner process boundary", () => {
     await expect(publication).resolves.toBe(true);
 
     unsubscribe();
-    channel.disconnect();
     await manager.close();
+    await channel.close();
     expect(beforeKinds).toEqual(["transcript"]);
   });
 

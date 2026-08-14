@@ -9,7 +9,6 @@ import { stdin, stdout } from "node:process";
 import { Channel } from "../channel/index.ts";
 import { ensureConfigFile, loadConfig } from "../config/config.ts";
 import { expandMentions } from "../context/mention.ts";
-import { Controller } from "../controller/index.ts";
 import {
   createHarnessAdapter,
   parseHarness,
@@ -119,26 +118,27 @@ async function main(): Promise<void> {
 
   const target = resolveDefaultHarnessTarget(agentName);
   if (!target) throw new Error(`No default HarnessTarget registered for Harness: ${agentName}`);
-  const channel = new Channel({ session });
-  const controller = new Controller({
+  const channel = new Channel({
     session,
-    mentionBudgetChars: config.mentionBudgetChars,
-    createAdapter: (resolvedTarget, handlers) =>
-      createHarnessAdapter(resolvedTarget, {
-        ...handlers,
-        config,
-        rootDir: store.rootDir,
-      }),
-    resolveTarget: resolveDefaultHarnessTarget,
-    hooks: channel,
-    textgenTargets: bundledTextgenTargets(),
-    ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
-    ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
+    controller: {
+      mentionBudgetChars: config.mentionBudgetChars,
+      createAdapter: (resolvedTarget, handlers) =>
+        createHarnessAdapter(resolvedTarget, {
+          ...handlers,
+          config,
+          rootDir: store.rootDir,
+        }),
+      resolveTarget: resolveDefaultHarnessTarget,
+      textgenTargets: bundledTextgenTargets(),
+      ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
+      ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
+    },
   });
+  const controller = channel.controller;
 
   let sawOutput = false;
   let interactionChain = Promise.resolve();
-  const unsubscribe = session.subscribe((event) => {
+  const unsubscribe = channel.subscribe((_projection, event) => {
     if (event.kind === "agent_message_chunk" && event.payload.content.type === "text") {
       if (!sawOutput) {
         stdout.write(`${event.harness ?? target.harness}> `);
@@ -154,7 +154,11 @@ async function main(): Promise<void> {
       interactionChain = interactionChain
         .then(async () => {
           const result = await collectInteractionResult(event.payload);
-          if (!controller.completeInteraction(event.payload.interactionId, result)) {
+          const receipt = await channel.resolveInteraction({
+            kind: "interaction_response",
+            interactionId: event.payload.interactionId,
+          }, async () => result);
+          if (!receipt.result) {
             stdout.write(`\ninteraction ${event.payload.interactionId} is no longer pending\n`);
           }
         })
@@ -185,15 +189,12 @@ async function main(): Promise<void> {
 
     sawOutput = false;
     try {
-      const sent = await channel.inbound({
+      const receipt = await channel.submitPrompt({
         kind: "prompt",
         text: line,
         harnessTargetId: target.id,
-      }, async (record) => await controller.sendTurn(
-        target.id,
-        [{ type: "text", text: prompt }],
-        { parentEventId: record.eventId },
-      ));
+      }, async () => [{ type: "text", text: prompt }]);
+      const sent = receipt.result;
       if (sent.effective === "new_turn") await sent.outcome;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -210,15 +211,7 @@ async function main(): Promise<void> {
 
   await interactionChain;
   unsubscribe();
-  await controller.close();
-  channel.disconnect();
-  session.log({
-    level: "info",
-    source: "baton",
-    component: "session.lifecycle",
-    message: "Headless session closed",
-  });
-  await session.closeLogs();
+  await channel.close();
   rl.close();
 }
 

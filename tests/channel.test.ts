@@ -13,15 +13,27 @@ import { SessionStore } from "../src/store/store.ts";
 
 const roots: string[] = [];
 
-function channel(): {
+function channel(hooks?: ChannelHookGateway): {
   channel: Channel;
+  session: ReturnType<SessionStore["createSession"]>;
   readKinds: () => string[];
 } {
   const root = mkdtempSync(join(tmpdir(), "baton-channel-"));
   roots.push(root);
   const session = new SessionStore(root).createSession({ cwd: "/repo" });
   return {
-    channel: new Channel({ session }),
+    channel: new Channel({
+      session,
+      controller: {
+        mentionBudgetChars: 1_000,
+        createAdapter: () => {
+          throw new Error("unused test adapter");
+        },
+        resolveTarget: () => undefined,
+      },
+      ...(hooks ? { hooks } : {}),
+    }),
+    session,
     readKinds: () => session.ledger.read().map((event) => event.kind),
   };
 }
@@ -34,9 +46,9 @@ afterEach(() => {
 
 describe("Channel", () => {
   test("records inbound facts before notifying Plugins and handling the input", async () => {
-    const fixture = channel();
+    let fixture!: ReturnType<typeof channel>;
     const calls: string[] = [];
-    fixture.channel.connect(gateway({
+    fixture = channel(gateway({
       before: async () => {
         calls.push("before");
         expect(fixture.readKinds()).toEqual(["input.received"]);
@@ -47,7 +59,7 @@ describe("Channel", () => {
       },
     }));
 
-    await fixture.channel.inbound({
+    await fixture.channel.dispatchCommand({
       kind: "command",
       command: "status",
       argument: "",
@@ -60,9 +72,8 @@ describe("Channel", () => {
   });
 
   test("publishes outbound state between before and after notifications", async () => {
-    const fixture = channel();
     const calls: string[] = [];
-    fixture.channel.connect(gateway({
+    const fixture = channel(gateway({
       has: () => true,
       before: async () => {
         calls.push("before");
@@ -81,7 +92,6 @@ describe("Channel", () => {
   });
 
   test("runs before Hooks for unrelated concurrent outbound presentations", async () => {
-    const fixture = channel();
     let releaseTranscript!: () => void;
     const transcriptGate = new Promise<void>((resolve) => {
       releaseTranscript = resolve;
@@ -91,7 +101,7 @@ describe("Channel", () => {
       transcriptStarted = resolve;
     });
     const beforeKinds: string[] = [];
-    fixture.channel.connect(gateway({
+    const fixture = channel(gateway({
       has: () => true,
       before: async (_stage, subject) => {
         const kind = (subject as { kind?: string }).kind;
@@ -115,9 +125,9 @@ describe("Channel", () => {
   });
 
   test("skips the same before Hook only for causally reentrant publication", async () => {
-    const fixture = channel();
+    let fixture!: ReturnType<typeof channel>;
     const calls: string[] = [];
-    fixture.channel.connect(gateway({
+    fixture = channel(gateway({
       has: () => true,
       before: async (_stage, subject) => {
         const kind = (subject as { kind?: string }).kind;
@@ -141,6 +151,38 @@ describe("Channel", () => {
       "publish:interaction",
       "publish:transcript",
     ]);
+  });
+
+  test("rejects new input while one idempotent close settlement is running", async () => {
+    const fixture = channel();
+    const first = fixture.channel.close();
+    const second = fixture.channel.close();
+
+    expect(second).toBe(first);
+    expect(fixture.channel.lifecycle).toBe("closing");
+    await expect(fixture.channel.dispatchCommand({
+      kind: "command",
+      command: "status",
+      argument: "",
+      harnessTargetId: "codex",
+    }, async () => undefined)).rejects.toThrow("Channel is closing");
+    await first;
+    expect(fixture.channel.lifecycle).toBe("closed");
+  });
+
+  test("allows only one active Channel for a BatonSession lease", async () => {
+    const fixture = channel();
+    expect(() => new Channel({
+      session: fixture.session,
+      controller: {
+        mentionBudgetChars: 1_000,
+        createAdapter: () => {
+          throw new Error("unused test adapter");
+        },
+        resolveTarget: () => undefined,
+      },
+    })).toThrow("already has an active Channel");
+    await fixture.channel.close();
   });
 });
 

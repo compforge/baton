@@ -38,9 +38,13 @@ Harness wire。
 
 Event Ledger 只记录 intake 的 WAL。Channel 让 BatonSession 先 record 并 reduce
 `input.received(inputId, input)`，再以这条 durable record 通知
-`human.inbound.before`，随后调用末端 handler 执行 lowering；lowering 返回后先接受
+`human.inbound.before`，随后按 Input variant 调用 Controller、Interaction gateway 或具体配置 owner；owner 接受后先记录
 `input.settled(outcome)`，再通知 `human.inbound.after`。Hook 即使通过 Verb 发起动作，也一定能找到
 触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
+
+Channel dispatch receipt 只说明 Input 已完成同步校验并被对应 owner 接受，不等于 Turn 已完成。prompt 的
+Controller receipt 会继续暴露 Queue/Turn settlement；调用方可以选择等待，也可以只观察 Event/Projection。
+Channel intake 不为完整 Harness Turn 保留一条阻塞调用链。
 
 剪贴板图片由 Baton 壳层在显式 paste 时读取，按内容寻址归档到 Baton attachment store，并在
 composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `image` block。Event Ledger 只保存

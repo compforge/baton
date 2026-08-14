@@ -73,10 +73,10 @@ describe("BatonChatProtocol exit", () => {
 
       await protocol.exit();
       expect(calls).toEqual([
-        "controller",
         "plugins",
-        "marketplace",
+        "controller",
         "lock",
+        "marketplace",
         `quit:${session.id}`,
       ]);
     } finally {
