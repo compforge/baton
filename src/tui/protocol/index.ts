@@ -14,12 +14,7 @@ import type {
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
 
-import {
-  COMMANDS,
-  parseHarness,
-  parseHarnessRoute,
-  type CommandName,
-} from "../../commands/registry.ts";
+import { CommandRegistry, type CommandDefinition } from "../../commands/registry.ts";
 import {
   Channel,
   type ChannelControllerOptions,
@@ -48,6 +43,7 @@ import {
   resolveHarnessTarget,
   resolveHarnessTargetSelection,
 } from "../../harness/registry.ts";
+import { HARNESS_IDENTITIES, HARNESSES } from "../../harness/ids.ts";
 import { configuredTextgenTargets } from "../../session/title.ts";
 import type { InteractionResult } from "../../interaction/types.ts";
 import type { Manager } from "../../plugin/manager.ts";
@@ -124,6 +120,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private presentation: ChatPresentation;
   private controller: Controller;
   private plugins: Manager;
+  private readonly commandRegistry: CommandRegistry;
   /** 当前输入与控制命令的具体配置目标；默认 Target ID 与 Harness ID 相同。 */
   private harnessTargetId: string;
   private toast: ToastMessage | null = null;
@@ -167,6 +164,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.harnessTargetId = defaultTarget.id;
     this.modelPreferences = loadModelPreferences(store.rootDir);
     this.effortPreferences = loadEffortPreferences(store.rootDir);
+    this.commandRegistry = this.createCommandRegistry();
     this.marketplace = new MarketplaceRegistry({
       rootDir: store.rootDir,
       cwd: this.session.meta.cwd,
@@ -201,7 +199,7 @@ export class BatonChatProtocol implements ChatProtocol {
   // ===== 输出：baton → TUI =====
 
   get commands(): readonly CommandSpec[] {
-    return [...COMMANDS, ...this.plugins.listCommands()];
+    return [...this.commandRegistry.list(), ...this.plugins.listCommands()];
   }
 
   get pluginManager(): Manager {
@@ -251,21 +249,6 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   async submit(text: string): Promise<void> {
-    const route = parseHarnessRoute(text);
-    if (route?.kind === "ambiguous") {
-      this.toast = null;
-      this.commandOutput = this.batonTranscriptItem(
-        "_baton_harness_route_error",
-        `Error: harness prefix "/${route.token}" is ambiguous; matches ${route.harnesses.join(", ")}. Use a longer harness name or alias.`,
-      );
-      this.changed();
-      return;
-    }
-    if (route?.kind === "matched") {
-      await this.configureHarness(route.harness);
-      if (!route.message) return;
-      return this.submitMessage(route.message);
-    }
     return this.submitMessage(text);
   }
 
@@ -341,6 +324,9 @@ export class BatonChatProtocol implements ChatProtocol {
     return blocks;
   }
 
+  /**
+   * @spec 一次 Commandable 提交先完整执行并结算 canonical Command；只有成功后，允许的 trailing text 才作为下一条普通 Prompt 提交。
+   */
   async command(name: string, argument: string): Promise<void> {
     const input: HumanInput = Object.freeze({
       kind: "command",
@@ -348,156 +334,56 @@ export class BatonChatProtocol implements ChatProtocol {
       argument,
       harnessTargetId: this.harnessTargetId,
     });
-    await this.channel.dispatchCommand(input, async () =>
-      await this.executeCommand(name, argument)
-    );
+    let trailingText: string | undefined;
+    await this.channel.dispatchCommand(input, async () => {
+      const invocation = this.commandRegistry.resolve(name, argument);
+      if (!invocation) {
+        if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
+          throw new Error(`Unknown command: /${name}`);
+        }
+        return await this.runPluginCommand(name, argument);
+      }
+      trailingText = invocation.trailingText;
+      return await invocation.command.execute(invocation.argument);
+    });
+    if (trailingText) await this.submitMessage(trailingText);
   }
 
-  private async executeCommand(name: string, argument: string): Promise<void> {
-    if (name !== "status") this.commandOutput = null;
-    const harness = parseHarness(name);
-    if (harness) {
-      const target = resolveHarnessTargetSelection(this.config, harness);
-      if (!target) throw new Error(`No unambiguous HarnessTarget configured for ${harness}`);
-      await this.configureHarness(target.id);
-      if (argument) await this.submitMessage(argument);
-      return;
+  private createCommandRegistry(): CommandRegistry {
+    const registry = new CommandRegistry();
+    const register = (command: CommandDefinition): void => {
+      registry.register({
+        ...command,
+        execute: async (argument) => {
+          if (command.name !== "status") this.commandOutput = null;
+          await command.execute(argument);
+        },
+      });
+    };
+
+    for (const harness of HARNESSES) {
+      register({
+        name: harness,
+        description: `Switch the input target to ${harness}`,
+        scope: "baton",
+        runPolicy: "always",
+        input: { kind: "none", trailingText: "submit" },
+        aliases: HARNESS_IDENTITIES[harness].aliases.map((name) => ({ name })),
+        execute: async () => {
+          const target = resolveHarnessTargetSelection(this.config, harness);
+          if (!target) throw new Error(`No unambiguous HarnessTarget configured for ${harness}`);
+          await this.configureHarness(target.id);
+        },
+      });
     }
-    const command = name as CommandName;
-    switch (command) {
-      case "exit":
-        return this.exit();
-      case "new": {
-        if (argument) throw new Error("/new takes no arguments");
-        return this.switchSession(() => {
-          const next = this.store.createSession({ cwd: this.session.meta.cwd });
-          next.acquireLock();
-          return { session: next };
-        });
-      }
-      case "sessions": {
-        // chat-tui Picker 没有自定义按键，模式经参数选择（启动 picker 则用 Tab 就地切换）
-        const mode = argument || "list";
-        if (mode !== "list" && mode !== "tree") {
-          throw new Error(`/sessions takes 'tree' or 'list' (got: ${argument})`);
-        }
-        this.openSessionsPicker(mode);
-        return;
-      }
-      case "status": {
-        if (argument) throw new Error("/status takes no arguments");
-        this.toast = null;
-        this.commandOutput = this.sessionStatusItem();
-        this.changed();
-        return;
-      }
-      case "compact": {
-        if (argument) throw new Error("/compact takes no arguments");
-        const target = this.harnessTargetId;
-        this.toast = null;
-        await this.controller.compactContext(target);
-        this.toast = { text: `${target} context compacted`, tone: "info" };
-        this.changed();
-        return;
-      }
-      case "plan": {
-        if (argument) throw new Error("/plan takes no arguments");
-        return this.configureMode(this.harnessTargetId, "plan");
-      }
-      case "implement-plan": {
-        const explicitId = argument.trim();
-        const proposal = explicitId
-          ? this.state.proposedPlans.get(explicitId)
-          : [...this.state.timeline]
-              .reverse()
-              .find((entry) => {
-                if (entry.type !== "proposed_plan") return false;
-                return !this.state.proposedPlans.get(entry.id)?.implementationTurnId;
-              })
-              ?.id;
-        const resolved =
-          typeof proposal === "string"
-            ? this.state.proposedPlans.get(proposal)
-            : proposal;
-        if (!resolved) {
-          throw new Error(
-            explicitId
-              ? `Proposed plan not found: ${explicitId}`
-              : "No unimplemented proposed plan found",
-          );
-        }
-        if (resolved.implementationTurnId) {
-          throw new Error(`Proposed plan already has an implementation turn: ${resolved.planId}`);
-        }
-        return this.submitMessage(
-          `Implement the following proposed plan:\n\n${resolved.content}`,
-          { sourceProposedPlanId: resolved.planId },
-        );
-      }
-      case "cancel-request": {
-        const identifier = argument.trim() || undefined;
-        const cancelled = await this.plugins.cancelHarnessInvocation(identifier);
-        if (!cancelled) {
-          throw new Error(
-            identifier
-              ? `Cancellable HarnessInvocation not found: ${identifier}`
-              : "No cancellable HarnessInvocation found",
-          );
-        }
-        this.toast = {
-          text: identifier
-            ? `Cancelled HarnessInvocation ${identifier}`
-            : "Cancelled latest HarnessInvocation",
-          tone: "info",
-        };
-        this.changed();
-        return;
-      }
-      case "board": {
-        const mode = argument.trim().toLowerCase() ||
-          (this.boardMode === "open" ? "hide" : "open");
-        if (mode !== "open" && mode !== "hide" && mode !== "auto") {
-          throw new Error(`/board takes 'open', 'hide', or 'auto' (got: ${argument})`);
-        }
-        this.boardMode = mode === "hide" ? "hidden" : mode;
-        this.toast =
-          mode === "open" && this.plugins.listBoardItems().length === 0
-            ? { text: "Board has no items", tone: "info" }
-            : null;
-        this.boardChanged();
-        return;
-      }
-      case "plugins": {
-        if (argument) throw new Error("/plugins takes no arguments");
-        if (!this.navigation) throw new Error("Plugin manager is not available in this client");
-        this.navigation.openPlugins();
-        return;
-      }
-      case "reload-plugins": {
-        if (argument) throw new Error("/reload-plugins takes no arguments");
-        this.toast = { text: "Reloading plugins…", tone: "info" };
-        this.changed();
-        const result = await this.plugins.reload();
-        if (result.failures.length === 0) {
-          this.toast = {
-            text: `Reloaded ${result.activated.length} plugin instance${result.activated.length === 1 ? "" : "s"}`,
-            tone: "info",
-          };
-        } else {
-          const failures = result.failures
-            .map(({ pluginInstanceId, error }) =>
-              `${pluginInstanceId}: ${error instanceof Error ? error.message : String(error)}`,
-            )
-            .join("; ");
-          this.toast = {
-            text: `Reloaded ${result.activated.length}; ${result.failures.length} failed — ${failures}`,
-            tone: "error",
-          };
-        }
-        this.changed();
-        return;
-      }
-      case "target": {
+
+    register({
+      name: "target",
+      description: "Switch the input target by configured HarnessTarget id",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
         const targets = configuredHarnessTargets(this.config);
         if (!argument) {
           this.openPicker({
@@ -519,15 +405,27 @@ export class BatonChatProtocol implements ChatProtocol {
         }
         const target = resolveHarnessTarget(this.config, argument);
         if (!target) throw new Error(`Unknown HarnessTarget: ${argument}`);
-        return this.configureHarness(target.id);
-      }
-      case "model": {
+        await this.configureHarness(target.id);
+      },
+    });
+
+    register({
+      name: "model",
+      description: "Set the model for the current harness's next turns",
+      scope: "harness",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
         const target = this.harnessTargetId;
         const models = await this.controller.listModels(target);
         if (!argument) {
           this.openPicker({
             title: `Select ${target} model`,
-            options: models.map((m) => ({ name: m.label, description: m.description ?? m.id, value: m.id })),
+            options: models.map((model) => ({
+              name: model.label,
+              description: model.description ?? model.id,
+              value: model.id,
+            })),
             onSelect: async (value) => {
               const model = models.find((candidate) => candidate.id === value);
               if (model) await this.configureModel(target, model);
@@ -540,9 +438,31 @@ export class BatonChatProtocol implements ChatProtocol {
           (candidate) => candidate.id.toLowerCase() === normalized || candidate.label.toLowerCase() === normalized,
         );
         if (!model) throw new Error(`Unknown ${target} model: ${argument}`);
-        return this.configureModel(target, model);
-      }
-      case "effort": {
+        await this.configureModel(target, model);
+      },
+    });
+
+    register({
+      name: "effort",
+      description: "Set the reasoning effort for the current harness's next turns",
+      scope: "harness",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      aliases: [
+        {
+          name: "h",
+          description: "Set the reasoning effort to High",
+          boundArgument: "high",
+          input: { kind: "none", trailingText: "submit" },
+        },
+        {
+          name: "eh",
+          description: "Set the reasoning effort to Extra high",
+          boundArgument: "xhigh",
+          input: { kind: "none", trailingText: "submit" },
+        },
+      ],
+      execute: async (argument) => {
         const target = this.harnessTargetId;
         const efforts = await this.controller.listEfforts(target);
         if (!argument) {
@@ -565,10 +485,17 @@ export class BatonChatProtocol implements ChatProtocol {
           (candidate) => candidate.id.toLowerCase() === normalized || candidate.label.toLowerCase() === normalized,
         );
         if (!effort) throw new Error(`Unknown ${target} effort: ${argument}`);
-        return this.configureEffort(target, effort);
-      }
-      case "fast": {
-        if (argument) throw new Error("/fast takes no arguments");
+        await this.configureEffort(target, effort);
+      },
+    });
+
+    register({
+      name: "fast",
+      description: "Toggle Fast mode for the current harness session",
+      scope: "harness",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "submit" },
+      execute: async () => {
         const target = this.harnessTargetId;
         const option = (await this.controller.getConfig(target)).find(
           (candidate) => candidate.id === "fast" && candidate.type === "boolean",
@@ -583,15 +510,213 @@ export class BatonChatProtocol implements ChatProtocol {
           tone: "info",
         };
         this.changed();
-        return;
-      }
-      default: {
-        if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
-          throw new Error(`Unknown command: /${name}`);
+      },
+    });
+
+    register({
+      name: "plan",
+      description: "Switch the current harness to Plan mode",
+      scope: "harness",
+      runPolicy: "idle",
+      input: { kind: "none", trailingText: "submit" },
+      execute: async () => await this.configureMode(this.harnessTargetId, "plan"),
+    });
+
+    register({
+      name: "compact",
+      description: "Compact the current harness context",
+      scope: "harness",
+      runPolicy: "idle",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        const target = this.harnessTargetId;
+        this.toast = null;
+        await this.controller.compactContext(target);
+        this.toast = { text: `${target} context compacted`, tone: "info" };
+        this.changed();
+      },
+    });
+
+    register({
+      name: "implement-plan",
+      description: "Start a new turn that implements a proposed plan (latest by default)",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
+        const explicitId = argument.trim();
+        const proposal = explicitId
+          ? this.state.proposedPlans.get(explicitId)
+          : [...this.state.timeline]
+              .reverse()
+              .find((entry) => {
+                if (entry.type !== "proposed_plan") return false;
+                return !this.state.proposedPlans.get(entry.id)?.implementationTurnId;
+              })
+              ?.id;
+        const resolved = typeof proposal === "string"
+          ? this.state.proposedPlans.get(proposal)
+          : proposal;
+        if (!resolved) {
+          throw new Error(
+            explicitId
+              ? `Proposed plan not found: ${explicitId}`
+              : "No unimplemented proposed plan found",
+          );
         }
-        return this.runPluginCommand(name, argument);
-      }
-    }
+        if (resolved.implementationTurnId) {
+          throw new Error(`Proposed plan already has an implementation turn: ${resolved.planId}`);
+        }
+        await this.submitMessage(
+          `Implement the following proposed plan:\n\n${resolved.content}`,
+          { sourceProposedPlanId: resolved.planId },
+        );
+      },
+    });
+
+    register({
+      name: "cancel-request",
+      description: "Cancel a pending HarnessInvocation (latest by default)",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
+        const identifier = argument.trim() || undefined;
+        const cancelled = await this.plugins.cancelHarnessInvocation(identifier);
+        if (!cancelled) {
+          throw new Error(
+            identifier
+              ? `Cancellable HarnessInvocation not found: ${identifier}`
+              : "No cancellable HarnessInvocation found",
+          );
+        }
+        this.toast = {
+          text: identifier
+            ? `Cancelled HarnessInvocation ${identifier}`
+            : "Cancelled latest HarnessInvocation",
+          tone: "info",
+        };
+        this.changed();
+      },
+    });
+
+    register({
+      name: "board",
+      description: "Toggle the Board sidecar (or set 'open', 'hide', or 'auto')",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
+        const mode = argument.trim().toLowerCase() ||
+          (this.boardMode === "open" ? "hide" : "open");
+        if (mode !== "open" && mode !== "hide" && mode !== "auto") {
+          throw new Error(`/board takes 'open', 'hide', or 'auto' (got: ${argument})`);
+        }
+        this.boardMode = mode === "hide" ? "hidden" : mode;
+        this.toast =
+          mode === "open" && this.plugins.listBoardItems().length === 0
+            ? { text: "Board has no items", tone: "info" }
+            : null;
+        this.boardChanged();
+      },
+    });
+
+    register({
+      name: "plugins",
+      description: "Manage Baton plugins",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        if (!this.navigation) throw new Error("Plugin manager is not available in this client");
+        this.navigation.openPlugins();
+      },
+    });
+
+    register({
+      name: "reload-plugins",
+      description: "Reload enabled plugins in the current BatonSession",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        this.toast = { text: "Reloading plugins…", tone: "info" };
+        this.changed();
+        const result = await this.plugins.reload();
+        if (result.failures.length === 0) {
+          this.toast = {
+            text: `Reloaded ${result.activated.length} plugin instance${result.activated.length === 1 ? "" : "s"}`,
+            tone: "info",
+          };
+        } else {
+          const failures = result.failures
+            .map(({ pluginInstanceId, error }) =>
+              `${pluginInstanceId}: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            .join("; ");
+          this.toast = {
+            text: `Reloaded ${result.activated.length}; ${result.failures.length} failed — ${failures}`,
+            tone: "error",
+          };
+        }
+        this.changed();
+      },
+    });
+
+    register({
+      name: "sessions",
+      description: "Open the BatonSession picker ('tree' for the fork-lineage view)",
+      scope: "baton",
+      runPolicy: "idle",
+      input: { kind: "argument" },
+      execute: async (argument) => {
+        // chat-tui Picker 没有自定义按键，模式经参数选择（启动 picker 则用 Tab 就地切换）
+        const mode = argument || "list";
+        if (mode !== "list" && mode !== "tree") {
+          throw new Error(`/sessions takes 'tree' or 'list' (got: ${argument})`);
+        }
+        this.openSessionsPicker(mode);
+      },
+    });
+
+    register({
+      name: "status",
+      description: "Show the current BatonSession information",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        this.toast = null;
+        this.commandOutput = this.sessionStatusItem();
+        this.changed();
+      },
+    });
+
+    register({
+      name: "new",
+      description: "Create a new BatonSession in the current directory",
+      scope: "baton",
+      runPolicy: "idle",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        await this.switchSession(() => {
+          const next = this.store.createSession({ cwd: this.session.meta.cwd });
+          next.acquireLock();
+          return { session: next };
+        });
+      },
+    });
+
+    register({
+      name: "exit",
+      description: "Exit baton",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => await this.exit(),
+    });
+
+    return registry;
   }
 
   async cycleMode(): Promise<void> {
@@ -1006,7 +1131,7 @@ export class BatonChatProtocol implements ChatProtocol {
         this.toast = message;
         this.changed();
       },
-      reservedCommandNames: COMMANDS.map((command) => command.name),
+      reservedCommandNames: this.commandRegistry.names(),
       mentions,
       onCommandsChanged: () => {
         this.completionsChanged();
