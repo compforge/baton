@@ -5,7 +5,8 @@
 baton 是一个 terminal-native 的 Loop Engineering 协作内核与控制面，也是跨 coding agent 的统一工作区。
 用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
 Session 的 Plugin 数据与执行；Project 按 cwd 组织和发现 Session，也承载同一 workspace
-跨 Session 的 Plugin 私有数据。Claude Code 和 Codex 是首批内置 Harness，不是封闭支持列表。
+跨 Session 的 Plugin 私有数据。Claude Code、Codex 和 DeepSeek Harness 是当前内置 Harness，
+不是封闭支持列表。
 
 baton core 位于人、Harness 和 Baton Plugin 三类参与者之间：
 
@@ -37,7 +38,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | 目录 | 职责 |
 |---|---|
 | `docs/kernel.md`、`docs/workflow.md` | 稳定内核、核心概念、不变量与端到端双向工作流 |
-| `docs/harness.md`、`docs/harness/` | Harness 公共抽象，以及 Codex / Claude Code 原生协议适配 |
+| `docs/harness.md`、`docs/harness/` | Harness 公共抽象，以及 Codex / Claude Code / DeepSeek Harness 原生协议适配 |
 | `docs/plugin.md` | Plugin host、authoring 契约与长期领域 loop |
 | `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
 | `src/channel/`、`src/controller/`、`src/event/`、`src/session/`、`src/store/` | 双向协调边界、Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
@@ -107,7 +108,7 @@ npm 包版本独立管理，不随 `VERSION` 自动更新。
 - `docs/kernel.md` — 稳定内核、核心模型与关键不变量
 - `docs/workflow.md` — Input、Context、Attempt、Harness Event、Interaction 与用户反馈主流程
 - `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
-- `docs/harness/codex.md`、`docs/harness/claude-code.md` — 首批内置 Harness 的协议适配
+- `docs/harness/codex.md`、`docs/harness/claude-code.md`、`docs/harness/deepseek-harness.md` — 内置 Harness 的协议适配
 - `docs/plugin.md` — Plugin Manager / Supervisor / Runner、Resource/Controller 与三方 authoring 契约
 - `docs/resource-lifecycle.md` — Plugin Resource 准入、结构 owner、删除与恢复契约
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执

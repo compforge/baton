@@ -17,6 +17,12 @@ export interface BatonConfig {
   claudeExecutable?: string;
   /** codex 启动命令（headless 必须是 app-server 形态） */
   codexCommand: string[];
+  /** DeepSeek Harness JSON-RPC runtime 完整启动 argv（含 Cordis 配置路径） */
+  dshCommand?: string[];
+  /** DSH SDK 创建 agent 时使用的 provider / model；缺省跟随 SDK runtime 默认值。 */
+  dshProvider?: string;
+  dshModel?: string;
+  dshMaxTokens?: number;
   /**
    * codex 审批人（approvals_reviewer）。**缺省不设 = 跟随 codex 自己的解析**
    * （~/.codex/config.toml、profile、企业 requirements 照常生效，codex 自身默认是 user）。
@@ -44,6 +50,8 @@ export interface BatonConfig {
 export const DEFAULT_CONFIG: BatonConfig = {
   defaultAgent: "codex",
   codexCommand: ["codex", "app-server"],
+  dshModel: "prod",
+  dshMaxTokens: 32_768,
   mentionBudgetChars: 4096,
   showThoughts: true,
   logLevel: "info",
@@ -85,6 +93,22 @@ export function loadConfig(rootDir?: string): BatonConfig {
         ? fromFile.codexCommand
         : DEFAULT_CONFIG.codexCommand,
   };
+  if (
+    !Array.isArray(merged.dshCommand) ||
+    merged.dshCommand.length === 0 ||
+    merged.dshCommand.some((part) => typeof part !== "string" || !part.trim())
+  ) {
+    merged.dshCommand = undefined;
+  }
+  if (typeof merged.dshProvider !== "string" || !merged.dshProvider.trim()) {
+    merged.dshProvider = undefined;
+  }
+  if (typeof merged.dshModel !== "string" || !merged.dshModel.trim()) {
+    merged.dshModel = DEFAULT_CONFIG.dshModel;
+  }
+  if (!Number.isInteger(merged.dshMaxTokens) || (merged.dshMaxTokens ?? 0) <= 0) {
+    merged.dshMaxTokens = DEFAULT_CONFIG.dshMaxTokens;
+  }
   merged.defaultAgent =
     typeof merged.defaultAgent === "string"
       ? (parseHarness(merged.defaultAgent) ?? DEFAULT_CONFIG.defaultAgent)

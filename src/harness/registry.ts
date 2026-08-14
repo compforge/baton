@@ -7,6 +7,7 @@ import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
 import { claudeSessionInspector } from "./claude/native-session.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
 import { codexSessionInspector } from "./codex/native-session.ts";
+import { DshAdapter } from "./dsh/adapter.ts";
 import type { BatonConfig } from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
 import type { LogSink } from "../logging.ts";
@@ -98,6 +99,22 @@ export const HARNESS_REGISTRY = [
         executablePath: config.claudeExecutable,
       }),
   },
+  {
+    ...HARNESS_IDENTITIES.dsh,
+    label: "DeepSeek Harness",
+    sessionKey: "deepseek-harness",
+    shortName: "dsh",
+    color: "#4d6bfe", // DeepSeek 蓝
+    create: ({ log, nativeEvent, config }) =>
+      new DshAdapter({
+        log,
+        nativeEvent,
+        command: config.dshCommand,
+        provider: config.dshProvider,
+        model: config.dshModel,
+        maxTokens: config.dshMaxTokens,
+      }),
+  },
 ] as const satisfies readonly HarnessDefinition<HarnessName>[];
 
 /**
@@ -142,7 +159,7 @@ export async function probeHarnessTarget(
 }
 
 /**
- * v2 target 模型的零功能迁移入口：现有 `/codex`、`/claude` 各映射到同名默认 target。
+ * v2 target 模型的默认入口：每个 bundled Harness 映射到同名默认 target。
  * target identity 与 Harness identity 即使当前值相同也保持两个字段，后续增加第二个同类
  * target 时不再改动 BatonSession/controller 主链路。
  */

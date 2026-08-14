@@ -8,6 +8,7 @@ describe("baton command registry", () => {
   test("parses direct harness commands and config arguments", () => {
     expect(parseSlashCommand("/claude", COMMANDS)).toEqual({ name: "claude", argument: "" });
     expect(parseSlashCommand("/codex", COMMANDS)).toEqual({ name: "codex", argument: "" });
+    expect(parseSlashCommand("/dsh", COMMANDS)).toEqual({ name: "dsh", argument: "" });
     expect(parseSlashCommand("/codex fix this", COMMANDS)).toEqual({ name: "codex", argument: "fix this" });
     expect(parseSlashCommand("/claude review this", COMMANDS)).toEqual({ name: "claude", argument: "review this" });
     expect(parseSlashCommand("/model sonnet", COMMANDS)).toEqual({ name: "model", argument: "sonnet" });
@@ -62,6 +63,11 @@ describe("baton command registry", () => {
       message: "review this",
     });
     expect(parseHarnessRoute("/cx fix this")).toEqual({ kind: "matched", harness: "codex", message: "fix this" });
+    expect(parseHarnessRoute("/deepseek inspect this")).toEqual({
+      kind: "matched",
+      harness: "dsh",
+      message: "inspect this",
+    });
     expect(parseHarnessRoute("/cla review this")).toEqual({
       kind: "matched",
       harness: "claude",
@@ -80,6 +86,7 @@ describe("baton command registry", () => {
     expect(parseHarness("codex")).toBe("codex");
     expect(parseHarness("cc")).toBe("claude");
     expect(parseHarness("cx")).toBe("codex");
+    expect(parseHarness("deepseek")).toBe("dsh");
     expect(parseHarness("other")).toBeNull();
   });
 });

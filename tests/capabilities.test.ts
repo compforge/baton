@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ClaudeAdapter } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { DshAdapter } from "../src/harness/dsh/adapter.ts";
 import type { HarnessAdapter } from "../src/harness/adapter.ts";
 
 const openInteraction: OpenInteraction = async (req) =>
@@ -17,6 +18,7 @@ const openInteraction: OpenInteraction = async (req) =>
 const adapters: HarnessAdapter[] = [
   new ClaudeAdapter({ openInteraction }),
   new CodexAdapter({ openInteraction }),
+  new DshAdapter(),
 ];
 
 /**

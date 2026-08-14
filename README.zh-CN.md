@@ -11,7 +11,7 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-baton 是一个以持久、harness-independent 会话为内核的 terminal-native coding-agent workspace，受 [tutti](https://github.com/tutti-os/tutti) 启发。当前，你可以在同一个 TUI 中使用 Claude Code 和 Codex，并在切换 agent 时自然延续上下文。由于 BatonSession 由 baton 而不是任何 harness 持有，这套基础能力可以从 agent 接力进一步演进到多 agent 协作与编排。Claude Code 和 Codex 是首批内置 harness，不是封闭支持列表。
+baton 是一个以持久、harness-independent 会话为内核的 terminal-native coding-agent workspace，受 [tutti](https://github.com/tutti-os/tutti) 启发。当前，你可以在同一个 TUI 中使用 Claude Code、Codex 和 DeepSeek Harness，并在切换 agent 时自然延续上下文。由于 BatonSession 由 baton 而不是任何 harness 持有，这套基础能力可以从 agent 接力进一步演进到多 agent 协作与编排；内置 harness 不是封闭支持列表。
 
 各家的原生会话只是恢复加速；即使原生会话无法恢复，BatonSession 历史仍然存在。
 
@@ -22,7 +22,7 @@ baton 是一个以持久、harness-independent 会话为内核的 terminal-nativ
 当前已落地的两个基本点：
 
 - **上下文打通**：BatonSession 是用户拥有的持久统一历史，跨 harness 存续。换 agent 不需要搬运上下文；各家原生会话只承担恢复加速，不是历史存续的前提。
-- **原生体验**：尽量保留单独使用各 agent 时的输入、补全、流式输出、工具调用与审批体验，baton 只增加少量自己的命令（如 `/codex` 和 `/claude`）。
+- **原生体验**：尽量保留单独使用各 agent 时的输入、补全、流式输出、工具调用与审批体验，baton 只增加少量自己的命令（如 `/codex`、`/claude` 和 `/dsh`）。
 
 Plugin host 又增加了一条原则：
 
@@ -52,10 +52,10 @@ v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台�
 
 ## 功能
 
-- 在同一个终端界面中使用 Claude Code 和 Codex
+- 在同一个终端界面中使用 Claude Code、Codex 和 DeepSeek Harness
 - 让 Plugin 通过 `ReconcileContext` 询问用户、准备可编辑 draft，或在 main/new Lane 发起 Harness Turn
 - 使用 `Ctrl+V` 粘贴剪贴板图片，并作为原生图片输入发送给 Codex 或 Claude Code
-- 使用 `/codex` 或 `/claude` 直接切换 agent，并分别配置当前 harness 的模型与推理强度
+- 使用 `/codex`、`/claude` 或 `/dsh` 直接切换 agent；运行时配置能力按 Harness 各自声明
 - 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
 - 首个 turn 后自动生成简洁会话标题，支持跨 harness 降级且不会创建原生会话
 - 使用 `baton -c` 继续当前项目最近会话，或用 `baton -s <id>` 打开指定会话
@@ -64,7 +64,7 @@ v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台�
 - 统一记录消息、思考、工具调用、文件改动、计划和 token usage
 - 保留 Codex hook trust 等 harness 启动交互；已信任且未变化的定义会自动复用并明确留痕
 - 将事件追加写入本地 `session.jsonl`，支持状态重建和后续引用
-- 复用本机 Claude Code / Codex 登录态，不托管凭证
+- 复用本机 Harness 登录态或 runtime 配置，不托管 provider 凭证
 - 提供 headless REPL，方便调试 agent 接入链路
 - 注册本地或 Git Plugin Marketplace，并安装不可变的 PluginPackage
 - 让每个活动的三方 Plugin Binding 在独立、受监管的进程中执行
@@ -72,7 +72,7 @@ v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台�
 
 ## 安装与配置
 
-使用 npm 安装 baton。此外需要安装并登录至少一个受支持的 agent（[Codex CLI](https://github.com/openai/codex) / [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)）。
+使用 npm 安装 baton。此外需要至少准备一个受支持的 runtime：已登录的 [Codex CLI](https://github.com/openai/codex)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)，或为 DSH Agent SDK 配置好的 DeepSeek Harness JSON-RPC runtime。
 
 ```bash
 npm install -g @compforge/baton
@@ -91,6 +91,10 @@ defaultAgent: codex
 codexCommand:
   - codex
   - app-server
+# 仅使用 /dsh 时需要：
+# dshCommand:
+#   - dsh-jsonrpc-agent
+#   - /absolute/path/to/cordis.yml
 mentionBudgetChars: 4096
 showThoughts: true
 ```
@@ -101,6 +105,8 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 
 如果 Claude Code 使用自定义可执行文件，可以在配置中设置 `claudeExecutable`，或通过环境变量临时覆盖（`BATON_CLAUDE_BIN=/path/to/claude baton`）。配置优先级为：环境变量 > `config.yaml` > 默认值。
 
+DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`dshCommand` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod` 和 `dshMaxTokens: 32768`；`dshProvider` 可选择其它 provider route。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
+
 ## 使用
 
 启动 TUI 后直接输入内容即可发送。
@@ -108,8 +114,10 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 ```text
 /claude 或 /cc        切换到 Claude Code
 /codex 或 /cx         切换到 Codex
+/dsh 或 /deepseek     切换到 DeepSeek Harness
 /cc <消息>           切换到 Claude Code 并立即发送消息
 /cx <消息>           切换到 Codex 并立即发送消息
+/deepseek <消息>     切换到 DeepSeek Harness 并立即发送消息
 /cla <消息>          harness 名的唯一前缀也可使用
 /model               打开当前 harness 的模型选择器
 /model <id>          设置后续 turn 使用的模型
@@ -191,7 +199,7 @@ baton 的数据默认保存在 `~/.baton/`：
             └── resources/
 ```
 
-Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；剪贴板图片作为不可变、按内容寻址的附件由会话历史与 fork 共享，`session.jsonl` 只保存其路径。Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。各 agent 的原生会话仍由 Claude Code / Codex 管理；baton 只保存其 ID 用于加速 resume，不会修改原生 session 文件。
+Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；剪贴板图片作为不可变、按内容寻址的附件由会话历史与 fork 共享，`session.jsonl` 只保存其路径。Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。原生会话仍由各 Harness 管理；baton 只保存用于加速 resume 的 binding，不会修改原生 session 文件。
 
 ## License
 
