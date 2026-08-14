@@ -14,7 +14,10 @@ import {
   type DshSessionLike,
   type DshTurnLike,
 } from "../src/harness/dsh/adapter.ts";
-import { sessionIdResumeState } from "../src/harness/resume.ts";
+import {
+  type HarnessResumeState,
+  sessionIdResumeState,
+} from "../src/harness/resume.ts";
 
 function result(sessionId: string, finalResponse = ""): DshRunResult {
   return {
@@ -209,6 +212,13 @@ describe("DshAdapter", () => {
   test("maps streaming messages, tools, usage, todo, subagents, and one terminal event", async () => {
     const sessionId = "dsh-native-2";
     const notifications: DshEvent[] = [
+      sessionEvent(sessionId, "request/context", {
+        turn: 1,
+        step: 1,
+        provider: "deepseek-official",
+        model: "prod",
+        contextWindow: 128_000,
+      }),
       sessionEvent(sessionId, "assistant/chunk", {
         turn: 1,
         step: 1,
@@ -318,6 +328,14 @@ describe("DshAdapter", () => {
       cacheWriteTokens: undefined,
       reasoningTokens: undefined,
     });
+    expect(
+      events
+        .filter((event) => event.kind === "context_usage_update")
+        .map((event) => event.payload),
+    ).toEqual([
+      { model: "prod", contextSize: 128_000 },
+      { model: "prod", contextUsed: 12, contextSize: 128_000 },
+    ]);
     expect(events.find((event) => event.kind === "plan_update")?.payload).toMatchObject({
       entries: [{ content: "Inspect repository", status: "completed", priority: "medium" }],
     });
@@ -334,6 +352,89 @@ describe("DshAdapter", () => {
     ]);
     expect(native).toHaveLength(notifications.length);
     await adapter.close(ref);
+  });
+
+  test("restores the last request context when DSH deduplicates it after resume", async () => {
+    const sessionId = "dsh-native-context-resume";
+    const firstClient = new FakeClient(sessionId, [new StaticTurn([
+      sessionEvent(sessionId, "request/context", {
+        turn: 1,
+        step: 1,
+        provider: "deepseek-official",
+        model: "prod",
+        contextWindow: 128_000,
+      }),
+      sessionEvent(sessionId, "assistant/message", {
+        turn: 1,
+        step: 1,
+        message: { role: "assistant", content: [{ type: "text", text: "first" }] },
+        usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 2 },
+      }),
+      sessionEvent(sessionId, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+    ], result(sessionId, "first"))]);
+    const bindings: Array<{ resumeState?: HarnessResumeState }> = [];
+    const firstEvents: AnyEventDraft[] = [];
+    const firstAdapter = new DshAdapter({
+      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      model: "prod",
+      clientFactory: () => firstClient,
+    });
+    const firstRef = await firstAdapter.open(
+      { cwd: "/repo" },
+      (event) => firstEvents.push(event),
+      (binding) => bindings.push(binding),
+    );
+    await firstAdapter.sendTurn(firstRef, {
+      turnId: "t_context_first",
+      messageId: "m_context_first",
+      blocks: [{ type: "text", text: "first" }],
+    });
+    await waitForIdle(firstEvents, "t_context_first");
+    await firstAdapter.close(firstRef);
+
+    const resumeState = bindings.at(-1)?.resumeState;
+    expect(resumeState).toEqual({
+      version: 1,
+      data: {
+        sessionId,
+        requestContext: { model: "prod", contextWindow: 128_000 },
+      },
+    });
+    if (!resumeState) throw new Error("expected DSH request context checkpoint");
+
+    // The route is unchanged, so DSH does not emit request/context again.
+    const secondClient = new FakeClient(sessionId, [new StaticTurn([
+      sessionEvent(sessionId, "assistant/message", {
+        turn: 2,
+        step: 1,
+        message: { role: "assistant", content: [{ type: "text", text: "second" }] },
+        usage: { inputTokens: 20, outputTokens: 3, cacheReadTokens: 5 },
+      }),
+      sessionEvent(sessionId, "turn/end", { turn: 2, reason: { kind: "completed" } }),
+    ], result(sessionId, "second"))]);
+    const events: AnyEventDraft[] = [];
+    const secondAdapter = new DshAdapter({
+      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      model: "prod",
+      clientFactory: () => secondClient,
+    });
+    const secondRef = await secondAdapter.open(
+      { cwd: "/repo", resumeState },
+      (event) => events.push(event),
+    );
+    await secondAdapter.sendTurn(secondRef, {
+      turnId: "t_context_second",
+      messageId: "m_context_second",
+      blocks: [{ type: "text", text: "second" }],
+    });
+    await waitForIdle(events, "t_context_second");
+
+    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
+      model: "prod",
+      contextUsed: 25,
+      contextSize: 128_000,
+    });
+    await secondAdapter.close(secondRef);
   });
 
   test("rejects unsupported prompts and busy steering before accepting responsibility", async () => {
