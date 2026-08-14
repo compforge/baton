@@ -821,11 +821,11 @@ describe("BatonChatProtocol harness commands", () => {
       await protocol.command("dsh", "");
       expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "dsh" });
 
-      await protocol.submit("/cc review this");
+      await protocol.command("cc", "review this");
       expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "claude" });
       expect(submitted).toEqual([{ harness: "claude", text: "review this" }]);
 
-      await protocol.submit("/cx fix it");
+      await protocol.command("cx", "fix it");
       expect(submitted.at(-1)).toEqual({ harness: "codex", text: "fix it" });
 
       await protocol.command("claude", "explain it");
@@ -834,7 +834,7 @@ describe("BatonChatProtocol harness commands", () => {
       await protocol.command("codex", "implement it");
       expect(submitted.at(-1)).toEqual({ harness: "codex", text: "implement it" });
 
-      await protocol.submit("/deepseek inspect it");
+      await protocol.command("deepseek", "inspect it");
       expect(submitted.at(-1)).toEqual({ harness: "dsh", text: "inspect it" });
 
       await protocol.command("codex", "");
@@ -844,12 +844,7 @@ describe("BatonChatProtocol harness commands", () => {
       expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex context compacted");
 
       await protocol.submit("/c ambiguous");
-      expect(submitted).toHaveLength(5);
-      expect(protocol.stateStore.getState("timeline").items.at(-1)).toMatchObject({
-        id: "_baton_harness_route_error",
-        author: "baton",
-        text: expect.stringContaining('harness prefix "/c" is ambiguous; matches codex, claude'),
-      });
+      expect(submitted.at(-1)).toEqual({ harness: "codex", text: "/c ambiguous" });
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -898,6 +893,10 @@ describe("BatonChatProtocol harness commands", () => {
         });
         return [];
       };
+      const submitted: Array<{ harness: string; text: string }> = [];
+      stubCompletedSend(protocol, (harness, blocks) => {
+        submitted.push({ harness, text: blocks[0]?.text ?? "" });
+      });
 
       await protocol.command("plan", "");
       expect(mode).toBe("plan");
@@ -905,9 +904,19 @@ describe("BatonChatProtocol harness commands", () => {
       expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
       expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · plan mode · idle");
 
+      await protocol.command("plan", "investigate the failure");
+      expect(mode).toBe("plan");
+      expect(submitted).toEqual([{ harness: "codex", text: "investigate the failure" }]);
+
       await protocol.cycleMode();
       expect(mode).toBe("default");
       expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex mode: Default");
+
+      controller.setConfig = async () => {
+        throw new Error("mode change failed");
+      };
+      await expect(protocol.command("plan", "do not send this")).rejects.toThrow("mode change failed");
+      expect(submitted).toEqual([{ harness: "codex", text: "investigate the failure" }]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -954,6 +963,10 @@ describe("BatonChatProtocol harness commands", () => {
         });
         return [];
       };
+      const submitted: Array<{ harness: string; text: string }> = [];
+      stubCompletedSend(protocol, (harness, blocks) => {
+        submitted.push({ harness, text: blocks[0]?.text ?? "" });
+      });
 
       await protocol.command("fast", "");
       expect(protocol.stateStore.getState("footer").toast?.text).toBe(
@@ -961,11 +974,50 @@ describe("BatonChatProtocol harness commands", () => {
       );
       expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · Fast · idle");
 
-      await protocol.command("fast", "");
-      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
-        "codex Fast mode: off (takes effect next turn)",
-      );
+      await protocol.command("fast", "continue with the fix");
+      expect(protocol.stateStore.getState("footer").toast).toBeNull();
       expect(protocol.stateStore.getState("activity").items?.[0]?.label).not.toContain("Fast");
+      expect(submitted).toEqual([{ harness: "codex", text: "continue with the fix" }]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("maps /h and /eh to effort levels and sends trailing text", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-effort-shortcuts-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
+      const selected: string[] = [];
+      const controller = (
+        protocol as unknown as {
+          controller: {
+            listEfforts: () => Promise<Array<{ id: string; label: string }>>;
+            setEffort: (_target: string, effort: string) => Promise<void>;
+          };
+        }
+      ).controller;
+      controller.listEfforts = async () => [
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra high" },
+      ];
+      controller.setEffort = async (_target, effort) => {
+        selected.push(effort);
+      };
+      const submitted: Array<{ harness: string; text: string }> = [];
+      stubCompletedSend(protocol, (harness, blocks) => {
+        submitted.push({ harness, text: blocks[0]?.text ?? "" });
+      });
+
+      await protocol.command("h", "fix this issue");
+      await protocol.command("eh", "analyze the root cause");
+      expect(selected).toEqual(["high", "xhigh"]);
+      expect(submitted).toEqual([
+        { harness: "codex", text: "fix this issue" },
+        { harness: "codex", text: "analyze the root cause" },
+      ]);
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });

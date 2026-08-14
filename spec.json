@@ -47,6 +47,14 @@
       }
     ]
   },
+  "src/commands/registry.ts::CommandRegistry.resolve": {
+    "specs": [
+      {
+        "cases": [],
+        "spec": "Alias 只改变 slash 调用形式：它先绑定 canonical Command 参数；无剩余命令参数且显式允许 trailing text 的 Commandable，才把后缀作为独立 Prompt 返回。"
+      }
+    ]
+  },
   "src/controller/index.ts::Controller.sendTurn": {
     "specs": [
       {
@@ -99,6 +107,14 @@
           "../docs/workflow.md"
         ],
         "spec": "只有仍位于队头的 HarnessInput 才能被 same-turn dispatch claim；claim 后不可被 composer recall。"
+      }
+    ]
+  },
+  "src/tui/protocol/index.ts::BatonChatProtocol.command": {
+    "specs": [
+      {
+        "cases": [],
+        "spec": "一次 Commandable 提交先完整执行并结算 canonical Command；只有成功后，允许的 trailing text 才作为下一条普通 Prompt 提交。"
       }
     ]
   },

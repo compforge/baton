@@ -1,93 +1,136 @@
 import { describe, expect, test } from "bun:test";
 import { parseSlashCommand } from "chat-tui";
 
-import { COMMANDS, parseHarness, parseHarnessRoute } from "../src/commands/registry.ts";
+import { CommandRegistry } from "../src/commands/registry.ts";
 
-// slash 解析实现在 chat-tui；这里锁的是"chat-tui 解析器 × baton 命令表"的组合行为。
-describe("baton command registry", () => {
-  test("parses direct harness commands and config arguments", () => {
-    expect(parseSlashCommand("/claude", COMMANDS)).toEqual({ name: "claude", argument: "" });
-    expect(parseSlashCommand("/codex", COMMANDS)).toEqual({ name: "codex", argument: "" });
-    expect(parseSlashCommand("/dsh", COMMANDS)).toEqual({ name: "dsh", argument: "" });
-    expect(parseSlashCommand("/target dsh-prod", COMMANDS)).toEqual({ name: "target", argument: "dsh-prod" });
-    expect(parseSlashCommand("/codex fix this", COMMANDS)).toEqual({ name: "codex", argument: "fix this" });
-    expect(parseSlashCommand("/claude review this", COMMANDS)).toEqual({ name: "claude", argument: "review this" });
-    expect(parseSlashCommand("/model sonnet", COMMANDS)).toEqual({ name: "model", argument: "sonnet" });
-    expect(parseSlashCommand("/effort high", COMMANDS)).toEqual({ name: "effort", argument: "high" });
-    expect(parseSlashCommand("/fast", COMMANDS)).toEqual({ name: "fast", argument: "" });
-    expect(parseSlashCommand("/plan", COMMANDS)).toEqual({ name: "plan", argument: "" });
-    expect(parseSlashCommand("/compact", COMMANDS)).toEqual({ name: "compact", argument: "" });
-    expect(parseSlashCommand("/cancel-request trq_1", COMMANDS)).toEqual({
-      name: "cancel-request",
-      argument: "trq_1",
+function fixture() {
+  const calls: Array<{ command: string; argument: string }> = [];
+  const registry = new CommandRegistry();
+  registry.register({
+    name: "effort",
+    description: "Set effort",
+    scope: "harness",
+    runPolicy: "always",
+    input: { kind: "argument" },
+    aliases: [
+      {
+        name: "h",
+        boundArgument: "high",
+        input: { kind: "none", trailingText: "submit" },
+      },
+      {
+        name: "eh",
+        boundArgument: "xhigh",
+        input: { kind: "none", trailingText: "submit" },
+      },
+    ],
+    execute: async (argument) => {
+      calls.push({ command: "effort", argument });
+    },
+  });
+  registry.register({
+    name: "plan",
+    description: "Switch to Plan mode",
+    scope: "harness",
+    runPolicy: "idle",
+    input: { kind: "none", trailingText: "submit" },
+    execute: async (argument) => {
+      calls.push({ command: "plan", argument });
+    },
+  });
+  registry.register({
+    name: "status",
+    description: "Show status",
+    scope: "baton",
+    runPolicy: "always",
+    input: { kind: "none", trailingText: "reject" },
+    execute: async (argument) => {
+      calls.push({ command: "status", argument });
+    },
+  });
+  return { registry, calls };
+}
+
+describe("CommandRegistry", () => {
+  test("a Command registers its own features, handler, and Aliases", async () => {
+    const { registry, calls } = fixture();
+    const commandables = registry.list();
+
+    expect(commandables.map((commandable) => commandable.name)).toEqual([
+      "effort",
+      "h",
+      "eh",
+      "plan",
+      "status",
+    ]);
+    expect(commandables.find((commandable) => commandable.name === "effort")).toMatchObject({
+      kind: "command",
+      input: { kind: "argument" },
     });
-    expect(parseSlashCommand("/board", COMMANDS)).toEqual({ name: "board", argument: "" });
-    expect(parseSlashCommand("/plugins", COMMANDS)).toEqual({ name: "plugins", argument: "" });
-    expect(parseSlashCommand("/reload-plugins", COMMANDS)).toEqual({
-      name: "reload-plugins",
+    expect(commandables.find((commandable) => commandable.name === "h")).toMatchObject({
+      kind: "alias",
+      boundArgument: "high",
+      input: { kind: "none", trailingText: "submit" },
+    });
+
+    const invocation = registry.resolve("h", "fix this")!;
+    await invocation.command.execute(invocation.argument);
+    expect(calls).toEqual([{ command: "effort", argument: "high" }]);
+  });
+
+  test("resolves command arguments separately from trailing text", () => {
+    const { registry } = fixture();
+
+    expect(registry.resolve("effort", "high")).toMatchObject({
+      invokedAs: "effort",
+      argument: "high",
+    });
+    expect(registry.resolve("h", "fix this")).toMatchObject({
+      invokedAs: "h",
+      argument: "high",
+      trailingText: "fix this",
+    });
+    expect(registry.resolve("eh", "analyze this")).toMatchObject({
+      invokedAs: "eh",
+      argument: "xhigh",
+      trailingText: "analyze this",
+    });
+    expect(registry.resolve("plan", "investigate this")).toMatchObject({
+      invokedAs: "plan",
       argument: "",
+      trailingText: "investigate this",
     });
-    expect(parseSlashCommand("/sessions", COMMANDS)).toEqual({ name: "sessions", argument: "" });
-    expect(parseSlashCommand("/status", COMMANDS)).toEqual({ name: "status", argument: "" });
-    expect(parseSlashCommand("/new", COMMANDS)).toEqual({ name: "new", argument: "" });
+    expect(() => registry.resolve("status", "unexpected")).toThrow("/status takes no arguments");
+    expect(registry.resolve("missing", "text")).toBeNull();
   });
 
-  test("accepts unique command prefixes", () => {
-    expect(parseSlashCommand("/cl", COMMANDS)).toEqual({ name: "claude", argument: "" });
-    expect(parseSlashCommand("/co", COMMANDS)).toBeNull();
-    expect(parseSlashCommand("/cod", COMMANDS)).toEqual({ name: "codex", argument: "" });
-    expect(parseSlashCommand("/com", COMMANDS)).toEqual({ name: "compact", argument: "" });
-    expect(parseSlashCommand("/cla review this", COMMANDS)).toEqual({ name: "claude", argument: "review this" });
-    expect(parseSlashCommand("/cod fix this", COMMANDS)).toEqual({ name: "codex", argument: "fix this" });
-    expect(parseSlashCommand("/c", COMMANDS)).toBeNull();
-    expect(parseSlashCommand("/m sonnet", COMMANDS)).toEqual({ name: "model", argument: "sonnet" });
-    expect(parseSlashCommand("/ef high", COMMANDS)).toEqual({ name: "effort", argument: "high" });
-    expect(parseSlashCommand("/e", COMMANDS)).toBeNull();
-    expect(parseSlashCommand("/se", COMMANDS)).toEqual({ name: "sessions", argument: "" });
-    expect(parseSlashCommand("/st", COMMANDS)).toEqual({ name: "status", argument: "" });
-    expect(parseSlashCommand("/s", COMMANDS)).toBeNull();
+  test("exposes all Commandables to chat-tui slash matching", () => {
+    const { registry } = fixture();
+    const commandables = registry.list();
+
+    expect(parseSlashCommand("/effort high", commandables)).toEqual({ name: "effort", argument: "high" });
+    expect(parseSlashCommand("/h fix this", commandables)).toEqual({ name: "h", argument: "fix this" });
+    expect(parseSlashCommand("/eh analyze this", commandables)).toEqual({ name: "eh", argument: "analyze this" });
+    expect(parseSlashCommand("/pla investigate this", commandables)).toEqual({
+      name: "plan",
+      argument: "investigate this",
+    });
+    expect(parseSlashCommand("/unknown", commandables)).toBeNull();
   });
 
-  test("does not retain /harness or consume unknown slash prompts", () => {
-    expect(parseSlashCommand("/harness claude", COMMANDS)).toBeNull();
-    expect(parseSlashCommand("/tmp/project", COMMANDS)).toBeNull();
-  });
-
-  test("routes harness aliases without registering them as slash commands", () => {
-    expect(parseSlashCommand("/cc review this", COMMANDS)).toBeNull();
-    expect(parseSlashCommand("/cx fix this", COMMANDS)).toBeNull();
-    expect(COMMANDS.map((command) => command.name)).not.toContain("cc");
-    expect(COMMANDS.map((command) => command.name)).not.toContain("cx");
-    expect(parseHarnessRoute("/cc  review this")).toEqual({
-      kind: "matched",
-      harness: "claude",
-      message: "review this",
-    });
-    expect(parseHarnessRoute("/cx fix this")).toEqual({ kind: "matched", harness: "codex", message: "fix this" });
-    expect(parseHarnessRoute("/deepseek inspect this")).toEqual({
-      kind: "matched",
-      harness: "dsh",
-      message: "inspect this",
-    });
-    expect(parseHarnessRoute("/cla review this")).toEqual({
-      kind: "matched",
-      harness: "claude",
-      message: "review this",
-    });
-    expect(parseHarnessRoute("/cod fix this")).toEqual({ kind: "matched", harness: "codex", message: "fix this" });
-    expect(parseHarnessRoute("/c ambiguous")).toEqual({
-      kind: "ambiguous",
-      token: "c",
-      harnesses: ["codex", "claude"],
-    });
-  });
-
-  test("currently bundled harness values are explicit", () => {
-    expect(parseHarness("Claude")).toBe("claude");
-    expect(parseHarness("codex")).toBe("codex");
-    expect(parseHarness("cc")).toBe("claude");
-    expect(parseHarness("cx")).toBe("codex");
-    expect(parseHarness("deepseek")).toBe("dsh");
-    expect(parseHarness("other")).toBeNull();
+  test("rejects duplicate direct or Alias tokens at registration", () => {
+    const { registry } = fixture();
+    expect(() =>
+      registry.register({
+        name: "other",
+        description: "Other",
+        scope: "baton",
+        runPolicy: "always",
+        input: { kind: "argument" },
+        aliases: [{ name: "h" }],
+        execute: async () => undefined,
+      })
+    ).toThrow("duplicate commandable: /h");
+    expect(registry.resolve("other", "")).toBeNull();
   });
 });

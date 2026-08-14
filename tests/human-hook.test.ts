@@ -117,12 +117,13 @@ describe("Human Hook integration", () => {
     plugins.afterHook = () => {};
 
     await chat.command("status", "");
-    await chat.submit("/cc");
+    await chat.command("cc", "");
     await chat.resolveInteraction("ix_missing", { kind: "cancelled" });
     chat.cancel();
     await Bun.sleep(0);
 
     expect(kinds).toEqual([
+      "command",
       "command",
       "configuration",
       "interaction_response",
