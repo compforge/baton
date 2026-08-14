@@ -12,7 +12,7 @@
         "@opentui/keymap": "^0.5.3",
         "@opentui/react": "^0.5.3",
         "bun": "^1.3.14",
-        "chat-tui": "github:compforge/chat-tui#fdcaff6e3a629fbcb3adf8cd9bfb4459ad20209a",
+        "chat-tui": "github:compforge/chat-tui#c6bf8242c62f2b477185ce16f9195b3b606a4d2e",
         "cron-parser": "^5.6.2",
         "react": "^19.2.7",
         "yaml": "^2.9.0",
@@ -193,7 +193,7 @@
 
     "call-bound": ["call-bound@1.0.4", "https://registry.npmmirror.com/call-bound/-/call-bound-1.0.4.tgz", { "dependencies": { "call-bind-apply-helpers": "^1.0.2", "get-intrinsic": "^1.3.0" } }, "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg=="],
 
-    "chat-tui": ["chat-tui@github:compforge/chat-tui#fdcaff6", { "peerDependencies": { "@opentui/core": "^0.5.3", "@opentui/keymap": "^0.5.3", "@opentui/react": "^0.5.3", "react": "^19.0.0" } }, "compforge-chat-tui-fdcaff6", "sha512-2C4yqfv7A5EttZoU+7huluhjCkP5ABhN/IXX5u/pnthnm/lzxHAJoYS7OQT8nvRn5VcJr3S/8n5jqU03v7VS+w=="],
+    "chat-tui": ["chat-tui@github:compforge/chat-tui#c6bf824", { "peerDependencies": { "@opentui/core": "^0.5.3", "@opentui/keymap": "^0.5.3", "@opentui/react": "^0.5.3", "react": "^19.0.0" } }, "compforge-chat-tui-c6bf824", "sha512-srJ+9PY29ZohwtWR5Sflp/sQMTSEufglFN92Z8Koh3+D3T/93LBJgTMj0KSx1Yj2XbSrESUAZ72cafDBiF7MaA=="],
 
     "content-disposition": ["content-disposition@1.1.0", "https://registry.npmmirror.com/content-disposition/-/content-disposition-1.1.0.tgz", {}, "sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g=="],
 
