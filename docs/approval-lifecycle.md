@@ -60,7 +60,7 @@ live waiter，recovery 会将 dangling Interaction 明确记为 cancelled，而�
 
 ### 2.2 审批人跟随 codex，不由 baton 定默认
 
-`thread/start` 原生收 `approvalsReviewer`。**baton 缺省不下发**——codex 自己的解析链（`~/.codex/config.toml`、profile、云端下发的企业 requirements）照常生效；codex 自身默认是 `user`，且 guardian feature 开着也不变。baton 没有比上游更激进的理由，也没有立场替用户的 codex 配置做主。配置 `codexApprovalReviewer: auto_review | user` 是一次 opt-in 覆盖，仅在显式设置时作为 thread 参数下发。
+`thread/start` 原生收 `approvalsReviewer`。**baton 缺省不下发**——codex 自己的解析链（`~/.codex/config.toml`、profile、云端下发的企业 requirements）照常生效；codex 自身默认是 `user`，且 guardian feature 开着也不变。baton 没有比上游更激进的理由，也没有立场替用户的 codex 配置做主。Codex Target 的 `approvalReviewer: auto_review | user` 是一次 opt-in 覆盖，仅在显式设置时作为 thread 参数下发。
 
 **生效值只认 codex 回吐**（`thread/start|resume` 响应的 `approvalsReviewer`），不由 baton 从配置或启动参数反推。反推必错：企业 requirements（`allowed_approvals_reviewers`）能把用户 config.toml 里写死的值、也能把 baton 请求的值打回。曾经的做法是往 argv 注入 `-c approvals_reviewer=...` 并在 config 层复刻一遍解析来喂 Target Status——既盖掉了用户的 codex 配置，footer 又会在托管机器上撒谎。问不出来时 `approvalRoute` 返回 null，投影静默而不是编一个（不变量 #2）。
 
@@ -82,7 +82,7 @@ live waiter，recovery 会将 dangling Interaction 明确记为 cancelled，而�
 
 - **目标**：把 auto-review 从“静默”变“留痕”——approve 与 deny **都**产生权威回执，携带目标操作、风险等级、授权等级与理由。
 - **取代而非共存**：Codex 的 `review.status ∈ {inProgress, approved, denied, aborted}`，**没有“升级给用户”这一档**（`userAuthorization` 是 reviewer 评估的授权等级，不是回退给用户）。因此开 auto-review = 该 turn 的 permission Interaction **完全不打开**，baton 只观测回执；不伪造不存在的 requested/answered 生命周期。依据：app-server README 的 `approvalsReviewer` 与 `item/autoApprovalReview/*` 段（均标 **UNSTABLE**）。
-- **委托是 opt-in、可撤回**：缺省跟随 codex（其自身默认 `user`）；`codexApprovalReviewer: auto_review` 显式委托，改回 `user` 或删掉该项即撤回。
+- **委托是 opt-in、可撤回**：缺省跟随 codex（其自身默认 `user`）；Codex Target 的 `approvalReviewer: auto_review` 显式委托，改回 `user` 或删掉该项即撤回。
 
 ### 3.2 事件归一
 
@@ -98,7 +98,7 @@ live waiter，recovery 会将 dangling Interaction 明确记为 cancelled，而�
 
 ### 3.4 全局可见
 
-codex 报告生效 reviewer 为委托时，Target Status 常驻 `approvals:auto-review`——让用户**随时**知道审批权已委托，而不是只在逐条回执里被动发现。该状态取自 adapter 的 `approvalRoute()`（Harness 自报的生效值），不读 baton config：config 是意图，且投影层不得按 Harness 分支（不变量 #3）。曾经这里硬编码 `config.codexApprovalReviewer`，于是跟 claude 对话时 footer 也显示 codex 的委托状态。
+codex 报告生效 reviewer 为委托时，Target Status 常驻 `approvals:auto-review`——让用户**随时**知道审批权已委托，而不是只在逐条回执里被动发现。该状态取自 adapter 的 `approvalRoute()`（Harness 自报的生效值），不读 baton config：config 是意图，且投影层不得按 Harness 分支（不变量 #3）。曾经这里硬编码 Codex Target 的 `approvalReviewer`，于是跟 claude 对话时 footer 也显示 codex 的委托状态。
 
 ### 3.5 chat-tui 呈现
 

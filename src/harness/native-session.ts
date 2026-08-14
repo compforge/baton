@@ -1,5 +1,5 @@
-import type { BatonConfig } from "../config/config.ts";
-import { parseHarness, HARNESS_REGISTRY, resolveDefaultHarnessTarget } from "./registry.ts";
+import { targetConfigFor, type BatonConfig, type HarnessTargetConfig } from "../config/config.ts";
+import { configuredHarnessTargets, harnessDefinitionFor, parseHarness } from "./registry.ts";
 import type { HarnessTarget } from "./target.ts";
 import type {
   HarnessHistoryBoundary,
@@ -32,7 +32,7 @@ export interface HarnessHistorySnapshot {
 }
 
 export interface HarnessSessionInspectorOptions {
-  config: BatonConfig;
+  targetConfig: HarnessTargetConfig;
   cwd: string;
 }
 
@@ -57,7 +57,9 @@ export interface HarnessSessionSource {
   inspector: HarnessSessionInspector;
 }
 
-export interface HarnessSessionResolutionOptions extends HarnessSessionInspectorOptions {
+export interface HarnessSessionResolutionOptions {
+  config: BatonConfig;
+  cwd: string;
   choose?: (
     matches: readonly ResolvedHarnessSession[],
   ) => Promise<ResolvedHarnessSession>;
@@ -76,11 +78,10 @@ function qualifiedReference(
   return { harness, sessionId };
 }
 
-function registeredHarnessSessionSources(): HarnessSessionSource[] {
-  return HARNESS_REGISTRY.flatMap((definition) => {
-    if (!("sessionInspector" in definition)) return [];
-    const target = resolveDefaultHarnessTarget(definition.id);
-    if (!target) return [];
+function registeredHarnessSessionSources(config: BatonConfig): HarnessSessionSource[] {
+  return configuredHarnessTargets(config).flatMap((target) => {
+    const definition = harnessDefinitionFor(target.harness);
+    if (!definition?.sessionInspector) return [];
     return [{
       target,
       harness: definition.sessionKey,
@@ -92,9 +93,12 @@ function registeredHarnessSessionSources(): HarnessSessionSource[] {
 async function inspectSource(
   source: HarnessSessionSource,
   sessionId: string,
-  options: HarnessSessionInspectorOptions,
+  options: HarnessSessionResolutionOptions,
 ): Promise<ResolvedHarnessSession | null> {
-  const inspected = await source.inspector.inspect(sessionId, options);
+  const inspected = await source.inspector.inspect(sessionId, {
+    targetConfig: targetConfigFor(options.config, source.target.id),
+    cwd: options.cwd,
+  });
   if (!inspected) return null;
   const identity = inspected.identity ?? (
     inspected.nativeSessionId ? { id: inspected.nativeSessionId } : undefined
@@ -125,15 +129,30 @@ export async function resolveHarnessSession(
   reference: string,
   options: HarnessSessionResolutionOptions,
 ): Promise<ResolvedHarnessSession> {
-  const sources = options.sources ?? registeredHarnessSessionSources();
+  const sources = options.sources ?? registeredHarnessSessionSources(options.config);
   const qualified = qualifiedReference(reference);
   if (qualified) {
+    const exactTarget = sources.find((candidate) => candidate.target.id === qualified.harness);
     const harness = parseHarness(qualified.harness);
-    if (!harness) throw new Error(`unknown HarnessSession harness: ${qualified.harness}`);
-    const source = sources.find((candidate) => candidate.target.harness === harness);
-    if (!source) throw new Error(`${harness} does not support HarnessSession lookup`);
+    const candidates = harness
+      ? sources.filter((candidate) => candidate.target.harness === harness)
+      : [];
+    const source = exactTarget ?? candidates.find((candidate) => candidate.target.id === harness) ?? (
+      candidates.length === 1 ? candidates[0] : undefined
+    );
+    if (!source) {
+      if (!harness) throw new Error(`unknown HarnessSession target: ${qualified.harness}`);
+      if (candidates.length > 1) {
+        throw new Error(
+          `HarnessSession target is ambiguous for ${qualified.harness}: ${candidates.map((candidate) => candidate.target.id).join(", ")}`,
+        );
+      }
+      throw new Error(`${harness} does not support HarnessSession lookup`);
+    }
     const match = await inspectSource(source, qualified.sessionId, options);
-    if (!match) throw new Error(`${harness} HarnessSession not found: ${qualified.sessionId}`);
+    if (!match) {
+      throw new Error(`${source.target.id} HarnessSession not found: ${qualified.sessionId}`);
+    }
     return match;
   }
 

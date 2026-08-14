@@ -137,7 +137,7 @@ describe("DshAdapter", () => {
   test("requires an explicit JSON-RPC runtime command", async () => {
     const adapter = new DshAdapter();
     await expect(adapter.open({ cwd: "/repo" }, () => undefined)).rejects.toThrow(
-      "set dshCommand",
+      "set command on its Baton HarnessTarget",
     );
   });
 

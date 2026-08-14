@@ -1020,7 +1020,7 @@ describe("interaction completion registry", () => {
 
 // 委托状态必须对当前活跃 harness 可见（见 docs/approval-lifecycle.md），但可见性的来源只能是
 // harness 自己报的生效路由——不是 baton 的配置意图。曾经投影层直接读
-// config.codexApprovalReviewer，于是跟 claude 对话时 footer 也显示 codex 的委托状态。
+// Codex Target 的 approvalReviewer，于是跟 claude 对话时 footer 也显示 codex 的委托状态。
 describe("controller.approvalRoute reports the harness's own effective route", () => {
   class RoutableAdapter extends FakeAdapter {
     readonly capabilities: AdapterCapabilities = { prompt: {}, approvalRouting: { supported: true } };

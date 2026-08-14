@@ -7,6 +7,7 @@ export { HARNESSES, parseHarness, type HarnessName };
 
 export type CommandName =
   | HarnessName
+  | "target"
   | "model"
   | "effort"
   | "fast"
@@ -37,6 +38,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     scope: "baton",
     runPolicy: "always",
   }) satisfies CommandDefinition),
+  {
+    name: "target",
+    description: "Switch the input target by configured HarnessTarget id",
+    scope: "baton",
+    runPolicy: "always",
+  },
   {
     name: "model",
     description: "Set the model for the current harness's next turns",

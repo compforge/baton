@@ -88,25 +88,28 @@ npx @compforge/baton
 On first run, baton creates `~/.baton/config.yaml`:
 
 ```yaml
-defaultAgent: codex
-codexCommand:
-  - codex
-  - app-server
-# Required only when using /dsh:
-# dshCommand:
-#   - dsh-jsonrpc-agent
-#   - /absolute/path/to/cordis.yml
+defaultTarget: codex
+targets:
+  codex:
+    harness: codex
+    command: [codex, app-server]
+  claude:
+    harness: claude
+  dsh:
+    harness: dsh
+    # command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
+    model: prod
 mentionBudgetChars: 4096
 showThoughts: true
 ```
 
 See [`config.yaml.example`](config.yaml.example) for all available options and usage notes.
 
-Codex approvals follow Codex's own configuration by default — your `~/.codex/config.toml`, profiles and any enterprise policy all apply, and Codex itself defaults to reviewing with you. Set `codexApprovalReviewer: auto_review` to delegate to its risk reviewer instead; Baton keeps that delegation visible in Harness Status and records each automatic decision beside its target tool.
+Codex approvals follow Codex's own configuration by default — your `~/.codex/config.toml`, profiles and any enterprise policy all apply, and Codex itself defaults to reviewing with you. Set `targets.codex.approvalReviewer: auto_review` to delegate to its risk reviewer instead; Baton keeps that delegation visible in Harness Status and records each automatic decision beside its target tool.
 
-If Claude Code uses a custom executable, set `claudeExecutable` in the configuration or override it temporarily with an environment variable (`BATON_CLAUDE_BIN=/path/to/claude baton`). Configuration precedence: environment variables > `config.yaml` > defaults.
+If Claude Code uses a custom executable, set `targets.claude.executable` or override it temporarily with an environment variable (`BATON_CLAUDE_BIN=/path/to/claude baton`). Configuration precedence: environment variables > Target configuration > Harness defaults.
 
-DeepSeek Harness uses `@compforge/dsh-agent-sdk`. Set `dshCommand` to the complete JSON-RPC runtime argv, including the Cordis config path. Baton defaults DSH to model `prod`; `dshProvider` can select another provider route, while the runtime/provider owns the output-token limit. See [the DSH adapter guide](docs/harness/deepseek-harness.md) for its current capability and cancellation boundaries.
+DeepSeek Harness uses `@compforge/dsh-agent-sdk`. Set `targets.dsh.command` to the complete JSON-RPC runtime argv, including the Cordis config path. Baton defaults DSH to model `prod`; the Target's `provider` can select another provider route, while the runtime/provider owns the output-token limit. Provider credentials remain in DSH's own credential store. See [the DSH adapter guide](docs/harness/deepseek-harness.md) for its current capability and cancellation boundaries.
 
 ## Usage
 
@@ -116,6 +119,8 @@ Start the TUI and type a prompt to send it.
 /claude or /cc       Switch to Claude Code
 /codex or /cx        Switch to Codex
 /dsh or /deepseek    Switch to DeepSeek Harness
+/target              Open the configured HarnessTarget picker
+/target <id>         Switch to a configured HarnessTarget
 /cc <message>        Switch to Claude Code and send the message immediately
 /cx <message>        Switch to Codex and send the message immediately
 /deepseek <message>  Switch to DeepSeek Harness and send the message immediately

@@ -318,7 +318,7 @@ export class DshAdapter implements HarnessAdapter {
     const [command, ...args] = this.options.command ?? [];
     if (!command?.trim()) {
       throw new Error(
-        "DeepSeek Harness is not configured; set dshCommand to the dsh-jsonrpc-agent executable and Cordis config path",
+        "DeepSeek Harness is not configured; set command on its Baton HarnessTarget to the dsh-jsonrpc-agent executable and Cordis config path",
       );
     }
     return {

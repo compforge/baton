@@ -41,6 +41,23 @@ interface HarnessTarget {
 不能按 Harness 名共享或反推任何一层 identity。
 未知 Target fail closed，不从名称形状猜实现。
 
+用户配置同样以 Target id 为键：根配置只索引 Target，Target 的 `harness` 选择
+`HarnessDefinition`，其余启动字段由对应 Harness 配置模块验证并 lowering 为 Adapter 依赖。
+因此根 `BatonConfig` 不随 Harness 增加而堆积 provider 方言，Adapter 工厂也不会收到其它 Target
+或全局配置。Harness 名和 alias 只帮助用户选择该家的默认 Target，不能替代 Target identity。
+
+```yaml
+defaultTarget: codex
+targets:
+  codex:
+    harness: codex
+    command: [codex, app-server]
+  dsh-prod:
+    harness: dsh
+    command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
+    model: prod
+```
+
 Target probe 只发现 model、effort、command 等静态目录，不创建 HarnessSession，也不借
 `Adapter.open()` 制造隐形执行状态。
 

@@ -10,15 +10,18 @@ Baton 通过 `@compforge/dsh-agent-sdk` 启动 DSH JSON-RPC runtime 子进程。
 `@deepseek-ai/dsh-sdk-jsonrpc-server`，启动 argv 由用户在 `~/.baton/config.yaml` 显式提供：
 
 ```yaml
-dshCommand:
-  - dsh-jsonrpc-agent
-  - /absolute/path/to/cordis.yml
-# provider 可选；Baton 默认使用 prod
-dshProvider: deepseek-official
-dshModel: prod
+targets:
+  dsh:
+    harness: dsh
+    command:
+      - dsh-jsonrpc-agent
+      - /absolute/path/to/cordis.yml
+    # provider 可选；Baton 默认使用 prod
+    provider: deepseek-official
+    model: prod
 ```
 
-未配置 `dshCommand` 不影响 Codex 或 Claude Code；只有选择 `/dsh` 时 open 才会给出可操作的
+未配置 DSH Target 的 `command` 不影响 Codex 或 Claude Code；只有选择该 Target 时 open 才会给出可操作的
 配置错误。子进程继承 Baton 环境与当前 workspace cwd；Baton 不读取或保存 provider 凭证，也不
 覆盖 SDK runtime/provider 的输出 token 上限。
 

@@ -7,14 +7,14 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
 import { Channel } from "../channel/index.ts";
-import { ensureConfigFile, loadConfig } from "../config/config.ts";
+import { ensureConfigFile, loadConfig, targetConfigFor } from "../config/config.ts";
 import { expandMentions } from "../context/mention.ts";
 import {
   createHarnessAdapter,
-  parseHarness,
-  resolveDefaultHarnessTarget,
+  resolveHarnessTarget,
+  resolveHarnessTargetSelection,
 } from "../harness/registry.ts";
-import { bundledTextgenTargets } from "../session/title.ts";
+import { configuredTextgenTargets } from "../session/title.ts";
 import type {
   Interaction,
   InteractionResult,
@@ -97,11 +97,10 @@ async function main(): Promise<void> {
   const rootArg = argValue("--root");
   ensureConfigFile(rootArg);
   const config = loadConfig(rootArg);
-  const requested = argValue("--agent") ?? config.defaultAgent;
-  // registry 全路径接管：不再手写 harness 分支（未知值以前静默落到 codex，现在显式报错）
-  const agentName = parseHarness(requested);
-  if (!agentName) {
-    stdout.write(`unknown agent: ${requested}\n`);
+  const requested = argValue("--agent") ?? config.defaultTarget;
+  const target = resolveHarnessTargetSelection(config, requested);
+  if (!target) {
+    stdout.write(`unknown or ambiguous HarnessTarget: ${requested}\n`);
     process.exit(1);
   }
   const cwd = argValue("--cwd") ?? process.cwd();
@@ -116,8 +115,6 @@ async function main(): Promise<void> {
   });
   stdout.write(`baton session: ${session.id}\nlog: ${session.dir}/session.jsonl\n`);
 
-  const target = resolveDefaultHarnessTarget(agentName);
-  if (!target) throw new Error(`No default HarnessTarget registered for Harness: ${agentName}`);
   const channel = new Channel({
     session,
     controller: {
@@ -125,11 +122,11 @@ async function main(): Promise<void> {
       createAdapter: (resolvedTarget, handlers) =>
         createHarnessAdapter(resolvedTarget, {
           ...handlers,
-          config,
+          targetConfig: targetConfigFor(config, resolvedTarget.id),
           rootDir: store.rootDir,
         }),
-      resolveTarget: resolveDefaultHarnessTarget,
-      textgenTargets: bundledTextgenTargets(),
+      resolveTarget: (targetId) => resolveHarnessTarget(config, targetId),
+      textgenTargets: configuredTextgenTargets(config),
       ...(config.textgenPrefer ? { textgenPrefer: config.textgenPrefer } : {}),
       ...(config.textgenModels ? { textgenModels: config.textgenModels } : {}),
     },

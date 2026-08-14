@@ -25,7 +25,7 @@ import {
   type ChannelControllerOptions,
   type ChannelPluginOptions,
 } from "../../channel/index.ts";
-import type { BatonConfig } from "../../config/config.ts";
+import { targetConfigFor, type BatonConfig } from "../../config/config.ts";
 import { loadEffortPreferences, saveEffortPreference } from "../../config/effort-preferences.ts";
 import { loadModelPreferences, saveModelPreference } from "../../config/model-preferences.ts";
 import {
@@ -42,11 +42,13 @@ import {
 } from "../../event/index.ts";
 import {
   createHarnessAdapter,
-  HARNESS_REGISTRY,
-  resolveDefaultHarnessTarget,
+  configuredHarnessTargets,
+  harnessDefinitionFor,
   probeHarnessTarget,
+  resolveHarnessTarget,
+  resolveHarnessTargetSelection,
 } from "../../harness/registry.ts";
-import { bundledTextgenTargets } from "../../session/title.ts";
+import { configuredTextgenTargets } from "../../session/title.ts";
 import type { InteractionResult } from "../../interaction/types.ts";
 import type { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
@@ -155,7 +157,11 @@ export class BatonChatProtocol implements ChatProtocol {
   ) {
     this.session = opened.session;
     this.syncTerminalTitle();
-    this.harnessTargetId = config.defaultAgent;
+    const defaultTarget = resolveHarnessTarget(config, config.defaultTarget);
+    if (!defaultTarget) {
+      throw new Error(`Default HarnessTarget is not registered: ${config.defaultTarget}`);
+    }
+    this.harnessTargetId = defaultTarget.id;
     this.modelPreferences = loadModelPreferences(store.rootDir);
     this.effortPreferences = loadEffortPreferences(store.rootDir);
     this.marketplace = new MarketplaceRegistry({
@@ -348,7 +354,9 @@ export class BatonChatProtocol implements ChatProtocol {
     if (name !== "status") this.commandOutput = null;
     const harness = parseHarness(name);
     if (harness) {
-      await this.configureHarness(harness);
+      const target = resolveHarnessTargetSelection(this.config, harness);
+      if (!target) throw new Error(`No unambiguous HarnessTarget configured for ${harness}`);
+      await this.configureHarness(target.id);
       if (argument) await this.submitMessage(argument);
       return;
     }
@@ -485,6 +493,30 @@ export class BatonChatProtocol implements ChatProtocol {
         }
         this.changed();
         return;
+      }
+      case "target": {
+        const targets = configuredHarnessTargets(this.config);
+        if (!argument) {
+          this.openPicker({
+            title: "Select HarnessTarget",
+            options: targets.map((target) => {
+              const definition = harnessDefinitionFor(target.harness);
+              return {
+                name: target.id,
+                description: definition?.label ?? target.harness,
+                value: target.id,
+              };
+            }),
+            onSelect: async (value) => {
+              const target = resolveHarnessTarget(this.config, value);
+              if (target) await this.configureHarness(target.id);
+            },
+          });
+          return;
+        }
+        const target = resolveHarnessTarget(this.config, argument);
+        if (!target) throw new Error(`Unknown HarnessTarget: ${argument}`);
+        return this.configureHarness(target.id);
       }
       case "model": {
         const target = this.harnessTargetId;
@@ -887,18 +919,18 @@ export class BatonChatProtocol implements ChatProtocol {
       createAdapter: (target, handlers) =>
         createHarnessAdapter(target, {
           ...handlers,
-          config: this.config,
+          targetConfig: targetConfigFor(this.config, target.id),
           rootDir: this.store.rootDir,
         }),
-      resolveTarget: resolveDefaultHarnessTarget,
-      textgenTargets: bundledTextgenTargets(),
+      resolveTarget: (targetId) => resolveHarnessTarget(this.config, targetId),
+      textgenTargets: configuredTextgenTargets(this.config),
       ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),
       ...(this.config.textgenModels ? { textgenModels: this.config.textgenModels } : {}),
       onSessionTitleChange: () => this.syncTerminalTitle(),
       probeTarget: (target, cwd) =>
         probeHarnessTarget(target, {
           cwd,
-          config: this.config,
+          targetConfig: targetConfigFor(this.config, target.id),
           log: (entry) =>
             this.session.log({ ...entry, harnessTargetId: target.id }),
         }),
@@ -919,11 +951,15 @@ export class BatonChatProtocol implements ChatProtocol {
         settings,
         session: this.session,
       }),
-      harnessTargets: HARNESS_REGISTRY.map((definition) => ({
-        id: definition.id,
-        harness: definition.id,
-        label: definition.label,
-      })),
+      harnessTargets: configuredHarnessTargets(this.config).map((target) => {
+        const definition = harnessDefinitionFor(target.harness);
+        return {
+          ...target,
+          label: target.id === target.harness
+            ? (definition?.label ?? target.id)
+            : `${definition?.label ?? target.harness} (${target.id})`,
+        };
+      }),
       selectedHarnessTargetId: () => this.harnessTargetId,
       loadPackageEntry: (pluginId, version, options) => {
         if (!options?.marketplace) {
