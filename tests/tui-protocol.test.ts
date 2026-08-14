@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { InteractionResult } from "../src/interaction/types.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
-import { MAIN_LANE_ID, sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
+import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
   BatonChatProtocol,
   runStatusLabel,

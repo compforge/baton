@@ -52,7 +52,8 @@ composer 中插入可编辑占位符；提交时占位符恢复为 path-backed `
 composer 输入路径处理。
 
 prompt lowering 时，Controller 创建 HarnessInput，为它分配稳定 `messageId` 并为可能的新 Turn
-预留 `turnId`。每次 Queue 状态迁移都先 record `harness_input.updated`，再更新内存执行索引；
+预留 `turnId`，再把它放入目标 Lane 的 Queue。每次 Queue 状态迁移都先 record
+`harness_input.updated`，再更新内存执行索引；
 `input.received` 通过 `parentEventId` 与第一个 HarnessInput 事实关联，两个对象不复用 identity。
 若 Adapter 接受 steer，HarnessInput 改为绑定实际承载它的当前 Turn。即使队列停留极短，也遵守同一状态机：
 
@@ -81,10 +82,12 @@ HarnessInput source 调度：
 
 - `laneId` 指定要继续的既有 Lane；保留值 `main` 表示主线；
 - `newLane:true` 从 `laneId` 指向的既有 Lane 创建支线，受支线并发上限约束，不占用主 Lane
-  Queue slot；缺省 `false`，直接继续该 Lane。
+  Queue 的执行位；缺省 `false`，直接继续该 Lane。
 
 Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代表是否调用 Harness。人或 Plugin
-发起的异步任务都可以使用新 Lane。
+发起的异步任务都可以使用新 Lane。每条 Lane 只有一个 Queue，HarnessInput 的 source 与 Queue
+选择正交；主 Lane Queue 拥有独立执行位，side Lane Queues 共享支线并发容量。某条 Lane 忙碌时，
+只阻塞自己的 Queue，不阻塞其它 Lane 中已就绪的 HarnessInput。
 
 Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，统一走
 Channel outbound，并以 `HumanPresentation` 通知 `human.outbound.before/after`。before 位于 surface state commit

@@ -19,6 +19,8 @@ export type {
 
 export type { Mention } from "./mention.ts";
 
+export { MAIN_LANE_ID } from "./lane.ts";
+
 export type {
   HumanInput,
   HumanInputOutcome,
@@ -60,7 +62,6 @@ export type {
   VerbResult,
 } from "./reconcile-context.ts";
 export {
-  MAIN_LANE_ID,
   MAX_VERB_TIMEOUT_MS,
 } from "./reconcile-context.ts";
 

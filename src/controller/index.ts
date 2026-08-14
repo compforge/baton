@@ -41,7 +41,8 @@ import type {
   InteractionDraft,
   InteractionResult,
 } from "../interaction/types.ts";
-import { MAIN_LANE_ID, type SessionHandle } from "../store/store.ts";
+import { MAIN_LANE_ID } from "../lane.ts";
+import type { SessionHandle } from "../store/store.ts";
 import { DeliveryAttempts } from "./attempt.ts";
 import {
   harnessInputUpdate,
@@ -113,7 +114,7 @@ export type Control = { kind: "interrupt" };
  * 用户 sendTurn 的调度结果（workflow：requested 与 effective 分开呈现）：
  * - `steer`：Adapter 已承担向当前 turn 投递的责任；原生队列是否已应用
  *   由 user_message deliveryState 继续报告；
- * - `new_turn`：已进入全局 Queue；`queued` 说明它是否在等待当前
+ * - `new_turn`：已进入主 Lane Queue；`queued` 说明它是否在等待当前
  *   turn。outcome 在该 turn 完成/被撤回时 resolve。
  */
 export type SendTurnOutcome =
@@ -203,8 +204,8 @@ export const INTERRUPTED_NOTICE_TITLE = "Conversation interrupted — tell the a
 export class Controller {
   /** Lane × HarnessTarget → live binding. */
   private readonly bindings = new Map<string, HarnessBinding>();
-  private readonly mainQueue: Queue<HarnessBinding>;
-  private readonly sideQueue: Queue<HarnessBinding>;
+  /** Every Queue is permanently bound to one Lane. */
+  private readonly queues = new Map<string, Queue<HarnessBinding>>();
   private readonly turns = new TurnRegistry<HarnessBinding>();
   private readonly deliveryAttempts: DeliveryAttempts<HarnessBinding>;
   private readonly contextDeliveries: ContextDeliveries<HarnessBinding>;
@@ -223,13 +224,6 @@ export class Controller {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new Error("sideLaneConcurrency must be a positive integer");
     }
-    const beforeInputTransition = (
-      input: QueueItem,
-      status: QueueItem["status"],
-      update?: { turnId?: string; delivery?: QueueItem["delivery"] },
-    ) => this.recordHarnessInputTransition(input, status, update);
-    this.mainQueue = new Queue<HarnessBinding>(beforeInputTransition);
-    this.sideQueue = new Queue<HarnessBinding>(beforeInputTransition);
     this.deliveryAttempts = new DeliveryAttempts(
       (binding, event) =>
         this.appendEvent(binding, event, {
@@ -256,8 +250,8 @@ export class Controller {
     });
     this.restoreQueuedHarnessInputs();
     queueMicrotask(() => {
-      if (this.mainQueue.length > 0) void this.drainMain();
-      if (this.sideQueue.length > 0) this.drainSideLanes();
+      if (this.queueForLane(MAIN_LANE_ID).length > 0) void this.drainMain();
+      if (this.nextRunnableSideQueue()) this.drainSideLanes();
     });
   }
 
@@ -267,14 +261,22 @@ export class Controller {
       string,
       Extract<AnyEventEnvelope, { kind: "harness_input.updated" }>
     >();
+    const enqueueSeq = new Map<string, number>();
     for (const event of this.options.session.ledger.read()) {
       if (event.kind === "harness_input.updated") {
+        if (event.payload.status === "queued" && !enqueueSeq.has(event.payload.messageId)) {
+          enqueueSeq.set(event.payload.messageId, event.seq);
+        }
         latest.set(event.payload.messageId, event);
       }
     }
     const queued = [...latest.values()]
       .filter((event) => event.payload.status === "queued")
-      .sort((left, right) => left.payload.queueId - right.payload.queueId);
+      .sort(
+        (left, right) =>
+          (enqueueSeq.get(left.payload.messageId) ?? left.seq) -
+          (enqueueSeq.get(right.payload.messageId) ?? right.seq),
+      );
     for (const event of queued) {
       const input = event.payload;
       // Plugin executions have their own recovery/failure contract; only the
@@ -295,11 +297,11 @@ export class Controller {
         });
         continue;
       }
-      const queue = input.laneId === this.mainLaneId() ? this.mainQueue : this.sideQueue;
-      queue.enqueue(target, input.laneId, [...input.blocks], {
+      const queue = this.queueForLane(input.laneId);
+      queue.enqueue(target, [...input.blocks], {
         source: input.source,
         identity: { messageId: input.messageId, turnId: input.turnId },
-        queueId: input.queueId,
+        enqueueSeq: enqueueSeq.get(input.messageId) ?? event.seq,
         restore: true,
         ...(input.causeEventId === undefined
           ? {}
@@ -316,9 +318,9 @@ export class Controller {
     input: QueueItem,
     status: QueueItem["status"],
     update?: { turnId?: string; delivery?: QueueItem["delivery"] },
-  ): void {
+  ): number {
     const payload = harnessInputUpdate(input, status, update);
-    this.options.session.appendEvent({
+    return this.options.session.appendEvent({
       kind: "harness_input.updated",
       source: eventSourceOf(input.source),
       ...(input.parentEventId === undefined ? {} : { parentEventId: input.parentEventId }),
@@ -327,7 +329,7 @@ export class Controller {
       laneId: input.laneId,
       turnId: payload.turnId,
       payload,
-    });
+    }).seq;
   }
 
   /**
@@ -346,7 +348,7 @@ export class Controller {
   ): Promise<InteractionResult> {
     const binding = this.bindings.get(this.bindingKey(laneId, harnessTargetId));
     if (!binding) return Promise.reject(new Error(`unknown Lane binding for interaction: ${laneId} × ${harnessTargetId}`));
-    const active = this.queueForLane(laneId).activeRun(laneId);
+    const active = this.queueForLane(laneId).activeRun;
     const turnId =
       context?.turnId ?? active?.turnId ?? binding.setupTurnId;
     return this.harnessInteractions.open(binding, draft, turnId, context);
@@ -357,15 +359,41 @@ export class Controller {
   }
 
   private queueForLane(laneId: string): Queue<HarnessBinding> {
-    return laneId === MAIN_LANE_ID ? this.mainQueue : this.sideQueue;
+    this.options.session.requireLane(laneId);
+    let queue = this.queues.get(laneId);
+    if (!queue) {
+      queue = new Queue<HarnessBinding>(
+        laneId,
+        (input, status, update) =>
+          this.recordHarnessInputTransition(input, status, update),
+      );
+      this.queues.set(laneId, queue);
+    }
+    return queue;
   }
 
   private activeMainRun(): QueueRun<HarnessBinding> | undefined {
-    return this.mainQueue.activeRun(MAIN_LANE_ID);
+    return this.queueForLane(MAIN_LANE_ID).activeRun;
   }
 
   private runForTurn(turnId: string): QueueRun<HarnessBinding> | undefined {
-    return this.mainQueue.run(turnId) ?? this.sideQueue.run(turnId);
+    for (const queue of this.queues.values()) {
+      const run = queue.run(turnId);
+      if (run) return run;
+    }
+    return undefined;
+  }
+
+  private nextRunnableSideQueue(): Queue<HarnessBinding> | undefined {
+    return [...this.queues.values()]
+      .filter(
+        (queue) =>
+          queue.laneId !== MAIN_LANE_ID &&
+          queue.head !== undefined &&
+          !queue.activeRun &&
+          !this.processing.has(queue.laneId),
+      )
+      .sort((left, right) => left.head!.enqueueSeq - right.head!.enqueueSeq)[0];
   }
 
   /** 主 Queue 当前 run 的具体配置目标；Harness 类型只用于选择 Adapter。 */
@@ -399,11 +427,13 @@ export class Controller {
   }
 
   get harnessQueueLength(): number {
-    return this.mainQueue.length + this.sideQueue.length;
+    return [...this.queues.values()].reduce((total, queue) => total + queue.length, 0);
   }
 
   get queuedHarnessInputs(): QueueSnapshot[] {
-    return [...this.mainQueue.snapshots, ...this.sideQueue.snapshots];
+    return [...this.queues.values()]
+      .flatMap((queue) => queue.snapshots)
+      .sort((left, right) => left.enqueueSeq - right.enqueueSeq);
   }
 
   get sideRunCount(): number {
@@ -417,14 +447,14 @@ export class Controller {
    */
   get harnessInputs(): HarnessInputSnapshot[] {
     const out: HarnessInputSnapshot[] = [];
-    for (const input of this.mainQueue.queued) out.push(harnessInputSnapshot(input));
-    for (const input of this.mainQueue.claimed) out.push(harnessInputSnapshot(input));
-    for (const input of this.sideQueue.queued) out.push(harnessInputSnapshot(input));
-    for (const input of this.sideQueue.claimed) out.push(harnessInputSnapshot(input));
-    for (const run of [...this.mainQueue.runs(), ...this.sideQueue.runs()]) {
-      if (run.status !== "active") continue;
-      if (run.input) out.push(harnessInputSnapshot(run.input));
-      for (const steer of run.steers) out.push(harnessInputSnapshot(steer));
+    for (const queue of this.queues.values()) {
+      for (const input of queue.queued) out.push(harnessInputSnapshot(input));
+      for (const input of queue.claimed) out.push(harnessInputSnapshot(input));
+      for (const run of queue.runs()) {
+        if (run.status !== "active") continue;
+        if (run.input) out.push(harnessInputSnapshot(run.input));
+        for (const steer of run.steers) out.push(harnessInputSnapshot(steer));
+      }
     }
     return out;
   }
@@ -469,7 +499,7 @@ export class Controller {
         throw new Error(`Proposed plan already has an implementation turn: ${options.sourceProposedPlanId}`);
       }
     }
-    return this.mainQueue.enqueue(target, laneId, blocks, options);
+    return this.queueForLane(laneId).enqueue(target, blocks, options);
   }
 
   /** Materializes a scheduled HarnessInvocation without inferring Lane from source. */
@@ -495,8 +525,8 @@ export class Controller {
         parentLaneId,
       ).laneId
       : this.options.session.requireLane(input.laneId).laneId;
-    const queue = laneId === this.mainLaneId() ? this.mainQueue : this.sideQueue;
-    const submission = queue.enqueue(target, laneId, input.blocks, {
+    const queue = this.queueForLane(laneId);
+    const submission = queue.enqueue(target, input.blocks, {
       source: input.source,
       harnessInvocationId: input.harnessInvocationId,
       identity: {
@@ -512,27 +542,26 @@ export class Controller {
 
   /** Cancels a queued Request, or interrupts its active Queue run. */
   cancelHarnessInvocation(harnessInvocationId: string): HarnessInvocationCancellation | undefined {
-    const queued =
-      this.mainQueue.cancelHarnessInvocation(harnessInvocationId) ??
-      this.sideQueue.cancelHarnessInvocation(harnessInvocationId);
-    if (queued) {
-      this.changed();
-      return "queued";
-    }
-    for (const active of [...this.mainQueue.runs(), ...this.sideQueue.runs()]) {
-      if (
-        active.status === "active" &&
-        active.input?.harnessInvocationId === harnessInvocationId
-      ) {
-        void this.interruptRecord(active);
-        return "running";
+    for (const queue of this.queues.values()) {
+      if (queue.cancelHarnessInvocation(harnessInvocationId)) {
+        this.changed();
+        return "queued";
+      }
+      for (const active of queue.runs()) {
+        if (
+          active.status === "active" &&
+          active.input?.harnessInvocationId === harnessInvocationId
+        ) {
+          void this.interruptRecord(active);
+          return "running";
+        }
       }
     }
     return undefined;
   }
 
   /**
-   * 用户输入的统一入口。Input 先获得稳定 messageId 并进入全局队列；没有更早 follow-up、
+   * 用户输入的统一入口。Input 先获得稳定 messageId 并进入主 Lane Queue；没有更早 follow-up、
    * 目标与当前 Queue run 一致且 HarnessSession 已就绪时，Controller 原子 claim 队头，
    * 再交给 Adapter 依据原生运行态决定 same-turn send。Adapter 拒绝时同一 Input 回到队头。
    * 没有对应 Queue run 的 Turn 不接受 steer——Baton 不拥有其投递生命周期。
@@ -546,11 +575,12 @@ export class Controller {
     options?: SendTurnOptions,
   ): Promise<SendTurnOutcome> {
     const laneId = this.mainLaneId();
-    const active = this.mainQueue.activeRun(laneId);
+    const queue = this.queueForLane(laneId);
+    const active = queue.activeRun;
     const queued =
       Boolean(this.activeMainRun()) ||
       this.drainingMain ||
-      this.mainQueue.length > 0;
+      queue.length > 0;
     const submission = this.enqueueMainInput(harnessTargetId, blocks, options);
     const input = submission.input;
     this.changed();
@@ -560,7 +590,7 @@ export class Controller {
       active?.input &&
       active.input.target.id === harnessTargetId &&
       active.binding.ref &&
-      this.mainQueue.claimFirstForSteer(input)
+      queue.claimFirstForSteer(input)
     ) {
       this.changed();
       let receipt: SendTurnReceipt;
@@ -585,7 +615,7 @@ export class Controller {
         };
       }
       if (receipt.effective === "steer") {
-        this.mainQueue.acceptClaimedSteer(input, active.turnId);
+        queue.acceptClaimedSteer(input, active.turnId);
         if (active.status === "active") {
           // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
           active.steers.push(input);
@@ -604,11 +634,11 @@ export class Controller {
         const error = new Error(
           `adapter ${active.binding.adapter.harness} opened a new turn while Baton turn ${active.turnId} is active`,
         );
-        this.mainQueue.abandonClaimed(input);
+        queue.abandonClaimed(input);
         this.changed();
         throw error;
       }
-      this.mainQueue.requeueClaimed(input);
+      queue.requeueClaimed(input);
       this.changed();
       void this.drainMain();
       return {
@@ -630,7 +660,7 @@ export class Controller {
 
   /** 只允许撤回尚未开始执行的最新 turn；已被 drain 取走的 active turn 不在此列。 */
   recallLatestQueued(): QueueSnapshot | undefined {
-    const turn = this.mainQueue.recallLatestUser();
+    const turn = this.queueForLane(MAIN_LANE_ID).recallLatestUser();
     if (!turn) return undefined;
     this.changed();
     return turn;
@@ -711,7 +741,8 @@ export class Controller {
    * 仍走统一 running → harness events → idle 流水线，因此 TUI、持久化与崩溃恢复不会旁路。
    */
   async compactContext(harnessTargetId: string): Promise<void> {
-    if (this.drainingMain || this.mainQueue.length > 0) {
+    const queue = this.queueForLane(MAIN_LANE_ID);
+    if (this.drainingMain || queue.length > 0) {
       throw new Error("/compact requires an idle session");
     }
     this.drainingMain = true;
@@ -720,7 +751,7 @@ export class Controller {
     } finally {
       this.drainingMain = false;
       this.changed();
-      if (this.mainQueue.length > 0) void this.drainMain();
+      if (queue.length > 0) void this.drainMain();
     }
   }
 
@@ -863,9 +894,10 @@ export class Controller {
   private async drainMain(): Promise<void> {
     if (this.drainingMain) return;
     this.drainingMain = true;
+    const queue = this.queueForLane(MAIN_LANE_ID);
     try {
-      while (this.mainQueue.length > 0) {
-        const input = this.mainQueue.dequeue() as QueueItem;
+      while (queue.length > 0) {
+        const input = queue.dequeue() as QueueItem;
         this.changed();
         try {
           await this.runQueueItem(input);
@@ -882,11 +914,9 @@ export class Controller {
 
   private drainSideLanes(): void {
     const concurrency = this.options.sideLaneConcurrency ?? DEFAULT_SIDE_LANE_CONCURRENCY;
-    while (this.activeSideRuns < concurrency && this.sideQueue.length > 0) {
-      const input = this.sideQueue.dequeue(
-        (candidate) => !this.processing.has(candidate.laneId) &&
-          !this.sideQueue.activeRun(candidate.laneId),
-      );
+    while (this.activeSideRuns < concurrency) {
+      const queue = this.nextRunnableSideQueue();
+      const input = queue?.dequeue();
       if (!input) return;
       this.activeSideRuns++;
       this.changed();

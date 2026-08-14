@@ -3,6 +3,7 @@ export * from "./event/ids.ts";
 export * from "./event/index.ts";
 export * from "./event/ledger.ts";
 export * from "./interaction/types.ts";
+export * from "./lane.ts";
 export * from "./plugin/reconcile-snapshot.ts";
 export {
   Controller as ResourceControllerRuntime,

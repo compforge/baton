@@ -1,8 +1,5 @@
 import type { ReconcileSnapshot, TurnSummary } from "./snapshot.ts";
 
-/** Session-scoped reserved ID for Baton's default task line. */
-export const MAIN_LANE_ID = "main" as const;
-
 /** Largest timeout supported by JavaScript timers. */
 export const MAX_VERB_TIMEOUT_MS = 2_147_483_647 as const;
 

@@ -29,8 +29,6 @@ export type HarnessInputStatus =
  */
 export interface HarnessInput {
   messageId: string;
-  /** 队列内展示排序用的自增号；与身份无关。 */
-  id: number;
   /** 为新 Turn 预留的 ID；accepted steer 后改为实际承载它的当前 Turn ID。 */
   turnId: string;
   target: HarnessTarget;
@@ -50,7 +48,6 @@ export interface HarnessInput {
 
 /** Durable WAL fact emitted before one Harness Input state transition. */
 export interface HarnessInputUpdate {
-  queueId: number;
   messageId: string;
   turnId: string;
   harnessTargetId: string;
@@ -84,7 +81,6 @@ export function harnessInputUpdate(
   update?: { turnId?: string; delivery?: HarnessInput["delivery"] },
 ): HarnessInputUpdate {
   return {
-    queueId: input.id,
     messageId: input.messageId,
     turnId: update?.turnId ?? input.turnId,
     harnessTargetId: input.target.id,
