@@ -56,8 +56,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 （typecheck + test）。仓库内试用使用 `bun install && bun link`，普通用户通过 npm 安装，
 不暴露 Bun 前置条件。
 
-根目录 `VERSION` 记录项目内部版本；每次逻辑改动至少递增一次 patch，同一轮只递增一次。
-npm 包版本独立管理，不随 `VERSION` 自动更新。
+根目录 `VERSION` 是 Baton 产品版本的唯一事实源；每次逻辑改动至少递增一次 patch，同一轮只递增
+一次。根 `package.json.version` 只在 npm 发布前通过 `make sync-npm-version` 从 `VERSION` 派生，
+不在普通代码改动中手工维护；`packages/plugin/package.json` 仍管理独立 Plugin 包版本。
 
 ## 关键约定
 

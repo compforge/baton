@@ -1,8 +1,11 @@
-.PHONY: install publish-baton-plugin
+.PHONY: install sync-npm-version publish-baton-plugin
 
 install:
 	bun install
 	bun link
+
+sync-npm-version:
+	bun scripts/sync-npm-version.ts
 
 publish-baton-plugin:
 	bun run --cwd packages/plugin typecheck

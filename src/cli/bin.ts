@@ -10,7 +10,6 @@
 //   baton version    显示版本
 //   baton help       帮助
 
-import packageJson from "../../package.json" with { type: "json" };
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -26,6 +25,7 @@ import { MarketplaceRegistry, type MarketplaceSource } from "../plugin/marketpla
 import { PluginSettingsStore } from "../plugin/settings.ts";
 import { sessionTreeRows, treeRowPrefix } from "../store/session-tree.ts";
 import { SessionStore, sessionDisplayTitle } from "../store/store.ts";
+import { BATON_VERSION } from "../version.ts";
 
 const HELP = `baton — one durable terminal session across coding-agent harnesses
 
@@ -84,7 +84,7 @@ switch (cmd) {
   case "version":
   case "--version":
   case "-V":
-    console.log(`baton ${packageJson.version}`);
+    console.log(`baton ${BATON_VERSION}`);
     process.exit(0);
   case "help":
   case "--help":
