@@ -288,7 +288,7 @@ export interface ConfigOptionUpdate {
 }
 
 /**
- * 当前 context 占用/成本快照，对应 ACP v2 的 usage_update。
+ * Legacy context 占用/成本快照，对应 ACP v2 的 usage_update，仅用于历史 Ledger replay。
  * 与 baton 的 `usage_update`（token 增量）刻意分名：已落盘事件的语义不可静默翻转，
  * 旧 session.jsonl 的 delta replay 必须继续得到相同累计结果（见 docs/workflow.md）。
  */
@@ -298,6 +298,18 @@ export interface ContextUsageUpdate {
   contextUsed?: number;
   contextSize?: number;
   cost?: { amount: number; currency: string };
+}
+
+/**
+ * 最近一次主/root 模型请求的 context window 快照。
+ * usedTokens 只统计输入侧（含 cache read/write，不含 output）；capacityTokens 与
+ * effectiveModel 必须来自同一次已解析路由。modelSelection 用于切换模型后判定旧快照失效。
+ */
+export interface ContextWindowUpdate {
+  modelSelection: string;
+  effectiveModel?: string;
+  usedTokens: number;
+  capacityTokens: number;
 }
 
 /**
@@ -329,7 +341,7 @@ export interface RunStatusUpdate {
   title?: string;
 }
 
-/** 语义为增量：reducer 直接累加。adapter 拿到累计快照时须先差分再发。快照语义见 ContextUsageUpdate。 */
+/** 语义为增量：reducer 直接累加。adapter 拿到累计快照时须先差分再发。当前窗口快照见 ContextWindowUpdate。 */
 export interface UsageUpdate {
   inputTokens?: number;
   outputTokens?: number;
@@ -431,6 +443,8 @@ export type EventPayloadMap = {
   usage_update: UsageUpdate;
   available_commands_update: AvailableCommandsUpdate;
   config_option_update: ConfigOptionUpdate;
+  context_window_update: ContextWindowUpdate;
+  /** Legacy replay only. New adapters emit context_window_update. */
   context_usage_update: ContextUsageUpdate;
   _baton_error_update: ErrorUpdate;
   _baton_notice: Notice;

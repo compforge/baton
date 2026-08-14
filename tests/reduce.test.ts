@@ -370,7 +370,7 @@ describe("snapshot vs delta semantics", () => {
     expect(state.perTarget.get("test")?.configOptions[0]).toMatchObject({ id: "model", value: "b" });
   });
 
-  test("usage_update accumulates (delta) while context_usage_update replaces (snapshot)", () => {
+  test("usage_update accumulates while legacy context_usage_update remains replayable", () => {
     // 守住 workflow 的关键区分：usage delta 在 replay 时累加，
     // context 快照则后写覆盖先写。
     const state = reduceEvents([
@@ -392,6 +392,27 @@ describe("snapshot vs delta semantics", () => {
     expect(state.perTarget.get("test")?.contextUsage?.cost).toBeUndefined();
   });
 
+  test("context_window_update replaces the complete strict snapshot", () => {
+    const state = reduceEvents([
+      ev("context_window_update", {
+        modelSelection: "gpt-a",
+        effectiveModel: "gpt-a-2026-08",
+        usedTokens: 1_000,
+        capacityTokens: 200_000,
+      }),
+      ev("context_window_update", {
+        modelSelection: "gpt-b",
+        usedTokens: 2_000,
+        capacityTokens: 400_000,
+      }),
+    ]);
+    expect(state.perTarget.get("test")?.contextWindow).toEqual({
+      modelSelection: "gpt-b",
+      usedTokens: 2_000,
+      capacityTokens: 400_000,
+    });
+  });
+
   test("context snapshots remain independently addressable per HarnessTarget", () => {
     const state = reduceEvents([
       { ...ev("context_usage_update", { contextSize: 200_000 }), harness: "codex", harnessTargetId: "codex" },
@@ -408,24 +429,24 @@ describe("snapshot vs delta semantics", () => {
   test("same Target keeps each Lane binding projection isolated", () => {
     const state = reduceEvents([
       {
-        ...ev("context_usage_update", { contextUsed: 10, contextSize: 100 }),
+        ...ev("context_window_update", { modelSelection: "default", usedTokens: 10, capacityTokens: 100 }),
         harness: "codex",
         harnessTargetId: "codex",
         laneId: "hl_main",
       },
       {
-        ...ev("context_usage_update", { contextUsed: 70, contextSize: 100 }),
+        ...ev("context_window_update", { modelSelection: "default", usedTokens: 70, capacityTokens: 100 }),
         harness: "codex",
         harnessTargetId: "codex",
         laneId: "hl_side",
       },
     ]);
     expect(
-      state.perLaneTarget.get(laneTargetStateKey("hl_main", "codex"))?.contextUsage,
-    ).toMatchObject({ contextUsed: 10 });
+      state.perLaneTarget.get(laneTargetStateKey("hl_main", "codex"))?.contextWindow,
+    ).toMatchObject({ usedTokens: 10 });
     expect(
-      state.perLaneTarget.get(laneTargetStateKey("hl_side", "codex"))?.contextUsage,
-    ).toMatchObject({ contextUsed: 70 });
+      state.perLaneTarget.get(laneTargetStateKey("hl_side", "codex"))?.contextWindow,
+    ).toMatchObject({ usedTokens: 70 });
   });
 
   test("plan_update records the Target's latest plan id in its Target-scoped slot", () => {

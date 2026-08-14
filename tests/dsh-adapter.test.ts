@@ -330,12 +330,14 @@ describe("DshAdapter", () => {
     });
     expect(
       events
-        .filter((event) => event.kind === "context_usage_update")
+        .filter((event) => event.kind === "context_window_update")
         .map((event) => event.payload),
-    ).toEqual([
-      { model: "prod", contextSize: 128_000 },
-      { model: "prod", contextUsed: 12, contextSize: 128_000 },
-    ]);
+    ).toEqual([{
+      modelSelection: "default",
+      effectiveModel: "prod",
+      usedTokens: 12,
+      capacityTokens: 128_000,
+    }]);
     expect(events.find((event) => event.kind === "plan_update")?.payload).toMatchObject({
       entries: [{ content: "Inspect repository", status: "completed", priority: "medium" }],
     });
@@ -429,12 +431,73 @@ describe("DshAdapter", () => {
     });
     await waitForIdle(events, "t_context_second");
 
-    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
-      model: "prod",
-      contextUsed: 25,
-      contextSize: 128_000,
+    expect(events.find((event) => event.kind === "context_window_update")?.payload).toEqual({
+      modelSelection: "prod",
+      effectiveModel: "prod",
+      usedTokens: 25,
+      capacityTokens: 128_000,
     });
     await secondAdapter.close(secondRef);
+  });
+
+  test("pairs each usage sample with the effective model route active for that request", async () => {
+    const sessionId = "dsh-native-context-routes";
+    const client = new FakeClient(sessionId, [new StaticTurn([
+      sessionEvent(sessionId, "request/context", {
+        turn: 1,
+        step: 1,
+        model: "deepseek-chat",
+        contextWindow: 128_000,
+      }),
+      sessionEvent(sessionId, "assistant/message", {
+        turn: 1,
+        step: 1,
+        message: { role: "assistant", content: [] },
+        usage: { inputTokens: 20, cacheReadTokens: 5, outputTokens: 4 },
+      }),
+      sessionEvent(sessionId, "request/context", {
+        turn: 1,
+        step: 2,
+        model: "deepseek-long",
+        contextWindow: 256_000,
+      }),
+      sessionEvent(sessionId, "assistant/message", {
+        turn: 1,
+        step: 2,
+        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+        usage: { inputTokens: 40, cacheReadTokens: 10, cacheWriteTokens: 2, outputTokens: 8 },
+      }),
+      sessionEvent(sessionId, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+    ], result(sessionId, "done"))]);
+    const events: AnyEventDraft[] = [];
+    const adapter = new DshAdapter({
+      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      model: "auto",
+      clientFactory: () => client,
+    });
+    const ref = await adapter.open({ cwd: "/repo" }, (event) => events.push(event));
+    await adapter.sendTurn(ref, {
+      turnId: "t_context_routes",
+      messageId: "m_context_routes",
+      blocks: [{ type: "text", text: "route" }],
+    });
+    await waitForIdle(events, "t_context_routes");
+
+    expect(events.filter((event) => event.kind === "context_window_update").map((event) => event.payload)).toEqual([
+      {
+        modelSelection: "auto",
+        effectiveModel: "deepseek-chat",
+        usedTokens: 25,
+        capacityTokens: 128_000,
+      },
+      {
+        modelSelection: "auto",
+        effectiveModel: "deepseek-long",
+        usedTokens: 52,
+        capacityTokens: 256_000,
+      },
+    ]);
+    await adapter.close(ref);
   });
 
   test("rejects unsupported prompts and busy steering before accepting responsibility", async () => {

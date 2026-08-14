@@ -181,6 +181,18 @@ Harness output 先由 BatonSession 同步 record 到 Event Ledger 并 reduce Pro
 upsert，completed 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一；未知
 值不进入核心封闭状态。
 
+`context_window_update` 是最近一次主/root 模型请求的完整快照，payload 固定包含：
+
+- `modelSelection`：用户或 Target 选择的模型，用于切 model 后立即判旧快照失效；
+- `effectiveModel`：Harness 路由实际命中的模型（能观测时提供）；
+- `usedTokens`：该次请求的输入侧 token，包含 cache read/write，不含 output；
+- `capacityTokens`：同一条已解析模型路由的有效 context window。
+
+Adapter 只有在占用与容量能严格配对时才发事件，不能先发 size-only 再补 used，也不能把成本塞进
+该快照。Projection 同时按 `HarnessTarget` 和 `Lane × HarnessTarget` 保存；面向当前会话的展示读取
+主 Lane，避免 side Lane 覆盖。旧 `context_usage_update` 只用于历史 Ledger replay，新 Adapter 不再
+产生该事件。
+
 ### 5.2 Turn 终态
 
 每个被 `new_turn` 接受的 Turn，在正常结束、wire fatal error、子进程退出和 transport close

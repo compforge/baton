@@ -972,7 +972,7 @@ describe("run status: context compaction → _baton_run_status", () => {
   });
 });
 
-describe("context usage → context_usage_update", () => {
+describe("context window → context_window_update", () => {
   test("codex maps the latest turn usage and model context window as a snapshot", () => {
     const { events, notify } = codexHarness();
     notify("thread/tokenUsage/updated", {
@@ -980,15 +980,28 @@ describe("context usage → context_usage_update", () => {
       turnId: "ct1",
       tokenUsage: {
         total: { inputTokens: 20_000, cachedInputTokens: 10_000, outputTokens: 2_000 },
-        last: { totalTokens: 12_500 },
+        last: { inputTokens: 11_000, totalTokens: 12_500 },
         modelContextWindow: 200_000,
       },
     });
-    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
-      model: "default",
-      contextUsed: 12_500,
-      contextSize: 200_000,
+    expect(events.find((event) => event.kind === "context_window_update")?.payload).toEqual({
+      modelSelection: "default",
+      usedTokens: 11_000,
+      capacityTokens: 200_000,
     });
+  });
+
+  test("codex does not publish a partial snapshot without a paired capacity", () => {
+    const { events, notify } = codexHarness();
+    notify("thread/tokenUsage/updated", {
+      threadId: "th1",
+      turnId: "ct1",
+      tokenUsage: {
+        total: { inputTokens: 10_000, outputTokens: 1_000 },
+        last: { inputTokens: 9_000 },
+      },
+    });
+    expect(events.some((event) => event.kind === "context_window_update")).toBe(false);
   });
 
   test("claude maps the primary model usage and context window as a snapshot", () => {
@@ -1010,11 +1023,11 @@ describe("context usage → context_usage_update", () => {
         },
       },
     });
-    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
-      model: "default",
-      contextUsed: 10_500,
-      contextSize: 200_000,
-      cost: { amount: 0.12, currency: "USD" },
+    expect(events.find((event) => event.kind === "context_window_update")?.payload).toEqual({
+      modelSelection: "default",
+      effectiveModel: "claude-sonnet",
+      usedTokens: 10_500,
+      capacityTokens: 200_000,
     });
   });
 
@@ -1049,11 +1062,11 @@ describe("context usage → context_usage_update", () => {
         },
       },
     });
-    expect(events.find((event) => event.kind === "context_usage_update")?.payload).toEqual({
-      model: "default",
-      contextUsed: 5_000,
-      contextSize: 200_000,
-      cost: { amount: 0.5, currency: "USD" },
+    expect(events.find((event) => event.kind === "context_window_update")?.payload).toEqual({
+      modelSelection: "default",
+      effectiveModel: "claude-sonnet-4",
+      usedTokens: 5_000,
+      capacityTokens: 200_000,
     });
   });
 });

@@ -572,13 +572,6 @@ export class DshAdapter implements HarnessAdapter {
       // latest value with the native session checkpoint so a resumed Adapter
       // can keep reporting the window even when DSH correctly deduplicates it.
       this.publishBinding(runtime);
-      this.emit(runtime, turn, {
-        kind: "context_usage_update",
-        payload: {
-          model,
-          ...(contextWindow === undefined ? {} : { contextSize: contextWindow }),
-        },
-      }, raw);
       return;
     }
 
@@ -652,15 +645,14 @@ export class DshAdapter implements HarnessAdapter {
           this.emit(runtime, turn, { kind: "usage_update", payload: usage }, raw);
         }
         const used = contextUsed(usage);
-        if (used !== undefined) {
+        if (used !== undefined && runtime.requestContext?.contextWindow !== undefined) {
           this.emit(runtime, turn, {
-            kind: "context_usage_update",
+            kind: "context_window_update",
             payload: {
-              model: runtime.requestContext?.model ?? this.options.model ?? "default",
-              contextUsed: used,
-              ...(runtime.requestContext?.contextWindow === undefined
-                ? {}
-                : { contextSize: runtime.requestContext.contextWindow }),
+              modelSelection: this.options.model ?? "default",
+              effectiveModel: runtime.requestContext.model,
+              usedTokens: used,
+              capacityTokens: runtime.requestContext.contextWindow,
             },
           }, raw);
         }
