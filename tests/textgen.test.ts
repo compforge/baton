@@ -174,6 +174,11 @@ describe("sanitizeSessionTitle", () => {
     expect(sanitizeSessionTitle(undefined)).toBeUndefined();
     expect(sanitizeSessionTitle(42)).toBeUndefined();
   });
+
+  test("低信息占位标题返回 undefined，留给后续 turn 重试", () => {
+    expect(sanitizeSessionTitle("开始新的协作会话")).toBeUndefined();
+    expect(sanitizeSessionTitle("New Conversation")).toBeUndefined();
+  });
 });
 
 describe("buildSessionTitlePrompt", () => {
@@ -194,6 +199,10 @@ describe("canReplaceSessionTitle", () => {
     expect(canReplaceSessionTitle("  ", userText)).toBe(true);
     expect(canReplaceSessionTitle("我的会话", userText)).toBe(false);
     expect(canReplaceSessionTitle(sessionPreview(userText), userText)).toBe(true);
+  });
+
+  test("历史低信息 textgen 标题可被后续 turn 修正", () => {
+    expect(canReplaceSessionTitle("开始新的协作会话", userText)).toBe(true);
   });
 });
 
@@ -364,6 +373,44 @@ describe("maybeGenerateSessionTitle", () => {
     expect(session.meta.title).toBe("Fix Flaky Login Test");
   });
 
+  test("纯问候不调用 textgen，等待后续消息出现主题", async () => {
+    const session = sessionWithUserMessage("你好");
+    const stub = new StubAdapter("codex", async () => ({ title: "友好问候" }));
+
+    expect(
+      await maybeGenerateSessionTitle({
+        session,
+        candidates: [{ harness: "codex", adapter: stub }],
+      }),
+    ).toBe(false);
+    expect(stub.requests).toHaveLength(0);
+    expect(session.meta.title).toBeUndefined();
+  });
+
+  test("后续重试时使用截至当前的用户消息", async () => {
+    const session = sessionWithUserMessage("你好");
+    session.updateMeta({ title: "开始新的协作会话" });
+    session.appendEvent({
+      kind: "user_message",
+      source: { type: "user" },
+      turnId: "t_2",
+      payload: {
+        messageId: "m_2",
+        content: [{ type: "text", text: "baton DeepSeek Harness 访问报错" }],
+      },
+    });
+    const stub = new StubAdapter("codex", async () => ({ title: "排查 DeepSeek Harness 访问报错" }));
+
+    expect(
+      await maybeGenerateSessionTitle({
+        session,
+        candidates: [{ harness: "codex", adapter: stub }],
+      }),
+    ).toBe(true);
+    expect(stub.requests[0]?.prompt).toContain("你好\n\nbaton DeepSeek Harness 访问报错");
+    expect(session.meta.title).toBe("排查 DeepSeek Harness 访问报错");
+  });
+
   test("fork 只用分叉后的首个用户输入生成标题", async () => {
     const source = sessionWithUserMessage("investigate the original issue");
     const session = store.forkSession(source.id);
@@ -453,7 +500,7 @@ describe("maybeGenerateSessionTitle", () => {
     expect(stub.requests).toHaveLength(0);
   });
 
-  test("Controller 首个主 Queue Turn 触发一次，遵循 prefer 并在落盘后刷新投影", async () => {
+  test("Controller 主 Queue Turn 触发，遵循 prefer 并在落盘后刷新投影", async () => {
     const session = store.createSession({ cwd: "/repo" });
     let finishTitle!: (value: unknown) => void;
     const titleResult = new Promise<unknown>((resolve) => {
@@ -503,6 +550,38 @@ describe("maybeGenerateSessionTitle", () => {
       await controller.submit("codex", [{ type: "text", text: "add another assertion" }]),
     ).toBe("completed");
     expect(claude.requests).toHaveLength(1);
+    await controller.close();
+  });
+
+  test("Controller 低信息结果不锁死，下一个主 Queue Turn 重试", async () => {
+    const session = store.createSession({ cwd: "/repo" });
+    let generation = 0;
+    const adapter = new CompletingTextgenAdapter("codex", async () => {
+      generation++;
+      return generation === 1
+        ? { title: "开始新的协作会话" }
+        : { title: "排查 DeepSeek Harness 访问报错" };
+    });
+    const target: HarnessTarget = { id: "codex", harness: "codex" };
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4_096,
+      resolveTarget: () => target,
+      createAdapter: () => adapter,
+      textgenTargets: [target],
+    });
+
+    expect(
+      await controller.submit("codex", [{ type: "text", text: "我想问个编程问题" }]),
+    ).toBe("completed");
+    await until(() => adapter.requests.length === 1);
+    expect(session.meta.title).toBeUndefined();
+
+    expect(
+      await controller.submit("codex", [{ type: "text", text: "baton DeepSeek Harness 访问报错" }]),
+    ).toBe("completed");
+    await until(() => session.meta.title === "排查 DeepSeek Harness 访问报错");
+    expect(adapter.requests).toHaveLength(2);
     await controller.close();
   });
 });
