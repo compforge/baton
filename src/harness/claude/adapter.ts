@@ -1776,6 +1776,24 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       case "result": {
+        if (msg.subtype === "success" && msg.user_message_uuid) {
+          const offer = rt.pendingOfferUuids?.get(msg.user_message_uuid);
+          if (offer) {
+            // A steer folded into the active Claude turn may not emit command_lifecycle.
+            // The result's correlated input UUID is then the authoritative applied receipt.
+            rt.pendingOfferUuids?.delete(msg.user_message_uuid);
+            emit({
+              kind: "user_message",
+              payload: {
+                messageId: offer.messageId,
+                content: offer.blocks,
+                delivery: "steer",
+                deliveryState: "applied",
+              },
+              raw: msg,
+            });
+          }
+        }
         const usage = msg.usage;
         if (usage) {
           emit({
