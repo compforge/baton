@@ -1327,18 +1327,23 @@ export class Controller {
   }
 
   /**
-   * session 标题的 LLM 生成（fire-and-forget 旁路）：首个主 Queue Turn 收口后触发一次，
+   * session 标题的 LLM 生成（fire-and-forget 旁路）：主 Queue Turn 收口后触发，
+   * 得到有效标题后护栏会让后续调用立即返回；低信息结果或失败则允许下一 Turn 重试。
    * 失败/降级全部在 textgen 路由器内收口，主流程无感。护栏（用户命名不覆盖）在
    * maybeGenerateSessionTitle 内，含落盘前复查。
    */
-  private titleGenAttempted = false;
+  private titleGenInFlight = false;
+  private pendingTitleGenTargetId: string | undefined;
 
   private maybeGenerateTitle(currentTargetId: string): void {
-    if (this.titleGenAttempted) return;
-    this.titleGenAttempted = true;
+    if (this.titleGenInFlight) {
+      this.pendingTitleGenTargetId = currentTargetId;
+      return;
+    }
     const session = this.options.session;
     const candidates = this.textgenCandidates(currentTargetId);
     if (candidates.length === 0) return;
+    this.titleGenInFlight = true;
     void maybeGenerateSessionTitle({
       session,
       candidates,
@@ -1360,6 +1365,12 @@ export class Controller {
           message: "session title generation failed",
           attributes: { error: error instanceof Error ? error.message : String(error) },
         });
+      })
+      .finally(() => {
+        this.titleGenInFlight = false;
+        const pendingTargetId = this.pendingTitleGenTargetId;
+        this.pendingTitleGenTargetId = undefined;
+        if (pendingTargetId) this.maybeGenerateTitle(pendingTargetId);
       });
   }
 

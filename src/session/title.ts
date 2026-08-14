@@ -1,5 +1,5 @@
 // Session 标题的 LLM 生成编排（fire-and-forget 旁路）：
-// 首个主 Queue Turn 收口后由 controller 触发一次，从事件流取第一条用户输入，
+// 每个主 Queue Turn 收口后由 controller 触发，从事件流取当前用户输入，
 // 经 textgen 路由器跨 harness 降级生成标题。护栏：title 非空且不等于机械 preview
 // 视为用户/adopted 命名，绝不覆盖（对齐 t3code canReplaceThreadTitle）。
 // 任何失败都静默降级为 sessionPreview——标题是增强，不是主流程。
@@ -24,11 +24,12 @@ export function configuredTextgenTargets(config: BatonConfig): HarnessTarget[] {
 }
 
 /**
- * 取当前 Session 自己的第一条非空用户输入。fork 复制了源事件，必须越过分叉边界，
- * 否则会拿源问题与 fork 的机械标题比较，并把后者误判成用户命名。
+ * 取当前 Session 自己截至现在的非空用户输入。用全部输入是为了让“你好”之后才出现的
+ * 真正主题能在后续 Turn 重试时被看到。fork 复制了源事件，必须越过分叉边界。
  */
-function firstUserText(session: SessionHandle): string | undefined {
+function sessionUserText(session: SessionHandle): string | undefined {
   const forkBoundary = session.meta.forkedFrom?.throughSeq;
+  const messages: string[] = [];
   for (const event of session.ledger.read()) {
     if (forkBoundary !== undefined && event.seq <= forkBoundary) continue;
     if (event.kind !== "user_message" || event.source.type === "plugin") {
@@ -36,10 +37,15 @@ function firstUserText(session: SessionHandle): string | undefined {
     }
     const payload = event.payload as { content?: Parameters<typeof textOf>[0] };
     const text = textOf(payload.content ?? []).trim();
-    if (text) return text;
+    if (text) messages.push(text);
   }
-  return undefined;
+  return messages.length > 0 ? messages.join("\n\n") : undefined;
 }
+
+/** 历史版本已经落盘的低信息 textgen 结果，允许后续 Turn 修正。 */
+const RETRYABLE_GENERATED_TITLES = new Set(["开始新的协作会话"]);
+const LOW_INFORMATION_USER_TEXT =
+  /^(?:你好|您好|嗨|哈[啰喽罗]|在吗|好的?|收到|谢谢|hi|hello|hey|thanks|thank you)[\s!！,.，。?？~～]*$/iu;
 
 /** 当前 title 是否允许被 LLM 标题替换：空，或仍等于机械 preview（即自动生成物）。 */
 export function canReplaceSessionTitle(
@@ -48,6 +54,7 @@ export function canReplaceSessionTitle(
 ): boolean {
   const current = title?.trim();
   if (!current) return true;
+  if (RETRYABLE_GENERATED_TITLES.has(current)) return true;
   const preview = userText ? sessionPreview(userText) : undefined;
   return preview !== undefined && current === preview;
 }
@@ -59,8 +66,12 @@ export async function maybeGenerateSessionTitle(opts: {
   log?: LogSink;
 }): Promise<boolean> {
   const { session, log } = opts;
-  const userText = firstUserText(session);
-  if (!userText || !canReplaceSessionTitle(session.meta.title, userText)) return false;
+  const userText = sessionUserText(session);
+  if (
+    !userText ||
+    LOW_INFORMATION_USER_TEXT.test(userText) ||
+    !canReplaceSessionTitle(session.meta.title, userText)
+  ) return false;
 
   const result = await generateStructuredWithFallback(
     opts.candidates,

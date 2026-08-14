@@ -8,7 +8,7 @@ export function sanitizeTerminalTitle(title: string): string {
   return title.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-/** OSC 1 sets the terminal icon name, which Otty uses as the tab name. */
+/** Otty uses OSC 1 as its tab name; Ghostty surfaces the OSC 2 window title. */
 export function setTerminalTabTitle(
   title: string,
   output: TerminalTitleOutput = process.stdout,
@@ -16,5 +16,5 @@ export function setTerminalTabTitle(
   if (!output.isTTY) return;
   const safeTitle = sanitizeTerminalTitle(title);
   if (!safeTitle) return;
-  output.write(`\x1b]1;${safeTitle}\x1b\\`);
+  output.write(`\x1b]1;${safeTitle}\x1b\\\x1b]2;${safeTitle}\x1b\\`);
 }

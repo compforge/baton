@@ -65,6 +65,22 @@ export const SESSION_TITLE_SCHEMA: Record<string, unknown> = {
 const TITLE_INPUT_MAX_CHARS = 8_000;
 export const SESSION_TITLE_MAX_CHARS = 50;
 
+const GENERIC_SESSION_TITLES = new Set([
+  "new chat",
+  "new conversation",
+  "new session",
+  "start a new chat",
+  "start a new conversation",
+  "start a new session",
+  "新会话",
+  "新的会话",
+  "开始新会话",
+  "新对话",
+  "新的对话",
+  "开始新的对话",
+  "开始新的协作会话",
+]);
+
 /**
  * 初始标题 prompt（编辑规则移植自 t3code TextGenerationPrompts，按 baton 语境调整）：
  * 目标是"几周后还能认出这个 session"，先归约 Subject/Outcome 再命名，丢弃过程性指令。
@@ -95,8 +111,9 @@ Editorial rules:
 - Do not repeat the project or working directory name; it is already visible elsewhere in the UI.
 - Avoid quotes, labels, filler, and trailing punctuation.
 - Reply in the same language as the user's message.
+- Ignore greetings and acknowledgements. If the messages do not yet reveal a durable subject or outcome, return an empty title so a later turn can retry.
 
-User message:
+User messages so far:
 ${message}`;
 }
 
@@ -114,6 +131,7 @@ export function sanitizeSessionTitle(raw: unknown): string | undefined {
     .trim()
     .replace(/\s+/g, " ");
   if (!normalized) return undefined;
+  if (GENERIC_SESSION_TITLES.has(normalized.toLocaleLowerCase())) return undefined;
   const chars = [...normalized];
   return chars.length <= SESSION_TITLE_MAX_CHARS
     ? normalized

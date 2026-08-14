@@ -7,7 +7,7 @@ describe("terminal tab title", () => {
     expect(sanitizeTerminalTitle(" fix\nlogin\x1b]2;owned\x07 ")).toBe("fix login ]2;owned");
   });
 
-  test("writes an OSC 1 sequence to a TTY", () => {
+  test("writes OSC 1 and OSC 2 sequences for Otty and Ghostty", () => {
     const chunks: string[] = [];
     setTerminalTabTitle("first question", {
       isTTY: true,
@@ -16,7 +16,7 @@ describe("terminal tab title", () => {
       },
     });
 
-    expect(chunks).toEqual(["\x1b]1;first question\x1b\\"]);
+    expect(chunks).toEqual(["\x1b]1;first question\x1b\\\x1b]2;first question\x1b\\"]);
   });
 
   test("does not write outside a TTY", () => {
