@@ -26,6 +26,7 @@ function turn(
   i: number,
   agentText: string,
   laneId?: string,
+  toolTitle?: string,
 ): void {
   const turnId = `t_${target.id}_${i}`;
   const coordinate = {
@@ -46,6 +47,18 @@ function turn(
     ...coordinate,
     payload: { messageId: `${turnId}_a`, content: [{ type: "text", text: agentText }] },
   });
+  if (toolTitle) {
+    h.appendEvent({
+      source: { type: "baton" },
+      kind: "tool_call_update",
+      ...coordinate,
+      payload: {
+        toolCallId: `${turnId}_tool`,
+        title: toolTitle,
+        status: "completed",
+      },
+    });
+  }
   h.appendEvent({
     source: { type: "baton" },
     kind: "state_update",
@@ -57,7 +70,7 @@ function turn(
 
 describe("buildTargetCatchUpContext", () => {
   test("fresh native session receives the complete BatonSession history", () => {
-    turn({ id: "codex-a", harness: "codex" }, 1, "codex history");
+    turn({ id: "codex-a", harness: "codex" }, 1, "codex history", undefined, "Read");
     turn({ id: "example", harness: "example" }, 2, "other history");
     const result = buildTargetCatchUpContext(h, {
       target: { id: "codex-a", harness: "codex" },
@@ -66,6 +79,9 @@ describe("buildTargetCatchUpContext", () => {
     });
     expect(result?.text).toContain("codex history");
     expect(result?.text).toContain("other history");
+    expect(result?.text).toContain("assistant[codex]: codex history");
+    expect(result?.text).toContain("tools[codex]: Read [completed]");
+    expect(result?.text).toContain("assistant[example]: other history");
     expect(result?.throughSeq).toBe(h.ledger.read().at(-1)?.seq);
   });
 
@@ -105,6 +121,13 @@ describe("buildTargetCatchUpContext", () => {
     });
     expect(result?.text).toContain("side lane result");
     expect(result?.text).toContain("previous harness handoff");
+    expect(result?.text).toContain(
+      "user: q3\nassistant[claude-code]: previous harness handoff",
+    );
+    expect(result?.text).toContain(
+      "user: q4\nassistant[codex]: side lane result",
+    );
+    expect(result?.text).not.toContain("## Turn");
     expect(result?.text).not.toContain("same binding output");
   });
 });
