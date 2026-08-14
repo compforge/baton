@@ -384,7 +384,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
-  const hasRecallableQueuedInput = controller.queuedHarnessInputs.some(
+  const mainQueuedInputs = controller.queuedHarnessInputs.filter(
+    (turn) => turn.laneId === MAIN_LANE_ID,
+  );
+  const hasRecallableQueuedInput = mainQueuedInputs.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
   const interactions: InteractionView[] = [...state.interactions.values()]
@@ -533,7 +536,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
           : "native queue"
       }`,
     })),
-    ...controller.queuedHarnessInputs.map((turn) => ({
+    ...mainQueuedInputs.map((turn) => ({
       id: turn.messageId,
       text: userVisibleText(composerTextOf(turn.blocks)),
       tag:
