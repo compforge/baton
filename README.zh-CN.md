@@ -87,25 +87,28 @@ npx @compforge/baton
 首次运行会生成 `~/.baton/config.yaml`：
 
 ```yaml
-defaultAgent: codex
-codexCommand:
-  - codex
-  - app-server
-# 仅使用 /dsh 时需要：
-# dshCommand:
-#   - dsh-jsonrpc-agent
-#   - /absolute/path/to/cordis.yml
+defaultTarget: codex
+targets:
+  codex:
+    harness: codex
+    command: [codex, app-server]
+  claude:
+    harness: claude
+  dsh:
+    harness: dsh
+    # command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
+    model: prod
 mentionBudgetChars: 4096
 showThoughts: true
 ```
 
 所有配置项及说明见 [`config.yaml.example`](config.yaml.example)。
 
-Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profile、企业策略照常生效，Codex 自身默认人工审批）。设置 `codexApprovalReviewer: auto_review` 才把审批委托给自动 reviewer——委托状态会常驻 Harness Status，每条自动决策也在对应工具旁留下回执。
+Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profile、企业策略照常生效，Codex 自身默认人工审批）。设置 `targets.codex.approvalReviewer: auto_review` 才把审批委托给自动 reviewer——委托状态会常驻 Harness Status，每条自动决策也在对应工具旁留下回执。
 
-如果 Claude Code 使用自定义可执行文件，可以在配置中设置 `claudeExecutable`，或通过环境变量临时覆盖（`BATON_CLAUDE_BIN=/path/to/claude baton`）。配置优先级为：环境变量 > `config.yaml` > 默认值。
+如果 Claude Code 使用自定义可执行文件，可以设置 `targets.claude.executable`，或通过环境变量临时覆盖（`BATON_CLAUDE_BIN=/path/to/claude baton`）。配置优先级为：环境变量 > Target 配置 > Harness 默认值。
 
-DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`dshCommand` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod`；`dshProvider` 可选择其它 provider route，输出 token 上限由 runtime/provider 决定。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
+DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`targets.dsh.command` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod`；Target 的 `provider` 可选择其它 provider route，输出 token 上限由 runtime/provider 决定。Provider 凭据仍由 DSH 自己的凭据存储持有。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
 
 ## 使用
 
@@ -115,6 +118,8 @@ DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`dshCommand` 要填�
 /claude 或 /cc        切换到 Claude Code
 /codex 或 /cx         切换到 Codex
 /dsh 或 /deepseek     切换到 DeepSeek Harness
+/target              打开已配置的 HarnessTarget 选择器
+/target <id>         切换到指定 HarnessTarget
 /cc <消息>           切换到 Claude Code 并立即发送消息
 /cx <消息>           切换到 Codex 并立即发送消息
 /deepseek <消息>     切换到 DeepSeek Harness 并立即发送消息

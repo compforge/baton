@@ -9,6 +9,7 @@ describe("baton command registry", () => {
     expect(parseSlashCommand("/claude", COMMANDS)).toEqual({ name: "claude", argument: "" });
     expect(parseSlashCommand("/codex", COMMANDS)).toEqual({ name: "codex", argument: "" });
     expect(parseSlashCommand("/dsh", COMMANDS)).toEqual({ name: "dsh", argument: "" });
+    expect(parseSlashCommand("/target dsh-prod", COMMANDS)).toEqual({ name: "target", argument: "dsh-prod" });
     expect(parseSlashCommand("/codex fix this", COMMANDS)).toEqual({ name: "codex", argument: "fix this" });
     expect(parseSlashCommand("/claude review this", COMMANDS)).toEqual({ name: "claude", argument: "review this" });
     expect(parseSlashCommand("/model sonnet", COMMANDS)).toEqual({ name: "model", argument: "sonnet" });

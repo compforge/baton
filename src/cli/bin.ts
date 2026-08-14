@@ -33,9 +33,9 @@ Usage:
   baton [--cwd <dir>] [-c|--continue] [-s|--session <id>]
                         start the chat TUI; creates a new BatonSession by default,
                         -c continues the latest session in the cwd, -s opens a
-                        specific session; /codex (/cx), /claude (/cc), and
-                        /dsh (/deepseek) switch harness
-  baton repl [--agent codex|cx|claude|cc|dsh|deepseek] [--cwd <dir>]
+                        specific session; /target switches configured Targets,
+                        while /codex, /claude, and /dsh use Harness aliases
+  baton repl [--agent <target-id|harness-alias>] [--cwd <dir>]
                         headless REPL
   baton resume [bs_xxx|harness-session-id|cx:<id>|cc:<id>]
                         resume a BatonSession; a Codex/Claude Code HarnessSession
@@ -72,12 +72,10 @@ Usage:
   baton help            this help
 
 Config:
-  ~/.baton/config.yaml      generated on first run; defaultAgent / claudeExecutable /
-                            codexCommand / codexApprovalReviewer / dshCommand /
-                            dshProvider / dshModel /
+  ~/.baton/config.yaml      generated on first run; defaultTarget / targets /
                             mentionBudgetChars / showThoughts / logLevel
   ~/.baton/plugin.yaml      globally enabled plugins keyed by plugin@marketplace
-  BATON_CLAUDE_BIN          env var, takes precedence over claudeExecutable in config.yaml
+  BATON_CLAUDE_BIN          env var, takes precedence over targets.*.executable for Claude
 `;
 
 const cmd = process.argv[2];

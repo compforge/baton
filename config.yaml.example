@@ -1,47 +1,50 @@
 # Copy this file to ~/.baton/config.yaml and adjust the values you need.
 
-# Harness used when baton starts. Supported values: codex, claude, dsh.
-defaultAgent: codex
+# HarnessTarget used when baton starts. The id must exist under targets.
+defaultTarget: codex
 
-# Optional: custom Claude Code executable, such as a company wrapper.
-claudeExecutable: claude
+# Harness-specific launch settings belong to their Target. The target id is the
+# scheduling/session coordinate; multiple targets may use the same Harness.
+targets:
+  codex:
+    harness: codex
+    # Codex must run in headless app-server mode.
+    command:
+      - codex
+      - app-server
+    # Optional: who reviews Codex approvals. Leave unset to follow Codex's own
+    # config/profile/enterprise requirements.
+    # approvalReviewer: auto_review # auto_review | user
 
-# Codex must run in headless app-server mode.
-codexCommand:
-  - codex
-  - app-server
+  claude:
+    harness: claude
+    # Optional custom Claude Code executable, such as a company wrapper.
+    executable: claude
 
-# Optional: DeepSeek Harness Agent SDK runtime. The runtime must load
-# @deepseek-ai/dsh-sdk-jsonrpc-server; include the absolute Cordis config path
-# in the complete argv. These settings are only required when using /dsh.
-# dshCommand:
-#   - dsh-jsonrpc-agent
-#   - /absolute/path/to/cordis.yml
-# dshProvider: deepseek-official
-dshModel: prod
+  dsh:
+    harness: dsh
+    # Optional DeepSeek Harness Agent SDK runtime. The runtime must load
+    # @deepseek-ai/dsh-sdk-jsonrpc-server. Include the absolute Cordis config
+    # path in the complete argv.
+    # command:
+    #   - dsh-jsonrpc-agent
+    #   - /absolute/path/to/cordis.yml
+    # provider: deepseek-official
+    model: prod
 
-# Optional: who reviews Codex approvals. Leave unset (the default) to follow
-# Codex's own resolution — your ~/.codex/config.toml, profiles and any enterprise
-# requirements all apply, and Codex itself defaults to user. Set this only to
-# override that for baton-launched sessions. Delegated decisions stay visible as
-# per-tool audit receipts and in Agent Status.
-# codexApprovalReviewer: auto_review # auto_review | user
-
-# Maximum number of characters injected for session mentions and harness handoffs.
+# Maximum number of characters injected for session mentions and Harness handoffs.
 mentionBudgetChars: 4096
 
 # Show agent reasoning in the timeline.
 showThoughts: true
 
-# Optional text-generation routing for automatic session titles. By default,
-# baton tries the harness that completed the first turn, then the other bundled
-# harness. Set a preference when one provider is unavailable, or override the
-# provider-specific model used for this small side request.
-# textgenPrefer: claude # codex | claude
+# Optional text-generation routing for automatic session titles. Values and map
+# keys are HarnessTarget ids. By default Baton tries the Target that completed
+# the first turn, then the other configured Targets.
+# textgenPrefer: claude
 # textgenModels:
 #   claude: haiku
 #   codex: your-codex-model-id
 
-# Minimum level persisted to each session.log. Use debug when diagnosing a
-# Baton component, Harness adapter, or third-party Plugin.
+# Minimum level persisted to each session.log.
 logLevel: info # debug | info | warn | error

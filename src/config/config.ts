@@ -1,5 +1,5 @@
-// ~/.baton/config.yaml：用户级配置。优先级 env > config.yaml > 默认值。
-// 首次运行自动生成默认文件，用户直接编辑即可。
+// ~/.baton/config.yaml：用户级配置。HarnessTarget 拥有 Harness 专属启动配置，
+// 根配置只负责全局选项、Target 索引和默认 Target。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -7,49 +7,20 @@ import { join } from "node:path";
 
 import { parse, stringify } from "yaml";
 
-import { parseHarness, type HarnessName } from "../harness/ids.ts";
-import type { LogLevel } from "../logging.ts";
+import { DEFAULT_CLAUDE_TARGET_CONFIG } from "../harness/claude/config.ts";
+import { DEFAULT_CODEX_TARGET_CONFIG } from "../harness/codex/config.ts";
+import { DEFAULT_DSH_TARGET_CONFIG } from "../harness/dsh/config.ts";
+import type { BatonConfig, HarnessTargetConfig } from "./types.ts";
 
-export interface BatonConfig {
-  /** 打开 TUI / REPL 时的默认 agent（canonical harness id） */
-  defaultAgent: HarnessName;
-  /** claude 可执行文件路径（如公司包装器 reclaude）；env BATON_CLAUDE_BIN 优先 */
-  claudeExecutable?: string;
-  /** codex 启动命令（headless 必须是 app-server 形态） */
-  codexCommand: string[];
-  /** DeepSeek Harness JSON-RPC runtime 完整启动 argv（含 Cordis 配置路径） */
-  dshCommand?: string[];
-  /** DSH SDK 创建 agent 时使用的 provider / model；缺省跟随 SDK runtime 默认值。 */
-  dshProvider?: string;
-  dshModel?: string;
-  /**
-   * codex 审批人（approvals_reviewer）。**缺省不设 = 跟随 codex 自己的解析**
-   * （~/.codex/config.toml、profile、企业 requirements 照常生效，codex 自身默认是 user）。
-   * 显式设了才作为 thread/start 参数下发，是一次 opt-in 覆盖。
-   * baton 不替 codex 定审批的安全默认。见 docs/approval-lifecycle.md。
-   */
-  codexApprovalReviewer?: "user" | "auto_review";
-  /** @ 引用与同会话 harness 同步的摘要预算（字符） */
-  mentionBudgetChars: number;
-  /** 是否在时间线里显示 agent 的思考过程（reasoning 流） */
-  showThoughts: boolean;
-  /**
-   * textgen 旁路生成（session 标题）的首选 harness（canonical id）。缺省 =
-   * 当前 turn 的 harness 优先，失败再降级其他家。
-   * 某家 quota 不可用时可在此显式换边。
-   */
-  textgenPrefer?: HarnessName;
-  /** 各 harness 的 textgen 模型覆盖（key = canonical harness id）；缺省由 adapter 选择。 */
-  textgenModels?: Record<string, string>;
-  /** session.log 的最低记录级别。 */
-  logLevel: LogLevel;
-}
+export type { BatonConfig, HarnessTargetConfig } from "./types.ts";
 
-// codexApprovalReviewer 有意不列：缺省就是"不下发、跟随 codex"。
 export const DEFAULT_CONFIG: BatonConfig = {
-  defaultAgent: "codex",
-  codexCommand: ["codex", "app-server"],
-  dshModel: "prod",
+  defaultTarget: "codex",
+  targets: {
+    codex: DEFAULT_CODEX_TARGET_CONFIG,
+    claude: DEFAULT_CLAUDE_TARGET_CONFIG,
+    dsh: DEFAULT_DSH_TARGET_CONFIG,
+  },
   mentionBudgetChars: 4096,
   showThoughts: true,
   logLevel: "info",
@@ -73,71 +44,83 @@ export function ensureConfigFile(rootDir?: string): string {
   return path;
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function loadTargets(value: unknown): Record<string, HarnessTargetConfig> {
+  const configured = record(value) ?? {};
+  const targets: Record<string, HarnessTargetConfig> = {};
+  const targetIds = new Set([...Object.keys(DEFAULT_CONFIG.targets), ...Object.keys(configured)]);
+  for (const targetId of targetIds) {
+    if (!TARGET_ID_PATTERN.test(targetId)) continue;
+    const base = DEFAULT_CONFIG.targets[targetId];
+    const supplied = record(configured[targetId]);
+    const candidate = { ...(base ?? {}), ...(supplied ?? {}) };
+    if (typeof candidate.harness !== "string" || !candidate.harness.trim()) continue;
+    targets[targetId] = Object.freeze({ ...candidate, harness: candidate.harness.trim() });
+  }
+  return targets;
+}
+
+export function targetConfigFor(config: BatonConfig, targetId: string): HarnessTargetConfig {
+  const target = config.targets[targetId];
+  if (!target) throw new Error(`HarnessTarget not configured: ${targetId}`);
+  return target;
+}
+
 export function loadConfig(rootDir?: string): BatonConfig {
-  let fromFile: Partial<BatonConfig> = {};
+  let fromFile: Record<string, unknown> = {};
   const path = configPath(rootDir);
   if (existsSync(path)) {
     try {
-      fromFile = (parse(readFileSync(path, "utf8")) ?? {}) as Partial<BatonConfig>;
+      fromFile = record(parse(readFileSync(path, "utf8"))) ?? {};
     } catch {
       fromFile = {};
     }
   }
-  const merged: BatonConfig = {
-    ...DEFAULT_CONFIG,
-    ...fromFile,
-    codexCommand:
-      Array.isArray(fromFile.codexCommand) && fromFile.codexCommand.length > 0
-        ? fromFile.codexCommand
-        : DEFAULT_CONFIG.codexCommand,
-  };
-  if (
-    !Array.isArray(merged.dshCommand) ||
-    merged.dshCommand.length === 0 ||
-    merged.dshCommand.some((part) => typeof part !== "string" || !part.trim())
-  ) {
-    merged.dshCommand = undefined;
-  }
-  if (typeof merged.dshProvider !== "string" || !merged.dshProvider.trim()) {
-    merged.dshProvider = undefined;
-  }
-  if (typeof merged.dshModel !== "string" || !merged.dshModel.trim()) {
-    merged.dshModel = DEFAULT_CONFIG.dshModel;
-  }
-  merged.defaultAgent =
-    typeof merged.defaultAgent === "string"
-      ? (parseHarness(merged.defaultAgent) ?? DEFAULT_CONFIG.defaultAgent)
-      : DEFAULT_CONFIG.defaultAgent;
-  if (!Number.isFinite(merged.mentionBudgetChars) || merged.mentionBudgetChars <= 0) {
-    merged.mentionBudgetChars = DEFAULT_CONFIG.mentionBudgetChars;
-  }
-  if (typeof merged.showThoughts !== "boolean") {
-    merged.showThoughts = DEFAULT_CONFIG.showThoughts;
-  }
-  if (!["debug", "info", "warn", "error"].includes(merged.logLevel)) {
-    merged.logLevel = DEFAULT_CONFIG.logLevel;
-  }
-  // 只接受已知取值；其余（含缺省）落回 undefined = 不下发、跟随 codex 自己的解析。
-  // 这里**不推导生效值**：曾经为了让 footer 准确，config 复刻了一遍 codex 的方言解析，
-  // 但那必然算错——企业 requirements 能覆盖用户配置和启动参数。生效值只由 codex 回吐，
-  // 见 CodexAdapter.approvalRoute。
-  if (merged.codexApprovalReviewer !== "auto_review" && merged.codexApprovalReviewer !== "user") {
-    merged.codexApprovalReviewer = undefined;
-  }
-  // 与 defaultAgent 同规则：只接受已知 harness；未知值视为未配置（跟随默认降级链）。
-  merged.textgenPrefer =
-    typeof merged.textgenPrefer === "string"
-      ? (parseHarness(merged.textgenPrefer) ?? undefined)
+
+  const targets = loadTargets(fromFile.targets);
+  const defaultTarget =
+    typeof fromFile.defaultTarget === "string" && targets[fromFile.defaultTarget]
+      ? fromFile.defaultTarget
+      : DEFAULT_CONFIG.defaultTarget;
+  const mentionBudgetChars =
+    typeof fromFile.mentionBudgetChars === "number" &&
+    Number.isFinite(fromFile.mentionBudgetChars) &&
+    fromFile.mentionBudgetChars > 0
+      ? fromFile.mentionBudgetChars
+      : DEFAULT_CONFIG.mentionBudgetChars;
+  const showThoughts = typeof fromFile.showThoughts === "boolean"
+    ? fromFile.showThoughts
+    : DEFAULT_CONFIG.showThoughts;
+  const logLevel =
+    typeof fromFile.logLevel === "string" &&
+    ["debug", "info", "warn", "error"].includes(fromFile.logLevel)
+      ? fromFile.logLevel as BatonConfig["logLevel"]
+      : DEFAULT_CONFIG.logLevel;
+  const textgenPrefer =
+    typeof fromFile.textgenPrefer === "string" && targets[fromFile.textgenPrefer]
+      ? fromFile.textgenPrefer
       : undefined;
-  if (
-    merged.textgenModels !== undefined &&
-    (typeof merged.textgenModels !== "object" ||
-      merged.textgenModels === null ||
-      Array.isArray(merged.textgenModels) ||
-      Object.values(merged.textgenModels).some((v) => typeof v !== "string" || !v.trim()))
-  ) {
-    merged.textgenModels = undefined;
-  }
-  if (process.env.BATON_CLAUDE_BIN) merged.claudeExecutable = process.env.BATON_CLAUDE_BIN;
-  return merged;
+  const textgenModels = record(fromFile.textgenModels);
+  const validTextgenModels =
+    textgenModels &&
+    Object.values(textgenModels).every((value) => typeof value === "string" && value.trim())
+      ? textgenModels as Record<string, string>
+      : undefined;
+
+  return {
+    defaultTarget,
+    targets,
+    mentionBudgetChars,
+    showThoughts,
+    logLevel,
+    ...(textgenPrefer ? { textgenPrefer } : {}),
+    ...(validTextgenModels ? { textgenModels: validTextgenModels } : {}),
+  };
 }

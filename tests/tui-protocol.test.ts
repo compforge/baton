@@ -754,6 +754,32 @@ describe("BatonChatProtocol streaming State", () => {
 });
 
 describe("BatonChatProtocol harness commands", () => {
+  test("selects an additional configured Target by id", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-target-command-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const config = {
+        ...DEFAULT_CONFIG,
+        targets: {
+          ...DEFAULT_CONFIG.targets,
+          "dsh-test": { harness: "dsh", model: "prod" },
+        },
+      };
+      const protocol = new BatonChatProtocol(store, config, { session, resumed: false }, () => undefined);
+      const submitted: string[] = [];
+      stubCompletedSend(protocol, (target) => submitted.push(target));
+
+      await protocol.command("target", "dsh-test");
+      await protocol.submit("inspect this");
+
+      expect(submitted).toEqual(["dsh-test"]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("switches the input target and sends a trailing message in one action", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-command-"));
     try {

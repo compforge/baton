@@ -555,7 +555,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         ...(input.commandOutput ? [input.commandOutput] : []),
       ],
       plan: planActive ? planEntries : undefined,
-      header: `baton · session ${session.id}\ntype to chat · /codex, /claude, or /dsh switch · /sessions open · @bs_xxx reference another session\n`,
+      header: `baton · session ${session.id}\ntype to chat · /target switches HarnessTarget · /sessions open · @bs_xxx reference another session\n`,
       showThoughts: input.config.showThoughts,
     },
     composer: {

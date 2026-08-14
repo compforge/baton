@@ -11,6 +11,7 @@ import {
   codexItemLifecycleDrafts,
   codexLaunchCommand,
 } from "./adapter.ts";
+import { resolveCodexTargetConfig } from "./config.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -272,8 +273,9 @@ async function withCodexPeer<T>(
 
 export const codexSessionInspector: HarnessSessionInspector = {
   inspect(sessionId, options) {
+    const config = resolveCodexTargetConfig(options.targetConfig);
     return withCodexPeer(
-      { command: options.config.codexCommand, cwd: options.cwd },
+      { command: config.command, cwd: options.cwd },
       (peer) => inspectCodexSession(peer, sessionId),
     );
   },

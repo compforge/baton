@@ -1,7 +1,7 @@
 import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_CONFIG } from "../src/config/config.ts";
+import { DEFAULT_CONFIG, targetConfigFor } from "../src/config/config.ts";
 import {
   createHarnessAdapter,
   parseHarness,
@@ -10,7 +10,9 @@ import {
   harnessDefinitionFor,
   harnessSessionKey,
   harnessShortName,
-  resolveDefaultHarnessTarget,
+  configuredHarnessTargets,
+  resolveHarnessTarget,
+  resolveHarnessTargetSelection,
 } from "../src/harness/registry.ts";
 import { agentColorFor } from "../src/tui/theme.ts";
 
@@ -31,19 +33,26 @@ describe("harness registry", () => {
   });
 
   test("constructs adapters without putting harness branches in the TUI or session controller", () => {
-    const options = { openInteraction, config: DEFAULT_CONFIG };
-    expect(createHarnessAdapter({ id: "codex-a", harness: "codex" }, options).harness).toBe("codex");
-    expect(createHarnessAdapter({ id: "claude-a", harness: "claude" }, options).harness).toBe("claude-code");
-    expect(createHarnessAdapter({ id: "dsh-a", harness: "dsh" }, options).harness).toBe("deepseek-harness");
+    const create = (target: { id: string; harness: "codex" | "claude" | "dsh" }) =>
+      createHarnessAdapter(target, {
+        openInteraction,
+        targetConfig: targetConfigFor(DEFAULT_CONFIG, target.harness),
+      });
+    expect(create({ id: "codex-a", harness: "codex" }).harness).toBe("codex");
+    expect(create({ id: "claude-a", harness: "claude" }).harness).toBe("claude-code");
+    expect(create({ id: "dsh-a", harness: "dsh" }).harness).toBe("deepseek-harness");
   });
 
-  test("maps current commands to explicit default HarnessTargets", () => {
-    expect(resolveDefaultHarnessTarget("codex")).toEqual({ id: "codex", harness: "codex" });
-    expect(resolveDefaultHarnessTarget("claude")).toEqual({ id: "claude", harness: "claude" });
-    expect(resolveDefaultHarnessTarget("dsh")).toEqual({ id: "dsh", harness: "dsh" });
-    expect(resolveDefaultHarnessTarget("missing")).toBeUndefined();
-    expect(resolveDefaultHarnessTarget("cc")).toBeUndefined();
-    expect(resolveDefaultHarnessTarget("claude-code")).toBeUndefined();
+  test("resolves configured HarnessTargets and maps Harness aliases to their default Target", () => {
+    expect(configuredHarnessTargets(DEFAULT_CONFIG)).toEqual([
+      { id: "codex", harness: "codex" },
+      { id: "claude", harness: "claude" },
+      { id: "dsh", harness: "dsh" },
+    ]);
+    expect(resolveHarnessTarget(DEFAULT_CONFIG, "codex")).toEqual({ id: "codex", harness: "codex" });
+    expect(resolveHarnessTargetSelection(DEFAULT_CONFIG, "cc")).toEqual({ id: "claude", harness: "claude" });
+    expect(resolveHarnessTargetSelection(DEFAULT_CONFIG, "deepseek")).toEqual({ id: "dsh", harness: "dsh" });
+    expect(resolveHarnessTarget(DEFAULT_CONFIG, "missing")).toBeUndefined();
   });
 
   test("normalizes canonical id and wire key to one definition (三套命名空间的唯一汇合点)", () => {

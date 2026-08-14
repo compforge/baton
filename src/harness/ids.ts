@@ -14,7 +14,7 @@ export type HarnessName = keyof typeof HARNESS_IDENTITIES;
 export type HarnessAlias = (typeof HARNESS_IDENTITIES)[HarnessName]["aliases"][number];
 export const HARNESSES = Object.keys(HARNESS_IDENTITIES) as HarnessName[];
 
-/** 用户输入（slash command、--agent、config.defaultAgent）归一为 canonical id；未知返回 null */
+/** 用户输入（slash command、Target 的 harness 字段）归一为 canonical id；未知返回 null */
 export function parseHarness(value: string): HarnessName | null {
   const normalized = value.trim().toLowerCase();
   const identity = Object.values(HARNESS_IDENTITIES).find(

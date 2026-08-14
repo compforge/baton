@@ -5,7 +5,8 @@
 // 任何失败都静默降级为 sessionPreview——标题是增强，不是主流程。
 
 import { textOf } from "../event/index.ts";
-import { HARNESSES, resolveDefaultHarnessTarget } from "../harness/registry.ts";
+import type { BatonConfig } from "../config/config.ts";
+import { configuredHarnessTargets } from "../harness/registry.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import {
   buildSessionTitlePrompt,
@@ -17,12 +18,9 @@ import {
 import type { LogSink } from "../logging.ts";
 import { sessionPreview, type SessionHandle } from "../store/store.ts";
 
-/** bundled harness 的 textgen 降级链候选（session 标题用）；controller 会把当前 target 前置。 */
-export function bundledTextgenTargets(): HarnessTarget[] {
-  return HARNESSES.flatMap((harness) => {
-    const target = resolveDefaultHarnessTarget(harness);
-    return target ? [target] : [];
-  });
+/** 已配置 Target 的 textgen 降级链候选；controller 会把当前 Target 前置。 */
+export function configuredTextgenTargets(config: BatonConfig): HarnessTarget[] {
+  return configuredHarnessTargets(config);
 }
 
 /**

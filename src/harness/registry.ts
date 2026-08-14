@@ -4,11 +4,14 @@
 
 import type { HarnessAdapter, OpenInteraction, NativeEventSink } from "./adapter.ts";
 import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
+import { resolveClaudeTargetConfig } from "./claude/config.ts";
 import { claudeSessionInspector } from "./claude/native-session.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
+import { resolveCodexTargetConfig } from "./codex/config.ts";
 import { codexSessionInspector } from "./codex/native-session.ts";
 import { DshAdapter } from "./dsh/adapter.ts";
-import type { BatonConfig } from "../config/config.ts";
+import { resolveDshTargetConfig } from "./dsh/config.ts";
+import type { BatonConfig, HarnessTargetConfig } from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
 import type { LogSink } from "../logging.ts";
 import { HARNESS_IDENTITIES, HARNESSES, parseHarness, type HarnessName } from "./ids.ts";
@@ -23,12 +26,12 @@ export interface HarnessAdapterOptions {
   openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
-  config: BatonConfig;
+  targetConfig: HarnessTargetConfig;
   rootDir?: string;
 }
 
 export interface HarnessDefinition<Id extends string = string> {
-  /** canonical id：用户侧词汇（slash command、--agent、config.defaultAgent） */
+  /** canonical id：用户侧词汇（slash command、Target 的 harness 字段） */
   id: Id;
   /** 用户侧简写；输入时归一到 id，不进入事件或持久化 */
   aliases: readonly string[];
@@ -55,7 +58,7 @@ export interface HarnessProbeOptions {
   cwd: string;
   env?: Record<string, string>;
   log?: LogSink;
-  config: BatonConfig;
+  targetConfig: HarnessTargetConfig;
 }
 
 /** 首批内置 harness；扩展支持只在这里注册，不进入 BatonSession core。 */
@@ -67,15 +70,17 @@ export const HARNESS_REGISTRY = [
     shortName: "codex",
     color: "#73daca", // 青
     sessionInspector: codexSessionInspector,
-    create: ({ target, openInteraction, log, nativeEvent, config, rootDir }) =>
-      new CodexAdapter({
+    create: ({ target, openInteraction, log, nativeEvent, targetConfig, rootDir }) => {
+      const config = resolveCodexTargetConfig(targetConfig);
+      return new CodexAdapter({
         openInteraction,
         log,
         nativeEvent,
-        command: config.codexCommand,
-        approvalReviewer: config.codexApprovalReviewer,
+        command: config.command,
+        approvalReviewer: config.approvalReviewer,
         hookTrustStore: new FileHookTrustStore(target.id, rootDir),
-      }),
+      });
+    },
   },
   {
     ...HARNESS_IDENTITIES.claude,
@@ -84,20 +89,24 @@ export const HARNESS_REGISTRY = [
     shortName: "claude",
     color: "#ff9e64", // 橙
     sessionInspector: claudeSessionInspector,
-    create: ({ openInteraction, log, nativeEvent, config }) =>
-      new ClaudeAdapter({
+    create: ({ openInteraction, log, nativeEvent, targetConfig }) => {
+      const config = resolveClaudeTargetConfig(targetConfig);
+      return new ClaudeAdapter({
         openInteraction,
         log,
         nativeEvent,
-        executablePath: config.claudeExecutable,
-      }),
-    probe: ({ cwd, env, log, config }) =>
-      probeClaudeTarget({
+        executablePath: config.executable,
+      });
+    },
+    probe: ({ cwd, env, log, targetConfig }) => {
+      const config = resolveClaudeTargetConfig(targetConfig);
+      return probeClaudeTarget({
         cwd,
         env,
         log,
-        executablePath: config.claudeExecutable,
-      }),
+        executablePath: config.executable,
+      });
+    },
   },
   {
     ...HARNESS_IDENTITIES.dsh,
@@ -105,14 +114,16 @@ export const HARNESS_REGISTRY = [
     sessionKey: "deepseek-harness",
     shortName: "dsh",
     color: "#4d6bfe", // DeepSeek 蓝
-    create: ({ log, nativeEvent, config }) =>
-      new DshAdapter({
+    create: ({ log, nativeEvent, targetConfig }) => {
+      const config = resolveDshTargetConfig(targetConfig);
+      return new DshAdapter({
         log,
         nativeEvent,
-        command: config.dshCommand,
-        provider: config.dshProvider,
-        model: config.dshModel,
-      }),
+        command: config.command,
+        provider: config.provider,
+        model: config.model,
+      });
+    },
   },
 ] as const satisfies readonly HarnessDefinition<HarnessName>[];
 
@@ -124,6 +135,41 @@ export function harnessDefinitionFor(idOrSessionKey: string): HarnessDefinition 
   const canonicalId = parseHarness(idOrSessionKey);
   return HARNESS_REGISTRY.find(
     (candidate) => candidate.id === canonicalId || candidate.sessionKey === idOrSessionKey,
+  );
+}
+
+/** 配置中的 Target id 是唯一查找键；Harness 名只选择 Definition，不充当 Target identity。 */
+export function resolveHarnessTarget(
+  config: BatonConfig,
+  harnessTargetId: string,
+): HarnessTarget | undefined {
+  const targetConfig = config.targets[harnessTargetId];
+  if (!targetConfig) return undefined;
+  const definition = harnessDefinitionFor(targetConfig.harness);
+  return definition
+    ? Object.freeze({ id: harnessTargetId, harness: definition.id })
+    : undefined;
+}
+
+export function configuredHarnessTargets(config: BatonConfig): HarnessTarget[] {
+  return Object.keys(config.targets).flatMap((targetId) => {
+    const target = resolveHarnessTarget(config, targetId);
+    return target ? [target] : [];
+  });
+}
+
+/** CLI/TUI 选择：Target id 精确匹配优先，Harness id/alias 只选择该家的默认 Target。 */
+export function resolveHarnessTargetSelection(
+  config: BatonConfig,
+  value: string,
+): HarnessTarget | undefined {
+  const exact = resolveHarnessTarget(config, value);
+  if (exact) return exact;
+  const harness = parseHarness(value);
+  if (!harness) return undefined;
+  const candidates = configuredHarnessTargets(config).filter((target) => target.harness === harness);
+  return candidates.find((target) => target.id === harness) ?? (
+    candidates.length === 1 ? candidates[0] : undefined
   );
 }
 
@@ -140,6 +186,11 @@ export function createHarnessAdapter(
   if (!definition) {
     throw new Error(`HarnessTarget ${target.id} references an unregistered Harness: ${target.harness}`);
   }
+  if (harnessDefinitionFor(options.targetConfig.harness)?.id !== target.harness) {
+    throw new Error(
+      `HarnessTarget config mismatch for ${target.id}: target=${target.harness}, config=${options.targetConfig.harness}`,
+    );
+  }
   return definition.create({ ...options, target });
 }
 
@@ -152,24 +203,14 @@ export async function probeHarnessTarget(
   if (!definition) {
     throw new Error(`HarnessTarget ${target.id} references an unregistered Harness: ${target.harness}`);
   }
+  if (harnessDefinitionFor(options.targetConfig.harness)?.id !== target.harness) {
+    throw new Error(
+      `HarnessTarget config mismatch for ${target.id}: target=${target.harness}, config=${options.targetConfig.harness}`,
+    );
+  }
   return "probe" in definition && definition.probe
     ? definition.probe({ ...options, target })
     : {};
-}
-
-/**
- * v2 target 模型的默认入口：每个 bundled Harness 映射到同名默认 target。
- * target identity 与 Harness identity 即使当前值相同也保持两个字段，后续增加第二个同类
- * target 时不再改动 BatonSession/controller 主链路。
- */
-function defaultHarnessTarget(harness: HarnessName): HarnessTarget {
-  return Object.freeze({ id: harness, harness });
-}
-
-/** 当前 bundled Target 的唯一解析入口；未知 id 不从名称形状猜测 Harness。 */
-export function resolveDefaultHarnessTarget(harnessTargetId: string): HarnessTarget | undefined {
-  const definition = HARNESS_REGISTRY.find((candidate) => candidate.id === harnessTargetId);
-  return definition ? defaultHarnessTarget(definition.id) : undefined;
 }
 
 export function harnessSessionKey(harness: HarnessName): string {
