@@ -33,7 +33,7 @@ function project(controller: Controller) {
 }
 
 describe("steer queue projection", () => {
-  test("uses message identity for queued Inputs from different Lane Queues", () => {
+  test("projects only the main Lane Queue into the composer", () => {
     const controller = {
       activeHarnessTargetId: undefined,
       activeTurnId: undefined,
@@ -68,10 +68,7 @@ describe("steer queue projection", () => {
       harnessQueueLength: 2,
     } as unknown as Controller;
 
-    expect(project(controller).composer.queued?.map((item) => item.id)).toEqual([
-      "m_main",
-      "m_side",
-    ]);
+    expect(project(controller).composer.queued?.map((item) => item.id)).toEqual(["m_main"]);
   });
 
   test("keeps a pending native steer in Queue until the correlated apply receipt", () => {
