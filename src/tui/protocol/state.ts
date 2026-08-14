@@ -520,11 +520,19 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     planEntries.some((entry) => entry.status !== "completed");
   const pinnedPlanId = planActive ? lastPlan?.planId : undefined;
   const pendingSteers = [...state.messages.values()].filter(
-    (message) =>
-      message.role === "user" &&
-      message.delivery === "steer" &&
-      message.deliveryState === "pending" &&
-      message.laneId === MAIN_LANE_ID,
+    (message) => {
+      if (
+        message.role !== "user" ||
+        message.delivery !== "steer" ||
+        message.deliveryState !== "pending" ||
+        message.laneId !== MAIN_LANE_ID
+      ) {
+        return false;
+      }
+      if (message.turnId !== undefined && state.activeTurns.has(message.turnId)) return true;
+      const targetId = message.harnessTargetId ?? message.harness;
+      return targetId !== undefined && controller.preservesPendingSteers(targetId);
+    },
   );
   const queuedItems = [
     ...pendingSteers.map((message) => ({

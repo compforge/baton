@@ -168,6 +168,12 @@ export interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;
   /**
+   * Native pending steers after cancel. `requeue` means interrupt makes them
+   * unreachable, so Controller must reclaim them before sending cancel.
+   * Omitted means the Harness owns and may continue its native queue.
+   */
+  readonly cancelPendingSteers?: "requeue";
+  /**
    * 建立（或恢复）HarnessSession 并绑定事实出口。`binding` 是稳定身份的唯一发布通道；
    * 即使身份要到首个原生事件才出现，Adapter 也必须在可知时立即发布。
    */

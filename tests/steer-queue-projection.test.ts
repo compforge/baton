@@ -64,6 +64,7 @@ describe("steer queue projection", () => {
       currentEffort: () => null,
       currentMode: () => "default",
       approvalRoute: () => null,
+      preservesPendingSteers: () => true,
       isBusy: false,
       harnessQueueLength: 2,
     } as unknown as Controller;
@@ -105,6 +106,7 @@ describe("steer queue projection", () => {
       currentEffort: () => null,
       currentMode: () => "default",
       approvalRoute: () => null,
+      preservesPendingSteers: () => true,
       isBusy: true,
       harnessQueueLength: 0,
     } as unknown as Controller;
@@ -168,6 +170,40 @@ describe("steer queue projection", () => {
     expect(applied.footer.text).toContain("queue:0");
   });
 
+  test("hides an orphaned pending steer when its Adapter cannot preserve a native queue", () => {
+    const turnId = "t_interrupted";
+    session.appendEvent({
+      kind: "user_message",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_orphaned",
+        content: [{ type: "text", text: "stale interrupted steer" }],
+        delivery: "steer",
+        deliveryState: "pending",
+      },
+    });
+    const controller = {
+      activeHarnessTargetId: undefined,
+      activeTurnId: undefined,
+      queuedHarnessInputs: [],
+      currentModel: () => null,
+      currentEffort: () => null,
+      currentMode: () => "default",
+      approvalRoute: () => null,
+      preservesPendingSteers: () => false,
+      isBusy: false,
+      harnessQueueLength: 0,
+    } as unknown as Controller;
+
+    const projected = project(controller);
+    expect(projected.composer.queued).toEqual([]);
+    expect(projected.footer.text).toContain("queue:0");
+  });
+
   test("removes failed native steer without presenting it as applied history", () => {
     const turnId = "t_failed";
     session.appendEvent({
@@ -205,6 +241,7 @@ describe("steer queue projection", () => {
       currentEffort: () => null,
       currentMode: () => "default",
       approvalRoute: () => null,
+      preservesPendingSteers: () => true,
       isBusy: false,
       harnessQueueLength: 0,
     } as unknown as Controller;

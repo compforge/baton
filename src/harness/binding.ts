@@ -53,6 +53,8 @@ export class HarnessBinding {
   contextEpochId?: string;
 
   private starting?: Promise<void>;
+  private closePromise?: Promise<void>;
+  private closing = false;
   private readonly session: SessionHandle;
   private readonly eventSink: EventSink;
   private readonly modelPreference?: string;
@@ -80,7 +82,7 @@ export class HarnessBinding {
    * Interaction，届时 Controller 需要先能按 HarnessTarget 找回本 binding。
    */
   start(): void {
-    if (this.starting || this.ref) return;
+    if (this.closing || this.starting || this.ref) return;
     this.starting = this.open();
     // ensure() 可能晚一拍才 await；先消费 rejection 防止误报，真实错误仍由 ensure 抛出。
     void this.starting.catch(() => {});
@@ -240,8 +242,21 @@ export class HarnessBinding {
     return this.publishedBinding?.identity;
   }
 
-  async close(): Promise<void> {
-    if (this.ref) await this.adapter.close(this.ref);
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.closePromise = this.closeActive();
+    return this.closePromise;
+  }
+
+  private async closeActive(): Promise<void> {
+    // close() can race a cold Adapter.open(). Waiting for that owner boundary is
+    // required: otherwise Controller sees no ref, returns, and the late child
+    // process survives after Baton has released the Session lock.
+    await this.starting?.catch(() => undefined);
+    const ref = this.ref;
+    this.ref = undefined;
+    if (ref) await this.adapter.close(ref);
   }
 
   private preferredModel(): string | undefined {

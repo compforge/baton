@@ -142,6 +142,9 @@ before 位于持久 Delivery Attempt 的 `prepared` 与 `dispatching` 之间；a
 ### 3.3 cancel 与 close
 
 `cancel` 只是请求中断，确认以最终 `idle/cancelled` Event 为准，发出后仍接收在途 update。
+若 Harness 的 pending steer 在 interrupt 后无法继续，Adapter 以 `cancelPendingSteers:"requeue"`
+把这项所有权约束交给 Controller；Controller 会在 cancel 前收回仍未 applied 的 Input。能自行继续
+原生队列的 Adapter 不声明该策略，后续仍以 delivery lifecycle 为准。
 `close` 释放 Adapter-owned 进程、query、订阅和句柄；若仍有已接受 Turn，必须先报告或合成终态。
 
 ## 4. Capability

@@ -77,13 +77,18 @@ function claudeQueueHarness() {
   return { events, feed, pendingOfferUuids };
 }
 
-function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, params: unknown) => void } {
+function codexHarness(): {
+  events: AnyEventDraft[];
+  notify: (method: string, params: unknown) => void;
+  runtime: { activeCommandProcesses?: Map<string, number> };
+} {
   const adapter = new CodexAdapter({ openInteraction });
   const events: AnyEventDraft[] = [];
   const rt = {
     threadId: "th1",
     turnId: "t1",
     activeTurn: { turnId: "t1", finalized: false, sawOutput: false },
+    activeCommandProcesses: undefined as Map<string, number> | undefined,
     sink: (ev: AnyEventDraft) => events.push(ev),
   };
   const notify = (method: string, params: unknown) =>
@@ -92,7 +97,7 @@ function codexHarness(): { events: AnyEventDraft[]; notify: (method: string, par
       method,
       params,
     );
-  return { events, notify };
+  return { events, notify, runtime: rt };
 }
 
 describe("codex: error notifications", () => {
@@ -824,6 +829,35 @@ describe("structured questions", () => {
 });
 
 describe("codex: tool output mapping", () => {
+  test("tracks only live command process ids for Esc", () => {
+    const { notify, runtime } = codexHarness();
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "commandExecution",
+        id: "cmd1",
+        status: "inProgress",
+        command: "sleep 30",
+        processId: "4242",
+      },
+    });
+    expect(runtime.activeCommandProcesses).toEqual(new Map([["cmd1", 4242]]));
+
+    notify("item/completed", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "commandExecution",
+        id: "cmd1",
+        status: "failed",
+        command: "sleep 30",
+        processId: "4242",
+      },
+    });
+    expect(runtime.activeCommandProcesses?.size).toBe(0);
+  });
+
   test("fileChange item maps object kinds and builds renderable unified patches", () => {
     const { events, notify } = codexHarness();
     notify("item/completed", {
