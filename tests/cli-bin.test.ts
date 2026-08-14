@@ -8,6 +8,16 @@ import { SessionStore } from "../src/store/store.ts";
 
 const repoRoot = join(import.meta.dir, "..");
 
+describe("baton version", () => {
+  test("reads the product version from VERSION", () => {
+    const version = readFileSync(join(repoRoot, "VERSION"), "utf8").trim();
+    const result = runCli(["version"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe(`baton ${version}`);
+  });
+});
+
 describe("baton sessions", () => {
   test("lists only sessions from the requested project", () => {
     const root = mkdtempSync(join(tmpdir(), "baton-cli-project-sessions-"));

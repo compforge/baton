@@ -17,6 +17,7 @@
   },
   "files": [
     "src",
+    "VERSION",
     "config.yaml.example",
     "docs/assets/baton-icon.png",
     "README.md",
