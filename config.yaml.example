@@ -19,7 +19,6 @@ codexCommand:
 #   - /absolute/path/to/cordis.yml
 # dshProvider: deepseek-official
 dshModel: prod
-dshMaxTokens: 32768
 
 # Optional: who reviews Codex approvals. Leave unset (the default) to follow
 # Codex's own resolution — your ~/.codex/config.toml, profiles and any enterprise

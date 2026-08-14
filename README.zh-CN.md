@@ -105,7 +105,7 @@ Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profil
 
 如果 Claude Code 使用自定义可执行文件，可以在配置中设置 `claudeExecutable`，或通过环境变量临时覆盖（`BATON_CLAUDE_BIN=/path/to/claude baton`）。配置优先级为：环境变量 > `config.yaml` > 默认值。
 
-DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`dshCommand` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod` 和 `dshMaxTokens: 32768`；`dshProvider` 可选择其它 provider route。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
+DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`dshCommand` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod`；`dshProvider` 可选择其它 provider route，输出 token 上限由 runtime/provider 决定。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
 
 ## 使用
 

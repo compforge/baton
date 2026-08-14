@@ -106,7 +106,7 @@ Codex approvals follow Codex's own configuration by default — your `~/.codex/c
 
 If Claude Code uses a custom executable, set `claudeExecutable` in the configuration or override it temporarily with an environment variable (`BATON_CLAUDE_BIN=/path/to/claude baton`). Configuration precedence: environment variables > `config.yaml` > defaults.
 
-DeepSeek Harness uses `@compforge/dsh-agent-sdk`. Set `dshCommand` to the complete JSON-RPC runtime argv, including the Cordis config path. Baton defaults DSH to model `prod` with `dshMaxTokens: 32768`; `dshProvider` can select another provider route. See [the DSH adapter guide](docs/harness/deepseek-harness.md) for its current capability and cancellation boundaries.
+DeepSeek Harness uses `@compforge/dsh-agent-sdk`. Set `dshCommand` to the complete JSON-RPC runtime argv, including the Cordis config path. Baton defaults DSH to model `prod`; `dshProvider` can select another provider route, while the runtime/provider owns the output-token limit. See [the DSH adapter guide](docs/harness/deepseek-harness.md) for its current capability and cancellation boundaries.
 
 ## Usage
 

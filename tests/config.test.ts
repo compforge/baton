@@ -57,24 +57,22 @@ describe("config", () => {
   test("validates DeepSeek Harness runtime settings", () => {
     writeFileSync(
       configPath(root),
-      "dshCommand: [dsh-jsonrpc-agent, /tmp/cordis.yml]\ndshProvider: deepseek-official\ndshModel: prod\ndshMaxTokens: 32768\n",
+      "dshCommand: [dsh-jsonrpc-agent, /tmp/cordis.yml]\ndshProvider: deepseek-official\ndshModel: prod\n",
     );
     expect(loadConfig(root)).toMatchObject({
       dshCommand: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
       dshProvider: "deepseek-official",
       dshModel: "prod",
-      dshMaxTokens: 32_768,
     });
 
     writeFileSync(
       configPath(root),
-      'dshCommand: []\ndshProvider: ""\ndshModel: ""\ndshMaxTokens: 0\n',
+      'dshCommand: []\ndshProvider: ""\ndshModel: ""\n',
     );
     expect(loadConfig(root)).toMatchObject({
       dshCommand: undefined,
       dshProvider: undefined,
       dshModel: "prod",
-      dshMaxTokens: 32_768,
     });
   });
 

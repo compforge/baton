@@ -74,7 +74,7 @@ Usage:
 Config:
   ~/.baton/config.yaml      generated on first run; defaultAgent / claudeExecutable /
                             codexCommand / codexApprovalReviewer / dshCommand /
-                            dshProvider / dshModel / dshMaxTokens /
+                            dshProvider / dshModel /
                             mentionBudgetChars / showThoughts / logLevel
   ~/.baton/plugin.yaml      globally enabled plugins keyed by plugin@marketplace
   BATON_CLAUDE_BIN          env var, takes precedence over claudeExecutable in config.yaml

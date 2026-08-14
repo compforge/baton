@@ -13,14 +13,14 @@ Baton 通过 `@compforge/dsh-agent-sdk` 启动 DSH JSON-RPC runtime 子进程。
 dshCommand:
   - dsh-jsonrpc-agent
   - /absolute/path/to/cordis.yml
-# provider 可选；Baton 默认使用 prod 与 32768 output tokens
+# provider 可选；Baton 默认使用 prod
 dshProvider: deepseek-official
 dshModel: prod
-dshMaxTokens: 32768
 ```
 
 未配置 `dshCommand` 不影响 Codex 或 Claude Code；只有选择 `/dsh` 时 open 才会给出可操作的
-配置错误。子进程继承 Baton 环境与当前 workspace cwd；Baton 不读取或保存 provider 凭证。
+配置错误。子进程继承 Baton 环境与当前 workspace cwd；Baton 不读取或保存 provider 凭证，也不
+覆盖 SDK runtime/provider 的输出 token 上限。
 
 启动顺序为：
 
@@ -51,7 +51,7 @@ Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实�
 
 当前不声明 image/audio/resource prompt、compact、same-turn steer、Session config、Interaction、
 reconcile、approval routing 或 textgen。unsupported prompt block 在 admission 前明确报错；model、
-provider 与 max tokens 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力。
+provider 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力。
 
 ## 4. Input、取消与终态
 

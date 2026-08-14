@@ -112,7 +112,6 @@ export const HARNESS_REGISTRY = [
         command: config.dshCommand,
         provider: config.dshProvider,
         model: config.dshModel,
-        maxTokens: config.dshMaxTokens,
       }),
   },
 ] as const satisfies readonly HarnessDefinition<HarnessName>[];

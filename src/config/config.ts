@@ -22,7 +22,6 @@ export interface BatonConfig {
   /** DSH SDK 创建 agent 时使用的 provider / model；缺省跟随 SDK runtime 默认值。 */
   dshProvider?: string;
   dshModel?: string;
-  dshMaxTokens?: number;
   /**
    * codex 审批人（approvals_reviewer）。**缺省不设 = 跟随 codex 自己的解析**
    * （~/.codex/config.toml、profile、企业 requirements 照常生效，codex 自身默认是 user）。
@@ -51,7 +50,6 @@ export const DEFAULT_CONFIG: BatonConfig = {
   defaultAgent: "codex",
   codexCommand: ["codex", "app-server"],
   dshModel: "prod",
-  dshMaxTokens: 32_768,
   mentionBudgetChars: 4096,
   showThoughts: true,
   logLevel: "info",
@@ -105,9 +103,6 @@ export function loadConfig(rootDir?: string): BatonConfig {
   }
   if (typeof merged.dshModel !== "string" || !merged.dshModel.trim()) {
     merged.dshModel = DEFAULT_CONFIG.dshModel;
-  }
-  if (!Number.isInteger(merged.dshMaxTokens) || (merged.dshMaxTokens ?? 0) <= 0) {
-    merged.dshMaxTokens = DEFAULT_CONFIG.dshMaxTokens;
   }
   merged.defaultAgent =
     typeof merged.defaultAgent === "string"
