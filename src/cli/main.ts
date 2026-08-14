@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// headless REPL：无 TUI 先跑通链路——终端里与 codex / claude 对话，全部事件落 session.jsonl。
-// 用法：bun src/cli/main.ts [--agent codex|claude] [--cwd <dir>] [--root <batonRoot>]
+// headless REPL：无 TUI 先跑通链路——终端里与任一已注册 Harness 对话，全部事件落 session.jsonl。
+// 用法：bun src/cli/main.ts [--agent codex|claude|dsh] [--cwd <dir>] [--root <batonRoot>]
 // claude 可执行文件用 BATON_CLAUDE_BIN 覆盖（如公司包装器 reclaude）。
 
 import { createInterface } from "node:readline/promises";

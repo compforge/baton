@@ -48,10 +48,32 @@ describe("config", () => {
   });
 
   test("harness aliases are normalized to canonical ids", () => {
-    writeFileSync(configPath(root), "defaultAgent: cc\ntextgenPrefer: cx\n");
+    writeFileSync(configPath(root), "defaultAgent: deepseek\ntextgenPrefer: cx\n");
     const config = loadConfig(root);
-    expect(config.defaultAgent).toBe("claude");
+    expect(config.defaultAgent).toBe("dsh");
     expect(config.textgenPrefer).toBe("codex");
+  });
+
+  test("validates DeepSeek Harness runtime settings", () => {
+    writeFileSync(
+      configPath(root),
+      "dshCommand: [dsh-jsonrpc-agent, /tmp/cordis.yml]\ndshProvider: deepseek-official\ndshModel: prod\n",
+    );
+    expect(loadConfig(root)).toMatchObject({
+      dshCommand: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshProvider: "deepseek-official",
+      dshModel: "prod",
+    });
+
+    writeFileSync(
+      configPath(root),
+      'dshCommand: []\ndshProvider: ""\ndshModel: ""\n',
+    );
+    expect(loadConfig(root)).toMatchObject({
+      dshCommand: undefined,
+      dshProvider: undefined,
+      dshModel: "prod",
+    });
   });
 
   test("textgen model overrides require a non-empty string map", () => {

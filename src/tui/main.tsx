@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// chat-first TUI：打开即聊天，体验对齐 claude/codex CLI。
+// chat-first TUI：打开即聊天，体验对齐各 Harness 的原生 CLI。
 // UI 层来自 chat-tui（github.com/compforge/chat-tui）：ChatShell 消费 State、回传 intents；
 // baton 侧只有 BatonChatProtocol（controller/store → 视图投影 + intents → controller 操作）。
 //   - 直接输入 → 发给当前 agent（默认 codex）
-//   - /codex、/claude 直接选择输入目标；/model、/effort 分别配置后续 turn
+//   - Harness slash command 直接选择输入目标；/model、/effort 分别配置后续 turn
 //   - 切换 Target 时自动注入其它 Target 最新进展（buildTargetCatchUpContext），无需手动搬运上下文
 //   - @bs_xxx 引用其它 baton 会话；@ 不承担 harness 路由
 // 用法：baton [--root <batonRoot>] [--cwd <dir>] [-c|--continue] [-s|--session <id>]

@@ -2,7 +2,8 @@
 
 Harness 是 Codex、Claude Code 等智能执行环境的统一边界。本文定义 Target、Session、Adapter、
 Capability、事件归一和外部会话纳管的公共契约；具体协议差异见
-[Codex](./harness/codex.md) 与 [Claude Code](./harness/claude-code.md)。端到端用户时序见
+[Codex](./harness/codex.md)、[Claude Code](./harness/claude-code.md) 与
+[DeepSeek Harness](./harness/deepseek-harness.md)。端到端用户时序见
 [工作流](./workflow.md)。
 
 ## 1. 抽象目标

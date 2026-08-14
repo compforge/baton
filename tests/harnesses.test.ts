@@ -21,22 +21,26 @@ const openInteraction: OpenInteraction = async (req) =>
 
 describe("harness registry", () => {
   test("registers the first bundled harnesses and their native session keys", () => {
-    expect(HARNESSES).toEqual(["codex", "claude"]);
+    expect(HARNESSES).toEqual(["codex", "claude", "dsh"]);
     expect(HARNESS_REGISTRY.find((harness) => harness.id === "codex")?.aliases).toEqual(["cx"]);
     expect(HARNESS_REGISTRY.find((harness) => harness.id === "claude")?.aliases).toEqual(["cc"]);
+    expect(HARNESS_REGISTRY.find((harness) => harness.id === "dsh")?.aliases).toEqual(["deepseek"]);
     expect(harnessSessionKey("codex")).toBe("codex");
     expect(harnessSessionKey("claude")).toBe("claude-code");
+    expect(harnessSessionKey("dsh")).toBe("deepseek-harness");
   });
 
   test("constructs adapters without putting harness branches in the TUI or session controller", () => {
     const options = { openInteraction, config: DEFAULT_CONFIG };
     expect(createHarnessAdapter({ id: "codex-a", harness: "codex" }, options).harness).toBe("codex");
     expect(createHarnessAdapter({ id: "claude-a", harness: "claude" }, options).harness).toBe("claude-code");
+    expect(createHarnessAdapter({ id: "dsh-a", harness: "dsh" }, options).harness).toBe("deepseek-harness");
   });
 
   test("maps current commands to explicit default HarnessTargets", () => {
     expect(resolveDefaultHarnessTarget("codex")).toEqual({ id: "codex", harness: "codex" });
     expect(resolveDefaultHarnessTarget("claude")).toEqual({ id: "claude", harness: "claude" });
+    expect(resolveDefaultHarnessTarget("dsh")).toEqual({ id: "dsh", harness: "dsh" });
     expect(resolveDefaultHarnessTarget("missing")).toBeUndefined();
     expect(resolveDefaultHarnessTarget("cc")).toBeUndefined();
     expect(resolveDefaultHarnessTarget("claude-code")).toBeUndefined();
@@ -48,6 +52,7 @@ describe("harness registry", () => {
     expect(harnessDefinitionFor("cc")).toBe(harnessDefinitionFor("claude"));
     expect(harnessDefinitionFor("claude")?.id).toBe("claude");
     expect(harnessDefinitionFor("codex")?.sessionKey).toBe("codex");
+    expect(harnessDefinitionFor("deepseek")).toBe(harnessDefinitionFor("deepseek-harness"));
     // harness 是开放扩展点：未知输入不 throw
     expect(harnessDefinitionFor("unknown-agent")).toBeUndefined();
   });
@@ -56,6 +61,7 @@ describe("harness registry", () => {
     expect(harnessShortName("claude-code")).toBe("claude");
     expect(harnessShortName("claude")).toBe("claude");
     expect(harnessShortName("codex")).toBe("codex");
+    expect(harnessShortName("deepseek-harness")).toBe("dsh");
     expect(harnessShortName("some-new-agent")).toBe("some-new-agent");
     // 认色从 registry 派生：不再靠注释约定 theme 与 label 两处一致
     for (const definition of HARNESS_REGISTRY) {
@@ -68,6 +74,7 @@ describe("harness registry", () => {
     expect(parseHarness(" CODEX ")).toBe("codex");
     expect(parseHarness("cc")).toBe("claude");
     expect(parseHarness("CX")).toBe("codex");
+    expect(parseHarness("DeepSeek")).toBe("dsh");
     expect(parseHarness("claude-code")).toBeNull();
     expect(parseHarness("gpt")).toBeNull();
   });

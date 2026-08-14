@@ -1,6 +1,6 @@
 # Copy this file to ~/.baton/config.yaml and adjust the values you need.
 
-# Harness used when baton starts. Supported values: codex, claude.
+# Harness used when baton starts. Supported values: codex, claude, dsh.
 defaultAgent: codex
 
 # Optional: custom Claude Code executable, such as a company wrapper.
@@ -10,6 +10,15 @@ claudeExecutable: claude
 codexCommand:
   - codex
   - app-server
+
+# Optional: DeepSeek Harness Agent SDK runtime. The runtime must load
+# @deepseek-ai/dsh-sdk-jsonrpc-server; include the absolute Cordis config path
+# in the complete argv. These settings are only required when using /dsh.
+# dshCommand:
+#   - dsh-jsonrpc-agent
+#   - /absolute/path/to/cordis.yml
+# dshProvider: deepseek-official
+dshModel: prod
 
 # Optional: who reviews Codex approvals. Leave unset (the default) to follow
 # Codex's own resolution — your ~/.codex/config.toml, profiles and any enterprise

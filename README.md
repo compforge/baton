@@ -11,7 +11,7 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-baton is a terminal-native workspace for coding agents, built around durable, harness-independent sessions and inspired by [tutti](https://github.com/tutti-os/tutti). Today, it lets you use Claude Code and Codex in one TUI and switch between them without carrying context. Because BatonSession is owned by baton rather than any harness, the same foundation can grow from agent handoffs into multi-agent collaboration and orchestration. Claude Code and Codex are the first bundled harnesses, not a closed support list.
+baton is a terminal-native workspace for coding agents, built around durable, harness-independent sessions and inspired by [tutti](https://github.com/tutti-os/tutti). Today, it lets you use Claude Code, Codex, and DeepSeek Harness in one TUI and switch between them without carrying context. Because BatonSession is owned by baton rather than any harness, the same foundation can grow from agent handoffs into multi-agent collaboration and orchestration. The bundled harnesses are not a closed support list.
 
 Harness-native sessions are resume optimizations; BatonSession history remains available even when a native session cannot be resumed.
 
@@ -22,7 +22,7 @@ The most common shape of multi-agent work today is a human acting as a context c
 Two fundamentals are in place today:
 
 - **Context portability**: a BatonSession is a durable, unified history owned by the user that outlives any single harness. Switching agents requires no context carrying; harness-native sessions only accelerate resume and are never a prerequisite for the history to survive.
-- **Native experience**: baton preserves each agent's own input, completion, streaming, tool-call, and approval experience as much as possible, adding only a few commands of its own (such as `/codex` and `/claude`).
+- **Native experience**: baton preserves each agent's own input, completion, streaming, tool-call, and approval experience as much as possible, adding only a few commands of its own (such as `/codex`, `/claude`, and `/dsh`).
 
 The Plugin host adds a third principle:
 
@@ -52,10 +52,10 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 
 ## Features
 
-- Use Claude Code and Codex from the same terminal interface
+- Use Claude Code, Codex, and DeepSeek Harness from the same terminal interface
 - Let Plugins ask users, prepare editable drafts, or run Harness Turns on the main/new Lane through `ReconcileContext`
 - Paste a clipboard image with `Ctrl+V` and send it as native image input to Codex or Claude Code
-- Switch directly with `/codex` or `/claude`, and configure its model and reasoning effort separately
+- Switch directly with `/codex`, `/claude`, or `/dsh`; supported runtime configuration remains Harness-specific
 - Use one Plan mode across Codex and Claude Code, with `/plan` or `Shift+Tab` to toggle back to Default
 - Open a previous BatonSession with `/sessions`, or start a clean one with `/new`
 - Generate a compact session title after the first turn, with cross-harness fallback and no native session side effects
@@ -65,7 +65,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 - Record messages, thoughts, tool calls, file changes, plans, and token usage in a unified format
 - Preserve harness startup interactions such as Codex hook trust, reusing unchanged trusted definitions with a visible notice
 - Append events to a local `session.jsonl` for state reconstruction and future references
-- Reuse local Claude Code and Codex credentials without storing them in baton
+- Reuse local Harness credentials and runtime configuration without storing provider secrets in baton
 - Use a headless REPL to debug agent integrations
 - Register local or Git Plugin Marketplaces and install immutable Plugin Packages
 - Run each active third-party Plugin Binding in its own supervised process
@@ -73,7 +73,7 @@ See [`docs/kernel.md`](docs/kernel.md) for the stable core model, [`docs/workflo
 
 ## Installation & configuration
 
-Install baton with npm. You also need at least one supported agent installed and authenticated ([Codex CLI](https://github.com/openai/codex) / [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)).
+Install baton with npm. You also need at least one supported runtime: an authenticated [Codex CLI](https://github.com/openai/codex), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), or a DeepSeek Harness JSON-RPC runtime configured for the DSH Agent SDK.
 
 ```bash
 npm install -g @compforge/baton
@@ -92,6 +92,10 @@ defaultAgent: codex
 codexCommand:
   - codex
   - app-server
+# Required only when using /dsh:
+# dshCommand:
+#   - dsh-jsonrpc-agent
+#   - /absolute/path/to/cordis.yml
 mentionBudgetChars: 4096
 showThoughts: true
 ```
@@ -102,6 +106,8 @@ Codex approvals follow Codex's own configuration by default — your `~/.codex/c
 
 If Claude Code uses a custom executable, set `claudeExecutable` in the configuration or override it temporarily with an environment variable (`BATON_CLAUDE_BIN=/path/to/claude baton`). Configuration precedence: environment variables > `config.yaml` > defaults.
 
+DeepSeek Harness uses `@compforge/dsh-agent-sdk`. Set `dshCommand` to the complete JSON-RPC runtime argv, including the Cordis config path. Baton defaults DSH to model `prod`; `dshProvider` can select another provider route, while the runtime/provider owns the output-token limit. See [the DSH adapter guide](docs/harness/deepseek-harness.md) for its current capability and cancellation boundaries.
+
 ## Usage
 
 Start the TUI and type a prompt to send it.
@@ -109,8 +115,10 @@ Start the TUI and type a prompt to send it.
 ```text
 /claude or /cc       Switch to Claude Code
 /codex or /cx        Switch to Codex
+/dsh or /deepseek    Switch to DeepSeek Harness
 /cc <message>        Switch to Claude Code and send the message immediately
 /cx <message>        Switch to Codex and send the message immediately
+/deepseek <message>  Switch to DeepSeek Harness and send the message immediately
 /cla <message>       Unique harness-name prefixes work too
 /model               Open the model picker for the active harness
 /model <id>          Select the model used by subsequent turns
@@ -198,7 +206,7 @@ baton stores its data in `~/.baton/` by default:
                 └── resources/
 ```
 
-Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Pasted images are immutable, content-addressed attachments shared by session histories and forks, while `session.jsonl` keeps only their paths. Plugins receive writable global, Project/workspace, Session, and Instance scope roots and decide their internal layout, while Resource, Interaction, and HarnessInvocation facts remain behind the host APIs. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. `session.log` is a private, rotated operational log shared by Baton components, Harness adapters, and Plugins; use `baton logs` to filter it by level, component, or Plugin. Claude Code and Codex still manage their private native sessions; baton stores their IDs only to accelerate resume and never modifies their native session files.
+Projects group sessions by working directory using a readable, collision-resistant key; `project.json` retains the original `cwd`. Pasted images are immutable, content-addressed attachments shared by session histories and forks, while `session.jsonl` keeps only their paths. Plugins receive writable global, Project/workspace, Session, and Instance scope roots and decide their internal layout, while Resource, Interaction, and HarnessInvocation facts remain behind the host APIs. `session.jsonl` is the durable logical history used for rendering, recovery, harness handoff, and cross-session references. `session.log` is a private, rotated operational log shared by Baton components, Harness adapters, and Plugins; use `baton logs` to filter it by level, component, or Plugin. Each Harness still manages its private native sessions; baton stores only the binding needed to accelerate resume and never modifies native session files.
 
 ## License
 

@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.226",
+    "@compforge/dsh-agent-sdk": "0.0.1",
     "@opentui/core": "^0.5.1",
     "@opentui/keymap": "^0.5.1",
     "@opentui/react": "^0.5.1",

@@ -780,6 +780,9 @@ describe("BatonChatProtocol harness commands", () => {
       await protocol.command("codex", "");
       expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "codex" });
 
+      await protocol.command("dsh", "");
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "dsh" });
+
       await protocol.submit("/cc review this");
       expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({ author: "claude" });
       expect(submitted).toEqual([{ harness: "claude", text: "review this" }]);
@@ -793,12 +796,17 @@ describe("BatonChatProtocol harness commands", () => {
       await protocol.command("codex", "implement it");
       expect(submitted.at(-1)).toEqual({ harness: "codex", text: "implement it" });
 
+      await protocol.submit("/deepseek inspect it");
+      expect(submitted.at(-1)).toEqual({ harness: "dsh", text: "inspect it" });
+
+      await protocol.command("codex", "");
+
       await protocol.command("compact", "");
       expect(compacted).toEqual(["codex"]);
       expect(protocol.stateStore.getState("footer").toast?.text).toBe("codex context compacted");
 
       await protocol.submit("/c ambiguous");
-      expect(submitted).toHaveLength(4);
+      expect(submitted).toHaveLength(5);
       expect(protocol.stateStore.getState("timeline").items.at(-1)).toMatchObject({
         id: "_baton_harness_route_error",
         author: "baton",

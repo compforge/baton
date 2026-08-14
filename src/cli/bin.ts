@@ -2,7 +2,7 @@
 // baton 统一命令入口（bun link 后全局可用）：
 //   baton            交互式 TUI（默认）
 //   baton tui        同上
-//   baton repl       headless REPL（--agent codex|cx|claude|cc）
+//   baton repl       headless REPL（--agent codex|cx|claude|cc|dsh|deepseek）
 //   baton resume     继续 BatonSession（无参 = cwd 最近一个，同 -c）
 //   baton fork       fork BatonSession 并进入新会话
 //   baton sessions   列出当前项目的 baton 会话
@@ -33,8 +33,10 @@ Usage:
   baton [--cwd <dir>] [-c|--continue] [-s|--session <id>]
                         start the chat TUI; creates a new BatonSession by default,
                         -c continues the latest session in the cwd, -s opens a
-                        specific session; /codex (/cx) and /claude (/cc) switch harness
-  baton repl [--agent codex|cx|claude|cc] [--cwd <dir>]   headless REPL
+                        specific session; /codex (/cx), /claude (/cc), and
+                        /dsh (/deepseek) switch harness
+  baton repl [--agent codex|cx|claude|cc|dsh|deepseek] [--cwd <dir>]
+                        headless REPL
   baton resume [bs_xxx|harness-session-id|cx:<id>|cc:<id>]
                         resume a BatonSession; a Codex/Claude Code HarnessSession
                         is inspected read-only, adopted into Baton, then resumed;
@@ -71,7 +73,8 @@ Usage:
 
 Config:
   ~/.baton/config.yaml      generated on first run; defaultAgent / claudeExecutable /
-                            codexCommand / codexApprovalReviewer /
+                            codexCommand / codexApprovalReviewer / dshCommand /
+                            dshProvider / dshModel /
                             mentionBudgetChars / showThoughts / logLevel
   ~/.baton/plugin.yaml      globally enabled plugins keyed by plugin@marketplace
   BATON_CLAUDE_BIN          env var, takes precedence over claudeExecutable in config.yaml
