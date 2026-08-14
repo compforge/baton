@@ -39,6 +39,30 @@ const DSH_SHUTDOWN_TIMEOUT_MS = 1_000;
 const DSH_DISPOSE_EOF_GRACE_MS = 6_000;
 const DSH_DISPOSE_GRACE_MS = 3_000;
 
+function dshSetupError(): Error {
+  const technical = new Error(
+    "DeepSeek Harness Target command is missing; expected command to contain the JSON-RPC runtime executable and Cordis config path",
+  );
+  // Controller displays the outer message in the timeline and preserves this
+  // technical cause in session.log for troubleshooting.
+  return new Error([
+    "DeepSeek Harness needs a one-time setup before it can run.",
+    "",
+    "1. Install the runtime:",
+    "   python -m pip install deepseek-harness-sdk",
+    "2. Print the installed runtime and Cordis config paths:",
+    "   python -c \"from deepseek_harness_runtime import bundled_runtime_path, bundled_default_config_path; print(bundled_runtime_path()); print(bundled_default_config_path())\"",
+    "3. Open ~/.baton/config.yaml and copy those two paths into:",
+    "   targets:",
+    "     dsh:",
+    "       harness: dsh",
+    "       command: [/runtime/path/from-step-2, /cordis/config/path/from-step-2]",
+    "4. Set DEEPSEEK_API_KEY, restart Baton, then run /dsh again.",
+    "",
+    "Guide: https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/python-sdk.md",
+  ].join("\n"), { cause: technical });
+}
+
 export interface DshTurnLike extends AsyncIterable<DshEvent> {
   readonly result: Promise<DshRunResult>;
 }
@@ -317,9 +341,7 @@ export class DshAdapter implements HarnessAdapter {
   private clientOptions(runtime: DshRuntime): DshClientOptions {
     const [command, ...args] = this.options.command ?? [];
     if (!command?.trim()) {
-      throw new Error(
-        "DeepSeek Harness is not configured; set command on its Baton HarnessTarget to the dsh-jsonrpc-agent executable and Cordis config path",
-      );
+      throw dshSetupError();
     }
     return {
       runtime: {

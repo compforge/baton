@@ -134,11 +134,20 @@ async function waitForIdle(events: AnyEventDraft[], turnId: string): Promise<voi
 }
 
 describe("DshAdapter", () => {
-  test("requires an explicit JSON-RPC runtime command", async () => {
+  test("guides the user while preserving the missing-command diagnostic", async () => {
     const adapter = new DshAdapter();
-    await expect(adapter.open({ cwd: "/repo" }, () => undefined)).rejects.toThrow(
-      "set command on its Baton HarnessTarget",
-    );
+    try {
+      await adapter.open({ cwd: "/repo" }, () => undefined);
+      throw new Error("expected DSH setup to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      const setup = error as Error;
+      expect(setup.message).toContain("DeepSeek Harness needs a one-time setup");
+      expect(setup.message).toContain("Open ~/.baton/config.yaml");
+      expect(setup.message).toContain("run /dsh again");
+      expect(setup.cause).toBeInstanceOf(Error);
+      expect((setup.cause as Error).message).toContain("Target command is missing");
+    }
   });
 
   test("opens a native session, publishes its binding, and lowers text prompts", async () => {
