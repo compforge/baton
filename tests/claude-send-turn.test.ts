@@ -142,6 +142,80 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   );
 });
 
+test("Claude result applies a steer folded into the active turn", async () => {
+  let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
+  let releaseResult: ((message: unknown) => void) | undefined;
+  let finishOutput: (() => void) | undefined;
+  const outputFinished = new Promise<void>((resolve) => {
+    finishOutput = resolve;
+  });
+  const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
+    if (typeof params.prompt === "string") throw new Error("expected streaming Claude prompt");
+    promptIterator = params.prompt[Symbol.asyncIterator]();
+    const result = new Promise<unknown>((resolve) => {
+      releaseResult = resolve;
+    });
+    const output = (async function* () {
+      yield (await result) as never;
+      finishOutput?.();
+    })();
+    return Object.assign(output, {
+      initializationResult: async () => ({ models: [] }),
+      setModel: async () => undefined,
+      interrupt: async () => undefined,
+      close: () => undefined,
+    }) as unknown as Query;
+  }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
+
+  const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
+  const events: Array<{ kind: string; turnId?: string; payload: Record<string, unknown> }> = [];
+  const ref = await adapter.open({ cwd: "/tmp" }, (event) => events.push(event as never));
+  await adapter.sendTurn(ref, {
+    turnId: "t_active",
+    messageId: "m_initial",
+    blocks: [{ type: "text", text: "start" }],
+  });
+  await promptIterator?.next();
+  await adapter.sendTurn(ref, {
+    turnId: "t_active",
+    messageId: "m_folded",
+    blocks: [{ type: "text", text: "use this additional context" }],
+  });
+  const folded = (await promptIterator?.next())?.value as SDKUserMessage;
+
+  releaseResult?.({
+    type: "result",
+    subtype: "success",
+    user_message_uuid: folded.uuid,
+    usage: {
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+    modelUsage: {},
+  });
+  await outputFinished;
+
+  const appliedIndex = events.findIndex(
+    (event) => event.kind === "user_message" && event.payload.messageId === "m_folded" &&
+      event.payload.deliveryState === "applied",
+  );
+  const idleIndex = events.findIndex(
+    (event) => event.kind === "state_update" && event.payload.state === "idle",
+  );
+  expect(appliedIndex).toBeGreaterThan(-1);
+  expect(idleIndex).toBeGreaterThan(appliedIndex);
+  expect(events).not.toContainEqual(
+    expect.objectContaining({
+      kind: "user_message",
+      payload: expect.objectContaining({ messageId: "m_folded", deliveryState: "failed" }),
+    }),
+  );
+
+  await adapter.close(ref);
+});
+
 test("Claude lifecycle start moves a delayed steer into a new Harness-started turn", async () => {
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   let releaseOutput: ((message: unknown) => void) | undefined;

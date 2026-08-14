@@ -55,9 +55,10 @@ Harness-neutral 的 L1 notice，不根据启发式采样自动 finalize。用户
 调用方签发的 UUID，并补 `delivery:"steer", deliveryState:"pending"` 用户消息。
 Turn 不匹配或 channel 已关闭时返回 `rejected`，由 Controller 排成 follow-up。
 
-Claude CLI 的 `command_lifecycle` 是 Queue 事实源：`queued` 仍留在 Composer Queue；
+Claude CLI 的投递回执是 Queue 事实源：`command_lifecycle.queued` 仍留在 Composer Queue；
 `started` / `completed` 更新为 `applied` 并进入 Transcript；`cancelled` / `discarded`
-更新为 `failed` 并生成 warning。CLI 可能让 queued command 跨过当前 Turn 才启动，
+更新为 `failed` 并生成 warning。消息直接折入活跃 Turn 时可能没有 lifecycle frame，此时 success
+result 的 `user_message_uuid` 是关联后的 `applied` 回执。CLI 可能让 queued command 跨过当前 Turn 才启动，
 所以 Turn 收口不清理该 UUID，也不把 pending 乐观放入 Transcript。
 
 Harness 自行开始的 Turn 没有对应 Queue item。后台消息在上一 Queue-driven Turn 结束后到达时，
