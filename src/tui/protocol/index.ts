@@ -20,7 +20,11 @@ import {
   parseHarnessRoute,
   type CommandName,
 } from "../../commands/registry.ts";
-import { Channel } from "../../channel/index.ts";
+import {
+  Channel,
+  type ChannelControllerOptions,
+  type ChannelPluginOptions,
+} from "../../channel/index.ts";
 import type { BatonConfig } from "../../config/config.ts";
 import { loadEffortPreferences, saveEffortPreference } from "../../config/effort-preferences.ts";
 import { loadModelPreferences, saveModelPreference } from "../../config/model-preferences.ts";
@@ -44,8 +48,7 @@ import {
 } from "../../harness/registry.ts";
 import { bundledTextgenTargets } from "../../session/title.ts";
 import type { InteractionResult } from "../../interaction/types.ts";
-import { createReconcileSnapshot } from "../../plugin/reconcile-snapshot.ts";
-import { Manager } from "../../plugin/manager.ts";
+import type { Manager } from "../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
 import type {
   HumanInput,
@@ -60,7 +63,7 @@ import {
 } from "../../plugin/settings.ts";
 import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
-import { Controller } from "../../controller/index.ts";
+import type { Controller } from "../../controller/index.ts";
 import type { SessionState } from "../../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
@@ -162,27 +165,28 @@ export class BatonChatProtocol implements ChatProtocol {
     if (opened.recovered) {
       this.toast = { text: "Recovered an interrupted turn from a previous baton run", tone: "info" };
     }
-    this.channel = new Channel({ session: this.session });
-    this.controller = this.createController();
+    this.channel = this.createChannel();
+    this.controller = this.channel.controller;
     // Projection 由 BatonSession 统一维护：打开时 replay，live Event 直接 reduce。
     // TUI 只观察投影变化，不从 Ledger 或 per-turn 回调重建事实。
-    this.state = this.session.projection;
+    this.state = this.channel.projection;
     this.seedHistoryFromState();
-    this.plugins = this.createPluginManager();
-    this.connectChannel();
+    this.plugins = this.requirePluginManager();
     this.stateStore = createChatStore(this.buildState());
     this.presentation = new ChatPresentation(
       this.channel,
       this.stateStore,
       () => this.buildState(),
     );
-    this.unsubscribeSession = this.subscribeSession(this.session);
-    this.startPluginManager();
+    this.unsubscribeSession = this.subscribeChannel(this.channel);
+    this.startChannel();
   }
 
   /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
-  private subscribeSession(session: SessionHandle): () => void {
-    return session.subscribe((envelope) => this.presentation.event(envelope.kind));
+  private subscribeChannel(channel: Channel): () => void {
+    return channel.subscribe((_projection, event) =>
+      this.presentation.event(event.kind)
+    );
   }
 
   // ===== 输出：baton → TUI =====
@@ -261,20 +265,13 @@ export class BatonChatProtocol implements ChatProtocol {
     options?: { sourceProposedPlanId?: string },
   ): Promise<void> {
     const target = this.harnessTargetId;
-    const sent = await this.channel.inbound(Object.freeze({
+    const receipt = await this.channel.submitPrompt(Object.freeze({
       kind: "prompt",
       text,
       harnessTargetId: target,
-    }), async (record) => {
-      const blocks = await this.prepareComposerInput(text);
-
-      // 所有 prompt 都走统一 sendTurn；Adapter 依据原生运行态决定 new turn / steer / reject，
-      // Controller 只在 reject 或已有队列时维持 follow-up 顺序。
-      return await this.controller.sendTurn(target, blocks, {
-        ...options,
-        parentEventId: record.eventId,
-      });
-    });
+    }), async () => await this.prepareComposerInput(text), options);
+    // Controller receipt 与 Turn settlement 分离；Channel 接受 Input 后不等待完整 Turn。
+    const sent = receipt.result;
     if (sent.effective === "steer") {
       this.toast = { text: `${target} steer queued for the current turn`, tone: "info" };
       this.changed();
@@ -342,7 +339,7 @@ export class BatonChatProtocol implements ChatProtocol {
       argument,
       harnessTargetId: this.harnessTargetId,
     });
-    return await this.channel.inbound(input, async () =>
+    await this.channel.dispatchCommand(input, async () =>
       await this.executeCommand(name, argument)
     );
   }
@@ -578,9 +575,7 @@ export class BatonChatProtocol implements ChatProtocol {
       kind: "interrupt",
       harnessTargetId: this.controller.activeHarnessTargetId ?? this.harnessTargetId,
     });
-    void this.channel.inbound(input, async () => {
-      await this.controller.control({ kind: "interrupt" });
-    });
+    void this.channel.interrupt(input);
   }
 
   dismissSidecar(): void {
@@ -593,20 +588,10 @@ export class BatonChatProtocol implements ChatProtocol {
     this.cancelPickerSearch();
     this.toast = { text: "Exiting…", tone: "info" };
     this.changed();
-    await this.controller.close();
-    await this.plugins.close();
     this.presentation.close();
-    this.channel.disconnect();
-    this.marketplace.close();
     this.unsubscribeSession();
-    this.session.log({
-      level: "info",
-      source: "baton",
-      component: "session.lifecycle",
-      message: "Session closed",
-    });
-    await this.session.closeLogs();
-    this.session.releaseLock();
+    await this.channel.close();
+    this.marketplace.close();
     this.quit(this.session.id);
   }
 
@@ -709,15 +694,21 @@ export class BatonChatProtocol implements ChatProtocol {
       kind: "interaction_response",
       interactionId: id,
     });
-    return await this.channel.inbound(input, async () =>
-      await this.applyInteractionResponse(id, response)
+    const receipt = await this.channel.resolveInteraction(
+      input,
+      async () => await this.prepareInteractionResult(id, response),
     );
+    if (!receipt.result) {
+      // 无 continuation：请求已被应答，或是崩溃残留。
+      this.toast = { text: "interaction request is no longer pending", tone: "info" };
+      this.changed();
+    }
   }
 
-  private async applyInteractionResponse(
+  private async prepareInteractionResult(
     id: string,
     response: InteractionResponse,
-  ): Promise<void> {
+  ): Promise<InteractionResult | undefined> {
     const interaction = this.state.interactions.get(id)?.interaction;
     let result: InteractionResult | undefined;
     if (
@@ -763,21 +754,7 @@ export class BatonChatProtocol implements ChatProtocol {
       );
       result = { kind: "question", outcome: "answered", answers };
     }
-    const completed =
-      result &&
-      (interaction?.requester.type === "plugin"
-        ? await this.plugins.completeInteraction(id, result)
-        : this.controller.completeInteraction(id, result));
-    if (!completed) {
-      // 无 resolver：请求已被应答，或是崩溃残留（新进程没有等待中的 adapter）
-      this.toast = { text: "interaction request is no longer pending", tone: "info" };
-      this.changed();
-    } else if (
-      response.kind === "cancelled" &&
-      interaction?.requester.type === "harness"
-    ) {
-      await this.controller.control({ kind: "interrupt" });
-    }
+    return result;
   }
 
   recallQueued(): { text: string } | null {
@@ -893,9 +870,16 @@ export class BatonChatProtocol implements ChatProtocol {
 
   // ===== 内部 =====
 
-  private createController(): Controller {
-    return new Controller({
+  private createChannel(): Channel {
+    return new Channel({
       session: this.session,
+      controller: this.controllerOptions(),
+      plugins: this.pluginOptions(),
+    });
+  }
+
+  private controllerOptions(): ChannelControllerOptions {
+    return {
       mentionBudgetChars: this.config.mentionBudgetChars,
       modelPreferences: this.modelPreferences,
       effortPreferences: this.effortPreferences,
@@ -906,7 +890,6 @@ export class BatonChatProtocol implements ChatProtocol {
           config: this.config,
           rootDir: this.store.rootDir,
         }),
-      hooks: this.channel,
       resolveTarget: resolveDefaultHarnessTarget,
       textgenTargets: bundledTextgenTargets(),
       ...(this.config.textgenPrefer ? { textgenPrefer: this.config.textgenPrefer } : {}),
@@ -920,10 +903,10 @@ export class BatonChatProtocol implements ChatProtocol {
             this.session.log({ ...entry, harnessTargetId: target.id }),
         }),
       onChange: () => this.changed(),
-    });
+    };
   }
 
-  private createPluginManager(): Manager {
+  private pluginOptions(): ChannelPluginOptions {
     const settings = new PluginSettingsStore(this.store.rootDir);
     const mentions = new MentionRegistry();
     mentions.registerMention(
@@ -931,24 +914,16 @@ export class BatonChatProtocol implements ChatProtocol {
         excludeSessionId: this.session.id,
       }),
     );
-    return new Manager({
-      session: this.session,
+    return {
       instances: new GlobalPluginInstanceStore({
         settings,
         session: this.session,
       }),
-      snapshot: () =>
-        createReconcileSnapshot({
-          batonSessionId: this.session.id,
-          cwd: this.session.meta.cwd,
-          state: this.state,
-          harnessInputs: this.controller.harnessInputs,
-          harnessTargets: HARNESS_REGISTRY.map((definition) => ({
-            id: definition.id,
-            harness: definition.id,
-            label: definition.label,
-          })),
-        }),
+      harnessTargets: HARNESS_REGISTRY.map((definition) => ({
+        id: definition.id,
+        harness: definition.id,
+        label: definition.label,
+      })),
       selectedHarnessTargetId: () => this.harnessTargetId,
       loadPackageEntry: (pluginId, version, options) => {
         if (!options?.marketplace) {
@@ -962,28 +937,6 @@ export class BatonChatProtocol implements ChatProtocol {
         );
       },
       pluginSupervisor: new PluginSupervisor(),
-      enqueueHarnessInvocation: (request) =>
-        this.controller.enqueueHarnessInvocation({
-          harnessInvocationId: request.invocationId,
-          pluginInstanceId: request.pluginInstanceId,
-          harnessTargetId: request.harnessTargetId,
-          laneId: request.laneId,
-          newLane: request.newLane,
-          ...(request.parentLaneId === undefined
-            ? {}
-            : { parentLaneId: request.parentLaneId }),
-          source: request.source === "user"
-            ? { type: "user" }
-            : {
-                type: "plugin",
-                pluginInstanceId: request.pluginInstanceId,
-              },
-          messageId: request.messageId,
-          turnId: request.turnId,
-          blocks: [...request.blocks],
-        }),
-      cancelHarnessInvocation: (requestId) =>
-        this.controller.cancelHarnessInvocation(requestId),
       onBoardChanged: () => {
         this.boardChanged();
       },
@@ -1047,19 +1000,17 @@ export class BatonChatProtocol implements ChatProtocol {
         };
         this.changed();
       },
-    });
+    };
   }
 
-  private connectChannel(): void {
-    this.channel.connect({
-      has: (stage) => this.plugins.hasHook(stage),
-      before: (stage, subject) => this.plugins.beforeHook(stage, subject),
-      after: (stage, subject) => this.plugins.afterHook(stage, subject),
-    });
+  private requirePluginManager(): Manager {
+    const manager = this.channel.pluginManager;
+    if (!manager) throw new Error("TUI Channel requires a Plugin Manager");
+    return manager;
   }
 
-  private startPluginManager(): void {
-    void this.plugins.start().catch((error) => {
+  private startChannel(): void {
+    void this.channel.start().catch((error) => {
       this.toast = {
         text: `Could not start plugins: ${error instanceof Error ? error.message : String(error)}`,
         tone: "error",
@@ -1083,10 +1034,7 @@ export class BatonChatProtocol implements ChatProtocol {
       throw new Error("Wait for the current turn to finish before switching BatonSession");
     }
     const next = open();
-    await this.controller.close();
-    await this.plugins.close();
     this.presentation.close();
-    this.channel.disconnect();
     this.unsubscribeSession();
     this.session.log({
       level: "info",
@@ -1094,29 +1042,27 @@ export class BatonChatProtocol implements ChatProtocol {
       component: "session.lifecycle",
       message: "Session closed for session switch",
     });
-    await this.session.closeLogs();
-    this.session.releaseLock();
+    await this.channel.close();
     this.session = next.session;
     this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;
-    this.channel = new Channel({ session: this.session });
-    this.controller = this.createController();
-    this.state = next.session.projection;
+    this.channel = this.createChannel();
+    this.controller = this.channel.controller;
+    this.state = this.channel.projection;
     this.seedHistoryFromState();
     this.toast = next.recovered
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
-    this.plugins = this.createPluginManager();
-    this.connectChannel();
+    this.plugins = this.requirePluginManager();
     this.presentation = new ChatPresentation(
       this.channel,
       this.stateStore,
       () => this.buildState(),
     );
-    this.unsubscribeSession = this.subscribeSession(next.session);
+    this.unsubscribeSession = this.subscribeChannel(this.channel);
     this.completionsChanged();
-    this.startPluginManager();
+    this.startChannel();
     this.changed();
   }
 
@@ -1126,7 +1072,7 @@ export class BatonChatProtocol implements ChatProtocol {
     value: string | null,
     action: () => Promise<void>,
   ): Promise<void> {
-    await this.channel.inbound(Object.freeze({
+    await this.channel.dispatchConfiguration(Object.freeze({
       kind: "configuration",
       harnessTargetId: target,
       setting,
