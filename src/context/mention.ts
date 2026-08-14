@@ -47,12 +47,23 @@ export function parseMentions(text: string): ParsedMention[] {
   return out;
 }
 
-function turnBlock(s: TurnSummary, index: number): string {
-  const lines: string[] = [`## Turn ${index + 1}${s.stopReason ? ` (${s.stopReason})` : ""}`];
+function turnBlock(
+  s: TurnSummary,
+  index: number,
+  source?: Pick<TurnSummaryRecord, "harness">,
+): string {
+  const assistant = source ? `assistant[${source.harness}]` : "agent";
+  const tools = source ? `tools[${source.harness}]` : "tools";
+  const lines: string[] = source
+    ? []
+    : [`## Turn ${index + 1}${s.stopReason ? ` (${s.stopReason})` : ""}`];
   if (s.userText) lines.push(`user: ${s.userText}`);
-  if (s.agentText) lines.push(`agent: ${s.agentText}`);
+  if (s.agentText) lines.push(`${assistant}: ${s.agentText}`);
   if (s.toolCalls.length) {
-    lines.push(`tools: ${s.toolCalls.map((t) => `${t.title ?? t.toolCallId} [${t.status ?? "?"}]`).join("; ")}`);
+    lines.push(`${tools}: ${s.toolCalls.map((t) => `${t.title ?? t.toolCallId} [${t.status ?? "?"}]`).join("; ")}`);
+  }
+  if (source && s.stopReason && s.stopReason !== "end_turn") {
+    lines.push(`status: ${s.stopReason}`);
   }
   return lines.join("\n");
 }
@@ -167,11 +178,7 @@ export function buildTargetCatchUpContext(
   let dropped = 0;
   for (let i = missed.length - 1; i >= 0; i--) {
     const m = missed[i] as (typeof missed)[number];
-    const coordinates = [
-      m.harness,
-      m.laneId ? `lane ${m.laneId}` : undefined,
-    ].filter((value): value is string => Boolean(value));
-    const block = `[${coordinates.join(" · ")}]\n${turnBlock(m.summary, i)}`;
+    const block = turnBlock(m.summary, i, m);
     if (used + block.length + 2 > budgetChars && picked.length > 0) {
       dropped = i + 1;
       break;

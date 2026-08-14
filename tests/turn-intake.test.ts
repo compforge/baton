@@ -208,13 +208,14 @@ describe("controller-owned user_message at dequeue", () => {
 
     // 启动随后完成：binding 复用，后续 turn 正常执行；被取消的 turn 从未作为 prompt 提交给
     // harness——但它属于正典历史，fresh native session 经 <baton-sync> 恢复完整逻辑历史时
-    // 会带上它（标记 cancelled），这是预期语义而非泄漏
+    // 会带上它（仅保留 cancelled 异常终态，不携带 turn 坐标），这是预期语义而非泄漏
     adapter.openGate();
     expect(await first).toBe("completed");
     expect(await controller.submit("codex", [{ type: "text", text: "warm follow-up" }])).toBe("completed");
     expect(adapter.prompts).toHaveLength(1);
     expect(adapter.prompts[0]).toContain("warm follow-up");
-    expect(adapter.prompts[0]).toContain("(cancelled)");
+    expect(adapter.prompts[0]).toContain("status: cancelled");
+    expect(adapter.prompts[0]).not.toContain("## Turn");
   });
 
   test("harness startup failure leaves error + idle + summary instead of a vanished input", async () => {
