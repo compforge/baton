@@ -11,66 +11,24 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-baton 是一个以持久、harness-independent 会话为内核的 terminal-native coding-agent workspace，受 [tutti](https://github.com/tutti-os/tutti) 启发。当前，你可以在同一个 TUI 中使用 Claude Code、Codex 和 DeepSeek Harness，并在切换 agent 时自然延续上下文。由于 BatonSession 由 baton 而不是任何 harness 持有，这套基础能力可以从 agent 接力进一步演进到多 agent 协作与编排；内置 harness 不是封闭支持列表。
+baton 是一个 terminal-native coding agent 工作区，让 Claude Code、Codex 和 DeepSeek Harness 共享同一段持久对话。切换 agent 不再复制上下文，工作可以随时重新打开，也可以由 Plugin 在一次交互结束后继续推进。
 
-各家的原生会话只是恢复加速；即使原生会话无法恢复，BatonSession 历史仍然存在。
+BatonSession 属于用户，而不属于任何 Harness。原生会话可以加速 resume，但即使原生会话无法恢复，baton 仍保留完整的逻辑历史。内置 Harness 只是起点，不是封闭支持列表。
 
-## 理念
+## 为什么选择 baton
 
-多 agent 协作最常见的形态，是人变成 agent 之间的传话筒：把一个 agent 的产出复制给另一个、反复解释背景、手写文档接力。baton 想把上下文变成**用户拥有的资产**，而不是锁在某个工具里的副产品。
+多数多 agent 工作流都把人变成了上下文传话筒：复制一份回答、重新解释一次任务，然后祈祷下一个 agent 看到的是同一幅图景。baton 用一个持久工作区替代这种人工接力，让上下文可以延续、agent 保持原生体验，长期工作则通过明确的人与 Plugin 协作继续推进。
 
-当前已落地的两个基本点：
+![baton 协作工作区](docs/kernel-pipeline_v3.svg)
 
-- **上下文打通**：BatonSession 是用户拥有的持久统一历史，跨 harness 存续。换 agent 不需要搬运上下文；各家原生会话只承担恢复加速，不是历史存续的前提。
-- **原生体验**：尽量保留单独使用各 agent 时的输入、补全、流式输出、工具调用与审批体验，baton 只增加少量自己的命令（如 `/codex`、`/claude` 和 `/dsh`）。
+## 特点
 
-Plugin host 又增加了一条原则：
+- 在同一个 terminal-native 界面中使用 Claude Code、Codex 和 DeepSeek Harness，切换 Target、模型和模式，同时保留每个 Harness 的原生体验。
+- 拥有跨 Harness 的持久 BatonSession：重新打开或 fork 工作、接入原生会话，并把 Session 或 Plugin 上下文带入后续 turn。
+- 把一轮对话变成长期工作流：Plugin 可以询问决策、准备可编辑草稿、按计划或事件唤醒，并把任务交给主线或异步支线。
+- 从本地或 Git Marketplace 安装三方 Plugin，无需把 provider 凭证交给 baton；每个 Plugin 都在独立、受监管的进程中运行。
 
-- **Typed coordination**：baton core 通过 Core-owned Input、Interaction、HarnessInvocation 和 Event 生命周期串联人、Harness 与 Baton Plugin，而不是转发 opaque message。Harness 原生 verb 由 Adapter lowering，Plugin reconcile verb 由 host lowering；Baton Plugin 拥有长期领域 loop，devloop 等 Harness Plugin 只约束 Harness 内部的开发小闭环。
-
-从控制论看，每个长期 Plugin loop 都是一条反馈控制循环：它先读取 Resource，再通过 Connector 重新观察外部事实，经由人、Harness 或外部系统采取行动，最后更新 status 留给下一次 reconcile。完成意味着领域事实已经收敛到目标，而不只是某个 agent 结束了一轮执行。
-
-在此之上仍有三个产品演进方向。BatonSession 已支持由人或 Plugin 发起主线与异步支线任务；协同 fan-out 与结果策展尚未完整落地：
-
-- **多 harness 协作**：一个 BatonSession 已可并发运行多个由人或 Plugin 发起的 Lane，并保持单一持久 ledger；每条 Lane 内可串行切换 Harness 接力。下一步是把同一任务作为协同 fan-out 分派给多家 Harness，再把结果策展进主线。
-- **上下文收录**：主线不是全量流水账，而是用户认可的正典历史。草稿会话出了成果后，由用户决定将结论合入主线还是丢弃；丢弃不等于删除，草稿仍持久、可再引用。
-- **事件驱动的长期 loop**：监听代码提交、PR 合并等外部事件，重新唤醒对应会话继续后续工作，让 agent 不止活在交互式终端里。
-
-## 架构速览
-
-先从稳定内核理解 baton：它是一条双向流水线。chat-tui 只承载 `intent`/`render`，controller 拥有 `Input`、Lane 调度与 Turn 生命周期，adapter 把各 harness 的 wire 归一成事件流，一个 `session.jsonl` 持久化所有 Lane 的事件。事件流是唯一真相源，UI 是它的投影。
-
-![baton 内核：一条双向流水线](docs/kernel-pipeline_v1.svg)
-
-v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台；每个业务领域作为一个可独立交付的 Plugin，拥有自己的 Resource、reconcile、完成条件与 Connector。所有 Plugin 发起的 Turn 仍回到 Core 持有的 Input、Interaction、HarnessInvocation、Event 以及统一的 Context、Permission 与 routing 路径。
-
-![Baton v3 协作内核](docs/kernel-pipeline_v3.svg)
-
-终端只有一个焦点和一个宿主事件循环；chat-tui 按 surface 隔离订阅与重绘，Baton 则让每个活动的三方 Plugin Binding 进入独立 Runner 进程。某个 Plugin 阻塞或崩溃不会占住 composer，它的注册会作为一个整体撤销。
-
-稳定内核见 [`docs/kernel.md`](docs/kernel.md)，用户与 Harness 的端到端流程见 [`docs/workflow.md`](docs/workflow.md)，Harness 适配契约见 [`docs/harness.md`](docs/harness.md)，长期领域 loop 与三方 Plugin 开发见 [`docs/plugin.md`](docs/plugin.md)。
-
-## 功能
-
-- 在同一个终端界面中使用 Claude Code、Codex 和 DeepSeek Harness
-- 让 Plugin 通过 `ReconcileContext` 询问用户、准备可编辑 draft，或在 main/new Lane 发起 Harness Turn
-- 使用 `Ctrl+V` 粘贴剪贴板图片，并作为原生图片输入发送给 Codex 或 Claude Code
-- 使用 `/codex`、`/claude` 或 `/dsh` 直接切换 agent；运行时配置能力按 Harness 各自声明
-- 使用 `/sessions` 打开历史 BatonSession，或用 `/new` 新建干净会话
-- 首个 turn 后自动生成简洁会话标题，支持跨 harness 降级且不会创建原生会话
-- 使用 `baton -c` 继续当前项目最近会话，或用 `baton -s <id>` 打开指定会话
-- 按 ID resume 或 fork 已有 Codex / Claude Code 原生会话，并以只读方式自动识别来源
-- 使用分组可搜索的 `@` 上下文，引用内置 Session 或 Plugin 提供的对象并注入当前 turn
-- 统一记录消息、思考、工具调用、文件改动、计划和 token usage
-- 保留 Codex hook trust 等 harness 启动交互；已信任且未变化的定义会自动复用并明确留痕
-- 将事件追加写入本地 `session.jsonl`，支持状态重建和后续引用
-- 复用本机 Harness 登录态或 runtime 配置，不托管 provider 凭证
-- 提供 headless REPL，方便调试 agent 接入链路
-- 注册本地或 Git Plugin Marketplace，并安装不可变的 PluginPackage
-- 让每个活动的三方 Plugin Binding 在独立、受监管的进程中执行
-- 让 session-scoped Plugin Controller reconcile 持久 Resource，支持 Resource/cron Source、requeue 唤醒、Board 投影与 reconcile-scoped 用户交互
-
-## 安装与配置
+## 安装
 
 使用 npm 安装 baton。此外需要至少准备一个受支持的 runtime：已登录的 [Codex CLI](https://github.com/openai/codex)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)，或为 DSH Agent SDK 配置好的 DeepSeek Harness JSON-RPC runtime。
 
@@ -78,11 +36,69 @@ v3 明确两层边界：Baton Core 是人、Harness 与 Plugin 的协作平台�
 npm install -g @compforge/baton
 ```
 
-也可以不做全局安装，直接运行一次：
+也可以不做全局安装，先体验一次：
 
 ```bash
 npx @compforge/baton
 ```
+
+## 快速上手
+
+在项目目录启动 TUI，直接输入任务：
+
+```bash
+baton
+```
+
+常用命令：
+
+```text
+/claude 或 /cc       切换到 Claude Code
+/codex 或 /cx        切换到 Codex
+/dsh 或 /deepseek    切换到 DeepSeek Harness
+/target              选择已配置的 Harness Target
+/model               选择当前 Harness 的模型
+/effort              设置推理强度
+/plan                切换 Plan 模式
+/sessions            打开历史 BatonSession
+/new                 新建干净的 BatonSession
+@                    搜索 Session 和 Plugin 上下文
+Ctrl+V               粘贴文本或剪贴板图片
+Esc                  中断当前 turn
+```
+
+切换命令后可以直接带消息，例如 `/cx review this diff` 或 `/cc implement the fix`，baton 会切换 Harness 并立即发送。
+
+## 在会话之间接力
+
+```bash
+baton -c                           # 继续当前项目最近的会话
+baton -s bs_01...                  # 按 ID 打开 BatonSession
+baton resume [bs_xxx|native-id]    # resume Baton 或原生 Harness 会话
+baton fork [bs_xxx|native-id]      # fork 为新的 BatonSession
+baton sessions                     # 列出可引用的会话
+```
+
+baton 可以只读识别 Codex 和 Claude Code 的 Session ID，不会修改它们的文件。它把原生持久历史导入用户拥有的 BatonSession：`resume` 继续源会话，`fork` 则创建一条新的工作分支。后续可以在 prompt 中引用任一会话：
+
+```text
+@bs_01... 根据前面 Claude 的分析实现这个功能
+```
+
+## 添加长期工作流
+
+Plugin 可以询问决策、准备可编辑草稿、把 turn 委托给 Harness、更新共享 Board，或由 Resource 变化和计划任务再次唤醒。从本地或 Git Marketplace 安装：
+
+```bash
+baton plugins marketplace add ./reqloop
+baton plugins available
+baton plugins install qiankun/requirement-loop
+baton plugins list
+```
+
+每个活动的三方 Plugin 都运行在独立、受监管的进程中。某个 Plugin 阻塞或崩溃不会占住终端，provider 凭证仍由对应 Harness 自己持有。
+
+## 配置
 
 首次运行会生成 `~/.baton/config.yaml`：
 
@@ -102,109 +118,11 @@ mentionBudgetChars: 4096
 showThoughts: true
 ```
 
-所有配置项及说明见 [`config.yaml.example`](config.yaml.example)。
+所有配置项见 [`config.yaml.example`](config.yaml.example)。baton 复用各 Harness 已有的凭证和运行时配置，不复制 provider secret。Codex 审批继续遵循 `~/.codex/config.toml`，除非通过 `targets.codex.approvalReviewer` 显式委托；Claude Code 可设置 `targets.claude.executable`；DeepSeek Harness 使用 `targets.dsh.command` 配置的命令。
 
-Codex 审批默认跟随 Codex 自己的配置（`~/.codex/config.toml`、profile、企业策略照常生效，Codex 自身默认人工审批）。设置 `targets.codex.approvalReviewer: auto_review` 才把审批委托给自动 reviewer——委托状态会常驻 Harness Status，每条自动决策也在对应工具旁留下回执。
+## 数据留在本机
 
-如果 Claude Code 使用自定义可执行文件，可以设置 `targets.claude.executable`，或通过环境变量临时覆盖（`BATON_CLAUDE_BIN=/path/to/claude baton`）。配置优先级为：环境变量 > Target 配置 > Harness 默认值。
-
-DeepSeek Harness 通过 `@compforge/dsh-agent-sdk` 接入。`targets.dsh.command` 要填写完整 JSON-RPC runtime argv（含 Cordis 配置路径）。Baton 默认使用模型 `prod`；Target 的 `provider` 可选择其它 provider route，输出 token 上限由 runtime/provider 决定。Provider 凭据仍由 DSH 自己的凭据存储持有。当前能力与取消边界见 [DSH Adapter 文档](docs/harness/deepseek-harness.md)。
-
-## 使用
-
-启动 TUI 后直接输入内容即可发送。
-
-```text
-/claude 或 /cc        切换到 Claude Code
-/codex 或 /cx         切换到 Codex
-/dsh 或 /deepseek     切换到 DeepSeek Harness
-/target              打开已配置的 HarnessTarget 选择器
-/target <id>         切换到指定 HarnessTarget
-/cc <消息>           切换到 Claude Code 并立即发送消息
-/cx <消息>           切换到 Codex 并立即发送消息
-/deepseek <消息>     切换到 DeepSeek Harness 并立即发送消息
-/cla <消息>          harness 名的唯一前缀也可使用
-/model               打开当前 harness 的模型选择器
-/model <id>          设置后续 turn 使用的模型
-/effort              打开当前 harness 的推理强度选择器
-/effort <level>      设置后续 turn 使用的推理强度
-/plan                将当前 harness 切换到 Plan 模式
-/compact             请求当前 harness 压缩上下文
-/status              查看当前 harness/model 的上下文用量和会话信息
-/sessions            打开 BatonSession 选择器
-/new                 在当前项目新建 BatonSession
-@                      分组搜索 Session 和 Plugin 上下文
-Tab                   补全命令或引用
-Shift+Tab             在 Default 与 Plan 模式间切换
-Ctrl+V                向输入框粘贴文本或剪贴板图片
-Esc                   中断当前 turn
-/exit                 退出
-```
-
-`/c <消息>` 这类歧义前缀不会发送给 harness；baton 会在 transcript 中列出匹配到的 harness。
-
-常用 CLI 命令：
-
-```bash
-baton                              # 启动 TUI
-baton --cwd /path/to/project       # 在指定项目目录启动
-baton -c                           # 继续当前目录最近的 BatonSession
-baton -s bs_01...                  # 打开指定 BatonSession
-baton resume [bs_xxx|native-id]    # resume；原生 ID 会先导入
-baton fork [bs_xxx|native-id]      # 必要时先导入，再 fork BatonSession
-baton repl --agent codex           # 使用 Codex 的 headless REPL（别名：cx）
-baton repl --agent claude          # 使用 Claude 的 headless REPL（别名：cc）
-baton sessions                     # 查看可引用的历史会话
-baton logs [session-id]             # 查看 Baton/Harness/Plugin 结构化日志
-baton plugins marketplace add ./reqloop
-baton plugins marketplace remove reqloop
-baton plugins available
-baton plugins install qiankun/requirement-loop
-baton plugins list
-baton help                         # 查看完整帮助
-```
-
-对裸 HarnessSession ID，baton 会只读探测 Codex 与 Claude Code：只有一方命中时自动选择；两边都命中时
-可交互选择，或用 `cx:<id>` / `cc:<id>` 显式消歧。baton 会先 adoption 或复用一个源 BatonSession，
-把 Inspector 可只读恢复的持久历史还原成归属于该 Harness 的普通 Baton turn，等价于这个
-BatonSession 从一开始就存在。两个内置 Harness 都会导入各自可持久恢复的完整历史：Codex
-包含 reasoning、工具和计划提案，Claude Code 包含 thinking、工具调用/结果和计划状态。
-`resume` 直接打开这个源；`fork` 对它执行普通 BatonSession fork，因此 child 会在命令当前
-project 中启动全新的 HarnessSession。adoption 源继续绑定原 HarnessSession。Baton 不会在后台自动镜像
-其它客户端的写入；再次显式使用该 ID 时，会用 HarnessHistoryBoundary 校验完整语义前缀并把新增尾部补入已有
-Baton owner，再 resume / fork。
-
-在输入中引用 `baton sessions` 列出的 ID：
-
-```text
-@bs_01... 根据前面 Claude 的分析实现这个功能
-```
-
-baton 会读取被引用会话的紧凑摘要，并将其作为上下文交给当前 harness。
-
-## 数据存储
-
-baton 的数据默认保存在 `~/.baton/`：
-
-```text
-~/.baton/
-├── config.yaml
-├── attachments/                              # 按内容寻址的剪贴板图片
-├── plugins/
-│   ├── marketplaces.json
-│   ├── marketplaces/<marketplace-name>/
-│   └── packages/<encoded-plugin-id>/<version>/
-└── projects/<project-key>/
-    ├── project.json
-    └── sessions/<session-id>/
-        ├── meta.json
-        ├── session.jsonl
-        ├── session.log
-        └── plugins/<plugin-instance-id>/
-            └── resources/
-```
-
-Project 使用可读且防碰撞的 key 按工作目录组织会话，原始 `cwd` 记录在 `project.json` 中；剪贴板图片作为不可变、按内容寻址的附件由会话历史与 fork 共享，`session.jsonl` 只保存其路径。Plugin 运行数据归属对应 BatonSession。`session.jsonl` 是用于渲染、恢复、harness 接力和跨会话引用的持久逻辑历史。`session.log` 是 Baton 内部组件、Harness adapter 与 Plugin 共用的私有轮转运维日志，可用 `baton logs` 按级别、组件或 Plugin 过滤。原生会话仍由各 Harness 管理；baton 只保存用于加速 resume 的 binding，不会修改原生 session 文件。
+baton 把配置、附件、Plugin、项目和持久会话历史保存在 `~/.baton/`。每个 Harness 继续拥有自己的原生会话；baton 不修改这些文件，只保存 resume 所需的 binding。使用 `baton logs [session-id]` 可以查看会话对应的私有轮转运维日志。
 
 ## License
 
