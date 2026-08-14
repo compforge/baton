@@ -1,8 +1,8 @@
 /**
  * Adapter 拥有的可持久化恢复状态。Baton 只负责按版本原样保存和回传，不解释 data。
  *
- * 当前内置 adapter 都只需要原生 session id，因此共享下面的 v1 codec；后续 adapter
- * 可以在 data 中保存自己的 cursor/checkpoint，而无需继续扩 OpenOptions。
+ * 内置 adapter 共享下面的 v1 session id codec，也可以在 data 中附带自己拥有的
+ * cursor/checkpoint；Baton 无需理解这些字段或继续扩 OpenOptions。
  */
 export interface HarnessResumeState {
   version: number;

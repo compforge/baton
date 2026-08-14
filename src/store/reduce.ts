@@ -6,6 +6,7 @@ import type {
   ApprovalReviewUpdate,
   AvailableCommand,
   ContentBlock,
+  ContextWindowUpdate,
   ContextUsageUpdate,
   ErrorUpdate,
   EventEnvelope,
@@ -102,6 +103,8 @@ export interface HarnessTargetState {
   harness?: string;
   /** 最近 context 占用快照（整体替换）。带 model 标签：切 model 后旧快照按标签判失效 */
   contextUsage?: ContextUsageUpdate;
+  /** 最近一次严格配对的 model route context window 快照。 */
+  contextWindow?: ContextWindowUpdate;
   /** 该 Target 最近一次 plan 的 id（plan 本体在 plans）。 */
   lastPlanId?: string;
   /** 该 Target 最近一次可用命令完整快照。 */
@@ -624,9 +627,15 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       break;
     }
     case "context_usage_update": {
-      // 快照替换语义（与 usage 的增量累加不同）；每个 Target 各有自己的原生上下文
+      // 旧 session replay：已落盘语义不可改变。新 Adapter 使用 context_window_update。
       for (const scope of executionScopes(state, ev)) {
         scope.contextUsage = { ...ev.payload };
+      }
+      break;
+    }
+    case "context_window_update": {
+      for (const scope of executionScopes(state, ev)) {
+        scope.contextWindow = { ...ev.payload };
       }
       break;
     }

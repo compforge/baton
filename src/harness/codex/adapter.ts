@@ -1872,17 +1872,17 @@ export class CodexAdapter implements HarnessAdapter {
         if (delta.inputTokens || delta.outputTokens || delta.cacheReadTokens || delta.reasoningTokens) {
           this.emit(rt, { kind: "usage_update", payload: delta }, params);
         }
-        const contextSize = typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : undefined;
-        const contextUsed = typeof last.totalTokens === "number" ? last.totalTokens : undefined;
-        if (contextSize !== undefined || contextUsed !== undefined) {
+        const capacityTokens = typeof usage.modelContextWindow === "number" ? usage.modelContextWindow : undefined;
+        const usedTokens = typeof last.inputTokens === "number" ? last.inputTokens : undefined;
+        if (capacityTokens !== undefined && usedTokens !== undefined) {
           this.emit(
             rt,
             {
-              kind: "context_usage_update",
+              kind: "context_window_update",
               payload: {
-                model: rt.model ?? "default",
-                ...(contextUsed !== undefined ? { contextUsed } : {}),
-                ...(contextSize !== undefined ? { contextSize } : {}),
+                modelSelection: rt.model ?? "default",
+                usedTokens,
+                capacityTokens,
               },
             },
             params,

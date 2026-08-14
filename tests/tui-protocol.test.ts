@@ -411,10 +411,21 @@ describe("BatonChatProtocol status command", () => {
       session.setPreviewIfEmpty("Implement status command");
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "codex",
         harnessTargetId: "codex",
-        payload: { model: "default", contextUsed: 12_500, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "default", usedTokens: 12_500, capacityTokens: 200_000 },
+      });
+      // Target aggregate now points at the side Lane's newer sample; /status must
+      // still render the current main Lane binding instead of leaking side work.
+      session.appendEvent({
+        source: { type: "baton" },
+        kind: "context_window_update",
+        harness: "codex",
+        harnessTargetId: "codex",
+        laneId: "hl_side",
+        payload: { modelSelection: "default", usedTokens: 180_000, capacityTokens: 200_000 },
       });
       const eventCount = session.ledger.read().length;
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
@@ -446,10 +457,11 @@ describe("BatonChatProtocol status command", () => {
       const session = store.createSession({ cwd: "/repo" });
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "claude-code",
         harnessTargetId: "claude",
-        payload: { model: "default", contextUsed: 40_000, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "default", usedTokens: 40_000, capacityTokens: 200_000 },
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       await protocol.command("claude", "");
@@ -1034,24 +1046,27 @@ describe("BatonChatProtocol State projection", () => {
       const session = store.createSession({ cwd: "/repo" });
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "codex",
         harnessTargetId: "codex",
-        payload: { model: "default", contextUsed: 12_500, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "default", usedTokens: 12_500, capacityTokens: 200_000 },
       });
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "codex",
         harnessTargetId: "codex-secondary",
-        payload: { model: "default", contextUsed: 150_000, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "default", usedTokens: 150_000, capacityTokens: 200_000 },
       });
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "claude-code",
         harnessTargetId: "claude",
-        payload: { model: "default", contextUsed: 80_000, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "default", usedTokens: 80_000, capacityTokens: 200_000 },
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
@@ -1076,10 +1091,11 @@ describe("BatonChatProtocol State projection", () => {
       const session = store.createSession({ cwd: "/repo" });
       session.appendEvent({
         source: { type: "baton" },
-        kind: "context_usage_update",
+        kind: "context_window_update",
         harness: "codex",
         harnessTargetId: "codex",
-        payload: { model: "gpt-old", contextUsed: 190_000, contextSize: 200_000 },
+        laneId: MAIN_LANE_ID,
+        payload: { modelSelection: "gpt-old", usedTokens: 190_000, capacityTokens: 200_000 },
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 

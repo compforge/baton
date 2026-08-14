@@ -66,7 +66,8 @@ import {
 import { PluginSupervisor } from "../../plugin/runner/index.ts";
 import { openBatonSession } from "../../session/open.ts";
 import type { Controller } from "../../controller/index.ts";
-import type { SessionState } from "../../store/reduce.ts";
+import { MAIN_LANE_ID } from "../../lane.ts";
+import { laneTargetStateKey, type SessionState } from "../../store/reduce.ts";
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
@@ -80,7 +81,7 @@ import {
 } from "../prompt-images.ts";
 import { userVisibleText } from "./transcript.ts";
 import {
-  contextUsageText,
+  contextWindowText,
   projectBoardView,
   projectChatState,
   type BoardMode,
@@ -1202,8 +1203,10 @@ export class BatonChatProtocol implements ChatProtocol {
     const selectedModel = this.controller.currentModel(this.harnessTargetId) ?? "default";
     const selectedEffort = this.controller.currentEffort(this.harnessTargetId) ?? "default";
     const selectedMode = this.controller.currentMode(this.harnessTargetId);
-    const context = this.state.perTarget.get(this.harnessTargetId)?.contextUsage;
-    const contextText = contextUsageText(context, selectedModel);
+    const context = this.state.perLaneTarget.get(
+      laneTargetStateKey(MAIN_LANE_ID, this.harnessTargetId),
+    )?.contextWindow;
+    const contextText = contextWindowText(context, selectedModel);
     const targets = meta.harnessTargets
       ? Object.keys(meta.harnessTargets).join(", ")
       : "-";

@@ -37,7 +37,9 @@ create DshClient → initialize runtime → select/create native session
 DSH SDK session ID 是稳定 HarnessSession identity，也是 v1 resume state 的内容。新会话在
 `open()` 时由 SDK 铸造 ID 并立即发布 Binding；已有 resume state 时使用原 ID 建立 session。
 取消会关闭当前 runtime，下一轮重新初始化 runtime 后仍以该 ID 继续，因此 BatonSession 内的
-恢复路径不依赖进程存活。
+恢复路径不依赖进程存活。DSH 只在路由或容量变化时记录 `request/context`；Adapter 将最近一次
+effective model 与 context window 一并保存在 DSH 自己的 resume state 中，保证进程重建后仍能
+将下一次 usage 配成完整的 context window 快照。
 
 当前 DSH SDK 协议不提供只读历史查询或 session catalog，所以 DSH 不注册外部 Session
 Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实现 Inspector 的 Harness。
@@ -49,6 +51,7 @@ Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实�
 |---|---|
 | text prompt | `session/prompt.contentBlocks` |
 | streaming | `session.event` 中的 assistant chunk/message、tool、usage、todo |
+| context window | `request/context` 的有效路由 + `assistant/message.usage` 的当次输入占用快照 |
 | subagent lifecycle | `subagent.started` / `subagent.finished` → `task_update` |
 | session resume | SDK session ID + Baton v1 resume state |
 
@@ -75,6 +78,10 @@ follow-up，不能在同一原生 session 上并行启动第二轮。
 
 - `assistant/chunk` 的 text/reasoning delta → agent message/thought chunk；
 - `assistant/message` → 对应完整 message/thought upsert，并在缺少 usage chunk 时补 usage；
+- `request/context` 缓存 effective model 与 context window，但不单独发不完整快照；
+  `assistant/message.usage` 将 uncached input、cache read 和 cache write 相加，与缓存路由严格配对后
+  生成 `context_window_update`。其中 `modelSelection` 来自 Target 配置，`effectiveModel` 来自 DSH
+  路由；
 - `tool/call` / `tool/result` → 同一 Baton tool call 的 running/terminal upsert；
 - `todo/write` → plan snapshot；
 - `turn/end.reason` → Baton stop reason 与结构化 error；

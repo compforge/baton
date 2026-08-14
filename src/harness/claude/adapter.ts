@@ -854,13 +854,13 @@ interface ClaudeContextSample {
  * result.modelUsage 是整个 streaming query 跨 turn 的累计值（含子 agent/辅助模型），
  * 直接当"当前 context 占用"会随轮数虚高、compact 后也不回落。当前占用改用主 agent
  * 最近一次 message_start 的当次调用 usage（contextSample）；modelUsage 只提供
- * contextWindow 与累计 cost，并在没有 sample 时兜底（如 resume 后首个 result）。
+ * contextWindow，并在没有 sample 时兜底（如 resume 后首个 result）。
  */
-function claudeContextUsage(
+function claudeContextWindow(
   modelUsage: Record<string, ModelUsage>,
   selectedModel?: string,
   contextSample?: ClaudeContextSample,
-): { contextUsed: number; contextSize: number; cost?: { amount: number; currency: string } } | undefined {
+): { effectiveModel: string; usedTokens: number; capacityTokens: number } | undefined {
   const entries = Object.entries(modelUsage);
   if (entries.length === 0) return undefined;
   const used = (usage: ModelUsage): number =>
@@ -871,13 +871,11 @@ function claudeContextUsage(
     entries.toSorted((a, b) => used(b[1]) - used(a[1]))[0];
   if (!selected || !Number.isFinite(selected[1].contextWindow)) return undefined;
   return {
-    contextUsed: contextSample
+    effectiveModel: contextSample?.model ?? selected[0],
+    usedTokens: contextSample
       ? contextSample.inputTokens + contextSample.cacheReadInputTokens + contextSample.cacheCreationInputTokens
       : used(selected[1]),
-    contextSize: selected[1].contextWindow,
-    ...(Number.isFinite(selected[1].costUSD)
-      ? { cost: { amount: selected[1].costUSD, currency: "USD" } }
-      : {}),
+    capacityTokens: selected[1].contextWindow,
   };
 }
 
@@ -1791,11 +1789,11 @@ export class ClaudeAdapter implements HarnessAdapter {
             raw: msg,
           });
         }
-        const context = claudeContextUsage(msg.modelUsage, rt.model, rt.lastContextSample);
+        const context = claudeContextWindow(msg.modelUsage, rt.model, rt.lastContextSample);
         if (context) {
           emit({
-            kind: "context_usage_update",
-            payload: { model: rt.model ?? "default", ...context },
+            kind: "context_window_update",
+            payload: { modelSelection: rt.model ?? "default", ...context },
             raw: msg,
           });
         }

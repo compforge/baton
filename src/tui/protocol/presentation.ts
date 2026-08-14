@@ -16,6 +16,7 @@ const COALESCED_STREAM_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "agent_thought_chunk",
   "tool_call_content_chunk",
   "usage_update",
+  "context_window_update",
 ]);
 const NON_PRESENTATION_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "input.received",

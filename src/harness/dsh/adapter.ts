@@ -32,7 +32,11 @@ import {
   type SendTurnReceipt,
   unsupportedPromptBlocks,
 } from "../adapter.ts";
-import { sessionIdFromResumeState, sessionIdResumeState } from "../resume.ts";
+import {
+  type HarnessResumeState,
+  sessionIdFromResumeState,
+  sessionIdResumeState,
+} from "../resume.ts";
 
 const DSH_REQUEST_TIMEOUT_MS = 15_000;
 const DSH_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -117,7 +121,13 @@ interface DshRuntime {
   client?: DshClientLike;
   session?: DshSessionLike;
   activeTurn?: DshTurnState;
+  requestContext?: DshRequestContext;
   closed: boolean;
+}
+
+interface DshRequestContext {
+  readonly model: string;
+  readonly contextWindow?: number;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -176,6 +186,37 @@ function usagePayload(value: unknown): UsageUpdate | undefined {
     reasoningTokens: finiteNumber(usage.reasoningTokens),
   };
   return Object.values(mapped).some((count) => count !== undefined) ? mapped : undefined;
+}
+
+function contextUsed(usage: UsageUpdate | undefined): number | undefined {
+  if (usage?.inputTokens === undefined) return undefined;
+  return usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+}
+
+function requestContextFromResumeState(
+  state: HarnessResumeState | undefined,
+): DshRequestContext | undefined {
+  if (state?.version !== 1) return undefined;
+  const data = record(state.data);
+  const requestContext = record(data?.requestContext);
+  const model = text(requestContext?.model);
+  if (!model) return undefined;
+  const contextWindow = finiteNumber(requestContext?.contextWindow);
+  return {
+    model,
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+  };
+}
+
+function dshResumeState(
+  sessionId: string,
+  requestContext?: DshRequestContext,
+): HarnessResumeState {
+  if (!requestContext) return sessionIdResumeState(sessionId);
+  return {
+    version: 1,
+    data: { sessionId, requestContext },
+  };
 }
 
 function dshStopReason(reason: unknown): StopReason {
@@ -254,12 +295,14 @@ export class DshAdapter implements HarnessAdapter {
     const requestedSessionId = opts.resumeState
       ? sessionIdFromResumeState(opts.resumeState)
       : opts.resumeSessionId;
+    const requestContext = requestContextFromResumeState(opts.resumeState);
     const runtime: DshRuntime = {
       cwd: opts.cwd,
       ...(opts.env ? { env: opts.env } : {}),
       sink,
       ...(binding ? { bindingSink: binding } : {}),
       ...(requestedSessionId ? { sessionId: requestedSessionId } : {}),
+      ...(requestContext ? { requestContext } : {}),
       closed: false,
     };
     this.sessions.set(handleId, runtime);
@@ -373,10 +416,7 @@ export class DshAdapter implements HarnessAdapter {
       const session = client.session(runtime.sessionId);
       runtime.session = session;
       runtime.sessionId = session.id;
-      runtime.bindingSink?.({
-        identity: { id: session.id },
-        resumeState: sessionIdResumeState(session.id),
-      });
+      this.publishBinding(runtime);
       return session;
     } catch (error) {
       runtime.client = undefined;
@@ -520,6 +560,21 @@ export class DshAdapter implements HarnessAdapter {
     raw: DshEvent,
   ): void {
     const stepKey = nativeStepKey(data);
+    if (eventType === "request/context") {
+      const model = text(data.model);
+      if (!model) return;
+      const contextWindow = finiteNumber(data.contextWindow);
+      runtime.requestContext = {
+        model,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+      };
+      // DSH only records request/context when the route changes. Persist the
+      // latest value with the native session checkpoint so a resumed Adapter
+      // can keep reporting the window even when DSH correctly deduplicates it.
+      this.publishBinding(runtime);
+      return;
+    }
+
     if (eventType === "assistant/chunk") {
       const chunk = record(data.chunk);
       const chunkType = text(chunk?.type);
@@ -583,11 +638,23 @@ export class DshAdapter implements HarnessAdapter {
           payload: { messageId: mappedId(turn.thoughtMessageIds, stepKey, "m"), content: reasoning },
         }, raw);
       }
-      if (!turn.usageSteps.has(stepKey)) {
-        const usage = usagePayload(data.usage);
-        if (usage) {
+      const usage = usagePayload(data.usage);
+      if (usage) {
+        if (!turn.usageSteps.has(stepKey)) {
           turn.usageSteps.add(stepKey);
           this.emit(runtime, turn, { kind: "usage_update", payload: usage }, raw);
+        }
+        const used = contextUsed(usage);
+        if (used !== undefined && runtime.requestContext?.contextWindow !== undefined) {
+          this.emit(runtime, turn, {
+            kind: "context_window_update",
+            payload: {
+              modelSelection: this.options.model ?? "default",
+              effectiveModel: runtime.requestContext.model,
+              usedTokens: used,
+              capacityTokens: runtime.requestContext.contextWindow,
+            },
+          }, raw);
         }
       }
       return;
@@ -666,6 +733,14 @@ export class DshAdapter implements HarnessAdapter {
     this.emit(runtime, turn, {
       kind: "_baton_error_update",
       payload: { ...(failure.code ? { code: failure.code } : {}), message: failure.message },
+    });
+  }
+
+  private publishBinding(runtime: DshRuntime): void {
+    if (!runtime.sessionId) return;
+    runtime.bindingSink?.({
+      identity: { id: runtime.sessionId },
+      resumeState: dshResumeState(runtime.sessionId, runtime.requestContext),
     });
   }
 

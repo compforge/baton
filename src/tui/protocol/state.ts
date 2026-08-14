@@ -11,7 +11,7 @@ import type {
 
 import type { BatonConfig } from "../../config/config.ts";
 import type { Controller } from "../../controller/index.ts";
-import { textOf } from "../../event/index.ts";
+import { textOf, type ContextWindowUpdate } from "../../event/index.ts";
 import {
   harnessDefinitionFor,
   harnessShortName,
@@ -276,38 +276,32 @@ export function runStatusLabel(
   return "thinking…";
 }
 
-export function contextUsageText(
-  context:
-    | { model?: string; contextUsed?: number; contextSize?: number }
-    | undefined,
+export function contextWindowText(
+  context: ContextWindowUpdate | undefined,
   selectedModel: string,
 ): string {
-  if (!context || (context.model && context.model !== selectedModel)) {
+  if (!context || context.modelSelection !== selectedModel) {
     return "unavailable until the harness reports this model";
   }
-  if (!context.contextSize || context.contextSize < 0) return "size unavailable";
-  const size = context.contextSize.toLocaleString("en-US");
-  if (context.contextUsed === undefined) return `${size} tokens`;
-  const percent = Math.round((context.contextUsed / context.contextSize) * 100);
-  return `${context.contextUsed.toLocaleString("en-US")} / ${size} tokens (${percent}%)`;
+  if (!context.capacityTokens || context.capacityTokens < 0) return "size unavailable";
+  const size = context.capacityTokens.toLocaleString("en-US");
+  const percent = Math.round((context.usedTokens / context.capacityTokens) * 100);
+  return `${context.usedTokens.toLocaleString("en-US")} / ${size} tokens (${percent}%)`;
 }
 
-function contextUsageStatusText(
-  context:
-    | { model?: string; contextUsed?: number; contextSize?: number }
-    | undefined,
+function contextWindowStatusText(
+  context: ContextWindowUpdate | undefined,
   selectedModel: string,
 ): string | undefined {
   if (
     !context ||
-    (context.model && context.model !== selectedModel) ||
-    context.contextUsed === undefined ||
-    !context.contextSize ||
-    context.contextSize < 0
+    context.modelSelection !== selectedModel ||
+    !context.capacityTokens ||
+    context.capacityTokens < 0
   ) {
     return undefined;
   }
-  const percent = Math.round((context.contextUsed / context.contextSize) * 100);
+  const percent = Math.round((context.usedTokens / context.capacityTokens) * 100);
   return `context ${percent}%`;
 }
 
@@ -409,8 +403,11 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const statusTargetId =
     activeTargetId ?? mainRun?.harnessTargetId ?? harnessTargetId;
   const statusLaneId = MAIN_LANE_ID;
+  const laneTargetState = state.perLaneTarget.get(
+    laneTargetStateKey(statusLaneId, statusTargetId),
+  );
   const targetState =
-    state.perLaneTarget.get(laneTargetStateKey(statusLaneId, statusTargetId)) ??
+    laneTargetState ??
     state.perTarget.get(statusTargetId);
   const statusHarness =
     activeTurn?.harness ??
@@ -421,7 +418,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const statusModel =
     statusTargetId === activeTargetId || statusTargetId === harnessTargetId
       ? (controller.currentModel(statusTargetId) ?? "default")
-      : (targetState?.contextUsage?.model ?? "default");
+      : (laneTargetState?.contextWindow?.modelSelection ?? "default");
   const statusEffort =
     statusTargetId === activeTargetId || statusTargetId === harnessTargetId
       ? controller.currentEffort(statusTargetId)
@@ -446,8 +443,8 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     modeStatus,
     approvalStatus,
   ].filter((detail): detail is string => detail !== undefined).join(" · ");
-  const contextStatus = contextUsageStatusText(
-    targetState?.contextUsage,
+  const contextStatus = contextWindowStatusText(
+    laneTargetState?.contextWindow,
     statusModel,
   );
   const statusDetails = [contextStatus].filter(
