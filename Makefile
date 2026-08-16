@@ -1,11 +1,14 @@
 .PHONY: install test sync-npm-version publish-baton-plugin
 
+TEST_FILES ?=
+TEST_ARGS = $(if $(strip $(TEST_FILES)),$(TEST_FILES),tests)
+
 install:
 	bun install
 	bun link
 
 test:
-	bun run test
+	bun test $(TEST_ARGS)
 
 sync-npm-version:
 	bun scripts/sync-npm-version.ts
