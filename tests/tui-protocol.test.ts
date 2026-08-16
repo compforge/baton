@@ -15,6 +15,10 @@ import {
   thoughtDisplayBlocks,
   toolTranscriptItem,
 } from "../src/tui/protocol/index.ts";
+import {
+  toolGroupKey,
+  toolGroupTranscriptItem,
+} from "../src/tui/protocol/transcript.ts";
 
 function stubCompletedSend(
   protocol: BatonChatProtocol,
@@ -1614,6 +1618,106 @@ describe("toolTranscriptItem", () => {
     expect(item.title).toStartWith("Read · …");
     expect(item.title).toContain("important-file.ts");
     expect(item.title).toEndWith("· 2 lines");
+  });
+});
+
+describe("tool call grouping", () => {
+  const tool = (
+    toolCallId: string,
+    kind: string,
+    status: "pending" | "in_progress" | "completed" | "failed" = "completed",
+  ) => ({
+    toolCallId,
+    harness: "codex",
+    harnessTargetId: "codex",
+    turnId: "t1",
+    title: `${kind[0]!.toUpperCase()}${kind.slice(1)}: ${toolCallId}`,
+    kind,
+    status,
+    content: [{ type: "text" as const, text: `${toolCallId} output\n` }],
+    locations: [],
+    rawInput: kind === "search" ? { pattern: toolCallId } : { file_path: `${toolCallId}.ts` },
+  });
+
+  test("groups only successful exploratory tools with the same projection coordinates", () => {
+    const read = tool("tc_read", "read");
+    expect(toolGroupKey(read)).toBe(toolGroupKey({ ...read, toolCallId: "tc_read_2" }));
+    expect(toolGroupKey({ ...read, turnId: "t2" })).not.toBe(toolGroupKey(read));
+    expect(toolGroupKey({ ...read, harnessTargetId: "codex-2" })).not.toBe(toolGroupKey(read));
+    expect(toolGroupKey({ ...read, status: "failed" })).toBeUndefined();
+    expect(toolGroupKey(tool("tc_edit", "edit"))).toBeUndefined();
+  });
+
+  test("projects a compact group with stable first-member identity", () => {
+    expect(toolGroupTranscriptItem([
+      tool("src/one", "read"),
+      tool("src/two", "read", "in_progress"),
+    ])).toEqual({
+      type: "block",
+      id: "src/one",
+      kind: "tool",
+      author: "codex",
+      title: "Read ×2",
+      status: "in_progress",
+      content: {
+        type: "lines",
+        lines: ["src/one.ts · 1 line", "• src/two.ts · 1 line"],
+      },
+    });
+  });
+
+  test("groups consecutive reads in the session transcript and preserves boundaries", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-tool-groups-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const appendTool = (
+        toolCallId: string,
+        kind: "read" | "search" | "execute",
+        status: "completed" | "failed" = "completed",
+      ) => session.appendEvent({
+        source: { type: "harness" as const, harnessTargetId: "codex" },
+        kind: "tool_call_update" as const,
+        harness: "codex",
+        harnessTargetId: "codex",
+        turnId: "t1",
+        payload: {
+          toolCallId,
+          title: `${kind[0]!.toUpperCase()}${kind.slice(1)}: ${toolCallId}`,
+          kind,
+          status,
+          rawInput: kind === "execute"
+            ? { command: toolCallId }
+            : kind === "search"
+              ? { pattern: toolCallId }
+              : { file_path: `${toolCallId}.ts` },
+          content: [{ type: "text" as const, text: "result\n" }],
+        },
+      });
+      appendTool("one", "read");
+      appendTool("two", "read");
+      appendTool("bad", "read", "failed");
+      appendTool("three", "read");
+      appendTool("query", "search");
+      appendTool("status", "execute");
+
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      expect(protocol.stateStore.getState("timeline").items).toMatchObject([
+        { id: "one", title: "Read ×2" },
+        { id: "bad", status: "failed" },
+        { id: "three", title: "Read · three.ts · 1 line" },
+        { id: "query", title: "Search · query · 1 line" },
+        { id: "status", title: "Ran · status · 1 line" },
+      ]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
