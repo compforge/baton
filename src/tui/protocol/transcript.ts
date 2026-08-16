@@ -261,6 +261,49 @@ export function toolTranscriptItem(
   };
 }
 
+// 只有探索类工具(read/search/fetch)允许聚合成组行:execute 的命令原文是审查面,
+// edit/delete/move 的 diff 按 chat-tui 既定决策永不裁剪,折叠它们都会藏住关键信息。
+const GROUPABLE_TOOL_KINDS = new Set(["read", "search", "fetch"]);
+
+/**
+ * 可分组工具的分组键:同 kind + 同 turn + 同 harness target 的连续调用才并组;
+ * undefined = 该调用不参与分组。failed/declined 不进组——错误详情必须单独成块显眼展示。
+ */
+export function toolGroupKey(tc: ToolCallState): string | undefined {
+  if (!tc.kind || !GROUPABLE_TOOL_KINDS.has(tc.kind)) return undefined;
+  const status = normalizeToolStatus(tc.status);
+  if (status === "failed" || status === "declined") return undefined;
+  return JSON.stringify([tc.kind, tc.turnId ?? "", tc.harnessTargetId ?? ""]);
+}
+
+/**
+ * N≥2 个同键调用 → 聚合 block。id 取首成员 toolCallId 并随组增长保持稳定:
+ * 组从单块升级为聚合块时 chat-tui 按 key 原地复用 renderable,避免重挂载残留
+ * (见 chat-tui transcript.tsx 的 OpenTUI 注释)。子行只是摘要,原始 output 不进聚合块。
+ */
+export function toolGroupTranscriptItem(
+  tcs: readonly ToolCallState[],
+): Extract<TranscriptItem, { type: "block" }> {
+  const first = tcs[0]!;
+  const isRunning = (tc: ToolCallState) =>
+    ["pending", "in_progress"].includes(normalizeToolStatus(tc.status));
+  const lines = tcs.map((tc) => {
+    const keyArg = toolKeyArg(tc, tc.title ?? tc.toolCallId) ??
+      compactText(tc.title ?? tc.toolCallId);
+    const stats = toolResultStats(tc, textOf(tc.content).split("\n").filter(Boolean));
+    return `${isRunning(tc) ? "• " : ""}${[keyArg, ...stats].filter(Boolean).join(" · ")}`;
+  });
+  return {
+    type: "block",
+    id: first.toolCallId,
+    kind: "tool",
+    author: harnessAuthor(first.harness),
+    title: `${TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind} ×${tcs.length}`,
+    status: tcs.some(isRunning) ? "in_progress" : "completed",
+    content: { type: "lines", lines },
+  };
+}
+
 const REVIEW_DISPLAY: Record<
   ApprovalReviewUpdate["decision"],
   { status: TranscriptBlockStatus; tone?: BlockTone }
@@ -298,10 +341,40 @@ export function buildTranscript(
   } = {},
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
+  let pendingToolGroup: ToolCallState[] = [];
+  let pendingToolGroupKey: string | undefined;
+  const flushToolGroup = () => {
+    if (pendingToolGroup.length === 1) {
+      items.push(toolTranscriptItem(pendingToolGroup[0]!));
+    } else if (pendingToolGroup.length > 1) {
+      items.push(toolGroupTranscriptItem(pendingToolGroup));
+    }
+    pendingToolGroup = [];
+    pendingToolGroupKey = undefined;
+  };
   const hidden = (laneId: string | undefined) =>
     laneId !== undefined && options.isSideLane?.(laneId) === true;
   const noticesById = new Map(state.notices.map((notice) => [`n_${notice.seq}`, notice]));
   for (const entry of state.timeline) {
+    if (entry.type === "tool_call") {
+      const tc = state.toolCalls.get(entry.id);
+      if (!tc || hidden(tc.laneId)) continue;
+      const groupKey = toolGroupKey(tc);
+      if (groupKey !== undefined) {
+        if (pendingToolGroupKey === groupKey) {
+          pendingToolGroup.push(tc);
+          continue;
+        }
+        flushToolGroup();
+        pendingToolGroup = [tc];
+        pendingToolGroupKey = groupKey;
+        continue;
+      }
+      flushToolGroup();
+      items.push(toolTranscriptItem(tc));
+      continue;
+    }
+    flushToolGroup();
     if (entry.type === "notice") {
       const notice = noticesById.get(entry.id);
       if (!notice) continue;
@@ -390,11 +463,6 @@ export function buildTranscript(
             }
           : { format: "plain" as const }),
       });
-      continue;
-    }
-    if (entry.type === "tool_call") {
-      const tc = state.toolCalls.get(entry.id);
-      if (tc && !hidden(tc.laneId)) items.push(toolTranscriptItem(tc));
       continue;
     }
     if (entry.type === "harness_invocation") {
@@ -503,5 +571,6 @@ export function buildTranscript(
       content: { type: "plan", entries },
     });
   }
+  flushToolGroup();
   return items;
 }
