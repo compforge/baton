@@ -24,7 +24,7 @@
   <text x="365" y="72" class="title">chat-tui</text>
   <rect x="330" y="100" width="250" height="540" rx="12" fill="#eee8ff" class="box"/>
   <rect x="365" y="180" width="180" height="85" rx="42" fill="#e1d8ff" class="box"/>
-  <text x="455" y="232" text-anchor="middle" class="label">Human Input</text>
+  <text x="455" y="232" text-anchor="middle" class="label">ViewInput</text>
   <rect x="365" y="485" width="180" height="85" rx="42" fill="#e1d8ff" class="box"/>
   <text x="455" y="537" text-anchor="middle" class="label">render</text>
   <line x1="455" y1="475" x2="455" y2="280" class="flow"/>

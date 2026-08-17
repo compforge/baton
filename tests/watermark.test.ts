@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   HarnessSessionBindingSink,
   OpenOptions,
   PromptInput,
@@ -29,7 +29,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** submit 只记账 + 报 running；终态由测试经 finish() 手动触发（确定性时序） */
 class ManualAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   prompts: string[] = [];
   private activeTurn?: PromptInput;
 
@@ -37,7 +37,7 @@ class ManualAdapter implements HarnessAdapter {
 
   async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     this.sink = sink;

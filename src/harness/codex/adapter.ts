@@ -32,7 +32,7 @@ import type {
   AdapterCapabilities,
   HarnessAdapter,
   EffortOption,
-  EventSink,
+  HarnessEventSink,
   HarnessSessionBindingSink,
   ModelOption,
   NativeEventSink,
@@ -86,7 +86,7 @@ interface ThreadRuntime {
   serviceTier: string | null;
   /** 最近一次发布的完整 session config 快照，供 settings 通知原地校准 Fast。 */
   configOptions?: SessionConfigOption[];
-  sink: EventSink;
+  sink: HarnessEventSink;
   /** 最近一次 submit 的 baton turn id：迟到通知（tokenUsage 等）也用它标注信封 */
   turnId?: string;
   /** 当前被接受、尚未逻辑终结的 turn */
@@ -1003,7 +1003,7 @@ export class CodexAdapter implements HarnessAdapter {
     });
   }
 
-  private launch(command: string[], opts: OpenOptions, sink: EventSink): ThreadRuntime {
+  private launch(command: string[], opts: OpenOptions, sink: HarnessEventSink): ThreadRuntime {
     const [cmd, ...args] = command;
     const child = spawn(cmd as string, args, {
       cwd: opts.cwd,
@@ -1088,7 +1088,7 @@ export class CodexAdapter implements HarnessAdapter {
 
   async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     const command = codexLaunchCommand(this.options.command);
@@ -1570,7 +1570,7 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   /** 信封补齐。turn 终态类发射显式传所属 turn：迟到终态不能盖上共享 rt.turnId（已是最新 turn 的 id） */
-  private emit(rt: ThreadRuntime, ev: Parameters<EventSink>[0], raw?: unknown, turn?: CodexTurn): void {
+  private emit(rt: ThreadRuntime, ev: Parameters<HarnessEventSink>[0], raw?: unknown, turn?: CodexTurn): void {
     // 空回合判定的记账点：任何可见产出都经过这里，集中标记比在各通知分支手工标记可靠
     const owner = turn ?? rt.activeTurn;
     if (owner && !owner.finalized && OUTPUT_EVENT_KINDS.has(ev.kind)) owner.sawOutput = true;

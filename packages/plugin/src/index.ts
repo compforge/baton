@@ -22,23 +22,20 @@ export type { Mention } from "./mention.ts";
 export { MAIN_LANE_ID } from "./lane.ts";
 
 export type {
-  HumanInput,
-  HumanInputOutcome,
-  HumanInputRecord,
-  HumanInputSettlement,
-} from "./input.ts";
+  ViewInput,
+  ViewInputRecord,
+  ViewOutput,
+} from "./view.ts";
 
 export type {
-  HarnessDelivery,
-  HarnessEventRecord,
+  BatonEventReference,
+  DeferredHookStage,
   Hook,
-  HookBoundary,
   HookContext,
-  HookDirection,
-  HookPhase,
   HookStage,
   HookSubjectMap,
-  HumanPresentation,
+  HarnessInputDispatch,
+  InlineHookStage,
 } from "./hook.ts";
 
 export type {
@@ -54,7 +51,7 @@ export type {
   DraftInput,
   DraftResult,
   FreeTextAskInput,
-  HarnessInput,
+  HarnessInvocationInput,
   HarnessResult,
   HarnessValue,
   PluginVerbs,

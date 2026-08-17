@@ -15,7 +15,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -48,7 +48,7 @@ afterEach(() => {
 class StreamingAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   turnId?: string;
   private admitted!: () => void;
   /** submit 已受理（sink / turnId 就绪）；测试据此开始注入流式事件 */
@@ -56,7 +56,7 @@ class StreamingAdapter implements HarnessAdapter {
     this.admitted = resolve;
   });
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "streaming-ref", resumed: false };
   }

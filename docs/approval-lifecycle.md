@@ -123,6 +123,6 @@ codex 报告生效 reviewer 为委托时，Target Status 常驻 `approvals:auto-
 - `src/interaction/harness.ts`：Harness verb lowering 后的 Interaction continuation。
 - `src/interaction/types.ts`：Interaction identity、requester 与 requested/answered/cancelled 公共契约。
 - `src/event/types.ts`：`interaction.requested` / `interaction.answered` / `interaction.cancelled` / `approval_review_update`。
-- `src/tui/protocol/`：审批卡、review 回执与 Target Status 委托提示投影。
+- `src/view/chat-tui/protocol/`：审批卡、review 回执与 Target Status 委托提示投影。
 - chat-tui 公开的 `TranscriptBlockStatus`、block `tone` 与 Timeline 展示规则。
 - `tests/approval-contract.test.ts` 等：审批契约与回执归一。

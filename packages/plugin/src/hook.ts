@@ -1,49 +1,33 @@
 import type { ReconcileSnapshot } from "./snapshot.ts";
 import type { PluginVerbs } from "./reconcile-context.ts";
-import type { HumanInputRecord, HumanInputSettlement } from "./input.ts";
-
-export type HookBoundary = "human" | "harness";
-export type HookDirection = "inbound" | "outbound";
-export type HookPhase = "before" | "after";
+import type { ViewInputRecord, ViewOutput } from "./view.ts";
 
 export type HookStage =
-  | "human.inbound.before"
-  | "human.inbound.after"
-  | "human.outbound.before"
-  | "human.outbound.after"
-  | "harness.inbound.before"
-  | "harness.inbound.after"
-  | "harness.outbound.before"
-  | "harness.outbound.after";
+  | "view.input"
+  | "view.output"
+  | "harness.input"
+  | "harness.output";
 
-/** A Core presentation update; this deliberately does not expose a TUI DTO. */
-export interface HumanPresentation {
-  readonly presentationId: string;
-  readonly kind:
-    | "transcript"
-    | "queue"
-    | "interaction"
-    | "status"
-    | "toast"
-    | "board"
-    | "picker";
-  readonly revision?: number;
-}
+/** Hook stages completed inline before Core continues the observed operation. */
+export type InlineHookStage =
+  | "view.input"
+  | "harness.input";
 
-/** One Core attempt to send a prepared Input to a Harness Adapter. */
-export interface HarnessDelivery {
+/** Durable or published observations delivered through the best-effort queue. */
+export type DeferredHookStage = Exclude<HookStage, InlineHookStage>;
+
+/** Read-only view of one Core dispatch of a HarnessInput to its Adapter. */
+export interface HarnessInputDispatch {
   readonly attemptId: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
   readonly turnId: string;
   readonly messageId: string;
   readonly operation: "new_turn" | "steer";
-  readonly outcome?: "accepted" | "rejected" | "error";
-  readonly reason?: string;
 }
 
-/** Normalized Harness output after it is durable in the Event Ledger. */
-export interface HarnessEventRecord {
+/** Reference to a Harness-originated Baton Event after Core commits it. */
+export interface BatonEventReference {
   readonly kind: string;
   readonly harnessTargetId: string;
   readonly laneId: string;
@@ -53,14 +37,10 @@ export interface HarnessEventRecord {
 }
 
 export interface HookSubjectMap {
-  readonly "human.inbound.before": HumanInputRecord;
-  readonly "human.inbound.after": HumanInputSettlement;
-  readonly "human.outbound.before": HumanPresentation;
-  readonly "human.outbound.after": HumanPresentation;
-  readonly "harness.inbound.before": HarnessDelivery;
-  readonly "harness.inbound.after": HarnessDelivery;
-  readonly "harness.outbound.before": HarnessEventRecord;
-  readonly "harness.outbound.after": HarnessEventRecord;
+  readonly "view.input": ViewInputRecord;
+  readonly "view.output": ViewOutput;
+  readonly "harness.input": HarnessInputDispatch;
+  readonly "harness.output": BatonEventReference;
 }
 
 /**

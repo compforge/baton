@@ -1,4 +1,10 @@
-import type { Hook, HookStage, HookSubjectMap } from "@compforge/baton-plugin";
+import type {
+  DeferredHookStage,
+  Hook,
+  HookStage,
+  HookSubjectMap,
+  InlineHookStage,
+} from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import { type LogSink, logError } from "../logging.ts";
@@ -11,7 +17,7 @@ import {
 } from "./verb.ts";
 
 export const DEFAULT_HOOK_TIMEOUT_MS = 10_000;
-export const DEFAULT_AFTER_HOOK_QUEUE_LIMIT = 256;
+export const DEFAULT_DEFERRED_HOOK_QUEUE_LIMIT = 256;
 
 export interface HookRegistrationOwner {
   readonly batonSessionId: string;
@@ -30,7 +36,7 @@ interface HookRuntimeOptions {
   readonly invokeVerb: InvokeVerb;
   readonly log?: LogSink;
   readonly defaultTimeoutMs?: number;
-  readonly afterQueueLimit?: number;
+  readonly deferredQueueLimit?: number;
 }
 
 /** Host registry; Plugin Binding cleanup removes each registration atomically. */
@@ -68,8 +74,8 @@ export class HookRegistry {
 }
 
 /**
- * Hook failures are observations, not decisions: before waits for all matching
- * handlers but fails open; after is delivered asynchronously through a bounded
+ * Hook failures are observations, not decisions: inline stages wait for all
+ * matching handlers and fail open; committed/published stages use a bounded
  * best-effort queue. Effects are only available through HookContext.verbs.
  */
 export class HookRuntime {
@@ -78,8 +84,8 @@ export class HookRuntime {
   private readonly invokeVerb: InvokeVerb;
   private readonly log?: LogSink;
   private readonly defaultTimeoutMs: number;
-  private readonly afterQueueLimit: number;
-  private afterPending = 0;
+  private readonly deferredQueueLimit: number;
+  private deferredPending = 0;
 
   constructor(
     private readonly registry: HookRegistry,
@@ -90,16 +96,20 @@ export class HookRuntime {
     this.invokeVerb = options.invokeVerb;
     this.log = options.log;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
-    this.afterQueueLimit = options.afterQueueLimit ?? DEFAULT_AFTER_HOOK_QUEUE_LIMIT;
+    this.deferredQueueLimit =
+      options.deferredQueueLimit ?? DEFAULT_DEFERRED_HOOK_QUEUE_LIMIT;
     if (!Number.isSafeInteger(this.defaultTimeoutMs) || this.defaultTimeoutMs < 1) {
       throw new Error("Hook default timeout must be a positive integer");
     }
-    if (!Number.isSafeInteger(this.afterQueueLimit) || this.afterQueueLimit < 1) {
-      throw new Error("Hook after queue limit must be a positive integer");
+    if (
+      !Number.isSafeInteger(this.deferredQueueLimit) ||
+      this.deferredQueueLimit < 1
+    ) {
+      throw new Error("Hook deferred queue limit must be a positive integer");
     }
   }
 
-  async before<S extends Extract<HookStage, `${string}.before`>>(
+  async inline<S extends InlineHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): Promise<void> {
@@ -110,20 +120,20 @@ export class HookRuntime {
     );
   }
 
-  after<S extends Extract<HookStage, `${string}.after`>>(
+  defer<S extends DeferredHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): void {
     for (const registration of this.registry.list(stage)) {
-      if (this.afterPending >= this.afterQueueLimit) {
+      if (this.deferredPending >= this.deferredQueueLimit) {
         this.writeLog(registration, stage, "dropped", undefined, {
-          reason: "after hook queue is full",
+          reason: "deferred hook queue is full",
         });
         continue;
       }
-      this.afterPending += 1;
+      this.deferredPending += 1;
       void this.run(registration, stage, subject).finally(() => {
-        this.afterPending -= 1;
+        this.deferredPending -= 1;
       });
     }
   }

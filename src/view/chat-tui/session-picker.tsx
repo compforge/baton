@@ -12,8 +12,8 @@ import { useState, type ReactNode } from "react";
 
 import type { Theme } from "chat-tui";
 
-import { sessionTreeRows, treeRowPrefix } from "../store/session-tree.ts";
-import { sessionDisplayTitle, type SessionMeta } from "../store/store.ts";
+import { sessionTreeRows, treeRowPrefix } from "../../store/session-tree.ts";
+import { sessionDisplayTitle, type SessionMeta } from "../../store/store.ts";
 
 /** list = 时间投影（updatedAt desc，listSessions 的顺序）；tree = fork 谱系投影 */
 export type SessionPickerMode = "list" | "tree";

@@ -1,5 +1,5 @@
-/** A semantic input accepted from the Human boundary. */
-export type HumanInput =
+/** A semantic Human intent normalized by a Baton View. */
+export type ViewInput =
   | {
       readonly kind: "prompt";
       readonly text: string;
@@ -26,21 +26,24 @@ export type HumanInput =
       readonly harnessTargetId?: string;
     };
 
-/** A Human Input after its received fact is durable in the Event Ledger. */
-export interface HumanInputRecord {
+/** A ViewInput after Core has durably accepted it. */
+export interface ViewInputRecord {
   readonly inputId: string;
   readonly eventId: string;
   readonly seq: number;
-  readonly input: HumanInput;
+  readonly input: ViewInput;
 }
 
-export type HumanInputOutcome = "succeeded" | "failed" | "cancelled";
-
-/** The durable terminal fact for lowering one Human Input. */
-export interface HumanInputSettlement {
-  readonly inputId: string;
-  readonly eventId: string;
-  readonly seq: number;
-  readonly outcome: HumanInputOutcome;
-  readonly detail?: string;
+/** A Core projection update published through a Baton View. */
+export interface ViewOutput {
+  readonly outputId: string;
+  readonly kind:
+    | "transcript"
+    | "queue"
+    | "interaction"
+    | "status"
+    | "toast"
+    | "board"
+    | "picker";
+  readonly revision?: number;
 }

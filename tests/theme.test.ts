@@ -7,7 +7,7 @@ import {
   batonTheme,
   batonThemeFor,
   themeModeForBackground,
-} from "../src/tui/theme.ts";
+} from "../src/view/chat-tui/theme.ts";
 
 describe("agentColorFor", () => {
   test("known harnesses get fixed, distinct colors", () => {

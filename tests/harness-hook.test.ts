@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type {
-  HarnessDelivery,
-  HarnessEventRecord,
+  BatonEventReference,
+  HarnessInputDispatch,
 } from "@compforge/baton-plugin";
 
 import {
@@ -15,7 +15,7 @@ import {
 import type { AnyEventDraft, PromptBlock } from "../src/event/index.ts";
 import type {
   AdapterCapabilities,
-  EventSink,
+  HarnessEventSink,
   HarnessAdapter,
   HarnessSessionHandle,
   OpenOptions,
@@ -28,11 +28,11 @@ import { resolveTestTarget } from "./harness-target.ts";
 class ProbeAdapter implements HarnessAdapter {
   readonly harness = "codex";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   inputs: PromptInput[] = [];
   private active?: PromptInput;
 
-  async open(_options: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_options: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "probe", resumed: false };
   }
@@ -103,7 +103,7 @@ function controller(adapter: ProbeAdapter, hooks: HarnessHookGateway): Controlle
 }
 
 describe("Harness Hook integration", () => {
-  test("wraps new-turn and steer sends with one correlated delivery", async () => {
+  test("observes each new-turn and steer HarnessInput before Adapter dispatch", async () => {
     const adapter = new ProbeAdapter();
     let releaseNewTurn!: () => void;
     let releaseSteer!: () => void;
@@ -113,58 +113,42 @@ describe("Harness Hook integration", () => {
     const steerGate = new Promise<void>((resolve) => {
       releaseSteer = resolve;
     });
-    const before: HarnessDelivery[] = [];
-    const after: HarnessDelivery[] = [];
+    const inputs: HarnessInputDispatch[] = [];
     const hooks = {
-      has: (stage) => stage === "harness.inbound.before",
-      before: async (stage, subject) => {
-        if (stage !== "harness.inbound.before") return;
-        const delivery = subject as unknown as HarnessDelivery;
-        before.push(delivery);
-        await (delivery.operation === "new_turn" ? newTurnGate : steerGate);
+      has: (stage) => stage === "harness.input",
+      inline: async (stage, subject) => {
+        if (stage !== "harness.input") return;
+        const input = subject as HarnessInputDispatch;
+        inputs.push(input);
+        await (input.operation === "new_turn" ? newTurnGate : steerGate);
       },
-      after: (stage, subject) => {
-        if (stage === "harness.inbound.after") {
-          after.push(subject as unknown as HarnessDelivery);
-        }
-      },
+      defer: () => {},
     } satisfies HarnessHookGateway;
     const control = controller(adapter, hooks);
 
     const first = control.submit("codex", text("one"));
-    await until(() => before.length === 1);
+    await until(() => inputs.length === 1);
     expect(adapter.inputs).toHaveLength(0);
-    expect(before[0]).toMatchObject({
+    expect(inputs[0]).toMatchObject({
       harnessTargetId: "codex",
       laneId: "main",
       operation: "new_turn",
     });
-    expect(before[0]?.attemptId).toMatch(/^att_/);
+    expect(inputs[0]?.attemptId).toMatch(/^att_/);
 
     releaseNewTurn();
-    await until(() => adapter.inputs.length === 1 && after.length === 1);
-    expect(after[0]).toMatchObject({
-      attemptId: before[0]?.attemptId,
-      operation: "new_turn",
-      outcome: "accepted",
-    });
+    await until(() => adapter.inputs.length === 1);
 
     const steering = control.sendTurn("codex", text("two"));
-    await until(() => before.length === 2);
+    await until(() => inputs.length === 2);
     expect(adapter.inputs).toHaveLength(1);
-    expect(before[1]).toMatchObject({
+    expect(inputs[1]).toMatchObject({
       operation: "steer",
       turnId: adapter.inputs[0]?.turnId,
     });
 
     releaseSteer();
     expect((await steering).effective).toBe("steer");
-    expect(after[1]).toMatchObject({
-      attemptId: before[1]?.attemptId,
-      operation: "steer",
-      outcome: "accepted",
-    });
-
     adapter.finish();
     await first;
     await control.close();
@@ -172,24 +156,13 @@ describe("Harness Hook integration", () => {
 
   test("records Harness output before notifying Plugins", async () => {
     const adapter = new ProbeAdapter();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let observed: HarnessEventRecord | undefined;
-    const records: HarnessEventRecord[] = [];
+    const records: BatonEventReference[] = [];
     const hooks = {
-      has: (stage) => stage === "harness.outbound.before",
-      before: async (stage, subject) => {
-        if (stage !== "harness.outbound.before") return;
-        const event = subject as unknown as HarnessEventRecord;
-        if (event.kind !== "agent_message") return;
-        observed = event;
-        await gate;
-      },
-      after: (stage, subject) => {
-        if (stage === "harness.outbound.after") {
-          records.push(subject as unknown as HarnessEventRecord);
+      has: (stage) => stage === "harness.output",
+      inline: async () => {},
+      defer: (stage, subject) => {
+        if (stage === "harness.output") {
+          records.push(subject as BatonEventReference);
         }
       },
     } satisfies HarnessHookGateway;
@@ -206,7 +179,8 @@ describe("Harness Hook integration", () => {
         content: [{ type: "text", text: "working" }],
       },
     });
-    await until(() => observed !== undefined);
+    await until(() => records.some((event) => event.kind === "agent_message"));
+    const observed = records.find((event) => event.kind === "agent_message");
     expect(observed).toMatchObject({
       kind: "agent_message",
       harnessTargetId: "codex",
@@ -217,15 +191,6 @@ describe("Harness Hook integration", () => {
     expect(observed?.seq).toBeNumber();
     expect(session.ledger.read().find((event) => event.kind === "agent_message")?.eventId)
       .toBe(observed?.eventId);
-
-    release();
-    await until(() => records.some((event) => event.kind === "agent_message"));
-    const recorded = records.find((event) => event.kind === "agent_message");
-    expect(recorded).toMatchObject(observed as HarnessEventRecord);
-    expect(recorded?.eventId).toMatch(/^ev_/);
-    expect(recorded?.seq).toBeNumber();
-    expect(session.ledger.read().find((event) => event.kind === "agent_message")?.eventId)
-      .toBe(recorded?.eventId);
 
     adapter.finish();
     await outcome;

@@ -14,7 +14,7 @@ import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -49,10 +49,10 @@ afterEach(() => {
 class OverlapAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   submitted?: PromptInput;
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "ov1", resumed: false };
   }

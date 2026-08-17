@@ -40,12 +40,14 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | `docs/kernel.md`、`docs/workflow.md` | 稳定内核、核心概念、不变量与端到端双向工作流 |
 | `docs/harness.md`、`docs/harness/` | Harness 公共抽象，以及 Codex / Claude Code / DeepSeek Harness 原生协议适配 |
 | `docs/plugin.md` | Plugin host、authoring 契约与长期领域 loop |
+| `docs/view.md` | View Adapter、chat-tui 公共库与 Baton View 边界 |
 | `packages/plugin/` | `@compforge/baton-plugin` 公共纯类型契约；三方 Plugin 的唯一宿主依赖 |
 | `src/channel/`、`src/controller/`、`src/event/`、`src/session/`、`src/store/` | 双向协调边界、Input/Attempt/Turn 编排、事件账本、Session 生命周期与重放 |
 | `src/harness/` | HarnessTarget、Binding、Adapter、capability 与各 Harness wire 适配 |
 | `src/plugin/` | Marketplace、Package/Instance/Binding、Manager/Supervisor/Runner、Resource/Controller 与 Board |
 | `src/context/`、`src/interaction/` | 上下文注册/交付与统一待决交互 |
-| `src/tui/`、`src/cli/` | chat-tui 投影装配、交互入口与 headless 工具 |
+| `src/view/` | View/Core Adapter；内置 chat-tui intent、Projection 映射与 ViewOutput publication |
+| `src/cli/` | TUI 进程入口与 headless 工具 |
 | `tests/` | 内核、Harness 与 Plugin 契约测试 |
 
 改稳定内核或进程模型前先读 `docs/kernel.md` 和 `docs/workflow.md`；接入 Harness 再读
@@ -78,7 +80,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
    是宽松、不参与检索的扩展 metadata；调度控制不进入公开 metadata。
 3. **Typed coordination 串联三类参与者**：Baton core 保持领域无关；一个 BatonSession lease 同时只有一个
    active `Channel`，由它装配 Controller、Plugin Manager、Interaction 路由和订阅，并统一承接
-   Human 与 Core 之间的 typed dispatch/outbound 路径。Channel 只拥有进程期生命周期，不复制任何可恢复
+   ViewInput 与 ViewOutput 的 typed path。Channel 只拥有进程期生命周期，不复制任何可恢复
    状态，也不代替 Queue、Controller、Interaction domain 或 Harness 干活。
    人、Harness 和 Baton Plugin 通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
@@ -90,8 +92,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
    则以 failure 收口而不重放调用栈。
    Plugin 只能依赖
    `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
-   Marketplace Plugin 按活动 Binding 进入独立 Runner；线程 / 进程编排由 Baton 持有，
-   chat-tui 只负责终端焦点、输入路由和 surface 投影。
+   Marketplace Plugin 按活动 Binding 进入独立 Runner；线程 / 进程编排由 Baton 持有。
+   `chat-tui` 是 Baton 与 Doctor 可共同使用的公共终端 UI 库；Baton 特有的 ViewInput / ViewOutput
+   适配留在 `src/view/chat-tui`，不反向进入 chat-tui。
 4. **Harness 差异只留在 Adapter / capability**：新增 Harness 默认只改对应 adapter、registry
    与 identity 目录；Session、store/reduce、Projection 和 chat-tui 不出现 Harness 分支。开放
    wire 值在边界保守归一，原始形态保留在 `raw`；外部 HarnessSession 只经只读 Inspector
@@ -111,6 +114,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 - `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
 - `docs/harness/codex.md`、`docs/harness/claude-code.md`、`docs/harness/deepseek-harness.md` — 内置 Harness 的协议适配
 - `docs/plugin.md` — Plugin Manager / Supervisor / Runner、Resource/Controller 与三方 authoring 契约
+- `docs/view.md` — View Adapter、chat-tui 集成和新增 View 的接入边界
 - `docs/resource-lifecycle.md` — Plugin Resource 准入、结构 owner、删除与恢复契约
 - `docs/approval-lifecycle.md` — 审批诚实性、授权方与回执
 - `docs/logging.md` — Baton、Harness 与 Plugin 共用的结构化运维日志

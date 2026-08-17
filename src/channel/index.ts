@@ -1,12 +1,12 @@
 import type {
+  DeferredHookStage,
   HookStage,
   HookSubjectMap,
-  HumanInput,
-  HumanInputRecord,
-  HumanInputSettlement,
-  HumanPresentation,
+  InlineHookStage,
+  ViewInput,
+  ViewInputRecord,
+  ViewOutput,
 } from "@compforge/baton-plugin";
-import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
   Controller,
@@ -15,7 +15,11 @@ import {
   type SendTurnOutcome,
 } from "../controller/index.ts";
 import { newId } from "../event/ids.ts";
-import type { AnyEventEnvelope, PromptBlock } from "../event/index.ts";
+import type {
+  AnyEventEnvelope,
+  PromptBlock,
+  ViewInputOutcome,
+} from "../event/index.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import type { InteractionResult } from "../interaction/types.ts";
 import { logError } from "../logging.ts";
@@ -26,11 +30,11 @@ import type { SessionHandle } from "../store/store.ts";
 
 export interface ChannelHookGateway {
   has(stage: HookStage): boolean;
-  before<S extends Extract<HookStage, `${string}.before`>>(
+  inline<S extends InlineHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): Promise<void>;
-  after<S extends Extract<HookStage, `${string}.after`>>(
+  defer<S extends DeferredHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): void;
@@ -65,8 +69,8 @@ export interface ChannelOptions {
 }
 
 export interface DispatchReceipt<T> {
-  /** Durable Human Input accepted by this Channel. */
-  readonly input: HumanInputRecord;
+  /** Durable ViewInput accepted by this Channel. */
+  readonly input: ViewInputRecord;
   readonly accepted: true;
   /** Immediate receipt from the state owner; long-running settlement stays separate. */
   readonly result: T;
@@ -84,7 +88,7 @@ const activeSessionChannels = new Set<string>();
  * One BatonSession lease 的活跃协调边界与 composition root。
  *
  * Channel 装配 Controller、Plugin Manager、Hook gateway 和 Interaction 路由，
- * 并为 Human Input 提供固定的 typed path。它只拥有进程期生命周期和组件引用；
+ * 并为 ViewInput 提供固定的 typed path。它只拥有进程期生命周期和组件引用；
  * Session、Queue、Turn、Interaction、Resource 的可恢复状态和状态机仍归原 owner。
  */
 export class Channel implements ChannelHookGateway {
@@ -95,9 +99,8 @@ export class Channel implements ChannelHookGateway {
   private lifecycleState: ChannelLifecycle = "open";
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private presentationRevision = 0;
+  private viewOutputRevision = 0;
   private readonly subscriptions = new Set<() => void>();
-  private readonly outboundHookScope = new AsyncLocalStorage<boolean>();
 
   constructor(private readonly options: ChannelOptions) {
     if (options.plugins && options.hooks) {
@@ -165,8 +168,8 @@ export class Channel implements ChannelHookGateway {
    * Controller own Queue admission and Turn execution.
    */
   submitPrompt(
-    input: Extract<HumanInput, { kind: "prompt" }>,
-    prepare: (record: HumanInputRecord) => Promise<PromptBlock[]>,
+    input: Extract<ViewInput, { kind: "prompt" }>,
+    prepare: (record: ViewInputRecord) => Promise<PromptBlock[]>,
     options?: Omit<SendTurnOptions, "parentEventId">,
   ): Promise<DispatchReceipt<SendTurnOutcome>> {
     return this.dispatch(input, async (record) =>
@@ -179,24 +182,24 @@ export class Channel implements ChannelHookGateway {
 
   /** Run a closed-set command lowering supplied by the Human surface. */
   dispatchCommand<T>(
-    input: Extract<HumanInput, { kind: "command" }>,
-    execute: (record: HumanInputRecord) => Promise<T>,
+    input: Extract<ViewInput, { kind: "command" }>,
+    execute: (record: ViewInputRecord) => Promise<T>,
   ): Promise<DispatchReceipt<T>> {
     return this.dispatch(input, execute);
   }
 
   /** Apply one typed configuration input through its concrete setting owner. */
   dispatchConfiguration<T>(
-    input: Extract<HumanInput, { kind: "configuration" }>,
-    apply: (record: HumanInputRecord) => Promise<T>,
+    input: Extract<ViewInput, { kind: "configuration" }>,
+    apply: (record: ViewInputRecord) => Promise<T>,
   ): Promise<DispatchReceipt<T>> {
     return this.dispatch(input, apply);
   }
 
   /** Route an Interaction answer to the requester that owns its continuation. */
   resolveInteraction(
-    input: Extract<HumanInput, { kind: "interaction_response" }>,
-    prepare: (record: HumanInputRecord) => Promise<InteractionResult | undefined>,
+    input: Extract<ViewInput, { kind: "interaction_response" }>,
+    prepare: (record: ViewInputRecord) => Promise<InteractionResult | undefined>,
   ): Promise<DispatchReceipt<boolean>> {
     return this.dispatch(input, async (record) => {
       const interaction = this.options.session.projection.interactions.get(
@@ -223,42 +226,29 @@ export class Channel implements ChannelHookGateway {
 
   /** Interrupt the active main-Lane Queue run; Turn settlement remains owner-driven. */
   interrupt(
-    input: Extract<HumanInput, { kind: "interrupt" }>,
+    input: Extract<ViewInput, { kind: "interrupt" }>,
   ): Promise<DispatchReceipt<void>> {
     return this.dispatch(input, async () => {
       await this.controller.control({ kind: "interrupt" });
     });
   }
 
-  /**
-   * Send one response up the outbound path. Reentrant publication skips the
-   * same before Hook so a Hook-created Interaction can become visible and
-   * unblock the Hook that requested it.
-   */
-  async outbound(
-    kind: HumanPresentation["kind"],
+  /** Publish one ViewOutput, then notify Plugins of that observation. */
+  async publishViewOutput(
+    kind: ViewOutput["kind"],
     publish: () => boolean,
   ): Promise<boolean> {
     if (this.lifecycleState !== "open") return false;
-    const presentation: HumanPresentation = Object.freeze({
-      presentationId: newId("hp"),
+    const output: ViewOutput = Object.freeze({
+      outputId: newId("vo"),
       kind,
-      revision: ++this.presentationRevision,
+      revision: ++this.viewOutputRevision,
     });
-    if (!this.publishingFromHook && this.has("human.outbound.before")) {
-      await this.outboundHookScope.run(
-        true,
-        () => this.notifyBefore("human.outbound.before", presentation),
-      );
-    }
     const published = publish();
-    if (published) this.notifyAfter("human.outbound.after", presentation);
+    if (published) {
+      this.notifyDeferred("view.output", output);
+    }
     return published;
-  }
-
-  /** Whether outbound is inside its before coordination window. */
-  get publishingFromHook(): boolean {
-    return this.outboundHookScope.getStore() === true;
   }
 
   has(stage: HookStage): boolean {
@@ -270,18 +260,18 @@ export class Channel implements ChannelHookGateway {
     }
   }
 
-  async before<S extends Extract<HookStage, `${string}.before`>>(
+  async inline<S extends InlineHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): Promise<void> {
-    await this.notifyBefore(stage, subject);
+    await this.notifyInline(stage, subject);
   }
 
-  after<S extends Extract<HookStage, `${string}.after`>>(
+  defer<S extends DeferredHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): void {
-    this.notifyAfter(stage, subject);
+    this.notifyDeferred(stage, subject);
   }
 
   /**
@@ -296,8 +286,8 @@ export class Channel implements ChannelHookGateway {
   }
 
   private async dispatch<T>(
-    input: HumanInput,
-    handle: (record: HumanInputRecord) => Promise<T>,
+    input: ViewInput,
+    handle: (record: ViewInputRecord) => Promise<T>,
   ): Promise<DispatchReceipt<T>> {
     this.assertOpen();
     const inputId = newId("in");
@@ -306,14 +296,14 @@ export class Channel implements ChannelHookGateway {
       source: { type: "user" },
       payload: { inputId, input },
     });
-    const record: HumanInputRecord = Object.freeze({
+    const record: ViewInputRecord = Object.freeze({
       inputId,
       eventId: received.eventId,
       seq: received.seq,
       input,
     });
 
-    await this.notifyBefore("human.inbound.before", record);
+    await this.notifyInline("view.input", record);
     try {
       const result = await handle(record);
       this.settle(record, "succeeded");
@@ -373,8 +363,8 @@ export class Channel implements ChannelHookGateway {
   private pluginHooks(manager: Manager): ChannelHookGateway {
     return {
       has: (stage) => manager.hasHook(stage),
-      before: (stage, subject) => manager.beforeHook(stage, subject),
-      after: (stage, subject) => manager.afterHook(stage, subject),
+      inline: (stage, subject) => manager.inlineHook(stage, subject),
+      defer: (stage, subject) => manager.deferHook(stage, subject),
     };
   }
 
@@ -422,11 +412,11 @@ export class Channel implements ChannelHookGateway {
   }
 
   private settle(
-    record: HumanInputRecord,
-    outcome: HumanInputSettlement["outcome"],
+    record: ViewInputRecord,
+    outcome: ViewInputOutcome,
     detail?: string,
   ): void {
-    const settled = this.options.session.appendEvent({
+    this.options.session.appendEvent({
       kind: "input.settled",
       source: { type: "baton" },
       parentEventId: record.eventId,
@@ -436,32 +426,25 @@ export class Channel implements ChannelHookGateway {
         ...(detail === undefined ? {} : { detail }),
       },
     });
-    this.notifyAfter("human.inbound.after", Object.freeze({
-      inputId: record.inputId,
-      eventId: settled.eventId,
-      seq: settled.seq,
-      outcome,
-      ...(detail === undefined ? {} : { detail }),
-    }));
   }
 
-  private async notifyBefore<S extends Extract<HookStage, `${string}.before`>>(
+  private async notifyInline<S extends InlineHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): Promise<void> {
     try {
-      await this.hooks?.before(stage, subject);
+      await this.hooks?.inline(stage, subject);
     } catch (error) {
       this.logFailure(stage, error);
     }
   }
 
-  private notifyAfter<S extends Extract<HookStage, `${string}.after`>>(
+  private notifyDeferred<S extends DeferredHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): void {
     try {
-      this.hooks?.after(stage, subject);
+      this.hooks?.defer(stage, subject);
     } catch (error) {
       this.logFailure(stage, error);
     }

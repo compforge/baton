@@ -96,7 +96,7 @@ switch (cmd) {
 // 无子命令或直接跟 flag（如 baton --cwd x）都进 TUI；
 // 注意不能在 import 后 exit——TUI 靠事件循环常驻
 if (cmd === undefined || cmd === "tui" || cmd.startsWith("-")) {
-  await import("../tui/main.tsx");
+  await import("../view/chat-tui/main.tsx");
 } else {
   await run(cmd);
 }
@@ -184,7 +184,7 @@ async function run(command: string): Promise<void> {
       const id = positionalAfterCommand();
       if (!id || id.startsWith("bs_")) {
         process.argv.push(...(id ? ["--session", id] : ["--pick-session", "resume"]));
-        await import("../tui/main.tsx");
+        await import("../view/chat-tui/main.tsx");
         break;
       }
       const root = argValue("--root");
@@ -203,7 +203,7 @@ async function run(command: string): Promise<void> {
       } catch (err) {
         fail(err instanceof Error ? err.message : String(err));
       }
-      await import("../tui/main.tsx");
+      await import("../view/chat-tui/main.tsx");
       break;
     }
     case "fork": {
@@ -211,7 +211,7 @@ async function run(command: string): Promise<void> {
       // 显式 id / --last / 非 TTY（管道、CI）直通老路径
       if (!positional && !process.argv.includes("--last") && process.stdout.isTTY) {
         process.argv.push("--pick-session", "fork");
-        await import("../tui/main.tsx");
+        await import("../view/chat-tui/main.tsx");
         break;
       }
       const root = argValue("--root");
@@ -245,7 +245,7 @@ async function run(command: string): Promise<void> {
         break;
       }
       process.argv.push("--session", childId);
-      await import("../tui/main.tsx");
+      await import("../view/chat-tui/main.tsx");
       break;
     }
     case "sessions": {

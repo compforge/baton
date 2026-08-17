@@ -131,7 +131,7 @@ export interface SendTurnOptions {
   readonly sourceProposedPlanId?: string;
   /** Host-prepared intake identity used to correlate human Hook stages with the Input. */
   readonly identity?: { readonly messageId: string; readonly turnId: string };
-  /** Durable Human Input or Plugin fact that caused this Turn. */
+  /** Durable ViewInput or Plugin fact that caused this Turn. */
   readonly parentEventId?: string;
   /** Called synchronously after the Input is visible in the Core queue. */
   readonly onEnqueued?: () => void;
@@ -1254,15 +1254,15 @@ export class Controller {
         blocks,
         ...(syncBlocks ? { syncBlocks } : {}),
       };
-      const beforeDelivery = this.harnessHooks.beforeDelivery(
-        this.harnessHooks.delivery(
+      const beforeInput = this.harnessHooks.beforeInput(
+        this.harnessHooks.dispatch(
           binding,
           promptInput,
           attempt.attemptId,
           "new_turn",
         ),
       );
-      if (beforeDelivery) await beforeDelivery;
+      if (beforeInput) await beforeInput;
       this.deliveryAttempts.markDispatching(binding, attempt);
 
       // sendTurn 回执只确认 Adapter 接受本次投递责任；Harness 终态仍由 idle Event 收口。
@@ -1380,7 +1380,7 @@ export class Controller {
   }
 
   /**
-   * adapter 上报与 Controller 自有 Event 的统一入口。BatonSession 先完成
+   * HarnessEvent 与 Controller 自有 Event draft 的统一提交入口。BatonSession 先完成
    * WAL record，再直接 reduce 当前 Projection；Controller 随后只处理 Turn
    * scope 等协调逻辑。Ledger 不在这条实时链路上广播 Event。
    */
@@ -1646,7 +1646,7 @@ export class Controller {
         setupTurnId,
         modelPreference: this.options.modelPreferences?.[target.id],
         effortPreference: this.options.effortPreferences?.[target.id],
-        eventSink: (event) => this.harnessHooks.acceptEvent(created, event),
+        eventSink: (event) => this.harnessHooks.acceptHarnessEvent(created, event),
       });
       binding = created;
       this.bindings.set(key, created);

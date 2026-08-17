@@ -12,17 +12,94 @@ Baton 需要保留各家 Harness 的原生体验，同时避免其 DTO、状态�
 Controller、Store、Projection 或 chat-tui。边界因此分为三层：
 
 ```text
-harness wire ── Adapter ──▶ Baton Event ── Projection ──▶ chat-tui view
-harness wire ◀─ Adapter ◀── Baton action ◀─ Controller ◀── chat-tui intent
+harness wire ── Adapter ──▶ HarnessEvent ── Core commit ──▶ Event ── Projection ──▶ chat-tui view
+harness wire ◀─ Adapter call ◀─ HarnessInput ◀─ Controller ◀── chat-tui intent
 harness verb ─ Adapter lowering ─▶ InteractionDraft ─ OpenInteraction ─▶ Core
 ```
 
 Adapter 是唯一同时理解原生协议与 Baton 契约的模块。Baton 采用“稳定共同语义 + capability +
 raw 保真”，不要求把所有 Harness 压成最低公分母，也不把单家方言提升为核心概念。
 
-## 2. 身份与对象
+## 2. Harness IO 与公共端口
 
-### 2.1 Definition 与 Target
+`Harness IO` 表示 Core ↔ Harness 实时执行的两个语义方向：Input port 把一条持久工作交给 Harness，
+Output port 接收 Harness 的流式观察。`HarnessInput` 与 `HarnessEvent` 直接表达这两个方向，不再通过
+inbound/outbound 组合命名。
+
+Harness 公共 IO 只定义两个事实：Core 拥有等待 Harness 处理的 `HarnessInput`，
+Adapter 持续产生已归一但尚未提交的 `HarnessEvent`。Core 为 HarnessEvent 补齐可信坐标、
+`eventId/seq` 并写入 Ledger 后，它才是 Baton `Event`。Adapter function call、即时返回、
+delivery attempt 和 Hook payload 只是这两个事实的传输与观察机制，不进入 Harness IO 概念模型。
+
+### 2.1 HarnessInput 与 Adapter input
+
+`HarnessInput` 是 Core-owned 的持久工作对象，不是 Harness wire DTO。它把一次准备交给 Harness 的
+prompt 工作稳定表达为五个维度：
+
+- identity：`messageId`，以及预留或实际承载它的 `turnId`；
+- routing：`HarnessTarget` 与 `laneId`；
+- content：闭合的 `PromptBlock[]`；
+- provenance：user/Plugin source，以及可选的 ViewInput、HarnessInvocation、ProposedPlan 因果；
+- lifecycle：Queue/admission status、`prompt|steer` delivery 与独立的 delivery outcome。
+
+Queue、recall、steer、cancel 和恢复都操作同一条 HarnessInput。真正调用 Adapter 时，Controller
+只把 HarnessInput 中 Harness 需要的 `turnId`、`messageId`、blocks 与可选 Context side-channel
+降低为 `sendTurn` 调用参数。该参数 shape 是 Adapter 机制，不是第二种 Input；Queue 状态、
+Plugin identity 和持久化细节不穿透 Harness。
+
+### 2.2 HarnessEvent
+
+Harness output 是 Adapter 经 `HarnessEventSink` 持续提交的归一化 `HarnessEvent`：
+
+| 类别 | 稳定语义 | 典型内容 |
+|---|---|---|
+| 内容 | Human 可消费的回答与思考 | message、thought |
+| 执行 | 有身份和生命周期的工作与产物 | tool call、diff/effect、plan、task |
+| 运行态 | Harness 当前执行与容量事实 | run state、usage、context window、available command/config |
+| 回执与诊断 | 需要 Core 持久处理的结果 | input delivery、approval review、notice、error |
+
+宿主在可信边界补齐 HarnessTarget、Lane、Session 与 Turn 坐标，签发 `eventId/seq`，
+再作为 Baton Event record + reduce。原生 wire 可以旁路进入 native trace，并在 Event `raw` 中保真，
+但不能直接成为 Projection 或
+Plugin API。UI grouping、Parallel 区域和卡片布局都是 Event 的 Projection，不属于 Harness output
+vocabulary。
+
+HarnessEvent 按稳定 ID upsert，字段省略表示不变、`null`/空集合表示清除、chunk 表示追加；completed
+全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一，未知值不进入 Core 封闭状态。
+context window 只有在本次占用与容量能严格配对时才作为完整快照输出，避免跨模型拼接数据。
+
+### 2.3 其它 Adapter 端口
+
+并非所有 Harness → Core 返回都属于 output stream：
+
+- `SendTurnReceipt` 是 Input port 的同步 admission 结果，只说明 Adapter 是否接受 new turn/steer；
+- `InteractionDraft` 是 Harness 原生 verb 对 typed decision 的请求，经 `OpenInteraction` 进入 Core；
+  Core 签发 identity 并持久化 requested/answered/cancelled，Adapter 只等待 result；
+- `HarnessSessionBinding` 经 Binding sink 发布原生 Session identity 与 resume state；
+- Inspector 是外部 HarnessSession 的只读观察端口，不参与 live IO。
+
+这些名称是 Adapter 接口中的返回类型或独立端口，不进入 Harness IO 概念模型。
+它们各自拥有不同生命周期，不为了输入/输出形式对称而统一包装成 Event。
+
+### 2.4 Hook 如何观察 Harness IO
+
+Plugin Hook 不直接接收完整 HarnessInput、HarnessEvent 或 Event payload，只获得边界所需的只读引用：
+
+- `harness.input` 在 Adapter 调用前 inline 发送 `HarnessInputDispatch`；
+- `harness.output` 在 HarnessEvent 提交为 Baton Event 后 deferred 发送 `BatonEventReference`。
+
+Adapter admission receipt 和后续 delivery outcome 仍由 Attempt、Input 与 Snapshot 表达，不另建 Hook
+stage。Hook 只能观察并通过 Verb 请求新动作，不能替换 Input、拦截 output 或成为事件总线。
+
+### 2.5 什么进入公共 output vocabulary
+
+Baton 只预置能跨 Harness 保持同一 identity、owner、生命周期和 replay 语义的 output。单家协议字段
+先留在 Adapter/raw；至少两家反复需要且能共享完整契约时，再提升为 Event、Capability 或 Interaction
+kind。是否需要独立 UI 不是提升 Core 概念的理由，是否需要被持久化、恢复、跨 Harness 消费才是。
+
+## 3. 身份与对象
+
+### 3.1 Definition 与 Target
 
 `HarnessDefinition` 是运行时注册的实现定义，包含 canonical ID、alias、持久化 wire key、展示
 信息、Adapter 工厂、可选 Target probe 和 Session Inspector。
@@ -61,7 +138,7 @@ targets:
 Target probe 只发现 model、effort、command 等静态目录，不创建 HarnessSession，也不借
 `Adapter.open()` 制造隐形执行状态。
 
-### 2.2 Lane
+### 3.2 Lane
 
 `Lane` 是 BatonSession 原生的逻辑任务线。主线使用保留 ID `main`，支线 ID 使用 `hl_` 前缀。
 它拥有创建来源，以及按 HarnessTarget 保存的 HarnessSession binding；原生 Session 因恢复失败
@@ -76,7 +153,7 @@ HarnessInvocation 用 `laneId` 继续既有 Lane；`newLane:true` 才在准备�
 每个 Lane 同时最多一个 active Queue run。多个 Lane 可并行，因此一个 Target 可同时有多个 Adapter、
 Handle 和原生 Session；Binding 索引必须使用 `(laneId, harnessTargetId)`，不能只用其中一个。
 
-### 2.3 Session、Binding 与 Handle
+### 3.3 Session、Binding 与 Handle
 
 三个相似对象承担不同生命周期：
 
@@ -93,7 +170,7 @@ Binding。Controller 不从 handle、事件或 `hs_` 等 ID 形状猜 identity�
 的 Delivery Attempt；之后配置变化不能回写历史。`HarnessResumeState` 是 Adapter-owned 的
 版本化 opaque 数据，Baton 只保存并在下次 open 原样回传。
 
-## 3. Adapter 生命周期
+## 4. Adapter 生命周期
 
 稳定核心接口保持很小：
 
@@ -101,27 +178,27 @@ Binding。Controller 不从 handle、事件或 `hs_` 等 ID 形状猜 identity�
 interface HarnessAdapter {
   readonly harness: string;
   readonly capabilities: AdapterCapabilities;
-  open(options, sink, bindingSink): Promise<HarnessSessionHandle>;
+  open(options, eventSink, bindingSink): Promise<HarnessSessionHandle>;
   sendTurn(handle, input): Promise<SendTurnReceipt>;
   cancel(handle): Promise<void>;
   close(handle): Promise<void>;
 }
 ```
 
-### 3.1 open
+### 4.1 open
 
-`open` 在 BatonSession cwd 中建立或恢复 HarnessSession，并长期绑定 Event sink。Adapter 可以在启动期完成 initialize、
+`open` 在 BatonSession cwd 中建立或恢复 HarnessSession，并长期绑定 HarnessEvent sink。Adapter 可以在启动期完成 initialize、
 hook trust、配置读取或原生 resume；这些 I/O 必须有显式 timeout 和失败清理。身份如果只能从
 首个原生事件获得，则在获得时立即发布 Binding。
 
 setup 不自成 Turn。冷启动由某个 Queue item 触发时，期间打开的 Interaction 归属对应 Turn；
 open 尚未返回 handle 前创建的进程、query 或连接必须由 Adapter 自己在失败路径回收。
 
-### 3.2 sendTurn
+### 4.2 sendTurn
 
-`PromptInput` 携带 Baton `turnId`、`messageId`、闭合的 prompt blocks，以及可选 Context
-side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，不能用文本化 helper 静默
-丢弃内容。
+`sendTurn` 的调用参数携带 HarnessInput 的 `turnId`、`messageId`、闭合 prompt blocks，
+以及可选 Context side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
+不能用文本化 helper 静默丢弃内容。
 
 `sendTurn` 只返回 admission 结果：
 
@@ -131,7 +208,12 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 - `rejected`：没有接受，Controller 可以安全排成 follow-up。
 
 有活跃 Turn 时，Adapter 不得擅自并行开启新 Turn。throw 只允许发生在接受责任之前；accepted
-后的失败通过 Event sink 报告终态。
+后的失败通过 HarnessEvent sink 报告终态。
+
+每个 accepted/new_turn 在正常结束、wire fatal error、子进程退出和 transport close 路径都必须
+报告或合成 `state_update(idle)`；错误先发 `_baton_error_update`。重复或迟到的物理终态可以存在，
+Controller 按 Baton turn ID 幂等 finalize。Harness 自发活动也用普通 running/idle Turn 划界，
+只是没有对应 Queue item。
 
 支持 same-turn steer 的 Adapter 必须声明 `steering` descriptor，把能力差异压缩成两个声明，
 而不是散落在各家的控制流里：
@@ -146,13 +228,12 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 投递事实是 Input 的一等状态（`HarnessInput.deliveryOutcome`），不再寄生
 `user_message.deliveryState`（该字段仅剩老 ledger replay 兼容）。
 
-Controller 在实际调用 `sendTurn` 前后发送 `harness.inbound.before/after` Hook。方向沿
-Human→Harness 定义，因此 Core 向 Harness 投递属于 inbound。新 Turn 的
-before 位于持久 Delivery Attempt 的 `prepared` 与 `dispatching` 之间；after 携带 Adapter admission
-的 `accepted/rejected/error` 结果，但不等待 Turn 终态。steer 也使用相同 notification shape，
-其 attempt identity 只关联这次 same-turn send。
+Controller 在实际调用 `sendTurn` 前发送 inline `harness.input` Hook。新 Turn 的通知位于持久 Delivery
+Attempt 的 `prepared` 与 `dispatching` 之间；steer 使用相同 `HarnessInputDispatch`，其 attempt identity
+只关联这次 same-turn send。Adapter admission 的 `accepted/rejected/error` 回执继续更新 Attempt/Input
+状态，不再作为第二个 Hook 阶段。
 
-### 3.3 cancel 与 close
+### 4.3 cancel 与 close
 
 `cancel` 只是请求中断，确认以最终 `idle/cancelled` Event 为准，发出后仍接收在途 update。
 若 Harness 的 pending steer 在 interrupt 后无法继续，Adapter 以
@@ -161,7 +242,7 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 后续仍以 `input_delivery_update` 回执为准。
 `close` 释放 Adapter-owned 进程、query、订阅和句柄；若仍有已接受 Turn，必须先报告或合成终态。
 
-## 4. Capability
+## 5. Capability
 
 公共设计采用“小核心 + 可选能力”。descriptor 用 `{ supported: true }` marker，行为由对应接口
 承担；契约测试保证“声明即实现”。当前能力族包括：
@@ -181,52 +262,6 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 Capability 表达是否支持，不表达 Harness 名称。Controller 只做 feature detection 和优雅降级，
 不能写 provider 分支。若只有一家 Harness 需要某种行为，先留在其 Adapter；至少两家共同印证且
 owner、生命周期和恢复语义一致时，才考虑提升公共 Capability。
-
-## 5. Event 与 Interaction 契约
-
-### 5.1 事件归一
-
-Adapter 只提交 Event draft；宿主按当前 Binding 在可信边界补 `source:harness`、Lane、HarnessTarget、
-HarnessSession 与 Session scope。原生 wire 存入 `raw`，不能让 Adapter 自报执行归属。
-
-Harness output 先由 BatonSession 同步 record 到 Event Ledger 并 reduce Projection，再以带
-`eventId/seq` 的 record 通知 `harness.outbound.before/after`。Ledger 不分发事件；Hook 不承担准入，
-不能把 Plugin 延迟传播到 EventSink；它需要动作时
-通过 Verb 请求 Core。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
-
-稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID
-upsert，completed 全量内容是流式丢包的自愈点。Plan entry 必须有 Plan 内稳定 ID；Adapter 保留
-原生 ID，原生完整快照没有 identity 时按稳定内容派生。开放 wire enum 在 Adapter 边界保守归一；
-未知值不进入核心封闭状态。
-
-`context_window_update` 是最近一次主/root 模型请求的完整快照，payload 固定包含：
-
-- `modelSelection`：用户或 Target 选择的模型，用于切 model 后立即判旧快照失效；
-- `effectiveModel`：Harness 路由实际命中的模型（能观测时提供）；
-- `usedTokens`：该次请求的输入侧 token，包含 cache read/write，不含 output；
-- `capacityTokens`：同一条已解析模型路由的有效 context window。
-
-Adapter 只有在占用与容量能严格配对时才发事件，不能先发 size-only 再补 used，也不能把成本塞进
-该快照。Projection 同时按 `HarnessTarget` 和 `Lane × HarnessTarget` 保存；面向当前会话的展示读取
-主 Lane，避免 side Lane 覆盖。旧 `context_usage_update` 只用于历史 Ledger replay，新 Adapter 不再
-产生该事件。
-
-### 5.2 Turn 终态
-
-每个被 `new_turn` 接受的 Turn，在正常结束、wire fatal error、子进程退出和 transport close
-路径都必须报告或合成一次 `state_update(idle)`；错误先发 `_baton_error_update`。重复或迟到的
-物理终态允许存在，Controller 按 Baton turn ID 幂等 finalize。
-
-Harness 自发活动由 Adapter 铸造普通 Turn，以 Harness 来源的 running/idle 划界。它没有对应
-Queue item，因此不占用 Queue；Turn 本身没有另一种 role。
-
-### 5.3 Interaction
-
-Harness 的 request approval、request user input 等原生 verb 属于各家协议。Adapter 先把它们
-lowering 成闭合的 `InteractionDraft`，再通过 `OpenInteraction` typed Core port 等待 result。
-Core 签发 `interactionId` 和 requester，持久化 requested/answered/cancelled；Adapter 不得自行发
-完整生命周期 Event，也不能把原生 DTO 当作通用消息上送。Interaction 的执行坐标和原生请求留在
-envelope context/raw，不能污染稳定 payload。
 
 ## 6. 外部 HarnessSession 纳管
 
@@ -257,14 +292,14 @@ BatonSession 历史。
 
 新增实现按以下顺序：
 
-1. 在 `src/harness/ids.ts` 注册 canonical ID 与 aliases；
-2. 实现 `src/harness/<name>/adapter.ts`，集中所有 wire lowering/normalization；
-3. 在 `registry.ts` 注册 Definition、工厂、session key、可选 probe 和 Inspector；
-4. 仅声明已经实现并有契约测试的 Capability；支持 same-turn steer 时声明 `steering`
-   descriptor（deliveryTracking / cancelOwnership），投递回执只走 `input_delivery_update`；
-5. 覆盖 open 失败、accepted 后失败、cancel、transport close 和迟到终态（含迟到的投递回执）；
-6. 若支持原生历史，Inspector 必须只读并生成完整 Boundary；
-7. 用参数化测试证明 Store、Projection、Interaction 与队列无需 Harness 分支。
+1. 注册 canonical ID、aliases、Target 配置 lowering 与 Definition；
+2. 实现 Input port：`open/sendTurn/cancel/close`、PromptBlock admission 和 `SendTurnReceipt`；支持 steer
+   时声明 delivery tracking/cancel ownership，并用 `input_delivery_update` 报告显式回执；
+3. 实现 Output port：只把已支持的原生观察归一为公共 HarnessEvent，未知 wire 保留 raw/diagnostic；
+4. 按需实现独立端口：Interaction lowering、Binding 发布、Capability、Target probe 与 Inspector；
+5. 覆盖 open 失败、accepted 后失败、cancel、transport close、迟到 Turn 终态和迟到 delivery receipt；
+6. 若支持原生历史，Inspector 必须只读并生成完整 `HarnessHistoryBoundary`；
+7. 用参数化测试证明 Store、Projection、Interaction 与 Queue 无需 Harness 分支。
 
 自检 diff 默认只落 `src/harness/<name>/`、`registry.ts`、`ids.ts` 和相应 tests。若修改
 Session、reduce、Projection 或 chat-tui，先判断暴露的是公共概念缺口，还是 Adapter 尚未收住

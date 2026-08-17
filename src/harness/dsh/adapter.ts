@@ -22,7 +22,7 @@ import type {
 import type { LogSink } from "../../logging.ts";
 import {
   type AdapterCapabilities,
-  type EventSink,
+  type HarnessEventSink,
   type HarnessAdapter,
   type HarnessSessionBindingSink,
   type HarnessSessionHandle,
@@ -116,7 +116,7 @@ interface DshTurnState {
 interface DshRuntime {
   readonly cwd: string;
   readonly env?: Record<string, string>;
-  readonly sink: EventSink;
+  readonly sink: HarnessEventSink;
   readonly bindingSink?: HarnessSessionBindingSink;
   sessionId?: string;
   client?: DshClientLike;
@@ -289,7 +289,7 @@ export class DshAdapter implements HarnessAdapter {
 
   async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     const handleId = newId("hs");
@@ -755,7 +755,7 @@ export class DshAdapter implements HarnessAdapter {
   private emit(
     runtime: DshRuntime,
     turn: DshTurnState,
-    event: Parameters<EventSink>[0],
+    event: Parameters<HarnessEventSink>[0],
     raw?: unknown,
   ): void {
     runtime.sink({

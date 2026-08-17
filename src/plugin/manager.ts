@@ -27,8 +27,10 @@ import {
   type CronSource,
   type PluginCommandInput,
   type PluginCommandResult,
+  type DeferredHookStage,
   type HookStage,
   type HookSubjectMap,
+  type InlineHookStage,
   type Resource,
   type ResourceRef,
   type ResourceType,
@@ -185,8 +187,8 @@ export interface ManagerOptions {
   mentions?: MentionRegistry;
   /** Default timeout for one Hook handler. */
   hookTimeoutMs?: number;
-  /** Maximum number of best-effort after Hook deliveries awaiting completion. */
-  afterHookQueueLimit?: number;
+  /** Maximum number of best-effort deferred Hook deliveries awaiting completion. */
+  deferredHookQueueLimit?: number;
   /** Controller reconcile 失败后的指数退避；默认从 1 秒增长到最多 1 分钟。 */
   retryBackoff?: Partial<ReconcileRetryBackoff>;
   now?: () => Date;
@@ -354,9 +356,9 @@ export class Manager {
       ...(options.hookTimeoutMs === undefined
         ? {}
         : { defaultTimeoutMs: options.hookTimeoutMs }),
-      ...(options.afterHookQueueLimit === undefined
+      ...(options.deferredHookQueueLimit === undefined
         ? {}
-        : { afterQueueLimit: options.afterHookQueueLimit }),
+        : { deferredQueueLimit: options.deferredHookQueueLimit }),
     });
     this.onToast = options.onToast;
     this.onCommandsChanged = options.onCommandsChanged;
@@ -721,18 +723,18 @@ export class Manager {
     return this.mentions.resolve(input, maxChars);
   }
 
-  beforeHook<S extends Extract<HookStage, `${string}.before`>>(
+  inlineHook<S extends InlineHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): Promise<void> {
-    return this.hooks.before(stage, subject);
+    return this.hooks.inline(stage, subject);
   }
 
-  afterHook<S extends Extract<HookStage, `${string}.after`>>(
+  deferHook<S extends DeferredHookStage>(
     stage: S,
     subject: Readonly<HookSubjectMap[S]>,
   ): void {
-    this.hooks.after(stage, subject);
+    this.hooks.defer(stage, subject);
   }
 
   hasHook(stage: HookStage): boolean {

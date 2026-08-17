@@ -4,7 +4,7 @@
 
 import type { HarnessDeliveryAttemptUpdate } from "../controller/attempt.ts";
 import type { HarnessInputUpdate } from "../harness/input.ts";
-import type { HumanInput, HumanInputOutcome } from "@compforge/baton-plugin";
+import type { ViewInput } from "@compforge/baton-plugin";
 import type {
   ContextDeliveryReceipt,
   ContextSnapshot,
@@ -431,20 +431,22 @@ export interface HarnessInvocationFailed {
   detail: string;
 }
 
-export interface HumanInputReceived {
+export interface ViewInputReceived {
   inputId: string;
-  input: HumanInput;
+  input: ViewInput;
 }
 
-export interface HumanInputSettled {
+export type ViewInputOutcome = "succeeded" | "failed" | "cancelled";
+
+export interface ViewInputSettled {
   inputId: string;
-  outcome: HumanInputOutcome;
+  outcome: ViewInputOutcome;
   detail?: string;
 }
 
 export type EventPayloadMap = {
-  "input.received": HumanInputReceived;
-  "input.settled": HumanInputSettled;
+  "input.received": ViewInputReceived;
+  "input.settled": ViewInputSettled;
   "harness_input.updated": HarnessInputUpdate;
   input_delivery_update: InputDeliveryUpdate;
   state_update: StateUpdate;

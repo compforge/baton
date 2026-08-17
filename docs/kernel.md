@@ -2,7 +2,8 @@
 
 本文定义 Baton 的最小稳定内核：Core 协调谁、核心对象如何关联，以及所有 Harness 和 Plugin
 都不能绕过的约束。Input lowering、Queue 状态机与 Harness 投递顺序见[工作流](./workflow.md)；
-Harness 适配见 [Harness](./harness.md)，长期领域 loop 见 [Plugin](./plugin.md)。
+Harness 适配见 [Harness](./harness.md)，长期领域 loop 见 [Plugin](./plugin.md)，Human surface 适配见
+[View](./view.md)。
 
 ## 1. 定位与边界
 
@@ -14,13 +15,13 @@ Baton Core 位于三类参与者之间：
 
 | 参与者 | 负责 | 通过 Core 协作 |
 |---|---|---|
-| **Human** | 目标、输入、编辑和最终决议 | 提交 Input，回答 Interaction，消费 Projection |
-| **Harness** | 推理、工具调用和原生执行会话 | 接收 HarnessInput，产生 Interaction request、Event 和 receipt |
+| **Human** | 目标、输入、编辑和最终决议 | 通过 View 提交 ViewInput、回答 Interaction、消费 ViewOutput |
+| **Harness** | 推理、工具调用和原生执行会话 | 接收 HarnessInput，产生 HarnessEvent、Interaction request 和 receipt |
 | **Plugin** | 领域 loop、Connector 和完成条件 | 通过 Hook 或 reconcile 被唤醒，通过 Verb 请求 Core 行动 |
 
 Core 是三方的协调者，不代替任何一方完成其工作。`Channel` 是一个 BatonSession lease 期间的
 active runtime handle：它既是 Controller、Plugin Manager、Interaction gateway 与 Harness ports 的
-composition root，也是 Human typed Input 的统一 facade 和 Projection 的 outbound 边界。Core 内部仍由
+composition root，也是 typed ViewInput 的统一 facade 和 ViewOutput 的发布边界。Core 内部仍由
 Session、Queue、Controller、Interaction domain 和 Adapter 各自拥有事实、状态机、调度与执行职责。
 参与者不能互持进程句柄、私建回调通道，也不能绕过 Core 直接改变另一方状态。
 
@@ -28,8 +29,11 @@ Channel 只借用网络框架中 active endpoint、request inbound、response ou
 方向感；它是 Baton 的固定 typed path，不复制可任意挂载 handler 的通用 pipeline。Plugin 扩展点仍是
 Hook 通知与 Verb 请求；Verb 每次都重新进入完整的 Core-owned path，不从当前 Hook 位置继续传播。
 
-chat-tui 位于内核之外：它把键盘、文本和页面操作变成 Human Input，并展示 Core Projection；它不装配或
-关闭 Controller、Plugin Manager、Session lease，也不解释 Requirement、Deployment、Review 等领域语义。
+View 位于内核之外。`chat-tui` 是 Baton 与 Doctor 可共同使用的公共终端交互库；Baton 的
+`src/view/chat-tui` Adapter 把其 intent 变成 ViewInput，并把 Core Projection 变成 ChatState；成功
+publication 再形成轻量 ViewOutput 边界。
+View 不拥有 Controller、Plugin Manager、Session lease 或领域事实，也不解释 Requirement、Deployment、
+Review 等领域语义。完整边界见 [View](./view.md)。
 
 ## 2. 最小核心模型
 
@@ -37,8 +41,10 @@ chat-tui 位于内核之外：它把键盘、文本和页面操作变成 Human I
 |---|---|
 | **BatonSession** | Human 拥有的持久协作空间；承载 Event Ledger、Lane 与 session-scoped Plugin 数据 |
 | **Channel** | BatonSession 的 active composition root 与 typed coordination facade；拥有进程期组件引用、订阅和 `open/closing/closed`，不拥有任何可恢复业务状态或状态机 |
-| **Input** | Human 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
+| **ViewInput** | View 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
+| **ViewOutput** | Core 发布给 View 的投影更新；表示可供 surface 消费，不证明用户已经看见 |
 | **HarnessInput** | Core lowering 后准备交给 Harness 的输入；具有稳定 message identity、目标 Lane 和可查询消费状态 |
+| **HarnessEvent** | Adapter 将 Harness 原生流式观察归一后的输出；Core 补齐可信坐标并提交后才成为 Baton Event |
 | **Queue** | 一条 Lane 的 HarnessInput 背压缓冲；Lane 内按入队顺序串行，决定等待、steer、取消和何时提交给 Harness |
 | **Lane** | BatonSession 内持久的任务线边界；Lane 内串行，不同 Lane 可以并行，可在多个 Harness 之间接力 |
 | **Turn** | Human 与 Harness 的一次交流边界；通常是一问一答，也可以只有 Harness 的回答。Turn 有稳定 `turnId` 和 start/end，但不排队、不调度，也不执行工作 |
@@ -65,8 +71,8 @@ BatonSession
 ```
 
 Lane 决定工作属于哪条长期任务线；Turn 让本次交流中的 Event、Interaction、Attempt 等对象共享
-`turnId`。Turn 不等于一次 LLM call、一次 tool call 或一个 Queue worker。Harness 在没有新 Human
-Input 时也可以产生答案，此时仍建立普通 Turn，只是没有对应的提问。
+`turnId`。Turn 不等于一次 LLM call、一次 tool call 或一个 Queue worker。Harness 在没有新
+ViewInput 时也可以产生答案，此时仍建立普通 Turn，只是没有对应的提问。
 
 `TurnRegistry` 只是可丢弃、可由 Event 重建的运行期索引，不保存 Input、Queue、取消、投递或释放
 状态，也不是第二份 Ledger。
@@ -77,7 +83,7 @@ Input 时也可以产生答案，此时仍建立普通 Turn，只是没有对应
 Hook gateway、Interaction requester 路由和 Harness Adapter ports；恢复时先由 BatonSession/Event Ledger 与
 Plugin Resource 恢复权威事实，再创建一个全新的 Channel。旧 Channel 的调用栈和临时引用不参与恢复。
 
-Channel 接受 typed Input 后返回 dispatch receipt；Queue admission、Harness receipt 和 Turn 终态仍由各自
+Channel 接受 typed ViewInput 后返回 dispatch receipt；Queue admission、Harness receipt 和 Turn 终态仍由各自
 owner 继续报告，调用方不必把完整 Turn 阻塞在 intake 调用栈。`close()` 先停止新 intake，再按固定顺序关闭
 活跃组件、撤销订阅、flush Session 并释放 lease；它是幂等的，重复调用共享同一个 close settlement。
 
@@ -85,13 +91,13 @@ owner 继续报告，调用方不必把完整 Turn 阻塞在 intake 调用栈。
 
 ### 3.1 Human 到 Harness
 
-Human Input 先进入 Channel，由 BatonSession 接受为 Event，再由 Channel 调用正确 owner 的高层语义方法。
+ViewInput 先进入 Channel，由 BatonSession 接受为 Event，再由 Channel 调用正确 owner 的高层语义方法。
 当前 WAL 顺序是先 record Event，再 reduce Projection 并继续 lowering；Ledger 只记录这个事实，不驱动后续流程。
 不同 Input 可以推进不同对象：
 
 ```text
 Human
-  ↓ Input
+  ↓ ViewInput
 Channel typed dispatch
   ↓
 BatonSession accepts Event
@@ -103,19 +109,20 @@ BatonSession accepts Event
   └── command/configuration ───→ 对应 Core 或 surface 操作
 ```
 
-Queue 是 Human 到 Harness 主路径上的调度者，但 Input 不等于 HarnessInput，Turn 也不等于 Queue item。
+Queue 是 Human 到 Harness 主路径上的调度者，但 ViewInput 不等于 HarnessInput，Turn 也不等于 Queue item。
 一个 Input 可以只改变 Core 状态；只有需要 Harness 执行的内容才 lowering 为 HarnessInput。
 
-`human.inbound` 和 `harness.inbound` Hook 可以把这条路径上的事实通知 Plugin。Hook 不替换 Input、
+`view.input` 和 `harness.input` Hook 可以把这条路径上的事实通知 Plugin。Hook 不替换 Input、
 不决定 allow/deny，也不直接改变 Queue；Plugin 如需行动，必须通过 Verb 请求 Core。
 
 ### 3.2 Harness 到 Human
 
-Harness output 经 Adapter 归一为 Event，BatonSession 直接 reduce 出 Projection，再经 Channel outbound 交给 Human surface。
+Harness output 经 Adapter 归一为 HarnessEvent，Core 提交为 Event 后由 BatonSession 直接 reduce 出
+Projection，再经 Channel 发布为 ViewOutput 交给 Human surface。
 Event 同时被 Ledger 记录、被 Hook 通知给 Plugin；两者都不是 Projection 的中转站：
 
 ```text
-Harness → Adapter normalize → Event → reduce → Projection → Channel outbound → Human
+Harness → Adapter normalize → HarnessEvent → Core commit → Event → reduce → Projection → Channel outbound → Human
                                    ├─ record ───→ Event Ledger
                                    └─ notify ───→ Hook → Plugin
 ```
@@ -135,7 +142,7 @@ Plugin 有两种被驱动的方式，但只有一种动作出口：
 
 Hook 适合观察当前输入、输出或展示边界；Resource + reconcile 适合跨 Session、跨进程和跨时间持续逼近
 长期目标。两条路径都不能直接调用 Harness 或修改 Human surface。Verb 只表达 typed request；Core 再把
-请求物化为 Interaction、HarnessInvocation、HarnessInput、presentation 或其它自己拥有的对象。
+请求物化为 Interaction、HarnessInvocation、HarnessInput、ViewOutput 或其它自己拥有的对象。
 
 Plugin 决定领域下一步，Core 决定协作动作如何授权、持久化、调度和恢复。这使 Core 保持业务无关，
 又不会退化成任意 payload 消息总线。
@@ -144,18 +151,18 @@ Plugin 决定领域下一步，Core 决定协作动作如何授权、持久化�
 
 ```text
                             Baton host process
-┌──────────┐ Human Input   ┌──────────────────────────────────────┐
-│  Human   │◀─────────────▶│ Channel: composition / typed routing  │
-│ via TUI  │  Projection   │ Session / Queue / Interaction owners │
-└──────────┘               │ Controller / Policy / Recovery       │
-                           └──────────────┬───────────────┬────────┘
-                                          │               │
-                                   stable contract        │ IPC
-                                          ▼               ▼
-                                  Harness Adapter     Plugin Runner
-                                          │               │
-                                          ▼               ▼
-                                       Harness       Connector / domain
+┌──────────┐              ┌──────────────┐ ViewInput    ┌──────────────────────────────────────┐
+│  Human   │◀────────────▶│ View Adapter │◀────────────▶│ Channel: composition / typed routing │
+└──────────┘  surface IO  │  (chat-tui)  │ ViewOutput   │ Session / Queue / Interaction owners │
+                          └──────────────┘              │ Controller / Policy / Recovery       │
+                                                        └──────────────┬───────────────┬───────┘
+                                                                       │               │
+                                                                stable contract        │ IPC
+                                                                       ▼               ▼
+                                                               Harness Adapter     Plugin Runner
+                                                                       │               │
+                                                                       ▼               ▼
+                                                                    Harness       Connector / domain
 ```
 
 进程边界按故障与 owner 划分，不按页面区域划分。Channel 装配 Host 内的 Controller、Plugin Manager、
@@ -182,7 +189,7 @@ accept Event
 prepared Event → external action → outcome Event
 ```
 
-Human Input 先 record `input.received`，再通知 Hook 或 lowering；HarnessInput 每次 Queue 迁移先
+ViewInput 先 record `input.received`，再通知 Hook 或 lowering；HarnessInput 每次 Queue 迁移先
 record `harness_input.updated`，再修改内存执行索引；Harness output 先 record 和 reduce，再通知
 Hook；Delivery Attempt 先持久化 `prepared`，再调用 Adapter。这是 write-ahead 的提交顺序，
 不表示 Ledger 驱动 Projection 或后续动作。live 与 replay 使用同一 reducer；自愈也必须
@@ -196,8 +203,8 @@ Plugin 负责领域判断；不能把 Input、Queue 状态、取消定时器或�
 
 ### 5.3 Hook 通知，Verb 请求动作
 
-Hook 不是第四类参与者，也不是准入或替换拦截器。它只把 Human→Harness 的 inbound 边界和 Harness→Human
-的 outbound 边界通知 Plugin，没有 replacement 或 allow/deny 返回值。Plugin 的所有副作用都通过
+Hook 不是第四类参与者，也不是准入或替换拦截器。它只把 `view.input`、`view.output`、
+`harness.input`、`harness.output` 四个稳定 IO 边界通知 Plugin，没有 replacement 或 allow/deny 返回值。Plugin 的所有副作用都通过
 typed Verb 回到 Core；Core 再执行 WAL、权限和生命周期规则。
 
 ### 5.4 终态封闭，未知悲观
@@ -237,6 +244,7 @@ Kernel。
 - [工作流](./workflow.md) — Input lowering、HarnessInput、Queue、Turn 与 Interaction 闭环
 - [Harness](./harness.md) — Target、Session、Adapter、Capability 与扩展契约
 - [Plugin](./plugin.md) — Resource/reconcile、Hook/Verb、Runner、Board 与 Context
+- [View](./view.md) — View Adapter、chat-tui 公共库与 surface 接入边界
 - [审批生命周期](./approval-lifecycle.md) — permission、授权方与 auto-review 回执
 - [Session Paths](./session-paths.md)、[resume 与 fork](./resume-fork.md) — 会话分支、恢复与收录
 - [日志体系](./logging.md) — Baton、Harness 与 Plugin 的结构化诊断

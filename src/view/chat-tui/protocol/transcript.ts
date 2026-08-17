@@ -11,13 +11,13 @@ import {
   textOf,
   type ApprovalReviewUpdate,
   type DiffBlock,
-} from "../../event/index.ts";
-import { harnessShortName } from "../../harness/registry.ts";
+} from "../../../event/index.ts";
+import { harnessShortName } from "../../../harness/registry.ts";
 import {
   isTurnRunning,
   type SessionState,
   type ToolCallState,
-} from "../../store/reduce.ts";
+} from "../../../store/reduce.ts";
 import { composerTextOf } from "../prompt-images.ts";
 
 // Baton 的状态类型是开放联合（容忍未知 wire 值），chat-tui 是闭集；

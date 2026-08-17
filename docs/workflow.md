@@ -1,24 +1,41 @@
 # Baton 工作流
 
-本文是 Baton 三方协作工作流的唯一入口：Human Input、Harness 原生 verb 与 Plugin reconcile
-verb 如何在 Core 汇合，HarnessInput/HarnessInvocation 如何到达 Harness，Harness 输出如何成为可恢复事实，
+本文是 Baton 三方协作工作流的唯一入口：View Input、Harness 原生 verb 与 Plugin reconcile
+verb 如何在 Core 汇合，HarnessInput/HarnessInvocation 如何到达 Harness，HarnessEvent 如何成为可恢复 Event，
 以及 steer、Interaction、cancel、失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
 [Harness](./harness.md)。
 
-## 1. 三方通过 typed Core objects 协作
+## 1. 参与者、IO 与 Core-owned objects
 
 ```text
-Human  ─ submit ────────────────────────────────→ Input ───────────────→ Harness
-Harness ─ native permission/question verb ─────→ Adapter lowering ─┐
-Plugin  ─ ask/confirm reconcile verb ──────────→ Host lowering ────┴─→ Interaction ─→ Human
-Plugin  ─ draft/harness reconcile verb ─→ Interaction gate ─→ HarnessInvocation ─→ Input ─→ Harness
-Harness ─ native output ─→ Adapter normalize ─→ Event / Projection ─→ Channel outbound ─→ Human
-                                                    └─ Hook ─→ Plugin
+                  logical collaboration
+Human ◀────────▶ View ◀────────▶ Plugin ◀────────▶ Harness
+                   └────── Core substrate ──────┘
+
+Human ─▶ View ── ViewInput ─▶ Core ── HarnessInput ─▶ Harness
+Human ◀─ View ◀─ ViewOutput ─ Core ◀── HarnessEvent ─ Harness
+                  Hook ─▶ Plugin ── typed Verb ─▶ Core
 ```
 
-Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core
-对象。Core 不接收任意 message：Interaction 承载 typed decision gate，决议者可以是人，也可以是
-宿主 policy；HarnessInvocation 只承载 gate 通过后的受控执行，Input 只承载已准备向 Harness 投递的工作。
+三类参与者拥有不同事实与动作边界：Human 提交目标、编辑和决议，并消费 UI surface；Harness 拥有
+推理、工具和原生 Session；Plugin 拥有领域 Resource、Connector 与完成条件。Core 协调三方并拥有
+ViewInput、HarnessInput、Queue、Turn、Interaction、HarnessInvocation、Event 与 Projection 的身份、
+状态机和恢复。
+
+这里的第一行是协作关系，不表示 Plugin 是 View 与 Harness 的串行 transport relay；没有绑定 Plugin 时，
+View 与 Harness 的基础路径仍由 Core 工作。稳定 IO 直接命名为 `ViewInput / ViewOutput` 与
+`HarnessInput / HarnessEvent`。Core 提交 HarnessEvent 后才得到 Baton Event。Plugin 没有第五条私有 IO：
+它用 Hook 观察 `view.input`、`view.output`、`harness.input`、`harness.output`，用 Verb 重新进入 Core。
+Hook-specific payload 只是边界事实的只读 view，不拥有对应 Input、Attempt 或 Event 的生命周期；
+稳定 IO 词汇仍只有 ViewInput、ViewOutput、HarnessInput 与 HarnessEvent。
+
+Queue 是 Core-owned 调度状态，不属于 Human；composer queue 只是它在 Human surface 上的 Projection。
+同理 chat-tui 拥有通用焦点、键盘路由和渲染，Baton View Adapter 拥有两侧映射；二者都不拥有 Input、
+Queue、Interaction 或 Harness 执行事实。完整分层见 [View](./view.md)。
+
+Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core 对象。
+Core 不接收任意 message：Interaction 承载 typed decision gate，决议者可以是人，也可以是宿主 policy；
+HarnessInvocation 只承载 gate 通过后的受控执行，HarnessInput 只承载已经准备向 Harness 调度的工作。
 
 Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；需要用户修改 prompt 时调用
 `draft`；已有完整 prompt 时调用 `harness`。所有发起新动作的 Plugin verb 都先物化为 Interaction；`harness`
@@ -26,21 +43,22 @@ Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；�
 恢复当前 Plugin execution continuation。Interaction 不进入 prompt queue，而是按稳定 identity
 就地解开等待方。
 
-## 2. Input 到 Harness
+## 2. Harness input：Input、Queue 与交付
 
 ### 2.1 采集与准入
 
-chat-tui 把键盘、文本和页面操作翻译成 Human Input，再交给 Core `Channel`。Input 是判别联合：
+`src/view/chat-tui` 把 chat-tui 的键盘、文本和页面 intent 翻译成 ViewInput，再交给 Core `Channel`。
+Input 是判别联合：
 prompt、command、configuration、Interaction response 和 interrupt 都是输入事实；只有一部分会 lowering 为 HarnessInput，另一部分
 操作 Core 的 Queue、配置或 Interaction。
-mention、Session 引用和 Plugin Context 在 Context 层解析；chat-tui 不理解 HarnessSession 或
-Harness wire。
+mention、Session 引用和 Plugin Context 在 Baton Adapter / Context 层解析；公共 chat-tui 不理解
+BatonSession、HarnessSession 或 Harness wire。
 
 Event Ledger 只记录 intake 的 WAL。Channel 让 BatonSession 先 record 并 reduce
 `input.received(inputId, input)`，再以这条 durable record 通知
-`human.inbound.before`，随后按 Input variant 调用 Controller、Interaction gateway 或具体配置 owner；owner 接受后先记录
-`input.settled(outcome)`，再通知 `human.inbound.after`。Hook 即使通过 Verb 发起动作，也一定能找到
-触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
+inline `view.input`，随后按 Input variant 调用 Controller、Interaction gateway 或具体配置 owner；
+owner 接受后记录 `input.settled(outcome)`。settled 是 Core 生命周期事实，不是第二个 Hook stage。
+Hook 即使通过 Verb 发起动作，也一定能找到触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
 
 Channel dispatch receipt 只说明 Input 已完成同步校验并被对应 owner 接受，不等于 Turn 已完成。prompt 的
 Controller receipt 会继续暴露 Queue/Turn settlement；调用方可以选择等待，也可以只观察 Event/Projection。
@@ -97,13 +115,6 @@ Lane 是 Baton 原生的任务串并行边界，不代表谁发起，也不代�
 选择正交；主 Lane Queue 拥有独立执行位，side Lane Queues 共享支线并发容量。某条 Lane 忙碌时，
 只阻塞自己的 Queue，不阻塞其它 Lane 中已就绪的 HarnessInput。
 
-Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，统一走
-Channel outbound，并以 `HumanPresentation` 通知 `human.outbound.before/after`。before 位于 surface state commit
-之前；after 只说明 surface 已接收最新 presentation，不证明终端已经绘制或用户已经看见。多个更新可在
-等待 before 时合并。若 before Hook 通过 Verb 打开 Interaction 并等待人的回答，该 Interaction
-必须立即发布而不能递归进入同一个 before Hook，否则 Hook 会等待一个尚未展示的问题而自锁；这种
-重入发布仍发送 after 通知。只有由当前 before Hook 因果链触发的发布可跳过同一 before；
-其他并发 presentation 必须各自完整通知 Hook。
 每个 Lane 同时最多一个 active Queue run，不同 Lane 可并行。Harness 也可以自行打开 Turn；
 这类 Turn 没有对应 Queue item，但与其它 Turn 使用完全相同的 Event 和终态契约。
 
@@ -178,8 +189,9 @@ assistant[harness2]: 已确认后加载的配置覆盖了前值。
 
 Harness 已打开、Context 已组装后，Controller 先 append
 `_baton_delivery_attempt_update(prepared)`，记录 Input、Target 和不可变
-`HarnessLaunchSnapshot`。若存在 `harness.inbound.before` Hook，Core 此时以
-`HarnessDelivery` 通知 Plugin；全部 settled 后才把 Attempt 推到 `dispatching` 并调用：
+`HarnessLaunchSnapshot`。若存在 inline `harness.input` Hook，Core 此时以只读
+`HarnessInputDispatch` 把这次交付的 identity 与坐标通知 Plugin；全部 settled 后才把 Attempt 推到
+`dispatching` 并调用：
 
 ```ts
 adapter.sendTurn(handle, promptInput)
@@ -194,21 +206,21 @@ Adapter 根据自己的权威运行态返回：
 
 Receipt 只确认 Adapter 接受了投递责任，不代表 Harness 已完成。accepted 后的错误必须通过事件流
 终结 Turn；throw 只能表示 Adapter 尚未接受。Controller 据此持久化 Attempt 的 `accepted`、
-`uncertain` 或最终 outcome，并以同一个 `attemptId` 发送非阻塞的 `harness.inbound.after`，其中
-outcome 区分 `accepted/rejected/error`。same-turn steer 走同一 Hook 边界，但其 `attemptId` 只关联
-本次 Adapter send，不会冒充新的持久 Delivery Attempt。
+`uncertain` 或最终 outcome。Adapter admission 是 Attempt/Input 状态，不再发送第二个 Hook 通知。
+same-turn steer 走同一 `harness.input` 边界，但其 `attemptId` 只关联本次 Adapter send，不会冒充新的
+持久 Delivery Attempt。
 
-## 3. Harness 输出到用户
+## 3. Harness output：HarnessEvent 到 Event
 
 ### 3.1 Adapter 归一
 
 Adapter 消费原生 wire，把 message、thought、tool、diff、plan、task、usage、Interaction 和状态
-翻译为 Baton Event 草稿。宿主在可信入口补齐 `source:harness`、Lane、HarnessTarget、
-HarnessSession 和 Turn 坐标，BatonSession 再补 `eventId`、scope、时间与序号。
+归一为流式 HarnessEvent。宿主在可信入口补齐 `source:harness`、Lane、HarnessTarget、
+HarnessSession 和 Turn 坐标，BatonSession 再补 `eventId`、scope、时间与序号，提交为 Baton Event。
 
-Event Ledger 只记录 Harness output 的 WAL。BatonSession 补齐信任坐标后先 record，随即直接
-reduce Projection；Core 再把带 `eventId/seq` 的 `HarnessEventRecord` 通知
-`harness.outbound.before/after`。Hook 不位于事实写入前，也不串行阻塞 Harness EventSink；
+Event Ledger 只记录已提交 Event，不记录未提交 HarnessEvent。BatonSession 补齐信任坐标后先 record，随即直接
+reduce Projection；Core 再把该 Event 的 `eventId/seq` 通知
+deferred `harness.output`。Hook 不位于事实写入前，也不串行阻塞 HarnessEventSink；
 它只能观察已接受的事实，并通过 typed Verb 请求后续动作。Hook 异常或超时
 fail-open，不能让 Plugin 截断 Harness 输出。
 
@@ -229,7 +241,7 @@ fail-open，不能让 Plugin 截断 Harness 输出。
 Event 分出的记录支路，不是 Projection 需要经过的一站：
 
 ```text
-Event ── reduce ──→ Projection snapshot ──→ Channel outbound ──→ surface
+Event ── reduce ──→ Projection snapshot ──→ publish ViewOutput ──→ surface
   ├── record ──→ Event Ledger
   └── notify ──→ Hook ──→ Plugin
 ```
@@ -238,6 +250,11 @@ Event ── reduce ──→ Projection snapshot ──→ Channel outbound ─
 Session 使用相同 reducer。自愈也必须合成新的事实 Event 再走这条路径，不能直接
 修改页面状态。chat-tui 只消费 transcript、activity、Interaction、status 等 view，不解析
 Harness DTO。
+
+Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，统一走
+`Channel.publishViewOutput()`，并在 publication 后以轻量 `ViewOutput` deferred 通知 `view.output`。它只说明
+View 已接收最新 projection，不证明终端已经绘制或用户已经看见。连续 publication 可以由 View 自身
+按 surface 刷新策略合并；Plugin Hook 不位于 state commit 之前，因此不会成为 UI 绘制的同步门闩。
 
 多 Lane 仍 append 到同一 `session.jsonl`。全局 `seq` 只是 ledger 观察到的写入顺序，
 不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；运行中的 side Lane、
@@ -260,7 +277,7 @@ completed 但没有可见产出的空回合必须显式告警，不能表现成�
 
 ### 3.4 Harness 自行开始的 Turn
 
-Harness 在没有新 Human Input 时也可能自行产生结果。Adapter 以 Harness 来源的 `running` 开界，
+Harness 在没有新 ViewInput 时也可能自行产生结果。Adapter 以 Harness 来源的 `running` 开界，
 以 `idle` 收界；Controller 同样持久化、汇总和投影。由于没有对应的 Queue run，收界时也没有
 Queue item 需要释放。Turn 本身不携带发起方向或角色分类。
 
@@ -318,7 +335,7 @@ Harness native verb → Adapter lowering ┐
 Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
   → Core signs interactionId + requester
   → interaction.requested persisted
-  → Channel outbound presents to a Human surface, or host policy resolves it
+  → Channel publishes ViewOutput to a Human surface, or host policy resolves it
   → user/policy answers, or request is cancelled
   → interaction.answered / interaction.cancelled persisted
   → waiting Adapter or Plugin execution continuation resumes
@@ -373,7 +390,7 @@ BatonSession；此后 resume/fork 只走 BatonSession 主路径。详细边界�
 
 ## 7. 代码与测试锚点
 
-- `src/channel/`、`src/tui/protocol/presentation.ts` — Human/Core 双向边界与 chat-tui outbound 适配
+- `src/view/chat-tui/`、`src/channel/` — View Adapter 与 Core 双向边界
 - `src/controller/input.ts`、`turn.ts`、`attempt.ts` — Input、Turn 与 Delivery Attempt owner
 - `src/context/delivery.ts` — Snapshot、Receipt 与 Epoch
 - `src/interaction/types.ts`、`harness.ts`、`reconcile.ts` — Interaction 公共模型与两种 continuation

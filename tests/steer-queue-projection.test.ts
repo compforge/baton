@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Controller } from "../src/controller/index.ts";
-import { projectChatState } from "../src/tui/protocol/state.ts";
+import { projectChatState } from "../src/view/chat-tui/protocol/state.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 

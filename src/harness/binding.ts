@@ -5,7 +5,7 @@ import {
   isSessionConfigurable,
   type ApprovalRoute,
   type EffortOption,
-  type EventSink,
+  type HarnessEventSink,
   type HarnessAdapter,
   type HarnessSessionBinding,
   type HarnessSessionHandle,
@@ -24,7 +24,7 @@ export interface HarnessBindingOptions {
   cwd: string;
   adapter: HarnessAdapter;
   session: SessionHandle;
-  eventSink: EventSink;
+  eventSink: HarnessEventSink;
   setupTurnId?: string;
   modelPreference?: string;
   effortPreference?: string;
@@ -56,7 +56,7 @@ export class HarnessBinding {
   private closePromise?: Promise<void>;
   private closing = false;
   private readonly session: SessionHandle;
-  private readonly eventSink: EventSink;
+  private readonly eventSink: HarnessEventSink;
   private readonly modelPreference?: string;
   private readonly effortPreference?: string;
   private publishedBinding?: HarnessSessionBinding;

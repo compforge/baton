@@ -1,9 +1,8 @@
 // Adapter 统一抽象："小核心 + 可选能力"（见 docs/harness.md）。
-// 各家用原生协议接入，翻译成内部 Event 草稿交给 sink；source / harness /
-// harnessTargetId 由宿主在可信边界补齐，其余信封字段由 Store 补齐。
+// 各家用原生协议接入，归一成 HarnessEvent 交给 sink；source / harness /
+// harnessTargetId 由宿主在可信边界补齐，提交后才成为 Baton Event。
 
 import type {
-  AnyEventDraft,
   ConfigValue,
   PromptBlock,
   SessionConfigOption,
@@ -13,6 +12,10 @@ import type {
   InteractionResult,
 } from "../interaction/types.ts";
 import type { HarnessResumeState } from "./resume.ts";
+import type { HarnessEventSink } from "./event.ts";
+import type { HarnessInput } from "./input.ts";
+
+export type { HarnessEvent, HarnessEventSink } from "./event.ts";
 
 /**
  * Adapter 进程内的会话句柄。它只用于把后续调用路由回当前 Adapter 实例，
@@ -41,9 +44,6 @@ export interface HarnessSessionBinding {
 
 export type HarnessSessionBindingSink = (binding: HarnessSessionBinding) => void;
 
-/** Adapter 只报告事实内容；执行归属由绑定该 Adapter 的宿主补齐。 */
-export type EventSink = (ev: AnyEventDraft) => void;
-
 /** provider 原生入站消息的旁路 trace；不进入 session event ledger。 */
 export type NativeEventSink = (event: {
   direction: "in";
@@ -61,7 +61,8 @@ export interface OpenOptions {
 }
 
 /**
- * 一轮输入。ID 都由 controller 分配（见 docs/harness.md）：新 turn 在入队时分配 turnId；
+ * `sendTurn` 的调用参数，不是独立的 Harness IO 概念。ID 都由 controller 分配
+ * （见 docs/harness.md）：新 turn 在入队时分配 turnId；
  * same-turn send 复用当前 turnId。harness 侧各自的 turn/message id 只进 raw 或 adapter
  * 内部映射，不进 controller 契约。
  *
@@ -70,12 +71,7 @@ export interface OpenOptions {
  * 含 <baton-sync> prepend，不能进正典历史）——adapter **不得**为 prompt 重复发这两个
  * 事件；messageId 仅供 same-turn send 成功路径发 delivery:"steer" 的 user_message upsert。
  */
-export interface PromptInput {
-  /** baton turn ID（t_ 前缀），本 turn 所有事件携带它 */
-  turnId: string;
-  /** 用户消息的 baton message ID（m_ 前缀） */
-  messageId: string;
-  blocks: PromptBlock[];
+export type PromptInput = Pick<HarnessInput, "turnId" | "messageId" | "blocks"> & {
   /**
    * 跨 harness catch-up 注入（不属于用户输入正文，不进正典历史）。仅当 adapter 声明
    * `capabilities.sync` 时由 controller 传入，adapter 用原生 side-channel 随本次 sendTurn
@@ -84,7 +80,7 @@ export interface PromptInput {
    * 契约：与本 turn 一起送达；admission 失败视为未送达（controller 水位不动，下次重注入）。
    */
   syncBlocks?: PromptBlock[];
-}
+};
 
 /** Turn submit 回执：只代表请求被接受，不代表 Turn 完成（见 docs/workflow.md）。 */
 export interface PromptReceipt {
@@ -186,7 +182,7 @@ export interface HarnessAdapter {
    */
   open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle>;
   /**

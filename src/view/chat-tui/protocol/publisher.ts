@@ -3,9 +3,9 @@ import type {
   WritableChatStore,
 } from "chat-tui";
 
-import type { Channel } from "../../channel/index.ts";
-import type { EventKind } from "../../event/index.ts";
-import type { HumanPresentation } from "../../plugin/package.ts";
+import type { Channel } from "../../../channel/index.ts";
+import type { EventKind } from "../../../event/index.ts";
+import type { ViewOutput } from "../../../plugin/package.ts";
 
 // Transcript reordering and full terminal commits are materially heavier than
 // composer painting. Coalesce only streaming facts; terminal and Interaction
@@ -60,10 +60,10 @@ function publishChatState(
   });
 }
 
-function presentationKind(
+function viewOutputKind(
   store: WritableChatStore,
   next: ChatState,
-): HumanPresentation["kind"] | undefined {
+): ViewOutput["kind"] | undefined {
   const timeline = store.getState("timeline");
   const composer = store.getState("composer");
   const activity = store.getState("activity");
@@ -91,11 +91,9 @@ function presentationKind(
   return undefined;
 }
 
-/** Owns the chat-tui side of Channel outbound publication. */
-export class ChatPresentation {
+/** Owns the chat-tui side of ViewOutput publication. */
+export class ChatViewPublisher {
   private streamTimer: ReturnType<typeof setTimeout> | undefined;
-  private pending = false;
-  private running = false;
   private closed = false;
 
   constructor(
@@ -120,17 +118,10 @@ export class ChatPresentation {
       clearTimeout(this.streamTimer);
       this.streamTimer = undefined;
     }
-    // A before Hook may synchronously create an Interaction and wait for its
-    // answer. Let the reentrant response travel outbound immediately.
-    if (
-      this.channel.publishingFromHook ||
-      !this.channel.has("human.outbound.before")
-    ) {
-      void this.publishOnce();
-      return;
-    }
-    this.pending = true;
-    void this.flush();
+    // View output has no inline Hook. Start publication immediately so a
+    // non-streaming Event and its surface state remain one synchronous edge;
+    // Plugin observation is deferred by Channel after the commit.
+    void this.publishOnce();
   }
 
   /** Keep Board updates narrow while still publishing through Channel. */
@@ -138,7 +129,7 @@ export class ChatPresentation {
     if (this.closed) return;
     const initial = this.build();
     if (!boardPublicationChanged(this.store, initial)) return;
-    void this.channel.outbound("board", () => {
+    void this.channel.publishViewOutput("board", () => {
       if (this.closed) return false;
       const next = this.build();
       if (!boardPublicationChanged(this.store, next)) return false;
@@ -160,7 +151,6 @@ export class ChatPresentation {
     this.closed = true;
     if (this.streamTimer !== undefined) clearTimeout(this.streamTimer);
     this.streamTimer = undefined;
-    this.pending = false;
   }
 
   private schedule(): void {
@@ -171,28 +161,14 @@ export class ChatPresentation {
     }, STREAM_STATE_FRAME_MS);
   }
 
-  private async flush(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      while (this.pending) {
-        this.pending = false;
-        await this.publishOnce();
-      }
-    } finally {
-      this.running = false;
-      if (this.pending) void this.flush();
-    }
-  }
-
   private async publishOnce(): Promise<void> {
     const initial = this.build();
-    const kind = presentationKind(this.store, initial);
+    const kind = viewOutputKind(this.store, initial);
     if (!kind) return;
-    await this.channel.outbound(kind, () => {
+    await this.channel.publishViewOutput(kind, () => {
       if (this.closed) return false;
       const next = this.build();
-      if (!presentationKind(this.store, next)) return false;
+      if (!viewOutputKind(this.store, next)) return false;
       publishChatState(this.store, next);
       return true;
     });

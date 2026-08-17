@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -24,12 +24,12 @@ import { resolveTestTarget } from "./harness-target.ts";
 class ApprovalHoldingAdapter implements HarnessAdapter {
   readonly harness = "codex";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   private active?: PromptInput;
 
   constructor(private readonly handlers: HarnessAdapterPorts) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "hold-ref", resumed: false };
   }

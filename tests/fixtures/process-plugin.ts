@@ -71,7 +71,7 @@ const plugin: PluginPackage = {
     });
     context.hooks.register({
       hookId: "process-input",
-      stage: "human.inbound.before",
+      stage: "view.input",
       async run(hook) {
         context.logger.info("Process Hook observed input", {
           component: "hook",
@@ -88,7 +88,7 @@ const plugin: PluginPackage = {
     });
     context.hooks.register({
       hookId: "process-output",
-      stage: "human.outbound.before",
+      stage: "view.output",
       async run(hook) {
         if (hook.subject.kind !== "transcript") return;
         await hook.verbs.ask({

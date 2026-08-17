@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type {
+  DeferredHookStage,
   HookStage,
   HookSubjectMap,
+  InlineHookStage,
 } from "@compforge/baton-plugin";
 
 import { Channel, type ChannelHookGateway } from "../src/channel/index.ts";
@@ -45,17 +47,13 @@ afterEach(() => {
 });
 
 describe("Channel", () => {
-  test("records inbound facts before notifying Plugins and handling the input", async () => {
+  test("records ViewInput before notifying Plugins and handling it", async () => {
     let fixture!: ReturnType<typeof channel>;
     const calls: string[] = [];
     fixture = channel(gateway({
-      before: async () => {
-        calls.push("before");
+      inline: async () => {
+        calls.push("input");
         expect(fixture.readKinds()).toEqual(["input.received"]);
-      },
-      after: () => {
-        calls.push("after");
-        expect(fixture.readKinds()).toEqual(["input.received", "input.settled"]);
       },
     }));
 
@@ -68,89 +66,49 @@ describe("Channel", () => {
       calls.push("handle");
     });
 
-    expect(calls).toEqual(["before", "handle", "after"]);
+    expect(calls).toEqual(["input", "handle"]);
+    expect(fixture.readKinds()).toEqual(["input.received", "input.settled"]);
   });
 
-  test("publishes outbound state between before and after notifications", async () => {
+  test("notifies ViewOutput only after publishing state", async () => {
     const calls: string[] = [];
     const fixture = channel(gateway({
       has: () => true,
-      before: async () => {
-        calls.push("before");
-      },
-      after: () => {
-        calls.push("after");
+      defer: () => {
+        calls.push("output");
       },
     }));
 
-    await fixture.channel.outbound("transcript", () => {
+    await fixture.channel.publishViewOutput("transcript", () => {
       calls.push("publish");
       return true;
     });
 
-    expect(calls).toEqual(["before", "publish", "after"]);
+    expect(calls).toEqual(["publish", "output"]);
   });
 
-  test("runs before Hooks for unrelated concurrent outbound presentations", async () => {
-    let releaseTranscript!: () => void;
-    const transcriptGate = new Promise<void>((resolve) => {
-      releaseTranscript = resolve;
-    });
-    let transcriptStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      transcriptStarted = resolve;
-    });
-    const beforeKinds: string[] = [];
+  test("reports each published ViewOutput kind", async () => {
+    const outputKinds: string[] = [];
     const fixture = channel(gateway({
-      has: () => true,
-      before: async (_stage, subject) => {
+      defer: (_stage, subject) => {
         const kind = (subject as { kind?: string }).kind;
-        if (!kind) return;
-        beforeKinds.push(kind);
-        if (kind === "transcript") {
-          transcriptStarted();
-          await transcriptGate;
-        }
+        if (kind) outputKinds.push(kind);
       },
     }));
 
-    const transcript = fixture.channel.outbound("transcript", () => true);
-    await started;
-    const board = fixture.channel.outbound("board", () => true);
-    await board;
-    releaseTranscript();
-    await transcript;
+    await fixture.channel.publishViewOutput("transcript", () => true);
+    await fixture.channel.publishViewOutput("board", () => true);
 
-    expect(beforeKinds).toEqual(["transcript", "board"]);
+    expect(outputKinds).toEqual(["transcript", "board"]);
   });
 
-  test("skips the same before Hook only for causally reentrant publication", async () => {
-    let fixture!: ReturnType<typeof channel>;
-    const calls: string[] = [];
-    fixture = channel(gateway({
-      has: () => true,
-      before: async (_stage, subject) => {
-        const kind = (subject as { kind?: string }).kind;
-        calls.push(`before:${kind}`);
-        if (kind === "transcript") {
-          await fixture.channel.outbound("interaction", () => {
-            calls.push("publish:interaction");
-            return true;
-          });
-        }
-      },
-    }));
+  test("does not notify an output that the View skipped", async () => {
+    let outputs = 0;
+    const fixture = channel(gateway({ defer: () => outputs += 1 }));
 
-    await fixture.channel.outbound("transcript", () => {
-      calls.push("publish:transcript");
-      return true;
-    });
+    await fixture.channel.publishViewOutput("transcript", () => false);
 
-    expect(calls).toEqual([
-      "before:transcript",
-      "publish:interaction",
-      "publish:transcript",
-    ]);
+    expect(outputs).toBe(0);
   });
 
   test("rejects new input while one idempotent close settlement is running", async () => {
@@ -188,18 +146,18 @@ describe("Channel", () => {
 
 function gateway(overrides: {
   has?: (stage: HookStage) => boolean;
-  before?: (stage: HookStage, subject: Readonly<unknown>) => Promise<void>;
-  after?: (stage: HookStage, subject: Readonly<unknown>) => void;
+  inline?: (stage: HookStage, subject: Readonly<unknown>) => Promise<void>;
+  defer?: (stage: HookStage, subject: Readonly<unknown>) => void;
 }): ChannelHookGateway {
   return {
     has: overrides.has ?? (() => false),
-    before: async <S extends Extract<HookStage, `${string}.before`>>(
+    inline: async <S extends InlineHookStage>(
       stage: S,
       subject: Readonly<HookSubjectMap[S]>,
-    ) => await overrides.before?.(stage, subject),
-    after: <S extends Extract<HookStage, `${string}.after`>>(
+    ) => await overrides.inline?.(stage, subject),
+    defer: <S extends DeferredHookStage>(
       stage: S,
       subject: Readonly<HookSubjectMap[S]>,
-    ) => overrides.after?.(stage, subject),
+    ) => overrides.defer?.(stage, subject),
   };
 }

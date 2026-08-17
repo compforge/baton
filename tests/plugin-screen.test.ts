@@ -11,7 +11,7 @@ import {
   pluginBrowserItems,
   pluginPanelHeight,
   type PluginBrowserData,
-} from "../src/tui/plugins/model.ts";
+} from "../src/view/chat-tui/plugins/model.ts";
 
 const available: AvailablePluginPackage = {
   marketplace: "reqloop",
