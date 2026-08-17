@@ -25,6 +25,7 @@ import type {
   StopReason,
   SubmitDelivery,
   ToolCallStatus,
+  ToolEffect,
   TurnSummary,
   UsageUpdate,
 } from "../event/index.ts";
@@ -67,6 +68,8 @@ export interface ToolCallState {
   laneId?: string;
   title?: string;
   kind?: string;
+  /** 只读/副作用声明，由 adapter 上报；缺省 = 未知，消费方保守处理。 */
+  effect?: ToolEffect;
   status: ToolCallStatus;
   content: ContentBlock[];
   locations: string[];
@@ -496,6 +499,7 @@ function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_u
   );
   if (p.title !== undefined) tc.title = p.title === null ? undefined : p.title;
   if (p.kind !== undefined) tc.kind = p.kind === null ? undefined : p.kind;
+  if (p.effect !== undefined) tc.effect = p.effect === null ? undefined : p.effect;
   if (p.status !== undefined && p.status !== null) tc.status = p.status;
   if (p.content !== undefined) tc.content = p.content === null ? [] : [...p.content];
   if (p.locations !== undefined) tc.locations = p.locations === null ? [] : [...p.locations];

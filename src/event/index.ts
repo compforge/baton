@@ -160,6 +160,14 @@ export type ToolKind =
   | (string & {});
 
 /**
+ * 工具调用对世界的效果声明，与 kind（动作词汇）正交：kind 说"做了什么动作"，
+ * effect 说"有没有改东西"。read = 纯只读（可聚合展示、未来可服务自动审批/并行调度）；
+ * write = 有副作用。adapter 边界负责按 harness 的工具语义填写；不上报 = 未知，
+ * 消费方一律保守按 write 处理。开放联合留扩展位（如交互式）。
+ */
+export type ToolEffect = "read" | "write" | (string & {});
+
+/**
  * 工具调用 upsert：首个未见过的 toolCallId 即创建（无独立 create 事件，对齐 ACP v2）。
  * 三态 patch：字段省略=不变；null=清除；具体值=替换。数组字段整体替换。
  */
@@ -167,6 +175,7 @@ export interface ToolCallUpdate {
   toolCallId: string;
   title?: string | null;
   kind?: ToolKind | null;
+  effect?: ToolEffect | null;
   status?: ToolCallStatus | null;
   content?: ContentBlock[] | null;
   locations?: string[] | null;

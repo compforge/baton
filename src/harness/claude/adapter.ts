@@ -32,9 +32,11 @@ import type {
   PlanEntry,
   PromptBlock,
   SessionConfigOption,
+  ToolEffect,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
+import { exploratoryShellCommand } from "../tool-effect.ts";
 import type {
   InteractionDraft,
   PermissionOption,
@@ -116,6 +118,38 @@ export function claudeToolKind(toolName: string): string {
       return "fetch";
     default:
       return "other";
+  }
+}
+
+/**
+ * Claude 工具名 + 入参 → effect 声明。Bash 的读写只能看命令文本,判定收敛在
+ * 共享 helper(宁漏勿错);Task/AskUserQuestion 等未列出的工具不上报,消费方保守处理。
+ */
+export function claudeToolEffect(
+  toolName: string,
+  input: Record<string, unknown>,
+): ToolEffect | undefined {
+  switch (toolName) {
+    case "Read":
+    case "NotebookRead":
+    case "Grep":
+    case "Glob":
+    case "WebFetch":
+    case "WebSearch":
+    case "BashOutput":
+      return "read";
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+    case "NotebookEdit":
+    case "KillShell":
+      return "write";
+    case "Bash":
+      return typeof input.command === "string" && exploratoryShellCommand(input.command)
+        ? "read"
+        : "write";
+    default:
+      return undefined;
   }
 }
 
@@ -430,6 +464,7 @@ export function claudeDurableMessageDrafts(
           toolCallId: toolUseId,
           title: claudeToolTitle(toolName, input),
           kind: claudeToolKind(toolName),
+          effect: claudeToolEffect(toolName, input),
           status: "in_progress",
           content: diff ? [diff] : undefined,
           rawInput: input,

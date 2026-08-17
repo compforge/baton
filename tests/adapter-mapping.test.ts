@@ -8,12 +8,14 @@ import {
   claudeApprovalOptions,
   claudeResultDiff,
   claudeToolDiff,
+  claudeToolEffect,
   claudeToolTitle,
   type TaskEntry,
   taskToolOp,
   todoWritePlan,
 } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { exploratoryShellCommand } from "../src/harness/tool-effect.ts";
 import type { LogEntry } from "../src/logging.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
@@ -1235,5 +1237,73 @@ describe("claude: api_error_status result", () => {
     const { events, feed } = claudeHarness();
     feed({ type: "result", subtype: "success", usage: {}, modelUsage: {} });
     expect(events.filter((event) => event.kind === "_baton_error_update")).toHaveLength(0);
+  });
+});
+
+describe("tool effect mapping", () => {
+  test("claude: tool name + input → effect", () => {
+    expect(claudeToolEffect("Read", { file_path: "/a.ts" })).toBe("read");
+    expect(claudeToolEffect("Grep", { pattern: "x" })).toBe("read");
+    expect(claudeToolEffect("BashOutput", { bash_id: "1" })).toBe("read");
+    expect(claudeToolEffect("Edit", { file_path: "/a.ts" })).toBe("write");
+    expect(claudeToolEffect("KillShell", { shell_id: "1" })).toBe("write");
+    expect(claudeToolEffect("Bash", { command: "head -80 a.ts | grep x" })).toBe("read");
+    expect(claudeToolEffect("Bash", { command: "npm test" })).toBe("write");
+    // 未列出的工具不上报,消费方保守处理
+    expect(claudeToolEffect("Task", { description: "x" })).toBeUndefined();
+  });
+
+  test("exploratoryShellCommand: 全段只读才通过,写副作用一律拒绝", () => {
+    expect(exploratoryShellCommand("head -80 a.ts; echo ---; grep -n x b.ts | head -5")).toBe(true);
+    expect(exploratoryShellCommand("FOO=bar /bin/ls -la")).toBe(true);
+    expect(exploratoryShellCommand("grep -rn x src/ 2>/dev/null")).toBe(true); // stderr 丢弃不算写
+    expect(exploratoryShellCommand("cat a.ts > b.ts")).toBe(false); // stdout 重定向
+    expect(exploratoryShellCommand("sed -i s/a/b/ a.ts")).toBe(false);
+    expect(exploratoryShellCommand("find . -name '*.log' -delete")).toBe(false);
+    expect(exploratoryShellCommand("git status")).toBe(false); // 未收录命令保守视为有副作用
+    expect(exploratoryShellCommand("")).toBe(false);
+  });
+
+  test("codex: commandExecution effect follows command text", () => {
+    const { events, notify } = codexHarness();
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "commandExecution", id: "cmd1", status: "inProgress", command: "rg foo src/" },
+    });
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "commandExecution", id: "cmd2", status: "inProgress", command: "cargo test" },
+    });
+    const payloads = events
+      .filter((e) => e.kind === "tool_call_update")
+      .map((e) => e.payload as { toolCallId: string; effect?: string });
+    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBe("read");
+    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBe("write");
+  });
+
+  test("codex: fileChange → write, webSearch → read, mcpToolCall 不上报", () => {
+    const { events, notify } = codexHarness();
+    notify("item/completed", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "webSearch", id: "ws1", status: "completed", query: "q" },
+    });
+    notify("item/completed", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "fileChange",
+        id: "fc1",
+        status: "completed",
+        changes: [{ path: "/x.ts", kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-a\n+b" }],
+      },
+    });
+    const effects = events
+      .filter((e) => e.kind === "tool_call_update")
+      .map((e) => (e.payload as { toolCallId: string; effect?: string }));
+    expect(effects.find((p) => p.toolCallId === "ws1")?.effect).toBe("read");
+    expect(effects.find((p) => p.toolCallId === "fc1")?.effect).toBe("write");
   });
 });

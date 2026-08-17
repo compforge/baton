@@ -13,6 +13,7 @@ import {
   type DiffBlock,
 } from "../../../event/index.ts";
 import { harnessShortName } from "../../../harness/registry.ts";
+import { kindEffect } from "../../../harness/tool-effect.ts";
 import {
   isTurnRunning,
   type SessionState,
@@ -88,6 +89,7 @@ const TOOL_KIND_LABELS: Record<string, string> = {
   search: "Search",
   fetch: "Fetch",
   think: "Think",
+  execute: "Ran",
 };
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
@@ -261,18 +263,20 @@ export function toolTranscriptItem(
   };
 }
 
-// 只有探索类工具(read/search/fetch)允许聚合成组行:execute 的命令原文是审查面,
-// edit/delete/move 的 diff 按 chat-tui 既定决策永不裁剪,折叠它们都会藏住关键信息。
-const GROUPABLE_TOOL_KINDS = new Set(["read", "search", "fetch"]);
+// 只读调用(effect = read)允许聚合成组行:写类(edit/delete/move/副作用 execute)永不进组,
+// diff 与命令详情按 chat-tui 既定决策不裁剪。effect 由 adapter 按 harness 工具语义上报
+// (见 harness/tool-effect.ts);未上报时按 kind 兜底,老 harness 行为与之前一致。
 
 /**
  * 可分组工具的分组键:同 kind + 同 turn + 同 harness target 的连续调用才并组;
  * undefined = 该调用不参与分组。failed/declined 不进组——错误详情必须单独成块显眼展示。
  */
 export function toolGroupKey(tc: ToolCallState): string | undefined {
-  if (!tc.kind || !GROUPABLE_TOOL_KINDS.has(tc.kind)) return undefined;
+  if (!tc.kind) return undefined;
   const status = normalizeToolStatus(tc.status);
   if (status === "failed" || status === "declined") return undefined;
+  const effect = tc.effect ?? kindEffect(tc.kind);
+  if (effect !== "read") return undefined;
   return JSON.stringify([tc.kind, tc.turnId ?? "", tc.harnessTargetId ?? ""]);
 }
 

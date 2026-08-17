@@ -20,8 +20,10 @@ import type {
   SessionConfigOption,
   StopReason,
   ToolCallStatus,
+  ToolEffect,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
+import { exploratoryShellCommand } from "../tool-effect.ts";
 import type {
   HookTrustCandidate,
   InteractionDraft,
@@ -442,6 +444,25 @@ function toolKindOf(itemType: string): string {
   }
 }
 
+/**
+ * item → effect 声明。commandExecution 的读写只能看命令文本,判定收敛在
+ * 共享 helper(宁漏勿错);mcp/dynamic/collab 语义未知,不上报,消费方保守处理。
+ */
+function toolEffectOf(item: Record<string, unknown>): ToolEffect | undefined {
+  switch (item.type) {
+    case "commandExecution":
+      return typeof item.command === "string" && exploratoryShellCommand(item.command)
+        ? "read"
+        : "write";
+    case "fileChange":
+      return "write";
+    case "webSearch":
+      return "read";
+    default:
+      return undefined;
+  }
+}
+
 function toolTitleOf(item: Record<string, unknown>): string {
   switch (item.type) {
     case "commandExecution":
@@ -619,6 +640,7 @@ export function codexItemLifecycleDrafts(
       toolCallId: String(item.id),
       title: toolTitleOf(item),
       kind: toolKindOf(itemType),
+      effect: toolEffectOf(item),
       status: lifecycle === "started" ? "in_progress" : codexToolTerminalStatus(item.status),
       content:
         lifecycle === "completed"

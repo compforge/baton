@@ -1648,6 +1648,42 @@ describe("tool call grouping", () => {
     expect(toolGroupKey(tool("tc_edit", "edit"))).toBeUndefined();
   });
 
+  test("adapter-reported effect takes precedence over the kind fallback", () => {
+    // 未上报 effect:按 kind 兜底(read/search/fetch 可组,execute 不组)——老 harness 行为不变
+    expect(toolGroupKey(tool("tc_exec", "execute"))).toBeUndefined();
+    // 上报后以 effect 为准:只读 execute 可组,标 write 的 read 不组
+    const execRead = { ...tool("tc_exec_ro", "execute"), effect: "read" };
+    expect(toolGroupKey(execRead)).toBe(toolGroupKey({ ...tool("tc_exec_ro2", "execute"), effect: "read" }));
+    expect(toolGroupKey({ ...tool("tc_read_w", "read"), effect: "write" })).toBeUndefined();
+  });
+
+  test("renders a read-only execute group with command text per line", () => {
+    const exec = (
+      toolCallId: string,
+      command: string,
+      status: "completed" | "in_progress" = "completed",
+    ) => ({
+      ...tool(toolCallId, "execute", status),
+      effect: "read",
+      rawInput: { command },
+    });
+    expect(toolGroupTranscriptItem([
+      exec("tc_one", "head -80 src/lane.ts"),
+      exec("tc_two", "grep -rn task src/ | head -20", "in_progress"),
+    ])).toEqual({
+      type: "block",
+      id: "tc_one",
+      kind: "tool",
+      author: "codex",
+      title: "Ran ×2",
+      status: "in_progress",
+      content: {
+        type: "lines",
+        lines: ["head -80 src/lane.ts · 1 line", "• grep -rn task src/ | head -20 · 1 line"],
+      },
+    });
+  });
+
   test("projects a compact group with stable first-member identity", () => {
     expect(toolGroupTranscriptItem([
       tool("src/one", "read"),
@@ -1675,6 +1711,7 @@ describe("tool call grouping", () => {
         toolCallId: string,
         kind: "read" | "search" | "execute",
         status: "completed" | "failed" = "completed",
+        effect?: "read",
       ) => session.appendEvent({
         source: { type: "harness" as const, harnessTargetId: "codex" },
         kind: "tool_call_update" as const,
@@ -1685,6 +1722,7 @@ describe("tool call grouping", () => {
           toolCallId,
           title: `${kind[0]!.toUpperCase()}${kind.slice(1)}: ${toolCallId}`,
           kind,
+          ...(effect !== undefined ? { effect } : {}),
           status,
           rawInput: kind === "execute"
             ? { command: toolCallId }
@@ -1700,6 +1738,8 @@ describe("tool call grouping", () => {
       appendTool("three", "read");
       appendTool("query", "search");
       appendTool("status", "execute");
+      appendTool("probe1", "execute", "completed", "read");
+      appendTool("probe2", "execute", "completed", "read");
 
       const protocol = new BatonChatProtocol(
         store,
@@ -1713,6 +1753,7 @@ describe("tool call grouping", () => {
         { id: "three", title: "Read · three.ts · 1 line" },
         { id: "query", title: "Search · query · 1 line" },
         { id: "status", title: "Ran · status · 1 line" },
+        { id: "probe1", title: "Ran ×2" },
       ]);
       await protocol.exit();
     } finally {
