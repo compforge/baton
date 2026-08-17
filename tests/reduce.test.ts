@@ -235,12 +235,39 @@ describe("state / permission / plan / usage", () => {
 
   test("plan update replaces entries per planId", () => {
     const state = reduceEvents([
-      ev("plan_update", { planId: "pl1", entries: [{ content: "step1", priority: "high", status: "pending" }] }),
-      ev("plan_update", { planId: "pl1", entries: [{ content: "step1", priority: "high", status: "completed" }] }),
+      ev("plan_update", {
+        planId: "pl1",
+        entries: [
+          { id: "step-1", content: "step1", priority: "high", status: "pending" },
+          { id: "step-2", content: "step2", priority: "medium", status: "pending" },
+        ],
+      }),
+      ev("plan_update", { planId: "pl1", entries: [{ id: "step-1", content: "step1", priority: "high", status: "completed" }] }),
     ]);
     expect(state.plans.get("pl1")!.entries[0]!.status).toBe("completed");
+    expect(state.plans.get("pl1")!.entries.map((entry) => entry.id)).toEqual(["step-1"]);
     expect(state.plans.get("pl1")!.harness).toBe("test");
     expect(state.timeline.filter((t) => t.type === "plan")).toHaveLength(1);
+  });
+
+  test("plan remove clears the projection and allows the same identity to be recreated", () => {
+    const state = reduceEvents([
+      ev("plan_update", {
+        planId: "pl1",
+        entries: [{ id: "step-1", content: "step1", priority: "medium", status: "pending" }],
+      }),
+      ev("plan_remove", { planId: "pl1" }),
+    ]);
+    expect(state.plans.has("pl1")).toBe(false);
+    expect(state.perTarget.get("test")?.lastPlanId).toBeUndefined();
+    expect(state.timeline.filter((entry) => entry.type === "plan")).toHaveLength(0);
+
+    applyEvent(state, ev("plan_update", {
+      planId: "pl1",
+      entries: [{ id: "step-2", content: "step2", priority: "medium", status: "pending" }],
+    }));
+    expect(state.plans.get("pl1")?.entries[0]?.id).toBe("step-2");
+    expect(state.timeline.filter((entry) => entry.type === "plan")).toHaveLength(1);
   });
 
   test("proposed plan is immutable and distinct from an executing plan", () => {
@@ -249,7 +276,7 @@ describe("state / permission / plan / usage", () => {
       ev("proposed_plan", { planId: "pl-proposed", content: "rewritten" }, "t1"),
       ev("plan_update", {
         planId: "pl-running",
-        entries: [{ content: "implementation", priority: "medium", status: "in_progress" }],
+        entries: [{ id: "implementation", content: "implementation", priority: "medium", status: "in_progress" }],
       }),
     ]);
     expect(state.proposedPlans.get("pl-proposed")).toMatchObject({
@@ -454,17 +481,17 @@ describe("snapshot vs delta semantics", () => {
     // pinned plan 的归属查询键：投影按 perTarget.lastPlanId 直取，不再全表扫描
     const state = reduceEvents([
       {
-        ...ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }),
+        ...ev("plan_update", { planId: "p1", entries: [{ id: "a", content: "a", status: "pending", priority: "medium" }] }),
         harness: "codex",
         harnessTargetId: "codex",
       },
       {
-        ...ev("plan_update", { planId: "p2", entries: [{ content: "b", status: "pending", priority: "medium" }] }),
+        ...ev("plan_update", { planId: "p2", entries: [{ id: "b", content: "b", status: "pending", priority: "medium" }] }),
         harness: "claude-code",
         harnessTargetId: "claude",
       },
       {
-        ...ev("plan_update", { planId: "p3", entries: [{ content: "c", status: "pending", priority: "medium" }] }),
+        ...ev("plan_update", { planId: "p3", entries: [{ id: "c", content: "c", status: "pending", priority: "medium" }] }),
         harness: "codex",
         harnessTargetId: "codex",
       },
@@ -478,7 +505,7 @@ describe("snapshot vs delta semantics", () => {
     // 后续 turn 里残留显示；turn 首见时作废，本 turn 真更新 plan 时再重新 pin。
     const state = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ id: "a", content: "a", status: "pending", priority: "medium" }] }, "t1"),
       ev("state_update", { state: "idle", stopReason: "end_turn" }, "t1"),
       ev("state_update", { state: "running" }, "t2"),
     ]);
@@ -487,7 +514,7 @@ describe("snapshot vs delta semantics", () => {
     // 重放的重复 running（turn 已在场）不再次清除
     const repinned = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ id: "a", content: "a", status: "pending", priority: "medium" }] }, "t1"),
       ev("state_update", { state: "running" }, "t1"),
     ]);
     expect(repinned.perTarget.get("test")?.lastPlanId).toBe("p1");
@@ -495,10 +522,10 @@ describe("snapshot vs delta semantics", () => {
     // 新 turn 里来了新 plan_update → 正常 pin 新 plan
     const fresh = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ id: "a", content: "a", status: "pending", priority: "medium" }] }, "t1"),
       ev("state_update", { state: "idle", stopReason: "end_turn" }, "t1"),
       ev("state_update", { state: "running" }, "t2"),
-      ev("plan_update", { planId: "p2", entries: [{ content: "b", status: "pending", priority: "medium" }] }, "t2"),
+      ev("plan_update", { planId: "p2", entries: [{ id: "b", content: "b", status: "pending", priority: "medium" }] }, "t2"),
     ]);
     expect(fresh.perTarget.get("test")?.lastPlanId).toBe("p2");
   });
@@ -540,7 +567,7 @@ describe("snapshot vs delta semantics", () => {
       {
         ...ev("plan_update", {
           planId: "p-work",
-          entries: [{ content: "review", status: "pending", priority: "medium" }],
+          entries: [{ id: "review", content: "review", status: "pending", priority: "medium" }],
         }),
         harness: "codex",
         harnessTargetId: "codex-work",
@@ -548,7 +575,7 @@ describe("snapshot vs delta semantics", () => {
       {
         ...ev("plan_update", {
           planId: "p-personal",
-          entries: [{ content: "ship", status: "pending", priority: "medium" }],
+          entries: [{ id: "ship", content: "ship", status: "pending", priority: "medium" }],
         }),
         harness: "codex",
         harnessTargetId: "codex-personal",

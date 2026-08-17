@@ -440,6 +440,17 @@ function deriveRunState(state: SessionState): SessionRunState {
     : "running";
 }
 
+function removePlan(state: SessionState, planId: string): void {
+  state.plans.delete(planId);
+  for (let index = state.timeline.length - 1; index >= 0; index--) {
+    const entry = state.timeline[index];
+    if (entry?.type === "plan" && entry.id === planId) state.timeline.splice(index, 1);
+  }
+  for (const scope of [...state.perTarget.values(), ...state.perLaneTarget.values()]) {
+    if (scope.lastPlanId === planId) scope.lastPlanId = undefined;
+  }
+}
+
 export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionState {
   state.lastSeq = ev.seq;
   switch (ev.kind) {
@@ -529,6 +540,9 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       for (const scope of executionScopes(state, ev)) scope.lastPlanId = p.planId;
       break;
     }
+    case "plan_remove":
+      removePlan(state, ev.payload.planId);
+      break;
     case "proposed_plan": {
       const p = ev.payload;
       // 提案是完成态产物，不做原地更新；重复事件不能改写用户已经看到的内容。

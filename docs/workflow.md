@@ -206,7 +206,10 @@ fail-open，不能让 Plugin 截断 Harness 输出。
 
 归一原则是“稳定语义 + raw 保真”：
 
-- message/tool/plan 按稳定 ID upsert；
+- message/tool 按稳定 ID upsert；执行中 Plan 以 `planId` 标识，非空 `plan_update` 首次创建、后续
+  整体替换 entries，`plan_remove` 显式撤下；每个 entry 都有 Plan 内稳定 ID；
+- Adapter 优先保留原生 Plan entry ID。原生快照没有 ID 时，按 `planId + content + 重复序号`
+  确定性派生；状态变化与重排保持身份，content 变化因无法证明同一性而表现为 remove + add；
 - 字段省略表示不变，`null`/空集合表示清除，具体值表示替换，chunk 表示追加；
 - completed item 应携带全量内容，纠正此前丢失或乱序的 chunk；
 - 原生粒度差异保留在 `raw`，Projection 与 Store 不出现 Harness 分支；

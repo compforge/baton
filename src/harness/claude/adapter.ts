@@ -34,6 +34,7 @@ import type {
   SessionConfigOption,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
+import { planEntriesWithIds } from "../../event/plan.ts";
 import type {
   InteractionDraft,
   PermissionOption,
@@ -56,6 +57,7 @@ import type {
   TextgenRequest,
 } from "../adapter.ts";
 import { unsupportedPromptBlocks } from "../adapter.ts";
+import { planSnapshotDraft } from "../plan.ts";
 import { generateClaudeStructured } from "./textgen.ts";
 import {
   sessionIdFromResumeState,
@@ -125,13 +127,13 @@ export function claudeToolTitle(toolName: string, input: Record<string, unknown>
 }
 
 /** TodoWrite 入参 → 统一 plan entries（最大公约数规范：计划一律走 plan_update） */
-export function todoWritePlan(input: Record<string, unknown>): PlanEntry[] {
+export function todoWritePlan(planId: string, input: Record<string, unknown>): PlanEntry[] {
   const todos = (Array.isArray(input.todos) ? input.todos : []) as Array<Record<string, unknown>>;
-  return todos.map((t) => ({
+  return planEntriesWithIds(planId, todos.map((t) => ({
     content: String(t.content ?? ""),
     priority: "medium",
     status: t.status === "in_progress" || t.status === "completed" ? (t.status as string) : "pending",
-  }));
+  })));
 }
 
 /** Task 工具族（新版 Claude Code 以 TaskCreate/TaskUpdate 替代 TodoWrite）登记的待落账操作 */
@@ -197,7 +199,12 @@ export function applyTaskOp(
 
 /** 任务表整表投影成 plan entries（Map 迭代序 = 创建序） */
 export function taskPlanEntries(tasks: Map<string, TaskEntry>): PlanEntry[] {
-  return [...tasks.values()].map((t) => ({ content: t.subject, priority: "medium", status: t.status }));
+  return [...tasks.entries()].map(([id, task]) => ({
+    id,
+    content: task.subject,
+    priority: "medium",
+    status: task.status,
+  }));
 }
 
 /**
@@ -405,12 +412,9 @@ export function claudeDurableMessageDrafts(
       }
       if (toolName === "TodoWrite") {
         state.suppressedToolIds.add(toolUseId);
-        drafts.push({
-          kind: "plan_update",
-          // per-turn plan 锚定当前 scrollback 位置，本 turn 内的更新原地 mark。
-          payload: { planId: `pl_${options.turnId}`, entries: todoWritePlan(input) },
-          raw,
-        });
+        const planId = `pl_${options.turnId}`;
+        // per-turn plan 锚定当前 scrollback 位置，本 turn 内的更新原地 mark。
+        drafts.push(planSnapshotDraft(planId, todoWritePlan(planId, input), raw));
         continue;
       }
       const taskOp = taskToolOp(toolName, input);
@@ -449,11 +453,11 @@ export function claudeDurableMessageDrafts(
           .map((output) => (output.type === "text" ? output.text : ""))
           .join("");
         applyTaskOp(state.tasks, taskOp, text, toolUseId);
-        drafts.push({
-          kind: "plan_update",
-          payload: { planId: `pl_${options.turnId}`, entries: taskPlanEntries(state.tasks) },
+        drafts.push(planSnapshotDraft(
+          `pl_${options.turnId}`,
+          taskPlanEntries(state.tasks),
           raw,
-        });
+        ));
       } else {
         // Task 工具的 tool_use 在入参阶段被 plan_update 取代（suppressedToolIds），失败
         // 时若也静默，错误将彻底不可见（任务表不变、UI 无任何痕迹）；补一条 failed 让
