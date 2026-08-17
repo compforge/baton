@@ -3,7 +3,9 @@ import type {
   BlockTone,
   DiffOp,
   TranscriptBlockContent,
+  TranscriptBlockItem,
   TranscriptBlockStatus,
+  TranscriptGroupItem,
   TranscriptItem,
 } from "chat-tui";
 
@@ -16,6 +18,7 @@ import { harnessShortName } from "../../../harness/registry.ts";
 import { kindEffect } from "../../../harness/tool-effect.ts";
 import {
   isTurnRunning,
+  type MessageState,
   type SessionState,
   type ToolCallState,
 } from "../../../store/reduce.ts";
@@ -277,35 +280,92 @@ export function toolGroupKey(tc: ToolCallState): string | undefined {
   if (status === "failed" || status === "declined") return undefined;
   const effect = tc.effect ?? kindEffect(tc.kind);
   if (effect !== "read") return undefined;
-  return JSON.stringify([tc.kind, tc.turnId ?? "", tc.harnessTargetId ?? ""]);
+  return JSON.stringify([
+    "read",
+    tc.kind,
+    tc.turnId ?? "",
+    tc.harnessTargetId ?? "",
+    tc.laneId ?? "",
+    tc.harness ?? "",
+  ]);
+}
+
+function thoughtGroupKey(msg: MessageState): string {
+  return JSON.stringify([
+    "thought",
+    msg.turnId ?? "",
+    msg.harnessTargetId ?? "",
+    msg.laneId ?? "",
+    msg.harness ?? "",
+  ]);
+}
+
+function transcriptGroup(
+  members: TranscriptBlockItem[],
+  title: string,
+): TranscriptGroupItem {
+  const first = members[0]!;
+  const running = members.some((member) =>
+    member.status === "pending" || member.status === "in_progress"
+  );
+  return {
+    type: "group",
+    id: `group:${first.id}`,
+    collapsedByDefault: true,
+    summary: {
+      type: "block",
+      id: `group:${first.id}:summary`,
+      kind: first.kind,
+      author: first.author,
+      title,
+      status: running ? "in_progress" : "completed",
+    },
+    members,
+  };
+}
+
+/** 独立事实也先进入稳定的透明 group；渲染上不增加标题或行数。 */
+function standaloneTranscriptGroup(block: TranscriptBlockItem): TranscriptGroupItem {
+  return {
+    type: "group",
+    id: `group:${block.id}`,
+    members: [block],
+  };
 }
 
 /**
- * N≥2 个同键调用 → 聚合 block。id 取首成员 toolCallId 并随组增长保持稳定:
- * 组从单块升级为聚合块时 chat-tui 按 key 原地复用 renderable,避免重挂载残留
- * (见 chat-tui transcript.tsx 的 OpenTUI 注释)。子行只是摘要,原始 output 不进聚合块。
+ * 每个可分组调用从第一条起就由稳定 TranscriptGroupItem 承载；N≥2 时只追加 member block
+ * 并更新 group 摘要，不改变顶层节点类型。完整成员保留在 members，默认只占摘要一行，
+ * Ctrl+O 后仍能查看每次调用的命令、输出与状态。
  */
 export function toolGroupTranscriptItem(
   tcs: readonly ToolCallState[],
-): Extract<TranscriptItem, { type: "block" }> {
+): TranscriptGroupItem {
   const first = tcs[0]!;
-  const isRunning = (tc: ToolCallState) =>
-    ["pending", "in_progress"].includes(normalizeToolStatus(tc.status));
-  const lines = tcs.map((tc) => {
-    const keyArg = toolKeyArg(tc, tc.title ?? tc.toolCallId) ??
-      compactText(tc.title ?? tc.toolCallId);
-    const stats = toolResultStats(tc, textOf(tc.content).split("\n").filter(Boolean));
-    return `${isRunning(tc) ? "• " : ""}${[keyArg, ...stats].filter(Boolean).join(" · ")}`;
-  });
-  return {
-    type: "block",
-    id: first.toolCallId,
-    kind: "tool",
-    author: harnessAuthor(first.harness),
-    title: `${TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind} ×${tcs.length}`,
-    status: tcs.some(isRunning) ? "in_progress" : "completed",
-    content: { type: "lines", lines },
-  };
+  return transcriptGroup(
+    tcs.map(toolTranscriptItem),
+    `${TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind} ×${tcs.length}`,
+  );
+}
+
+type CompactBlockFamily = "read" | "thought";
+
+interface CompactBlockCandidate {
+  mergeKey: string;
+  family: CompactBlockFamily;
+  label: string;
+  block: TranscriptBlockItem;
+}
+
+function compactBlockGroup(candidates: CompactBlockCandidate[]): TranscriptGroupItem {
+  const first = candidates[0]!;
+  const last = candidates[candidates.length - 1]!;
+  const title = candidates.length === 1
+    ? first.block.title
+    : first.family === "thought"
+      ? `Thought ×${candidates.length} · ${compactText(last.block.title, 48)}`
+      : `${first.label} ×${candidates.length}`;
+  return transcriptGroup(candidates.map((candidate) => candidate.block), title);
 }
 
 const REVIEW_DISPLAY: Record<
@@ -317,7 +377,7 @@ const REVIEW_DISPLAY: Record<
   aborted: { status: "failed" },
 };
 
-function approvalReviewTranscriptItem(review: ApprovalReviewUpdate): TranscriptItem {
+function approvalReviewTranscriptItem(review: ApprovalReviewUpdate): TranscriptBlockItem {
   const facts = [
     review.riskLevel ? `risk: ${review.riskLevel}` : undefined,
     review.userAuthorization ? `authorization: ${review.userAuthorization}` : undefined,
@@ -345,16 +405,24 @@ export function buildTranscript(
   } = {},
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
-  let pendingToolGroup: ToolCallState[] = [];
-  let pendingToolGroupKey: string | undefined;
-  const flushToolGroup = () => {
-    if (pendingToolGroup.length === 1) {
-      items.push(toolTranscriptItem(pendingToolGroup[0]!));
-    } else if (pendingToolGroup.length > 1) {
-      items.push(toolGroupTranscriptItem(pendingToolGroup));
+  const appendStandaloneBlock = (block: TranscriptBlockItem) => {
+    items.push(standaloneTranscriptGroup(block));
+  };
+  let pendingBlocks: CompactBlockCandidate[] = [];
+  const flushBlocks = () => {
+    if (pendingBlocks.length > 0) {
+      items.push(compactBlockGroup(pendingBlocks));
     }
-    pendingToolGroup = [];
-    pendingToolGroupKey = undefined;
+    pendingBlocks = [];
+  };
+  const appendCompactBlock = (candidate: CompactBlockCandidate) => {
+    if (
+      pendingBlocks.length > 0 &&
+      pendingBlocks[0]!.mergeKey !== candidate.mergeKey
+    ) {
+      flushBlocks();
+    }
+    pendingBlocks.push(candidate);
   };
   const hidden = (laneId: string | undefined) =>
     laneId !== undefined && options.isSideLane?.(laneId) === true;
@@ -365,25 +433,24 @@ export function buildTranscript(
       if (!tc || hidden(tc.laneId)) continue;
       const groupKey = toolGroupKey(tc);
       if (groupKey !== undefined) {
-        if (pendingToolGroupKey === groupKey) {
-          pendingToolGroup.push(tc);
-          continue;
-        }
-        flushToolGroup();
-        pendingToolGroup = [tc];
-        pendingToolGroupKey = groupKey;
+        appendCompactBlock({
+          mergeKey: groupKey,
+          family: "read",
+          label: TOOL_KIND_LABELS[tc.kind ?? ""] ?? tc.kind ?? "Read",
+          block: toolTranscriptItem(tc),
+        });
         continue;
       }
-      flushToolGroup();
-      items.push(toolTranscriptItem(tc));
+      flushBlocks();
+      appendStandaloneBlock(toolTranscriptItem(tc));
       continue;
     }
-    flushToolGroup();
     if (entry.type === "notice") {
+      flushBlocks();
       const notice = noticesById.get(entry.id);
       if (!notice) continue;
       if (hidden(notice.laneId)) continue;
-      items.push({
+      appendStandaloneBlock({
         type: "block",
         id: entry.id,
         kind: "notice",
@@ -393,10 +460,11 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "error") {
+      flushBlocks();
       const error = state.errors.get(entry.id);
       if (!error) continue;
       if (hidden(error.laneId)) continue;
-      items.push({
+      appendStandaloneBlock({
         type: "block",
         id: entry.id,
         kind: "error",
@@ -433,18 +501,24 @@ export function buildTranscript(
             ? "completed"
             : "in_progress";
         for (const [index, block] of thoughtDisplayBlocks(textOf(msg.content)).entries()) {
-          items.push({
-            type: "block",
-            id: `${entry.id}:${index}`,
-            kind: "thought",
-            status,
-            author: harnessAuthor(msg.harness),
-            title: block.title,
-            content: block.content ? { type: "text", text: block.content } : undefined,
+          appendCompactBlock({
+            mergeKey: thoughtGroupKey(msg),
+            family: "thought",
+            label: "Thought",
+            block: {
+              type: "block",
+              id: `${entry.id}:${index}`,
+              kind: "thought",
+              status,
+              author: harnessAuthor(msg.harness),
+              title: block.title,
+              content: block.content ? { type: "text", text: block.content } : undefined,
+            },
           });
         }
         continue;
       }
+      flushBlocks();
       const author =
         msg.role === "user"
           ? msg.source?.type === "plugin"
@@ -472,6 +546,7 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "harness_invocation") {
+      flushBlocks();
       const request = state.harnessInvocations.get(entry.id);
       if (!request) continue;
       if (
@@ -502,7 +577,7 @@ export function buildTranscript(
         request.failure?.detail,
         request.phase === "uncertain" ? "Delivery outcome is uncertain" : undefined,
       ].filter((value): value is string => Boolean(value));
-      items.push({
+      appendStandaloneBlock({
         type: "block",
         id: `harness-invocation:${request.invocationId}`,
         kind: "task",
@@ -516,15 +591,19 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "approval_review") {
+      flushBlocks();
       const review = state.approvalReviews.get(entry.id);
-      if (review) items.push(approvalReviewTranscriptItem(review));
+      if (review) {
+        appendStandaloneBlock(approvalReviewTranscriptItem(review));
+      }
       continue;
     }
     if (entry.type === "proposed_plan") {
+      flushBlocks();
       const proposal = state.proposedPlans.get(entry.id);
       if (!proposal) continue;
       if (hidden(proposal.laneId)) continue;
-      items.push({
+      appendStandaloneBlock({
         type: "block",
         id: entry.id,
         kind: "proposed_plan",
@@ -538,6 +617,7 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "task") {
+      flushBlocks();
       const task = state.tasks.get(entry.id);
       if (!task) continue;
       if (hidden(task.laneId)) continue;
@@ -547,7 +627,7 @@ export function buildTranscript(
         task.summary,
         task.lastToolName ? `Last tool: ${task.lastToolName}` : undefined,
       ].filter((value): value is string => Boolean(value));
-      items.push({
+      appendStandaloneBlock({
         type: "block",
         id: entry.id,
         kind: "task",
@@ -560,6 +640,7 @@ export function buildTranscript(
       });
       continue;
     }
+    flushBlocks();
     if (entry.type !== "plan") continue;
     const plan = state.plans.get(entry.id);
     if (!plan || plan.planId === pinnedPlanId) continue;
@@ -577,7 +658,7 @@ export function buildTranscript(
             )
           ? "in_progress"
           : "pending";
-    items.push({
+    appendStandaloneBlock({
       type: "block",
       id: entry.id,
       kind: "plan",
@@ -586,6 +667,6 @@ export function buildTranscript(
       content: { type: "plan", entries },
     });
   }
-  flushToolGroup();
+  flushBlocks();
   return items;
 }

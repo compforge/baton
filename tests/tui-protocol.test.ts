@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TranscriptBlockItem, TranscriptItem } from "chat-tui";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { InteractionResult } from "../src/interaction/types.ts";
@@ -19,6 +20,21 @@ import {
   toolGroupKey,
   toolGroupTranscriptItem,
 } from "../src/view/chat-tui/protocol/transcript.ts";
+
+function transcriptBlocks(items: readonly TranscriptItem[]): TranscriptBlockItem[] {
+  return items.flatMap((item) => {
+    if (item.type === "block") return [item];
+    if (item.type === "group") return item.members;
+    return [];
+  });
+}
+
+function transcriptBlock(
+  items: readonly TranscriptItem[],
+  id: string,
+): TranscriptBlockItem | undefined {
+  return transcriptBlocks(items).find((item) => item.id === id);
+}
 
 function stubCompletedSend(
   protocol: BatonChatProtocol,
@@ -632,7 +648,7 @@ describe("BatonChatProtocol proposed plan", () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
       expect(protocol.stateStore.getState("timeline").plan).toBeUndefined();
-      expect(protocol.stateStore.getState("timeline").items).toContainEqual({
+      expect(transcriptBlock(protocol.stateStore.getState("timeline").items, "pl-proposed")).toEqual({
         type: "block",
         id: "pl-proposed",
         kind: "proposed_plan",
@@ -1171,7 +1187,8 @@ describe("BatonChatProtocol State projection", () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
       const internals = protocol as unknown as ViewInternals;
       const planInTranscript = () =>
-        protocol.stateStore.getState("timeline").items.some((item) => item.type === "block" && item.kind === "plan");
+        transcriptBlocks(protocol.stateStore.getState("timeline").items)
+          .some((item) => item.kind === "plan");
 
       internals.state.plans.set("p1", {
         planId: "p1",
@@ -1253,7 +1270,8 @@ describe("BatonChatProtocol State projection", () => {
       expect(protocol.stateStore.getState("footer").text).not.toContain("plan:");
       expect(planInTranscript()).toBe(true);
       expect(
-        protocol.stateStore.getState("timeline").items.find((item) => item.type === "block" && item.kind === "plan"),
+        transcriptBlocks(protocol.stateStore.getState("timeline").items)
+          .find((item) => item.kind === "plan"),
       ).toMatchObject({ id: "p1", status: "completed" });
       await protocol.exit();
     } finally {
@@ -1376,7 +1394,7 @@ describe("BatonChatProtocol transcript projection", () => {
       const items = protocol.stateStore.getState("timeline").items;
       expect(items.find((item) => item.id === "m_worker")).toBeUndefined();
       expect(items.find((item) => item.id === "m_worker_answer")).toBeUndefined();
-      expect(items.find((item) => item.id === "harness-invocation:hinv_worker")).toMatchObject({
+      expect(transcriptBlock(items, "harness-invocation:hinv_worker")).toMatchObject({
         kind: "task",
         status: "completed",
         title: "Implement requirement · completed",
@@ -1423,16 +1441,21 @@ describe("BatonChatProtocol transcript projection", () => {
       });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      const toolIndex = protocol.stateStore.getState("timeline").items.findIndex((item) => item.id === "tc1");
+      const items = protocol.stateStore.getState("timeline").items;
+      const toolIndex = items.findIndex((item) => item.id === "group:tc1");
       // 展示双轴：approved 的 outcome 是 completed（审到底了，不被遮成 warning），
       // 需留痕由正交的 tone 表达（委托代批放行 → 审计痕）
-      expect(protocol.stateStore.getState("timeline").items[toolIndex + 1]).toMatchObject({
+      expect(items[toolIndex + 1]).toMatchObject({
+        type: "group",
+        id: "group:approval-review:arv_test1",
+        members: [{
         id: "approval-review:arv_test1",
         kind: "notice",
         status: "completed",
         tone: "warning",
         title: "Automatic approval review approved (risk: low, authorization: unknown)",
         content: { type: "text", text: "Auto-review returned a low-risk allow decision." },
+        }],
       });
       await protocol.exit();
     } finally {
@@ -1506,7 +1529,7 @@ describe("BatonChatProtocol transcript projection", () => {
         },
       ]);
       // thought/tool block 的归属走一等 author 字段，不再拼进 title
-      expect(protocol.stateStore.getState("timeline").items.find((item) => item.id === "m_thought:0")).toMatchObject({
+      expect(transcriptBlock(protocol.stateStore.getState("timeline").items, "m_thought:0")).toMatchObject({
         author: "codex",
         title: "Inspecting image",
       });
@@ -1671,16 +1694,43 @@ describe("tool call grouping", () => {
       exec("tc_one", "head -80 src/lane.ts"),
       exec("tc_two", "grep -rn task src/ | head -20", "in_progress"),
     ])).toEqual({
-      type: "block",
-      id: "tc_one",
-      kind: "tool",
-      author: "codex",
-      title: "Ran ×2",
-      status: "in_progress",
-      content: {
-        type: "lines",
-        lines: ["head -80 src/lane.ts · 1 line", "• grep -rn task src/ | head -20 · 1 line"],
+      type: "group",
+      id: "group:tc_one",
+      collapsedByDefault: true,
+      summary: {
+        type: "block",
+        id: "group:tc_one:summary",
+        kind: "tool",
+        author: "codex",
+        title: "Ran ×2",
+        status: "in_progress",
       },
+      members: [
+        {
+          type: "block",
+          id: "tc_one",
+          kind: "tool",
+          author: "codex",
+          title: "Ran · head -80 src/lane.ts · 1 line",
+          status: "completed",
+          content: [
+            { type: "command", command: "head -80 src/lane.ts" },
+            { type: "output", lines: ["tc_one output"] },
+          ],
+        },
+        {
+          type: "block",
+          id: "tc_two",
+          kind: "tool",
+          author: "codex",
+          title: "Running · grep -rn task src/ | head -20 · 1 line",
+          status: "in_progress",
+          content: [
+            { type: "command", command: "grep -rn task src/ | head -20" },
+            { type: "output", lines: ["tc_two output"] },
+          ],
+        },
+      ],
     });
   });
 
@@ -1689,16 +1739,37 @@ describe("tool call grouping", () => {
       tool("src/one", "read"),
       tool("src/two", "read", "in_progress"),
     ])).toEqual({
-      type: "block",
-      id: "src/one",
-      kind: "tool",
-      author: "codex",
-      title: "Read ×2",
-      status: "in_progress",
-      content: {
-        type: "lines",
-        lines: ["src/one.ts · 1 line", "• src/two.ts · 1 line"],
+      type: "group",
+      id: "group:src/one",
+      collapsedByDefault: true,
+      summary: {
+        type: "block",
+        id: "group:src/one:summary",
+        kind: "tool",
+        author: "codex",
+        title: "Read ×2",
+        status: "in_progress",
       },
+      members: [
+        {
+          type: "block",
+          id: "src/one",
+          kind: "tool",
+          author: "codex",
+          title: "Read · src/one.ts · 1 line",
+          status: "completed",
+          content: [{ type: "output", lines: ["src/one output"] }],
+        },
+        {
+          type: "block",
+          id: "src/two",
+          kind: "tool",
+          author: "codex",
+          title: "Read · src/two.ts · 1 line",
+          status: "in_progress",
+          content: [{ type: "output", lines: ["src/two output"] }],
+        },
+      ],
     });
   });
 
@@ -1748,12 +1819,118 @@ describe("tool call grouping", () => {
         () => undefined,
       );
       expect(protocol.stateStore.getState("timeline").items).toMatchObject([
-        { id: "one", title: "Read ×2" },
-        { id: "bad", status: "failed" },
-        { id: "three", title: "Read · three.ts · 1 line" },
-        { id: "query", title: "Search · query · 1 line" },
-        { id: "status", title: "Ran · status · 1 line" },
-        { id: "probe1", title: "Ran ×2" },
+        {
+          type: "group",
+          id: "group:one",
+          collapsedByDefault: true,
+          summary: { title: "Read ×2" },
+          members: [{ id: "one" }, { id: "two" }],
+        },
+        {
+          type: "group",
+          id: "group:bad",
+          members: [{ id: "bad", status: "failed" }],
+        },
+        {
+          type: "group",
+          id: "group:three",
+          collapsedByDefault: true,
+          summary: { title: "Read · three.ts · 1 line" },
+          members: [{ id: "three" }],
+        },
+        {
+          type: "group",
+          id: "group:query",
+          collapsedByDefault: true,
+          summary: { title: "Search · query · 1 line" },
+          members: [{ id: "query" }],
+        },
+        {
+          type: "group",
+          id: "group:status",
+          members: [{ id: "status", title: "Ran · status · 1 line" }],
+        },
+        {
+          type: "group",
+          id: "group:probe1",
+          collapsedByDefault: true,
+          summary: { title: "Ran ×2" },
+          members: [{ id: "probe1" }, { id: "probe2" }],
+        },
+      ]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps thought and read in separate adjacent block groups", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-compact-blocks-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const appendThought = (messageId: string, title: string) => session.appendEvent({
+        source: { type: "harness" as const, harnessTargetId: "codex" },
+        kind: "agent_thought" as const,
+        harness: "codex",
+        harnessTargetId: "codex",
+        turnId: "t1",
+        payload: {
+          messageId,
+          content: [{ type: "text" as const, text: `**${title}**` }],
+        },
+      });
+      const appendRead = (toolCallId: string) => session.appendEvent({
+        source: { type: "harness" as const, harnessTargetId: "codex" },
+        kind: "tool_call_update" as const,
+        harness: "codex",
+        harnessTargetId: "codex",
+        turnId: "t1",
+        payload: {
+          toolCallId,
+          title: `Read: ${toolCallId}`,
+          kind: "read",
+          effect: "read" as const,
+          status: "completed" as const,
+          rawInput: { file_path: `${toolCallId}.ts` },
+          content: [{ type: "text" as const, text: "result\n" }],
+        },
+      });
+
+      appendThought("thought-1", "Inspecting files");
+      appendThought("thought-2", "Planning reads");
+      appendRead("read-1");
+      appendRead("read-2");
+      appendThought("thought-3", "Planning write");
+
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      expect(protocol.stateStore.getState("timeline").items).toMatchObject([
+        {
+          type: "group",
+          id: "group:thought-1:0",
+          collapsedByDefault: true,
+          summary: { kind: "thought", title: "Thought ×2 · Planning reads" },
+          members: [{ title: "Inspecting files" }, { title: "Planning reads" }],
+        },
+        {
+          type: "group",
+          id: "group:read-1",
+          collapsedByDefault: true,
+          summary: { kind: "tool", title: "Read ×2" },
+          members: [{ id: "read-1" }, { id: "read-2" }],
+        },
+        {
+          type: "group",
+          id: "group:thought-3:0",
+          collapsedByDefault: true,
+          summary: { kind: "thought", title: "Planning write" },
+          members: [{ id: "thought-3:0", title: "Planning write" }],
+        },
       ]);
       await protocol.exit();
     } finally {

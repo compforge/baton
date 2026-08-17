@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TranscriptBlockItem, TranscriptItem } from "chat-tui";
 
 import type { Controller } from "../src/controller/index.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
@@ -45,6 +46,20 @@ function project() {
   });
 }
 
+function transcriptBlock(
+  items: readonly TranscriptItem[],
+  id: string,
+): TranscriptBlockItem | undefined {
+  for (const item of items) {
+    if (item.type === "block" && item.id === id) return item;
+    if (item.type === "group") {
+      const member = item.members.find((member) => member.id === id);
+      if (member) return member;
+    }
+  }
+  return undefined;
+}
+
 describe("Parallel projection", () => {
   test("keeps a native subagent out of Timeline until it completes", () => {
     const coordinate = {
@@ -78,7 +93,7 @@ describe("Parallel projection", () => {
         tokens: 12_345,
       }],
     });
-    expect(running.timeline.items.find((item) => item.id === "task-1")).toBeUndefined();
+    expect(transcriptBlock(running.timeline.items, "task-1")).toBeUndefined();
 
     session.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
@@ -88,7 +103,7 @@ describe("Parallel projection", () => {
     });
     const completed = project();
     expect(completed.parallel).toBeUndefined();
-    expect(completed.timeline.items.find((item) => item.id === "task-1")).toMatchObject({
+    expect(transcriptBlock(completed.timeline.items, "task-1")).toMatchObject({
       kind: "task",
       status: "completed",
       title: "Inspect adapter",
@@ -227,7 +242,7 @@ describe("Parallel projection", () => {
       }),
     ]);
     expect(
-      running.timeline.items.find((item) => item.id === "harness-invocation:hinv_worker"),
+      transcriptBlock(running.timeline.items, "harness-invocation:hinv_worker"),
     ).toBeUndefined();
 
     session.appendEvent({
@@ -250,7 +265,7 @@ describe("Parallel projection", () => {
     const completed = project();
     expect(completed.parallel).toBeUndefined();
     expect(
-      completed.timeline.items.find((item) => item.id === "harness-invocation:hinv_worker"),
+      transcriptBlock(completed.timeline.items, "harness-invocation:hinv_worker"),
     ).toMatchObject({
       kind: "task",
       status: "completed",

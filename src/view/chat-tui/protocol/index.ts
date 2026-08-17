@@ -11,6 +11,7 @@ import type {
   InteractionResponse,
   PickerSearchView,
   TranscriptItem,
+  TranscriptMessageItem,
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
 
@@ -1350,7 +1351,7 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   /** baton 自身也是 transcript author；这类 UI 反馈不写入 harness 会话历史。 */
-  private batonTranscriptItem(id: string, text: string): TranscriptItem {
+  private batonTranscriptItem(id: string, text: string): TranscriptMessageItem {
     return { type: "message", id, role: "agent", author: "baton", text, format: "plain" };
   }
 
