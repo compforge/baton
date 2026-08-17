@@ -83,7 +83,7 @@ follow-up，不能在同一原生 session 上并行启动第二轮。
   生成 `context_window_update`。其中 `modelSelection` 来自 Target 配置，`effectiveModel` 来自 DSH
   路由；
 - `tool/call` / `tool/result` → 同一 Baton tool call 的 running/terminal upsert；
-- `todo/write` → plan snapshot；
+- `todo/write` → 带确定性 entry ID 的 plan snapshot，空 snapshot → `plan_remove`；
 - `turn/end.reason` → Baton stop reason 与结构化 error；
 - `subagent.started` / `subagent.finished` → task lifecycle。
 

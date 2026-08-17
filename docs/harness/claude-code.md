@@ -84,7 +84,8 @@ Controller 拥有，Claude `toolUseID` 只用于关联原生请求。
 - assistant text/thinking 与 partial message → agent message/thought；
 - tool_use/tool_result → tool lifecycle；
 - Edit/Write 等工具输入 → DiffBlock；
-- TodoWrite → plan snapshot，同时抑制重复工具卡；
+- TodoWrite → 带确定性 entry ID 的 plan snapshot；TaskCreate/TaskUpdate 保留原生 task ID，删除最后
+  一个 entry 时发 `plan_remove`；两条路径都抑制重复工具卡；
 - task started/progress/notification → task lifecycle；
 - result modelUsage → usage、context window 与 cost snapshot；
 - result、query error、stream close → Turn 终态。

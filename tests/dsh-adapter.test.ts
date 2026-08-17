@@ -250,6 +250,7 @@ describe("DshAdapter", () => {
       sessionEvent(sessionId, "todo/write", {
         todos: [{ content: "Inspect repository", status: "completed" }],
       }),
+      sessionEvent(sessionId, "todo/write", { todos: [] }),
       sessionEvent(sessionId, "assistant/message", {
         turn: 1,
         step: 1,
@@ -338,8 +339,12 @@ describe("DshAdapter", () => {
       usedTokens: 12,
       capacityTokens: 128_000,
     }]);
-    expect(events.find((event) => event.kind === "plan_update")?.payload).toMatchObject({
-      entries: [{ content: "Inspect repository", status: "completed", priority: "medium" }],
+    const planUpdate = events.find((event) => event.kind === "plan_update");
+    expect(planUpdate?.payload).toMatchObject({
+      entries: [{ id: expect.stringMatching(/^pe_/), content: "Inspect repository", status: "completed", priority: "medium" }],
+    });
+    expect(events.find((event) => event.kind === "plan_remove")?.payload).toEqual({
+      planId: (planUpdate?.payload as { planId: string }).planId,
     });
     expect(events.filter((event) => event.kind === "task_update")).toHaveLength(2);
     expect(

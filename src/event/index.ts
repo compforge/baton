@@ -168,15 +168,25 @@ export interface ToolCallContentChunk {
 }
 
 export interface PlanEntry {
+  /** Stable within its Plan. Adapters preserve native IDs or derive one when the wire has none. */
+  id: string;
   content: string;
   priority: "high" | "medium" | "low" | (string & {});
   status: "pending" | "in_progress" | "completed" | (string & {});
 }
 
-/** 每次 plan_update 整体替换该 planId 的 entries */
-export interface PlanUpdate {
+/** 执行中的计划快照；同一 planId 标识同一份计划。 */
+export interface Plan {
   planId: string;
   entries: PlanEntry[];
+}
+
+/** 每次 plan_update 整体替换该 planId 的 entries；首次出现即创建。 */
+export interface PlanUpdate extends Plan {}
+
+/** 显式撤下执行中的计划；Event Ledger 仍保留其历史事实。 */
+export interface PlanRemove {
+  planId: string;
 }
 
 /**
@@ -433,6 +443,7 @@ export type EventPayloadMap = {
   tool_call_update: ToolCallUpdate;
   tool_call_content_chunk: ToolCallContentChunk;
   plan_update: PlanUpdate;
+  plan_remove: PlanRemove;
   proposed_plan: ProposedPlan;
   proposed_plan_implementation_started: ProposedPlanImplementationStarted;
   task_update: HarnessTaskUpdate;

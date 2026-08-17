@@ -8,7 +8,9 @@ import { FileHookTrustStore, type HookTrustStore } from "../../config/hook.ts";
 import type { LogSink } from "../../logging.ts";
 import { logError } from "../../logging.ts";
 import { newId } from "../../event/ids.ts";
+import { planEntriesWithIds } from "../../event/plan.ts";
 import { closedTerminal } from "../normalize.ts";
+import { planSnapshotDraft } from "../plan.ts";
 import type {
   ConfigValue,
   ContentBlock,
@@ -851,6 +853,7 @@ const OUTPUT_EVENT_KINDS: ReadonlySet<string> = new Set([
   "tool_call_update",
   "tool_call_content_chunk",
   "plan_update",
+  "plan_remove",
   "_baton_run_status",
 ]);
 
@@ -1836,19 +1839,16 @@ export class CodexAdapter implements HarnessAdapter {
         );
         break;
       case "turn/plan/updated": {
-        const entries = (Array.isArray(p.plan) ? p.plan : []).map((e) => {
+        const planId = `pl_${rt.codexTurnId ?? "turn"}`;
+        const entries = planEntriesWithIds(planId, (Array.isArray(p.plan) ? p.plan : []).map((e) => {
           const entry = e as Record<string, unknown>;
           return {
             content: String(entry.step ?? entry.content ?? ""),
             priority: "medium",
             status: String(entry.status ?? "pending"),
           };
-        });
-        this.emit(
-          rt,
-          { kind: "plan_update", payload: { planId: `pl_${rt.codexTurnId ?? "turn"}`, entries } },
-          params,
-        );
+        }));
+        this.emit(rt, planSnapshotDraft(planId, entries), params);
         break;
       }
       case "thread/tokenUsage/updated": {

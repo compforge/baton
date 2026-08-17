@@ -88,7 +88,7 @@ fail closed，不能伪造成 permission requested/answered。
 
 - item message/reasoning → agent message/thought；
 - command/file/tool item → tool lifecycle、实时 output 和 DiffBlock；
-- `turn/plan/updated` → plan snapshot；
+- `turn/plan/updated` → 带确定性 entry ID 的 plan snapshot，空 snapshot → `plan_remove`；
 - collab agent item → task lifecycle；
 - token usage → usage/context snapshot；
 - `turn/completed`、wire error、进程退出 → Turn 终态。

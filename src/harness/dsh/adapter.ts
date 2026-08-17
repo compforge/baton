@@ -12,9 +12,9 @@ import {
 } from "@compforge/dsh-agent-sdk";
 
 import { newId } from "../../event/ids.ts";
+import { planEntriesWithIds } from "../../event/plan.ts";
 import type {
   ContentBlock,
-  PlanEntry,
   StopReason,
   ToolKind,
   UsageUpdate,
@@ -37,6 +37,7 @@ import {
   sessionIdFromResumeState,
   sessionIdResumeState,
 } from "../resume.ts";
+import { planSnapshotDraft } from "../plan.ts";
 
 const DSH_REQUEST_TIMEOUT_MS = 15_000;
 const DSH_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -698,7 +699,7 @@ export class DshAdapter implements HarnessAdapter {
 
     if (eventType === "todo/write" && Array.isArray(data.todos)) {
       turn.planId ??= newId("pl");
-      const entries: PlanEntry[] = data.todos.flatMap((candidate) => {
+      const entries = planEntriesWithIds(turn.planId, data.todos.flatMap((candidate) => {
         const todo = record(candidate);
         const content = text(todo?.content);
         const status = text(todo?.status);
@@ -709,11 +710,8 @@ export class DshAdapter implements HarnessAdapter {
           return [];
         }
         return [{ content, status, priority: "medium" }];
-      });
-      this.emit(runtime, turn, {
-        kind: "plan_update",
-        payload: { planId: turn.planId, entries },
-      }, raw);
+      }));
+      this.emit(runtime, turn, planSnapshotDraft(turn.planId, entries), raw);
       return;
     }
 

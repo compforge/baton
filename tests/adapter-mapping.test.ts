@@ -100,6 +100,47 @@ function codexHarness(): {
   return { events, notify, runtime: rt };
 }
 
+describe("codex: plan snapshots", () => {
+  test("keeps derived entry IDs across status changes and removes an empty plan", () => {
+    const { events, notify } = codexHarness();
+    notify("turn/plan/updated", {
+      threadId: "th1",
+      turnId: "ct1",
+      plan: [
+        { step: "Inspect", status: "inProgress" },
+        { step: "Verify", status: "pending" },
+      ],
+    });
+    notify("turn/plan/updated", {
+      threadId: "th1",
+      turnId: "ct1",
+      plan: [
+        { step: "Verify", status: "completed" },
+        { step: "Inspect", status: "completed" },
+      ],
+    });
+
+    const updates = events.filter((event) => event.kind === "plan_update");
+    const first = (updates[0]!.payload as { entries: Array<{ id: string; content: string }> }).entries;
+    const second = (updates[1]!.payload as { entries: Array<{ id: string; content: string }> }).entries;
+    expect(first.map((entry) => [entry.content, entry.id])).toEqual([
+      ["Inspect", expect.stringMatching(/^pe_/)],
+      ["Verify", expect.stringMatching(/^pe_/)],
+    ]);
+    expect(second.map((entry) => [entry.content, entry.id])).toEqual([
+      ["Verify", first[1]!.id],
+      ["Inspect", first[0]!.id],
+    ]);
+
+    notify("turn/plan/updated", {
+      threadId: "th1",
+      turnId: "ct1",
+      plan: [],
+    });
+    expect(events.at(-1)).toMatchObject({ kind: "plan_remove", payload: { planId: "pl_turn" } });
+  });
+});
+
 describe("codex: error notifications", () => {
   test("projects a non-retrying error and closes the turn as failed", () => {
     const { events, notify } = codexHarness();
@@ -278,11 +319,41 @@ describe("claude: TodoWrite → plan_update", () => {
     expect(plans).toHaveLength(1);
     // planId per-turn：卡片锚定在当前 turn，跨 turn 的新 plan 不改写 scrollback 里的旧卡
     expect((plans[0]!.payload as { planId: string }).planId).toBe("pl_t1");
-    expect((plans[0]!.payload as { entries: unknown[] }).entries).toEqual([
-      { content: "步骤一", priority: "medium", status: "completed" },
-      { content: "步骤二", priority: "medium", status: "in_progress" },
+    const firstEntries = (plans[0]!.payload as { entries: Array<{ id: string; content: string; priority: string; status: string }> }).entries;
+    expect(firstEntries).toEqual([
+      { id: expect.stringMatching(/^pe_/), content: "步骤一", priority: "medium", status: "completed" },
+      { id: expect.stringMatching(/^pe_/), content: "步骤二", priority: "medium", status: "in_progress" },
     ]);
     expect(events.filter((e) => e.kind === "tool_call_update")).toHaveLength(0);
+
+    feed({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "tu2",
+          name: "TodoWrite",
+          input: { todos: [{ content: "步骤二", status: "completed" }, { content: "步骤一", status: "completed" }] },
+        }],
+      },
+    });
+    const updatedEntries = (events.filter((event) => event.kind === "plan_update").at(-1)!.payload as {
+      entries: Array<{ id: string; content: string }>;
+    }).entries;
+    expect(updatedEntries.map((entry) => [entry.content, entry.id])).toEqual([
+      ["步骤二", firstEntries[1]!.id],
+      ["步骤一", firstEntries[0]!.id],
+    ]);
+
+    feed({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: "tool_use", id: "tu3", name: "TodoWrite", input: { todos: [] } }],
+      },
+    });
+    expect(events.at(-1)).toMatchObject({ kind: "plan_remove", payload: { planId: "pl_t1" } });
 
     // 对应 tool_result 也被吞掉，不会凭空造出工具卡
     feed({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] } });
@@ -290,7 +361,7 @@ describe("claude: TodoWrite → plan_update", () => {
   });
 
   test("todoWritePlan tolerates unknown status", () => {
-    expect(todoWritePlan({ todos: [{ content: "x", status: "weird" }] })[0]!.status).toBe("pending");
+    expect(todoWritePlan("pl_test", { todos: [{ content: "x", status: "weird" }] })[0]!.status).toBe("pending");
   });
 });
 
@@ -402,15 +473,19 @@ describe("claude: Task 工具族 → plan_update", () => {
     expect(plans).toHaveLength(1);
     expect((plans.at(-1)!.payload as { planId: string }).planId).toBe("pl_t1");
     expect((plans.at(-1)!.payload as { entries: unknown[] }).entries).toEqual([
-      { content: "确认演示范围", priority: "medium", status: "pending" },
+      { id: "1", content: "确认演示范围", priority: "medium", status: "pending" },
     ]);
 
     feed(toolUse("tu2", "TaskUpdate", { taskId: "1", status: "in_progress" }));
     feed(toolResult("tu2", "Updated task #1 status"));
     plans = events.filter((e) => e.kind === "plan_update");
     expect((plans.at(-1)!.payload as { entries: unknown[] }).entries).toEqual([
-      { content: "确认演示范围", priority: "medium", status: "in_progress" },
+      { id: "1", content: "确认演示范围", priority: "medium", status: "in_progress" },
     ]);
+
+    feed(toolUse("tu3", "TaskUpdate", { task_id: "1", status: "deleted" }));
+    feed(toolResult("tu3", "Deleted task #1"));
+    expect(events.at(-1)).toMatchObject({ kind: "plan_remove", payload: { planId: "pl_t1" } });
     // 全程不出 Task 工具卡
     expect(events.filter((e) => e.kind === "tool_call_update")).toHaveLength(0);
   });
@@ -422,7 +497,7 @@ describe("claude: Task 工具族 → plan_update", () => {
 
     const plans = events.filter((e) => e.kind === "plan_update");
     expect((plans.at(-1)!.payload as { entries: unknown[] }).entries).toEqual([
-      { content: "删 ResolvedRepo.code_unit", priority: "medium", status: "pending" },
+      { id: "1", content: "删 ResolvedRepo.code_unit", priority: "medium", status: "pending" },
     ]);
   });
 
@@ -481,7 +556,7 @@ describe("claude: Task 工具族 → plan_update", () => {
     feed(toolResult("tu2", "Updated task #1 status"));
     const plans = events.filter((e) => e.kind === "plan_update");
     expect((plans.at(-1)!.payload as { entries: unknown[] }).entries).toEqual([
-      { content: "确认演示范围", priority: "medium", status: "completed" },
+      { id: "1", content: "确认演示范围", priority: "medium", status: "completed" },
     ]);
   });
 });

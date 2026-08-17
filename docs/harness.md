@@ -181,8 +181,9 @@ Harness output 先由 BatonSession 同步 record 到 Event Ledger 并 reduce Pro
 通过 Verb 请求 Core。Hook 失败 fail-open，不改变 Adapter 的 EventSink 契约。
 
 稳定事件覆盖 message、thought、tool、diff、plan、task、usage、状态和短寿命 notice。按稳定 ID
-upsert，completed 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一；未知
-值不进入核心封闭状态。
+upsert，completed 全量内容是流式丢包的自愈点。Plan entry 必须有 Plan 内稳定 ID；Adapter 保留
+原生 ID，原生完整快照没有 identity 时按稳定内容派生。开放 wire enum 在 Adapter 边界保守归一；
+未知值不进入核心封闭状态。
 
 `context_window_update` 是最近一次主/root 模型请求的完整快照，payload 固定包含：
 
