@@ -1,6 +1,7 @@
 // Input 一等抽象（HarnessInput）（见 docs/workflow.md“采集与准入”）：
-// 每条输入身份即其 messageId（m_）+ 显式 status；queued/dispatching/admitted/accepted_steer 可查，
+// 每条输入身份即其 messageId（m_）+ 显式 status；queued/dispatching/admitted/steering 可查，
 // recall→recalled、cancel→interrupted（S3：不静默丢、不自动重发）。
+// steer 投递事实走 input_delivery_update 回执（HarnessInput.deliveryOutcome）。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +25,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
 class HoldingAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  readonly cancelPendingSteers?: "requeue";
+  readonly steering?: HarnessAdapter["steering"];
   sink?: EventSink;
   prompts: string[] = [];
   received: PromptInput[] = [];
@@ -33,7 +34,11 @@ class HoldingAdapter implements HarnessAdapter {
   private active?: PromptInput;
 
   constructor(readonly harness: string, options?: { requeuePendingSteers?: boolean }) {
-    if (options?.requeuePendingSteers) this.cancelPendingSteers = "requeue";
+    // 默认 ack-only（接受即应用，Core 合成回执）；requeuePendingSteers 模拟
+    // codex 形态：显式回执 + cancel 后原生队列不可达。
+    this.steering = options?.requeuePendingSteers
+      ? { deliveryTracking: "explicit", cancelOwnership: "unreachable" }
+      : { deliveryTracking: "ack-only", cancelOwnership: "survives" };
   }
 
   async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
@@ -56,7 +61,6 @@ class HoldingAdapter implements HarnessAdapter {
           messageId: input.messageId,
           content: input.blocks,
           delivery: "steer",
-          ...(this.cancelPendingSteers ? { deliveryState: "pending" as const } : {}),
         },
       });
       return this.steerResult;
@@ -242,7 +246,11 @@ describe("Input lifecycle (HarnessInput)", () => {
 
     const steer = controller.harnessInputs.find((i) => i.delivery === "steer");
     expect(steer?.messageId).toMatch(/^m_/);
-    expect(steer?.status).toBe("accepted_steer");
+    expect(steer?.status).toBe("steering");
+    // ack-only adapter：接受即应用，Core 合成 applied 回执（投影是投递事实的真理来源）。
+    expect(
+      session.loadState().harnessInputs.get(steer!.messageId)?.deliveryOutcome,
+    ).toBe("applied");
 
     adapter.finish("end_turn");
     await turn;
@@ -391,7 +399,7 @@ describe("Input lifecycle (HarnessInput)", () => {
     const turn = controller.submit("codex", text("build it"));
     await until(() => adapter.prompts.length === 1);
     await controller.sendTurn("codex", text("also do B"));
-    expect(controller.harnessInputs.some((i) => i.status === "accepted_steer")).toBe(true);
+    expect(controller.harnessInputs.some((i) => i.status === "steering")).toBe(true);
 
     await controller.control({ kind: "interrupt" });
     expect(await turn).toBe("completed");
@@ -424,11 +432,15 @@ describe("Input lifecycle (HarnessInput)", () => {
     const replay = adapter.received.at(-1)!;
     expect(replay.messageId).toBe(messageId);
     expect(textOf(replay.blocks)).toBe("use the lighter approach");
+    // 回收的 steer 作为可见 follow-up 重放；投递事实留在 input 投影
+    // （该 messageId 的 steer 尝试已 failed，不再寄生 user_message）。
     expect(session.loadState().messages.get(messageId)).toMatchObject({
       turnId: replay.turnId,
       delivery: "follow_up",
-      deliveryState: "applied",
     });
+    expect(
+      session.loadState().harnessInputs.get(messageId)?.deliveryOutcome,
+    ).toBe("failed");
 
     adapter.finish("end_turn");
     if (followUp.effective === "new_turn") await followUp.outcome;

@@ -456,8 +456,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
-  const mainQueuedInputs = controller.queuedHarnessInputs.filter(
-    (turn) => turn.laneId === MAIN_LANE_ID,
+  // Composer Queue 单源化：queued 与 pending steer 都来自 harness_input 投影
+  // （投递事实的真理来源），不再拼 message 补丁与内存 Queue 两个口径。
+  const mainQueuedInputs = [...state.harnessInputs.values()].filter(
+    (input) => input.laneId === MAIN_LANE_ID && input.status === "queued",
   );
   const hasRecallableQueuedInput = mainQueuedInputs.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
@@ -574,29 +576,24 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     targetRunning &&
     planEntries.some((entry) => entry.status !== "completed");
   const pinnedPlanId = planActive ? lastPlan?.planId : undefined;
-  const pendingSteers = [...state.messages.values()].filter(
-    (message) => {
-      if (
-        message.role !== "user" ||
-        message.delivery !== "steer" ||
-        message.deliveryState !== "pending" ||
-        message.laneId !== MAIN_LANE_ID
-      ) {
-        return false;
-      }
-      if (message.turnId !== undefined && state.activeTurns.has(message.turnId)) return true;
-      const targetId = message.harnessTargetId ?? message.harness;
-      return targetId !== undefined && controller.preservesPendingSteers(targetId);
-    },
-  );
+  const pendingSteers = [...state.harnessInputs.values()].filter((input) => {
+    if (
+      input.laneId !== MAIN_LANE_ID ||
+      input.delivery !== "steer" ||
+      input.status !== "steering" ||
+      input.deliveryOutcome !== undefined
+    ) {
+      return false;
+    }
+    if (state.activeTurns.has(input.turnId)) return true;
+    return controller.preservesPendingSteers(input.harnessTargetId);
+  });
   const queuedItems = [
-    ...pendingSteers.map((message) => ({
-      id: message.messageId,
-      text: userVisibleText(composerTextOf(message.content)),
-      tag: `${message.harnessTargetId ?? message.harness ?? harnessTargetId} · ${
-        message.turnId !== undefined && state.activeTurns.has(message.turnId)
-          ? "current turn"
-          : "native queue"
+    ...pendingSteers.map((input) => ({
+      id: input.messageId,
+      text: userVisibleText(composerTextOf(input.blocks)),
+      tag: `${input.harnessTargetId} · ${
+        state.activeTurns.has(input.turnId) ? "current turn" : "native queue"
       }`,
     })),
     ...mainQueuedInputs.map((turn) => ({

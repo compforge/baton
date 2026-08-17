@@ -226,17 +226,12 @@ describe("claude: command lifecycle → steer delivery", () => {
     feed({ type: "command_lifecycle", uuid: "native-steer", state: "started" });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      kind: "user_message",
-      payload: {
-        messageId: "m_steer",
-        content: [{ type: "text", text: "queued steer" }],
-        delivery: "steer",
-        deliveryState: "applied",
-      },
+      kind: "input_delivery_update",
+      payload: { messageId: "m_steer", state: "applied" },
     });
     expect(pendingOfferUuids.has("native-steer")).toBe(false);
 
-    // terminal frame follows started; the correlation was already consumed, so the upsert stays idempotent.
+    // terminal frame follows started; the correlation was already consumed, so the receipt stays idempotent.
     feed({ type: "command_lifecycle", uuid: "native-steer", state: "completed" });
     expect(events).toHaveLength(1);
   });
@@ -253,8 +248,8 @@ describe("claude: command lifecycle → steer delivery", () => {
     feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-2", state: "started" });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      kind: "user_message",
-      payload: { messageId: "m_steer", delivery: "steer", deliveryState: "applied" },
+      kind: "input_delivery_update",
+      payload: { messageId: "m_steer", state: "applied" },
     });
     expect(pendingOfferUuids.has("native-steer")).toBe(false);
 
@@ -267,9 +262,9 @@ describe("claude: command lifecycle → steer delivery", () => {
 
     feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-1", state: "cancelled" });
 
-    expect(events.map((event) => event.kind)).toEqual(["user_message", "_baton_notice"]);
+    expect(events.map((event) => event.kind)).toEqual(["input_delivery_update", "_baton_notice"]);
     expect(events[0]).toMatchObject({
-      payload: { messageId: "m_steer", deliveryState: "failed" },
+      payload: { messageId: "m_steer", state: "failed" },
     });
     expect(pendingOfferUuids.has("native-steer")).toBe(false);
   });
@@ -281,11 +276,11 @@ describe("claude: command lifecycle → steer delivery", () => {
       feed({ type: "command_lifecycle", uuid: "native-steer", state });
 
       expect(events.map((event) => event.kind)).toEqual([
-        "user_message",
+        "input_delivery_update",
         "_baton_notice",
       ]);
       expect(events[0]).toMatchObject({
-        payload: { messageId: "m_steer", deliveryState: "failed" },
+        payload: { messageId: "m_steer", state: "failed" },
       });
       expect(events[1]).toMatchObject({
         payload: {

@@ -139,14 +139,29 @@ export class Queue<TBinding extends QueueBinding> {
     return { run, settled };
   }
 
-  finishRun(run: QueueRun<TBinding>, stopReason: StopReason | undefined): void {
+  finishRun(
+    run: QueueRun<TBinding>,
+    stopReason: StopReason | undefined,
+    /** 投影中的 steer 投递结果查询；Turn 收口只终结已投递的 steer。 */
+    deliveryOutcomeOf?: (messageId: string) => "applied" | "failed" | undefined,
+  ): void {
     if (run.status === "finalized") return;
     run.status = "finalized";
     run.stopReason = stopReason;
     const terminal: HarnessInputStatus = stopReason === "cancelled" ? "interrupted" : "finalized";
-    if (run.input) run.input.status = terminal;
+    if (run.input) {
+      this.beforeTransition(run.input, terminal);
+      run.input.status = terminal;
+    }
     for (const steer of run.steers) {
-      steer.status = terminal;
+      const outcome = deliveryOutcomeOf?.(steer.messageId);
+      if (outcome === "applied") {
+        // 已进模型上下文的 steer 与 Turn 共命运。
+        this.beforeTransition(steer, terminal);
+        steer.status = terminal;
+      }
+      // outcome 为 undefined:原生队列跨 Turn,不标终态——投影继续持有 steering 状态,
+      // Harness 回执到达后再迁移;failed:回执时已落终态,不覆盖。
       steer.resolve?.("completed");
     }
     if (this.currentRun?.turnId === run.turnId) this.currentRun = undefined;
@@ -167,6 +182,8 @@ export class Queue<TBinding extends QueueBinding> {
       parentEventId?: string;
       enqueueSeq?: number;
       restore?: boolean;
+      /** Crash 恢复的 steering Input 按 Esc 回收同语义处理：重放为可见 follow-up。 */
+      requeuedFromSteer?: boolean;
     },
   ): QueueSubmission {
     let resolve!: (outcome: QueueOutcome) => void;
@@ -196,6 +213,7 @@ export class Queue<TBinding extends QueueBinding> {
       ...(options?.sourceProposedPlanId
         ? { sourceProposedPlanId: options.sourceProposedPlanId }
         : {}),
+      ...(options?.requeuedFromSteer ? { requeuedFromSteer: true } : {}),
       resolve,
       reject,
     };
@@ -253,13 +271,17 @@ export class Queue<TBinding extends QueueBinding> {
     if (this.dispatching !== input) {
       throw new Error(`Input ${input.messageId} is not dispatching`);
     }
-    this.beforeTransition(input, "accepted_steer", { turnId, delivery: "steer" });
+    this.beforeTransition(input, "steering", { turnId, delivery: "steer" });
     this.dispatching = undefined;
     input.turnId = turnId;
-    input.status = "accepted_steer";
+    input.status = "steering";
   }
 
-  requeueClaimed(input: QueueItem): void {
+  /**
+   * @param fromAcceptedSteer admission 回执输给 Esc 竞态时使用：Adapter 已接受
+   * 且已落 steer 正文，重放必须按回收 steer 语义落成可见 follow-up。
+   */
+  requeueClaimed(input: QueueItem, opts?: { fromAcceptedSteer?: boolean }): void {
     if (this.dispatching !== input) {
       throw new Error(`Input ${input.messageId} is not dispatching`);
     }
@@ -267,6 +289,7 @@ export class Queue<TBinding extends QueueBinding> {
     this.dispatching = undefined;
     input.status = "queued";
     input.delivery = "prompt";
+    if (opts?.fromAcceptedSteer) input.requeuedFromSteer = true;
     this.queue.unshift(input);
   }
 

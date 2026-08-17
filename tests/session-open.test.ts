@@ -74,12 +74,43 @@ describe("crash recovery on open", () => {
       harnessTargetId: "claude",
       turnId: "t1",
     });
+    // 新式 ledger：steering input + 正文 upsert，投递事实在 input 投影。
+    h.appendEvent({
+      source: { type: "user" },
+      kind: "harness_input.updated",
+      payload: {
+        messageId: "m_pending",
+        turnId: "t1",
+        harnessTargetId: "claude",
+        laneId: "hl_main",
+        blocks: [{ type: "text", text: "queued after this turn" }],
+        source: { type: "user" },
+        status: "steering",
+        delivery: "steer",
+      },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId: "t1",
+    });
     h.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
       kind: "user_message",
       payload: {
         messageId: "m_pending",
         content: [{ type: "text", text: "queued after this turn" }],
+        delivery: "steer",
+      },
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      turnId: "t1",
+    });
+    // 老 ledger 形态：投递状态寄生在 user_message.deliveryState。
+    h.appendEvent({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "user_message",
+      payload: {
+        messageId: "m_legacy_pending",
+        content: [{ type: "text", text: "legacy queued steer" }],
         delivery: "steer",
         deliveryState: "pending",
       },
@@ -100,7 +131,12 @@ describe("crash recovery on open", () => {
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
 
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().messages.get("m_pending")?.deliveryState).toBe("failed");
+    // 新式：投递事实收在 input 投影。
+    expect(
+      result.session.loadState().harnessInputs.get("m_pending")?.deliveryOutcome,
+    ).toBe("failed");
+    // 老 ledger：回执镜像到 legacy deliveryState。
+    expect(result.session.loadState().messages.get("m_legacy_pending")?.deliveryState).toBe("failed");
     expect(
       result.session
         .loadState()

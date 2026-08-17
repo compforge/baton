@@ -408,13 +408,15 @@ export function buildTranscript(
       if (hidden(msg.laneId)) continue;
       // Harness 接受 steer 只代表承担投递责任。只有 applied 才是模型已看到的
       // Transcript 历史；pending 留在 Composer Queue，failed 由诊断事件说明且不伪造历史。
-      if (
-        msg.role === "user" &&
-        msg.delivery === "steer" &&
-        msg.deliveryState !== undefined &&
-        msg.deliveryState !== "applied"
-      ) {
-        continue;
+      // 投递事实以 input 投影（input_delivery_update）为准：有 input 记录时 outcome
+      // 未填写即未应用；没有 input 记录的老 ledger 才回落 user_message.deliveryState。
+      if (msg.role === "user" && msg.delivery === "steer") {
+        const input = state.harnessInputs.get(msg.messageId);
+        if (input) {
+          if (input.deliveryOutcome !== "applied") continue;
+        } else if (msg.deliveryState !== undefined && msg.deliveryState !== "applied") {
+          continue;
+        }
       }
       if (msg.role === "thought") {
         const turnCompleted = state.turnSummaries.some(

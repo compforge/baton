@@ -114,10 +114,23 @@ export type SubmitDelivery = "prompt" | "steer" | "follow_up" | (string & {});
 export interface UserMessageUpsert extends MessageUpsert {
   delivery?: SubmitDelivery;
   /**
-   * steer 的原生投递进度：pending = 仍在 Harness 队列，applied = 已进入模型上下文，
-   * failed = Harness 已明确不会应用。failed 不能投影成 Transcript 里的用户历史。
+   * Legacy replay only：老 ledger 里 steer 的投递进度寄生在消息补丁上。
+   * 新事件流用 `input_delivery_update` 一等事件表达（HarnessInput.deliveryOutcome），
+   * Adapter 不再写这个字段；reduce 仍会消费它还原老会话。
    */
   deliveryState?: "pending" | "applied" | "failed";
+}
+
+/**
+ * Harness 对 steer 输入的投递回执（Adapter → Core）：applied = 已写入模型上下文，
+ * failed = Harness 明确丢弃。投递事实是 Input 的一等状态，不再寄生 user_message；
+ * 回执可能迟到于 Turn 收口（原生队列跨 Turn），只迁移 deliveryOutcome。
+ * deliveryTracking = "ack-only" 的 Harness 没有后续回执，接受即由 Core 合成 applied。
+ */
+export interface InputDeliveryUpdate {
+  messageId: string;
+  state: "applied" | "failed";
+  detail?: string;
 }
 
 /** chunk 永远是追加语义；role 由事件 kind 决定（user_/agent_/agent_thought_ 前缀） */
@@ -433,6 +446,7 @@ export type EventPayloadMap = {
   "input.received": HumanInputReceived;
   "input.settled": HumanInputSettled;
   "harness_input.updated": HarnessInputUpdate;
+  input_delivery_update: InputDeliveryUpdate;
   state_update: StateUpdate;
   user_message: UserMessageUpsert;
   user_message_chunk: MessageChunk;

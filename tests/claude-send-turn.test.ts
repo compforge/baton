@@ -79,7 +79,6 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
       payload: expect.objectContaining({
         messageId: "m_2",
         delivery: "steer",
-        deliveryState: "pending",
       }),
     }),
   );
@@ -133,10 +132,10 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   expect(closes).toBe(2);
   expect(events).toContainEqual(
     expect.objectContaining({
-      kind: "user_message",
+      kind: "input_delivery_update",
       payload: expect.objectContaining({
         messageId: "m_2",
-        deliveryState: "failed",
+        state: "failed",
       }),
     }),
   );
@@ -198,8 +197,8 @@ test("Claude result applies a steer folded into the active turn", async () => {
   await outputFinished;
 
   const appliedIndex = events.findIndex(
-    (event) => event.kind === "user_message" && event.payload.messageId === "m_folded" &&
-      event.payload.deliveryState === "applied",
+    (event) => event.kind === "input_delivery_update" && event.payload.messageId === "m_folded" &&
+      event.payload.state === "applied",
   );
   const idleIndex = events.findIndex(
     (event) => event.kind === "state_update" && event.payload.state === "idle",
@@ -208,8 +207,8 @@ test("Claude result applies a steer folded into the active turn", async () => {
   expect(idleIndex).toBeGreaterThan(appliedIndex);
   expect(events).not.toContainEqual(
     expect.objectContaining({
-      kind: "user_message",
-      payload: expect.objectContaining({ messageId: "m_folded", deliveryState: "failed" }),
+      kind: "input_delivery_update",
+      payload: expect.objectContaining({ messageId: "m_folded", state: "failed" }),
     }),
   );
 
@@ -275,16 +274,12 @@ test("Claude lifecycle start moves a delayed steer into a new Harness-started tu
   await outputFinished;
 
   const applied = events.find(
-    (event) => event.kind === "user_message" && event.payload.messageId === "m_delayed" &&
-      event.payload.deliveryState === "applied",
+    (event) => event.kind === "input_delivery_update" && event.payload.messageId === "m_delayed" &&
+      event.payload.state === "applied",
   );
+  // 回执挂在 Harness 新起的 turn 上；正文在 offer 时已落盘（原 turn），不再随回执重复。
   expect(applied).toMatchObject({
     turnId: expect.not.stringMatching(/^t_original$/),
-    payload: {
-      content: [{ type: "text", text: "run after this turn" }],
-      delivery: "steer",
-      deliveryState: "applied",
-    },
   });
   expect(events).toContainEqual(
     expect.objectContaining({
