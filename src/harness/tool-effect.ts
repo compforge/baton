@@ -1,6 +1,6 @@
 // 工具调用 effect（只读/副作用）的 adapter 侧判定 helper。
-// 这里只处理语义已经由 Harness 明确归一的 kind；shell 文本不能可靠证明
-// 无副作用，execute/think/other 等保持 unknown，由消费方保守处理。
+// 这里只处理语义已经由 Harness 明确归一的 kind；shell 文本的窄规则由对应
+// Adapter 在 command-effect 边界处理，execute/think/other 等保持 unknown。
 import type { ToolEffect } from "../event/index.ts";
 
 /**

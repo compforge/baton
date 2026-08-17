@@ -71,10 +71,12 @@ context window 只有在本次占用与容量能严格配对时才作为完整�
 `tool_call_update` 的 `effect`（`read`/`write`）是 Adapter 对工具调用副作用的声明，与 `kind`
 （动作词汇）正交，是 Harness output 契约的一部分。Adapter 应按自家工具语义明确填写：只读工具直接
 `read`，写工具直接 `write`；Codex `commandExecution` 只在其原生 `commandActions`
-非空且全部为 `read` / `listFiles` / `search` 时上报 `read`。纯 shell 文本、
-空 action 集合或含 `unknown` 的命令不能证明副作用，Adapter 一律显式上报 `write`。
+非空且全部能证明为只读时上报 `read`。原生 `read` / `listFiles` / `search` 是首选证据；Codex
+把查询命令折叠为 `unknown` 时，Adapter 只对规则表已收录且参数形态无副作用的命令做
+fail-closed 兜底（当前包括 Git 查询、ripgrep 与 sed 的窄只读子集）。空 action、未收录命令、
+重定向、substitution 或写入型参数仍显式上报 `write`。
 该字段当前驱动 TUI 的只读聚合展示，也可服务自动审批、并行调度等策略，因此
-只能来自 Harness 的结构化工具语义，不能由展示启发式签发。
+provider fallback 必须留在对应 Adapter，并以参数级反例测试约束，不能由通用展示启发式签发。
 
 ### 2.3 其它 Adapter 端口
 

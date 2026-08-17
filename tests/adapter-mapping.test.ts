@@ -1298,6 +1298,29 @@ describe("tool effect mapping", () => {
     expect(payloads.find((p) => p.toolCallId === "cmd3")?.effect).toBe("write");
   });
 
+  test("codex: read-only Git queries recover a native unknown action", () => {
+    const { events, notify } = codexHarness();
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "commandExecution",
+        id: "cmd-git-query",
+        status: "inProgress",
+        command: "/bin/zsh -lc 'git status && git log -5 && git tag --sort=-version:refname | head -20'",
+        commandActions: [{
+          type: "unknown",
+          command: "git status && git log -5 && git tag --sort=-version:refname | head -20",
+        }],
+      },
+    });
+    const payload = events
+      .filter((event) => event.kind === "tool_call_update")
+      .map((event) => event.payload as { toolCallId: string; effect?: string })
+      .find((event) => event.toolCallId === "cmd-git-query");
+    expect(payload?.effect).toBe("read");
+  });
+
   test("codex: fileChange → write, webSearch → read, mcpToolCall 不上报", () => {
     const { events, notify } = codexHarness();
     notify("item/completed", {

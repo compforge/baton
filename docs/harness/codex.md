@@ -128,8 +128,11 @@ BatonSession。Inspector 结束后关闭临时 app-server，不修改原生 thre
 ## 8. 代码与测试锚点
 
 - `src/harness/codex/adapter.ts` — live Adapter、Interaction、Capability 和 mapping
+- `src/harness/codex/command-effect.ts` — Codex 原生 action 聚合与 unknown fallback 入口
+- `src/harness/command-effect/` — 可注册的只读命令规则、shell 组合判定与命令族参数语义
 - `src/harness/codex/jsonrpc.ts` — JSON-RPC transport
 - `src/harness/codex/native-session.ts` — 只读历史 Inspector
 - `tests/codex-session.test.ts`、`tests/codex-steer.test.ts` — Session 与 steer
 - `tests/codex-turn-race.test.ts`、`tests/codex-empty-turn.test.ts` — 终态竞速与空回合
 - `tests/reconcile.test.ts`、`tests/approval-contract.test.ts` — 对账与审批诚实性
+- `tests/command-effect.test.ts` — 只读命令正反例与规则扩展契约
