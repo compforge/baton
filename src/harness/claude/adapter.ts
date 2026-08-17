@@ -590,6 +590,12 @@ interface ClaudePromptChannel {
 interface ClaudeCommandLifecycleMessage {
   type: "command_lifecycle";
   uuid: string;
+  /**
+   * 同一命令在 queued→started→completed 全程稳定的相关联 id，等于 offer 进
+   * streaming input 的用户消息 uuid；顶层 `uuid` 是每个 frame 自己的信封 id，
+   * 逐帧不同，不能用于匹配 pendingOfferUuids。
+   */
+  command_uuid?: string;
   state: string;
 }
 
@@ -607,6 +613,11 @@ function claudeCommandLifecycleMessage(value: unknown): ClaudeCommandLifecycleMe
   }
   // 保留原始 frame 的其余字段，使 native trace 与 Event.raw 仍是完整 wire 事实。
   return value as ClaudeCommandLifecycleMessage;
+}
+
+/** command_lifecycle 的关联键：优先稳定的 command_uuid，回退旧 CLI 只有信封 uuid 的形态。 */
+function commandLifecycleKey(msg: ClaudeCommandLifecycleMessage): string {
+  return msg.command_uuid ?? msg.uuid;
 }
 
 /**
@@ -1273,7 +1284,7 @@ export class ClaudeAdapter implements HarnessAdapter {
           current.finalized &&
           msg.type === "command_lifecycle" &&
           msg.state === "started" &&
-          rt.pendingOfferUuids?.has(msg.uuid) === true;
+          rt.pendingOfferUuids?.has(commandLifecycleKey(msg)) === true;
         if (startsHarnessTurn(msg.type, current) || startsQueuedTurn) {
           current = this.mintHarnessTurn(rt);
           rt.currentTurn = current;
@@ -1574,12 +1585,13 @@ export class ClaudeAdapter implements HarnessAdapter {
   private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
     switch (msg.type) {
       case "command_lifecycle": {
-        const offer = rt.pendingOfferUuids?.get(msg.uuid);
+        const key = commandLifecycleKey(msg);
+        const offer = rt.pendingOfferUuids?.get(key);
         // 首轮 prompt 和 CLI 内部 command 也有 lifecycle；只处理 Baton 发出的 steer uuid。
         if (!offer) break;
         if (msg.state === "queued") break;
         if (msg.state === "started" || msg.state === "completed") {
-          rt.pendingOfferUuids?.delete(msg.uuid);
+          rt.pendingOfferUuids?.delete(key);
           emit({
             kind: "user_message",
             payload: {
@@ -1593,7 +1605,7 @@ export class ClaudeAdapter implements HarnessAdapter {
           break;
         }
         if (msg.state === "cancelled" || msg.state === "discarded") {
-          rt.pendingOfferUuids?.delete(msg.uuid);
+          rt.pendingOfferUuids?.delete(key);
           emit({
             kind: "user_message",
             payload: {

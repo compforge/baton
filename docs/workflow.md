@@ -229,8 +229,9 @@ Session 使用相同 reducer。自愈也必须合成新的事实 Event 再走这
 Harness DTO。
 
 多 Lane 仍 append 到同一 `session.jsonl`。全局 `seq` 只是 ledger 观察到的写入顺序，
-不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；默认主时间线
-把它投影为一张包含状态、Lane 和结果的任务卡片。
+不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；运行中的 side Lane、
+Harness 原生 subagent 与异步 task 统一进入 Footer 下方可选的 Parallel 现在时区域，终结后再由
+默认主时间线投影为可回看的任务卡片。
 
 ### 3.3 Turn 收口
 

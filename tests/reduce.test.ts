@@ -298,6 +298,7 @@ describe("state / permission / plan / usage", () => {
       status: "completed",
       title: "Explore",
       summary: "Found it",
+      startedAt: 0,
     });
   });
 
@@ -472,6 +473,36 @@ describe("snapshot vs delta semantics", () => {
     expect(state.perTarget.get("claude")?.lastPlanId).toBe("p2");
   });
 
+  test("a new turn invalidates the pinned plan until a fresh plan_update re-pins it", () => {
+    // 回归：旧 plan 的未完成条目永存是常态，lastPlanId 跨 turn 不清会让它在每个
+    // 后续 turn 里残留显示；turn 首见时作废，本 turn 真更新 plan 时再重新 pin。
+    const state = reduceEvents([
+      ev("state_update", { state: "running" }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("state_update", { state: "idle", stopReason: "end_turn" }, "t1"),
+      ev("state_update", { state: "running" }, "t2"),
+    ]);
+    expect(state.perTarget.get("test")?.lastPlanId).toBeUndefined();
+
+    // 重放的重复 running（turn 已在场）不再次清除
+    const repinned = reduceEvents([
+      ev("state_update", { state: "running" }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("state_update", { state: "running" }, "t1"),
+    ]);
+    expect(repinned.perTarget.get("test")?.lastPlanId).toBe("p1");
+
+    // 新 turn 里来了新 plan_update → 正常 pin 新 plan
+    const fresh = reduceEvents([
+      ev("state_update", { state: "running" }, "t1"),
+      ev("plan_update", { planId: "p1", entries: [{ content: "a", status: "pending", priority: "medium" }] }, "t1"),
+      ev("state_update", { state: "idle", stopReason: "end_turn" }, "t1"),
+      ev("state_update", { state: "running" }, "t2"),
+      ev("plan_update", { planId: "p2", entries: [{ content: "b", status: "pending", priority: "medium" }] }, "t2"),
+    ]);
+    expect(fresh.perTarget.get("test")?.lastPlanId).toBe("p2");
+  });
+
   test("same Harness with two Targets keeps all Target-scoped projections isolated", () => {
     const state = reduceEvents([
       {
@@ -491,6 +522,18 @@ describe("snapshot vs delta semantics", () => {
       },
       {
         ...ev("available_commands_update", { commands: [{ name: "ship" }] }),
+        harness: "codex",
+        harnessTargetId: "codex-personal",
+      },
+      // turn 先于 plan_update 在场：真实时序（TodoWrite/TaskCreate 发生在 turn 内），
+      // 也契合"新 turn 作废旧 plan pin"的语义。
+      {
+        ...ev("state_update", { state: "running" }, "t-work"),
+        harness: "codex",
+        harnessTargetId: "codex-work",
+      },
+      {
+        ...ev("state_update", { state: "running" }, "t-personal"),
         harness: "codex",
         harnessTargetId: "codex-personal",
       },
@@ -517,16 +560,6 @@ describe("snapshot vs delta semantics", () => {
       },
       {
         ...ev("tool_call_update", { toolCallId: "tc-personal", status: "pending" }, "t-personal"),
-        harness: "codex",
-        harnessTargetId: "codex-personal",
-      },
-      {
-        ...ev("state_update", { state: "running" }, "t-work"),
-        harness: "codex",
-        harnessTargetId: "codex-work",
-      },
-      {
-        ...ev("state_update", { state: "running" }, "t-personal"),
         harness: "codex",
         harnessTargetId: "codex-personal",
       },

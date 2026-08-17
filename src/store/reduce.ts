@@ -91,6 +91,8 @@ export interface HarnessTaskState extends HarnessTaskUpdate {
   harnessTargetId?: string;
   laneId?: string;
   turnId?: string;
+  /** First observed lifecycle edge; projection-only elapsed time survives replay. */
+  startedAt?: number;
 }
 
 /**
@@ -461,6 +463,12 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         // state 保真透传（requires_action ↔ running 可来回迁移），但 pending blocking
         // request 在场时钉在 requires_action——重放的 running 不得掩盖未决审批卡片。
         const existing = state.activeTurns.get(ev.turnId);
+        if (!existing) {
+          // 新 turn 首见即作废旧 plan 的 pin：未完成条目永存是常态（任务中断/未逐条
+          // TaskUpdate），不清会让上一段工作的 plan 在每个后续 turn 里借尸还魂；
+          // 本 turn 若真的更新 plan，plan_update 会重新 pin。
+          for (const scope of executionScopes(state, ev)) scope.lastPlanId = undefined;
+        }
         state.activeTurns.set(ev.turnId, {
           turnId: ev.turnId,
           harness: ev.harness ?? existing?.harness,
@@ -555,6 +563,10 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         if (value !== undefined) {
           (next as unknown as Record<string, unknown>)[key] = value;
         }
+      }
+      if (!existing) {
+        const startedAt = Date.parse(ev.ts);
+        if (!Number.isNaN(startedAt)) next.startedAt = startedAt;
       }
       next.harness = ev.harness ?? existing?.harness;
       next.harnessTargetId = eventTargetId(ev) ?? existing?.harnessTargetId;

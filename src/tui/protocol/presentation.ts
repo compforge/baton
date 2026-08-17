@@ -31,6 +31,7 @@ function publishChatState(
   const timeline = store.getState("timeline");
   const composer = store.getState("composer");
   const activity = store.getState("activity");
+  const parallel = store.getState("parallel");
   const footer = store.getState("footer");
   store.commit({
     ...(timeline.items === next.timeline.items &&
@@ -49,6 +50,7 @@ function publishChatState(
     ...(activity.items === next.activity.items
       ? {}
       : { activity: next.activity }),
+    ...(parallel === next.parallel ? {} : { parallel: next.parallel }),
     ...(footer.toast === next.footer.toast && footer.text === next.footer.text
       ? {}
       : { footer: next.footer }),
@@ -65,6 +67,7 @@ function presentationKind(
   const timeline = store.getState("timeline");
   const composer = store.getState("composer");
   const activity = store.getState("activity");
+  const parallel = store.getState("parallel");
   const footer = store.getState("footer");
   if (composer.interactions !== next.composer.interactions) return "interaction";
   if (composer.picker !== next.composer.picker) return "picker";
@@ -80,6 +83,7 @@ function presentationKind(
     composer.busy !== next.composer.busy ||
     composer.placeholder !== next.composer.placeholder ||
     activity.items !== next.activity.items ||
+    parallel !== next.parallel ||
     footer.text !== next.footer.text
   ) {
     return "status";
