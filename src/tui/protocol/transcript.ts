@@ -468,6 +468,14 @@ export function buildTranscript(
     if (entry.type === "harness_invocation") {
       const request = state.harnessInvocations.get(entry.id);
       if (!request) continue;
+      if (
+        request.newLane &&
+        (request.phase === "queued" ||
+          request.phase === "running" ||
+          request.phase === "uncertain")
+      ) {
+        continue;
+      }
       const status: TranscriptBlockStatus =
         request.phase === "completed"
           ? request.result?.stopReason === "error" || request.result?.stopReason === "failed"
@@ -527,6 +535,7 @@ export function buildTranscript(
       const task = state.tasks.get(entry.id);
       if (!task) continue;
       if (hidden(task.laneId)) continue;
+      if (task.status === "in_progress") continue;
       const status = task.status === "stopped" ? "failed" : task.status;
       const details = [
         task.summary,

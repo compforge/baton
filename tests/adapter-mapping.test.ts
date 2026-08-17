@@ -200,6 +200,39 @@ describe("claude: command lifecycle → steer delivery", () => {
     expect(events).toHaveLength(1);
   });
 
+  // 真实 wire：command_uuid 全程稳定且等于 offer 注册键，顶层 uuid 是逐帧信封 id。
+  // 回归：曾因按顶层 uuid 匹配导致 started/completed 永远查不中，steer 永远挂在 Queue。
+  test("matches offers by stable command_uuid when frame uuid differs per frame", () => {
+    const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+
+    feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-1", state: "queued" });
+    expect(events).toHaveLength(0);
+    expect(pendingOfferUuids.has("native-steer")).toBe(true);
+
+    feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-2", state: "started" });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "user_message",
+      payload: { messageId: "m_steer", delivery: "steer", deliveryState: "applied" },
+    });
+    expect(pendingOfferUuids.has("native-steer")).toBe(false);
+
+    feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-3", state: "completed" });
+    expect(events).toHaveLength(1);
+  });
+
+  test("matches cancelled/discarded by command_uuid as well", () => {
+    const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+
+    feed({ type: "command_lifecycle", command_uuid: "native-steer", uuid: "frame-1", state: "cancelled" });
+
+    expect(events.map((event) => event.kind)).toEqual(["user_message", "_baton_notice"]);
+    expect(events[0]).toMatchObject({
+      payload: { messageId: "m_steer", deliveryState: "failed" },
+    });
+    expect(pendingOfferUuids.has("native-steer")).toBe(false);
+  });
+
   for (const state of ["cancelled", "discarded"] as const) {
     test(`marks ${state} steer failed without putting it in Transcript`, () => {
       const { events, feed, pendingOfferUuids } = claudeQueueHarness();
