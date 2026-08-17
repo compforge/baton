@@ -15,7 +15,6 @@ import {
   todoWritePlan,
 } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
-import { exploratoryShellCommand } from "../src/harness/tool-effect.ts";
 import type { LogEntry } from "../src/logging.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
@@ -1247,29 +1246,13 @@ describe("tool effect mapping", () => {
     expect(claudeToolEffect("BashOutput", { bash_id: "1" })).toBe("read");
     expect(claudeToolEffect("Edit", { file_path: "/a.ts" })).toBe("write");
     expect(claudeToolEffect("KillShell", { shell_id: "1" })).toBe("write");
-    expect(claudeToolEffect("Bash", { command: "head -80 a.ts | grep x" })).toBe("read");
-    expect(claudeToolEffect("Bash", { command: "npm test" })).toBe("write");
+    expect(claudeToolEffect("Bash", { command: "head -80 a.ts | grep x" })).toBeUndefined();
+    expect(claudeToolEffect("Bash", { command: "echo $(rm victim.txt)" })).toBeUndefined();
     // 未列出的工具不上报,消费方保守处理
     expect(claudeToolEffect("Task", { description: "x" })).toBeUndefined();
   });
 
-  test("exploratoryShellCommand: 全段只读才通过,写副作用一律拒绝", () => {
-    expect(exploratoryShellCommand("head -80 a.ts; echo ---; grep -n x b.ts | head -5")).toBe(true);
-    expect(exploratoryShellCommand("FOO=bar /bin/ls -la")).toBe(true);
-    expect(exploratoryShellCommand("grep -rn x src/ 2>/dev/null")).toBe(true); // stderr 丢弃不算写
-    expect(exploratoryShellCommand("grep x a.ts 2>&1 | head")).toBe(true); // stderr 合流 stdout 也不算
-    expect(exploratoryShellCommand("cat a.ts > b.ts")).toBe(false); // stdout 重定向
-    expect(exploratoryShellCommand("cat a.ts &> b.log")).toBe(false); // stdout+stderr 写文件
-    expect(exploratoryShellCommand("ls 1>files.txt")).toBe(false); // 显式 stdout 重定向
-    expect(exploratoryShellCommand("grep x a.ts 2>err.log")).toBe(false); // stderr 写文件
-    expect(exploratoryShellCommand("sed -i s/a/b/ a.ts")).toBe(false);
-    expect(exploratoryShellCommand("sed --in-place s/a/b/ a.ts")).toBe(false);
-    expect(exploratoryShellCommand("find . -name '*.log' -delete")).toBe(false);
-    expect(exploratoryShellCommand("git status")).toBe(false); // 未收录命令保守视为有副作用
-    expect(exploratoryShellCommand("")).toBe(false);
-  });
-
-  test("codex: commandExecution effect follows command text", () => {
+  test("codex: commandExecution remains unknown without structured effect semantics", () => {
     const { events, notify } = codexHarness();
     notify("item/started", {
       threadId: "th1",
@@ -1284,8 +1267,8 @@ describe("tool effect mapping", () => {
     const payloads = events
       .filter((e) => e.kind === "tool_call_update")
       .map((e) => e.payload as { toolCallId: string; effect?: string });
-    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBe("read");
-    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBe("write");
+    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBeUndefined();
+    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBeUndefined();
   });
 
   test("codex: fileChange → write, webSearch → read, mcpToolCall 不上报", () => {

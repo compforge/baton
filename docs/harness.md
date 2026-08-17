@@ -70,9 +70,9 @@ context window 只有在本次占用与容量能严格配对时才作为完整�
 
 `tool_call_update` 的 `effect`（`read`/`write`）是 Adapter 对工具调用副作用的声明，与 `kind`
 （动作词汇）正交，是 Harness output 契约的一部分。Adapter 应按自家工具语义明确填写：只读工具直接
-`read`；执行类（shell）按命令文本判定（共享 helper `src/harness/tool-effect.ts`，宁漏勿错）；
-语义未知的工具不上报，消费方一律保守按 `write` 处理。该字段当前驱动 TUI 的只读聚合展示，
-也可服务自动审批、并行调度等策略。
+`read`，写工具直接 `write`；shell 文本等不能证明副作用的输入不上报，消费方一律保守按
+`write` 处理。该字段当前驱动 TUI 的只读聚合展示，也可服务自动审批、并行调度等策略，因此
+只能来自 Harness 的结构化工具语义，不能由展示启发式签发。
 
 ### 2.3 其它 Adapter 端口
 

@@ -36,7 +36,6 @@ import type {
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
-import { exploratoryShellCommand } from "../tool-effect.ts";
 import type {
   InteractionDraft,
   PermissionOption,
@@ -122,12 +121,12 @@ export function claudeToolKind(toolName: string): string {
 }
 
 /**
- * Claude 工具名 + 入参 → effect 声明。Bash 的读写只能看命令文本,判定收敛在
- * 共享 helper(宁漏勿错);Task/AskUserQuestion 等未列出的工具不上报,消费方保守处理。
+ * Claude 工具名 → effect 声明。只有工具自身语义能证明读写时才上报；Bash、
+ * Task、AskUserQuestion 等不上报，由消费方保守处理。
  */
 export function claudeToolEffect(
   toolName: string,
-  input: Record<string, unknown>,
+  _input: Record<string, unknown>,
 ): ToolEffect | undefined {
   switch (toolName) {
     case "Read":
@@ -144,10 +143,6 @@ export function claudeToolEffect(
     case "NotebookEdit":
     case "KillShell":
       return "write";
-    case "Bash":
-      return typeof input.command === "string" && exploratoryShellCommand(input.command)
-        ? "read"
-        : "write";
     default:
       return undefined;
   }

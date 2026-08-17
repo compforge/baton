@@ -23,7 +23,6 @@ import type {
   ToolEffect,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
-import { exploratoryShellCommand } from "../tool-effect.ts";
 import type {
   HookTrustCandidate,
   InteractionDraft,
@@ -445,15 +444,11 @@ function toolKindOf(itemType: string): string {
 }
 
 /**
- * item → effect 声明。commandExecution 的读写只能看命令文本,判定收敛在
- * 共享 helper(宁漏勿错);mcp/dynamic/collab 语义未知,不上报,消费方保守处理。
+ * item → effect 声明。只有原生 item 类型能证明读写时才上报；commandExecution、
+ * mcp/dynamic/collab 语义未知，不上报并由消费方保守处理。
  */
 function toolEffectOf(item: Record<string, unknown>): ToolEffect | undefined {
   switch (item.type) {
-    case "commandExecution":
-      return typeof item.command === "string" && exploratoryShellCommand(item.command)
-        ? "read"
-        : "write";
     case "fileChange":
       return "write";
     case "webSearch":
