@@ -444,11 +444,24 @@ function toolKindOf(itemType: string): string {
 }
 
 /**
- * item → effect 声明。只有原生 item 类型能证明读写时才上报；commandExecution、
- * mcp/dynamic/collab 语义未知，不上报并由消费方保守处理。
+ * item → effect 声明。Codex 已把 shell 命令解析为 commandActions；只有每个
+ * action 都能证明为读取时，commandExecution 才上报 read。空集合、unknown
+ * 或其它不能证明为读取的命令一律显式上报 write。
  */
 function toolEffectOf(item: Record<string, unknown>): ToolEffect | undefined {
   switch (item.type) {
+    case "commandExecution": {
+      const actions = Array.isArray(item.commandActions)
+        ? item.commandActions
+        : [];
+      return actions.length > 0 && actions.every((action) => {
+        if (!action || typeof action !== "object") return false;
+        const type = (action as Record<string, unknown>).type;
+        return type === "read" || type === "listFiles" || type === "search";
+      })
+        ? "read"
+        : "write";
+    }
     case "fileChange":
       return "write";
     case "webSearch":

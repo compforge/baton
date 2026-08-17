@@ -1252,23 +1252,50 @@ describe("tool effect mapping", () => {
     expect(claudeToolEffect("Task", { description: "x" })).toBeUndefined();
   });
 
-  test("codex: commandExecution remains unknown without structured effect semantics", () => {
+  test("codex: commandExecution trusts structured command actions", () => {
     const { events, notify } = codexHarness();
     notify("item/started", {
       threadId: "th1",
       turnId: "ct1",
-      item: { type: "commandExecution", id: "cmd1", status: "inProgress", command: "rg foo src/" },
+      item: {
+        type: "commandExecution",
+        id: "cmd1",
+        status: "inProgress",
+        command: "rg foo src/",
+        commandActions: [{ type: "search", command: "rg foo src/", query: "foo", path: "src/" }],
+      },
     });
     notify("item/started", {
       threadId: "th1",
       turnId: "ct1",
-      item: { type: "commandExecution", id: "cmd2", status: "inProgress", command: "cargo test" },
+      item: {
+        type: "commandExecution",
+        id: "cmd2",
+        status: "inProgress",
+        command: "sed -n '1,80p' a.ts && cargo test",
+        commandActions: [
+          { type: "read", command: "sed -n '1,80p' a.ts", name: "a.ts", path: "/repo/a.ts" },
+          { type: "unknown", command: "cargo test" },
+        ],
+      },
+    });
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "commandExecution",
+        id: "cmd3",
+        status: "inProgress",
+        command: "custom-command",
+        commandActions: [],
+      },
     });
     const payloads = events
       .filter((e) => e.kind === "tool_call_update")
       .map((e) => e.payload as { toolCallId: string; effect?: string });
-    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBeUndefined();
-    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBeUndefined();
+    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBe("read");
+    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBe("write");
+    expect(payloads.find((p) => p.toolCallId === "cmd3")?.effect).toBe("write");
   });
 
   test("codex: fileChange → write, webSearch → read, mcpToolCall 不上报", () => {
