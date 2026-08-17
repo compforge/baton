@@ -32,6 +32,7 @@ import type {
   PlanEntry,
   PromptBlock,
   SessionConfigOption,
+  ToolEffect,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
@@ -116,6 +117,34 @@ export function claudeToolKind(toolName: string): string {
       return "fetch";
     default:
       return "other";
+  }
+}
+
+/**
+ * Claude 工具名 → effect 声明。只有工具自身语义能证明读写时才上报；Bash、
+ * Task、AskUserQuestion 等不上报，由消费方保守处理。
+ */
+export function claudeToolEffect(
+  toolName: string,
+  _input: Record<string, unknown>,
+): ToolEffect | undefined {
+  switch (toolName) {
+    case "Read":
+    case "NotebookRead":
+    case "Grep":
+    case "Glob":
+    case "WebFetch":
+    case "WebSearch":
+    case "BashOutput":
+      return "read";
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+    case "NotebookEdit":
+    case "KillShell":
+      return "write";
+    default:
+      return undefined;
   }
 }
 
@@ -430,6 +459,7 @@ export function claudeDurableMessageDrafts(
           toolCallId: toolUseId,
           title: claudeToolTitle(toolName, input),
           kind: claudeToolKind(toolName),
+          effect: claudeToolEffect(toolName, input),
           status: "in_progress",
           content: diff ? [diff] : undefined,
           rawInput: input,

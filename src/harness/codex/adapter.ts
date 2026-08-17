@@ -20,6 +20,7 @@ import type {
   SessionConfigOption,
   StopReason,
   ToolCallStatus,
+  ToolEffect,
 } from "../../event/index.ts";
 import { textOf } from "../../event/index.ts";
 import type {
@@ -442,6 +443,21 @@ function toolKindOf(itemType: string): string {
   }
 }
 
+/**
+ * item → effect 声明。只有原生 item 类型能证明读写时才上报；commandExecution、
+ * mcp/dynamic/collab 语义未知，不上报并由消费方保守处理。
+ */
+function toolEffectOf(item: Record<string, unknown>): ToolEffect | undefined {
+  switch (item.type) {
+    case "fileChange":
+      return "write";
+    case "webSearch":
+      return "read";
+    default:
+      return undefined;
+  }
+}
+
 function toolTitleOf(item: Record<string, unknown>): string {
   switch (item.type) {
     case "commandExecution":
@@ -619,6 +635,7 @@ export function codexItemLifecycleDrafts(
       toolCallId: String(item.id),
       title: toolTitleOf(item),
       kind: toolKindOf(itemType),
+      effect: toolEffectOf(item),
       status: lifecycle === "started" ? "in_progress" : codexToolTerminalStatus(item.status),
       content:
         lifecycle === "completed"

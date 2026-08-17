@@ -8,6 +8,7 @@ import {
   claudeApprovalOptions,
   claudeResultDiff,
   claudeToolDiff,
+  claudeToolEffect,
   claudeToolTitle,
   type TaskEntry,
   taskToolOp,
@@ -1235,5 +1236,62 @@ describe("claude: api_error_status result", () => {
     const { events, feed } = claudeHarness();
     feed({ type: "result", subtype: "success", usage: {}, modelUsage: {} });
     expect(events.filter((event) => event.kind === "_baton_error_update")).toHaveLength(0);
+  });
+});
+
+describe("tool effect mapping", () => {
+  test("claude: tool name + input → effect", () => {
+    expect(claudeToolEffect("Read", { file_path: "/a.ts" })).toBe("read");
+    expect(claudeToolEffect("Grep", { pattern: "x" })).toBe("read");
+    expect(claudeToolEffect("BashOutput", { bash_id: "1" })).toBe("read");
+    expect(claudeToolEffect("Edit", { file_path: "/a.ts" })).toBe("write");
+    expect(claudeToolEffect("KillShell", { shell_id: "1" })).toBe("write");
+    expect(claudeToolEffect("Bash", { command: "head -80 a.ts | grep x" })).toBeUndefined();
+    expect(claudeToolEffect("Bash", { command: "echo $(rm victim.txt)" })).toBeUndefined();
+    // 未列出的工具不上报,消费方保守处理
+    expect(claudeToolEffect("Task", { description: "x" })).toBeUndefined();
+  });
+
+  test("codex: commandExecution remains unknown without structured effect semantics", () => {
+    const { events, notify } = codexHarness();
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "commandExecution", id: "cmd1", status: "inProgress", command: "rg foo src/" },
+    });
+    notify("item/started", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "commandExecution", id: "cmd2", status: "inProgress", command: "cargo test" },
+    });
+    const payloads = events
+      .filter((e) => e.kind === "tool_call_update")
+      .map((e) => e.payload as { toolCallId: string; effect?: string });
+    expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBeUndefined();
+    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBeUndefined();
+  });
+
+  test("codex: fileChange → write, webSearch → read, mcpToolCall 不上报", () => {
+    const { events, notify } = codexHarness();
+    notify("item/completed", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: { type: "webSearch", id: "ws1", status: "completed", query: "q" },
+    });
+    notify("item/completed", {
+      threadId: "th1",
+      turnId: "ct1",
+      item: {
+        type: "fileChange",
+        id: "fc1",
+        status: "completed",
+        changes: [{ path: "/x.ts", kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-a\n+b" }],
+      },
+    });
+    const effects = events
+      .filter((e) => e.kind === "tool_call_update")
+      .map((e) => (e.payload as { toolCallId: string; effect?: string }));
+    expect(effects.find((p) => p.toolCallId === "ws1")?.effect).toBe("read");
+    expect(effects.find((p) => p.toolCallId === "fc1")?.effect).toBe("write");
   });
 });
