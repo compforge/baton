@@ -68,6 +68,12 @@ HarnessEvent 按稳定 ID upsert，字段省略表示不变、`null`/空集合�
 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一，未知值不进入 Core 封闭状态。
 context window 只有在本次占用与容量能严格配对时才作为完整快照输出，避免跨模型拼接数据。
 
+`tool_call_update` 的 `effect`（`read`/`write`）是 Adapter 对工具调用副作用的声明，与 `kind`
+（动作词汇）正交，是 Harness output 契约的一部分。Adapter 应按自家工具语义明确填写：只读工具直接
+`read`；执行类（shell）按命令文本判定（共享 helper `src/harness/tool-effect.ts`，宁漏勿错）；
+语义未知的工具不上报，消费方一律保守按 `write` 处理。该字段当前驱动 TUI 的只读聚合展示，
+也可服务自动审批、并行调度等策略。
+
 ### 2.3 其它 Adapter 端口
 
 并非所有 Harness → Core 返回都属于 output stream：
@@ -295,7 +301,8 @@ BatonSession 历史。
 1. 注册 canonical ID、aliases、Target 配置 lowering 与 Definition；
 2. 实现 Input port：`open/sendTurn/cancel/close`、PromptBlock admission 和 `SendTurnReceipt`；支持 steer
    时声明 delivery tracking/cancel ownership，并用 `input_delivery_update` 报告显式回执；
-3. 实现 Output port：只把已支持的原生观察归一为公共 HarnessEvent，未知 wire 保留 raw/diagnostic；
+3. 实现 Output port：只把已支持的原生观察归一为公共 HarnessEvent，为 `tool_call_update` 声明能由
+   Harness 语义证明的 `effect`，未知 wire 与 effect 保留 raw/diagnostic 或不报；
 4. 按需实现独立端口：Interaction lowering、Binding 发布、Capability、Target probe 与 Inspector；
 5. 覆盖 open 失败、accepted 后失败、cancel、transport close、迟到 Turn 终态和迟到 delivery receipt；
 6. 若支持原生历史，Inspector 必须只读并生成完整 `HarnessHistoryBoundary`；

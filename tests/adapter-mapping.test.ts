@@ -1257,8 +1257,13 @@ describe("tool effect mapping", () => {
     expect(exploratoryShellCommand("head -80 a.ts; echo ---; grep -n x b.ts | head -5")).toBe(true);
     expect(exploratoryShellCommand("FOO=bar /bin/ls -la")).toBe(true);
     expect(exploratoryShellCommand("grep -rn x src/ 2>/dev/null")).toBe(true); // stderr 丢弃不算写
+    expect(exploratoryShellCommand("grep x a.ts 2>&1 | head")).toBe(true); // stderr 合流 stdout 也不算
     expect(exploratoryShellCommand("cat a.ts > b.ts")).toBe(false); // stdout 重定向
+    expect(exploratoryShellCommand("cat a.ts &> b.log")).toBe(false); // stdout+stderr 写文件
+    expect(exploratoryShellCommand("ls 1>files.txt")).toBe(false); // 显式 stdout 重定向
+    expect(exploratoryShellCommand("grep x a.ts 2>err.log")).toBe(false); // stderr 写文件
     expect(exploratoryShellCommand("sed -i s/a/b/ a.ts")).toBe(false);
+    expect(exploratoryShellCommand("sed --in-place s/a/b/ a.ts")).toBe(false);
     expect(exploratoryShellCommand("find . -name '*.log' -delete")).toBe(false);
     expect(exploratoryShellCommand("git status")).toBe(false); // 未收录命令保守视为有副作用
     expect(exploratoryShellCommand("")).toBe(false);

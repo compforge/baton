@@ -42,13 +42,15 @@ const EXPLORATORY_SHELL_COMMANDS = new Set([
 /**
  * 一条 shell 命令是否纯只读探索:按 `|`/`&&`/`||`/`;`/换行 拆段,每段的命令词
  * 都落在 EXPLORATORY_SHELL_COMMANDS 内才算。防线(方向都是宁漏勿错):
- * - 任何 stdout 重定向(`>`/`>>`;`2>`/`&>` 除外)都可能写文件 → false;
- * - `sed -i` 原地改文件、`find -delete/-exec/-ok` 可执行任意动作 → false;
+ * - 重定向只放行 stderr 丢弃/合流(`2>/dev/null`、`2>&1`);其余任何 `>`
+ *   (`>`/`>>`/`1>`/`&>`/`2>err.log`)都可能写文件 → false;
+ * - `sed -i/--in-place` 原地改文件、`find -delete/-exec/-ok` 可执行任意动作 → false;
  * - 空段跳过,但整条命令至少要有一个有效段;引号内的 `>` 会误伤,
  *   结果只是该命令不聚合,可接受。
  */
 export function exploratoryShellCommand(command: string): boolean {
-  if (/((?<![\d&])>{1,2})/.test(command)) return false;
+  const scrubbed = command.replace(/2>(?:&1|\/dev\/null)/g, "");
+  if (scrubbed.includes(">")) return false;
   const segments = command.split(/&&|\|\||[;|\n]/).map((segment) => segment.trim()).filter(Boolean);
   if (segments.length === 0) return false;
   return segments.every((segment) => {
@@ -62,7 +64,9 @@ export function exploratoryShellCommand(command: string): boolean {
     }
     const word = tokens[0]?.split("/").pop();
     if (!word || !EXPLORATORY_SHELL_COMMANDS.has(word)) return false;
-    if (word === "sed" && tokens.some((t) => t.startsWith("-i"))) return false;
+    if (word === "sed" && tokens.some((t) => t.startsWith("-i") || t === "--in-place" || t.startsWith("--in-place="))) {
+      return false;
+    }
     if (word === "find" && tokens.some((t) => t === "-delete" || t === "-exec" || t === "-execdir" || t === "-ok")) {
       return false;
     }
