@@ -1,6 +1,6 @@
 import type { ReadOnlyCommandRule } from "./shell.ts";
 
-const UNSAFE_LOG_OPTIONS = ["--output", "--ext-diff", "--textconv"] as const;
+const UNSAFE_REVISION_QUERY_OPTIONS = ["--output", "--ext-diff", "--textconv"] as const;
 
 const TAG_LIST_OPTIONS = new Set([
   "-l",
@@ -32,10 +32,25 @@ const TAG_LIST_OPTION_PREFIXES = [
   "--color=",
 ] as const;
 
-function logIsReadOnly(args: readonly string[]): boolean {
+function revisionQueryIsReadOnly(args: readonly string[]): boolean {
   return !args.some((arg) =>
-    UNSAFE_LOG_OPTIONS.some((option) => arg === option || arg.startsWith(`${option}=`)),
+    UNSAFE_REVISION_QUERY_OPTIONS.some((option) => arg === option || arg.startsWith(`${option}=`)),
   );
+}
+
+function branchListsOnly(args: readonly string[]): boolean {
+  if (args.length === 1 && args[0] === "--show-current") return true;
+  if (args[0] !== "--list" && args[0] !== "-l") return false;
+  return args.slice(1).every((arg) => !arg.startsWith("-"));
+}
+
+function remoteListsOnly(args: readonly string[]): boolean {
+  return args.length === 0
+    || (args.length === 1 && (args[0] === "-v" || args[0] === "--verbose"));
+}
+
+function lsRemoteIsReadOnly(args: readonly string[]): boolean {
+  return !args.some((arg) => arg === "--upload-pack" || arg.startsWith("--upload-pack="));
 }
 
 function tagListsOnly(args: readonly string[]): boolean {
@@ -63,7 +78,14 @@ export const gitCommandIsReadOnly: ReadOnlyCommandRule = ([subcommand, ...args])
     case "status":
       return true;
     case "log":
-      return logIsReadOnly(args);
+    case "show":
+      return revisionQueryIsReadOnly(args);
+    case "branch":
+      return branchListsOnly(args);
+    case "remote":
+      return remoteListsOnly(args);
+    case "ls-remote":
+      return lsRemoteIsReadOnly(args);
     case "tag":
       return tagListsOnly(args);
     default:

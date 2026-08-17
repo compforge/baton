@@ -16,6 +16,11 @@ describe("shell command read effects", () => {
       "git status",
       "git status --short --branch",
       "git log --oneline --decorate -12",
+      "git show --stat HEAD",
+      "git branch --show-current",
+      "git branch --list 'feat/*'",
+      "git remote -v",
+      "git ls-remote origin refs/tags/v0.3.26 refs/heads/main",
       "git tag",
       "git tag --list 'v1.*'",
       "git tag --contains HEAD 'v1.*'",
@@ -36,7 +41,15 @@ describe("shell command read effects", () => {
     ], true);
   });
 
-  test("rejects Git mutations and effectful query options", () => {
+  test("accepts find queries without effectful actions", () => {
+    expectCommands([
+      "find . -maxdepth 3 -name AGENTS.md -print",
+      "find src tests -type f",
+      "find . -type f -print0",
+    ], true);
+  });
+
+  test("rejects mutations and effectful query options", () => {
     expectCommands([
       "git tag v1.2.3",
       "git tag -a v1.2.3",
@@ -48,6 +61,20 @@ describe("shell command read effects", () => {
       "git log --output /tmp/log",
       "git log --ext-diff",
       "git log --textconv",
+      "git show --output=/tmp/show HEAD",
+      "git show --ext-diff HEAD",
+      "git branch feat/new",
+      "git branch -d old",
+      "git branch --list --sort=-committerdate",
+      "git remote add origin example.com/repo.git",
+      "git remote set-url origin example.com/repo.git",
+      "git ls-remote --upload-pack=helper origin",
+      "find . -delete",
+      "find . -exec rm {} +",
+      "find . -execdir touch marker {} +",
+      "find . -ok rm {} +",
+      "find . -fprint output.txt",
+      "find . -fprintf output.txt '%p\\n'",
       "rg --pre processor pattern",
       "rg --hostname-bin=hostname pattern",
       "sed -i '' '1,2p' file",
