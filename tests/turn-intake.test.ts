@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -25,7 +25,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** open() 被外部 gate 控制的 adapter：制造稳定的"harness 冷启动中"窗口 */
 class GatedOpenAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   prompts: string[] = [];
   closes = 0;
   openGate!: () => void;
@@ -37,7 +37,7 @@ class GatedOpenAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     await this.gate;
     return { harness: this.harness, handleId: `${this.harness}-ref`, resumed: false };

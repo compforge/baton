@@ -14,7 +14,7 @@ import {
   resolveHarnessTarget,
   resolveHarnessTargetSelection,
 } from "../src/harness/registry.ts";
-import { agentColorFor } from "../src/tui/theme.ts";
+import { agentColorFor } from "../src/view/chat-tui/theme.ts";
 
 const openInteraction: OpenInteraction = async (req) =>
   req.kind === "permission"

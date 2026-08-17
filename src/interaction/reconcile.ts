@@ -5,7 +5,7 @@ import type {
   ConfirmInput,
   ConfirmResult,
   DraftInput,
-  HarnessInput,
+  HarnessInvocationInput,
   VerbResult,
 } from "@compforge/baton-plugin";
 
@@ -313,7 +313,7 @@ export class ReconcileInteractionStore {
 
   async harness(
     scope: ExecutionScope,
-    input: HarnessInput,
+  input: HarnessInvocationInput,
   ): Promise<ReconcileHarnessGateResult> {
     const interaction = this.open(scope, {
       kind: "harness_invocation",

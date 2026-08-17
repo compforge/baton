@@ -19,9 +19,9 @@ import {
   type AvailablePluginPackage,
   type InstalledPluginPackage,
   type RegisteredMarketplace,
-} from "../../plugin/marketplace/index.ts";
-import type { PluginInstance } from "../../plugin/instance.ts";
-import { Manager } from "../../plugin/manager.ts";
+} from "../../../plugin/marketplace/index.ts";
+import type { PluginInstance } from "../../../plugin/instance.ts";
+import { Manager } from "../../../plugin/manager.ts";
 import {
   findNewerVersion,
   isPackageInstalled,

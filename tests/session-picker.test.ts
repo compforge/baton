@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { SessionMeta } from "../src/store/store.ts";
-import { sessionPickerOptions } from "../src/tui/session-picker.tsx";
+import { sessionPickerOptions } from "../src/view/chat-tui/session-picker.tsx";
 
 describe("sessionPickerOptions", () => {
   const sessions: SessionMeta[] = [

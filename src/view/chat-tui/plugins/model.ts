@@ -2,8 +2,8 @@ import type {
   AvailablePluginPackage,
   InstalledPluginPackage,
   RegisteredMarketplace,
-} from "../../plugin/marketplace/index.ts";
-import type { PluginInstance } from "../../plugin/instance.ts";
+} from "../../../plugin/marketplace/index.ts";
+import type { PluginInstance } from "../../../plugin/instance.ts";
 
 export type PluginTab = "discover" | "installed" | "marketplaces" | "errors";
 

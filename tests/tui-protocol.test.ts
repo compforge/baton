@@ -14,11 +14,11 @@ import {
   runStatusLabel,
   thoughtDisplayBlocks,
   toolTranscriptItem,
-} from "../src/tui/protocol/index.ts";
+} from "../src/view/chat-tui/protocol/index.ts";
 import {
   toolGroupKey,
   toolGroupTranscriptItem,
-} from "../src/tui/protocol/transcript.ts";
+} from "../src/view/chat-tui/protocol/transcript.ts";
 
 function stubCompletedSend(
   protocol: BatonChatProtocol,
@@ -1721,7 +1721,7 @@ describe("tool call grouping", () => {
   });
 });
 
-// 启动时的 resume/fork 会话选择已移到 session picker（src/tui/session-picker.tsx，
+// 启动时的 resume/fork 会话选择已移到 session picker（src/view/chat-tui/session-picker.tsx，
 // 不经过 BatonChatProtocol）；/sessions 的会话内切换浮层仍由 protocol 承载。
 
 describe("BatonChatProtocol sessions picker", () => {

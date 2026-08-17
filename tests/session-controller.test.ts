@@ -7,7 +7,7 @@ import type {
   AdapterCapabilities,
   HarnessAdapter,
   EffortOption,
-  EventSink,
+  HarnessEventSink,
   HarnessSessionBindingSink,
   ModelOption,
   OpenOptions,
@@ -26,7 +26,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 class FakeAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
   openOptions?: OpenOptions;
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   model: string | null = null;
   effort: string | null = null;
   synced: string[] = [];
@@ -39,7 +39,7 @@ class FakeAdapter implements HarnessAdapter {
 
   async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
@@ -113,7 +113,7 @@ class TargetedFakeAdapter extends FakeAdapter {
 
   override async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
@@ -141,7 +141,7 @@ class DelayedNativeIdAdapter extends FakeAdapter {
 
   override async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     this.openOptions = opts;
@@ -794,17 +794,17 @@ describe("interaction completion registry", () => {
   class InteractiveAdapter implements HarnessAdapter {
     readonly harness = "codex";
     readonly capabilities: AdapterCapabilities = { prompt: {} };
-    sink?: EventSink;
+    sink?: HarnessEventSink;
 
     constructor(private readonly handlers: HarnessAdapterPorts) {}
 
-    async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+    async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
       this.sink = sink;
       return { harness: this.harness, handleId: "ia-ref", resumed: false };
     }
 
     async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
-      const emit = (ev: Parameters<EventSink>[0]) => this.sink?.({ ...ev, turnId: input.turnId });
+      const emit = (ev: Parameters<HarnessEventSink>[0]) => this.sink?.({ ...ev, turnId: input.turnId });
       emit({ kind: "state_update", payload: { state: "running" } });
       void (async () => {
         const decision = await this.handlers.openInteraction({
@@ -895,11 +895,11 @@ describe("interaction completion registry", () => {
     class StartupTrustAdapter implements HarnessAdapter {
       readonly harness = "codex";
       readonly capabilities: AdapterCapabilities = { prompt: {} };
-      private sink?: EventSink;
+      private sink?: HarnessEventSink;
 
       constructor(private readonly handlers: HarnessAdapterPorts) {}
 
-      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+      async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
         const response = await this.handlers.openInteraction({
           kind: "hook_trust" as const,
@@ -961,11 +961,11 @@ describe("interaction completion registry", () => {
     class SetupPermissionAdapter implements HarnessAdapter {
       readonly harness = "codex";
       readonly capabilities: AdapterCapabilities = { prompt: {} };
-      private sink?: EventSink;
+      private sink?: HarnessEventSink;
 
       constructor(private readonly handlers: HarnessAdapterPorts) {}
 
-      async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+      async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
         this.sink = sink;
         const response = await this.handlers.openInteraction({
           kind: "permission" as const,

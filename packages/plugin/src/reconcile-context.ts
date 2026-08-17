@@ -65,7 +65,8 @@ export interface ConfirmInput extends VerbInput {
 export type ConfirmValue = "accepted" | "declined";
 export type ConfirmResult = VerbResult<ConfirmValue>;
 
-export interface HarnessInput extends VerbInput {
+/** A Plugin request that gates and creates a Core-owned HarnessInvocation. */
+export interface HarnessInvocationInput extends VerbInput {
   readonly title: string;
   readonly prompt: string;
   /** Existing Baton Lane to continue, including the reserved main Lane ID `main`. */
@@ -108,7 +109,7 @@ export interface PluginVerbs {
   ): Promise<AskResult<AskValue<TInput>>>;
   confirm(input: ConfirmInput): Promise<ConfirmResult>;
   draft(input: DraftInput): Promise<DraftResult>;
-  harness(input: HarnessInput): Promise<HarnessResult>;
+  harness(input: HarnessInvocationInput): Promise<HarnessResult>;
 }
 
 export interface ReconcileContext {

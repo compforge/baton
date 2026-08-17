@@ -11,7 +11,7 @@ import type { query } from "@anthropic-ai/claude-agent-sdk";
 
 import type {
   AdapterCapabilities,
-  EventSink,
+  HarnessEventSink,
   HarnessAdapter,
   HarnessSessionHandle,
   OpenOptions,
@@ -54,7 +54,7 @@ class StubAdapter implements HarnessAdapter {
     return this.impl(request);
   }
 
-  async open(_opts: OpenOptions, _sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, _sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     return { harness: this.harness, handleId: `${this.harness}-ref` };
   }
   async sendTurn(_ref: HarnessSessionHandle, _input: PromptInput): Promise<SendTurnReceipt> {
@@ -74,9 +74,9 @@ class PlainAdapter extends StubAdapter {
 
 /** 运行一个真实 Controller Queue-driven Turn，但不启动外部 Harness。 */
 class CompletingTextgenAdapter extends StubAdapter {
-  private sink?: EventSink;
+  private sink?: HarnessEventSink;
 
-  override async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  override async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: `${this.harness}-ref` };
   }

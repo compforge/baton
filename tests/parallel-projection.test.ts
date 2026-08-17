@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Controller } from "../src/controller/index.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
-import { projectChatState } from "../src/tui/protocol/state.ts";
+import { projectChatState } from "../src/view/chat-tui/protocol/state.ts";
 
 let root: string;
 let session: SessionHandle;
@@ -121,6 +121,50 @@ describe("Parallel projection", () => {
         tokens: 800,
       }),
     ]);
+  });
+
+  test("shows skipTranscript tasks while live without adding terminal history", () => {
+    const coordinate = {
+      harness: "deepseek-harness",
+      harnessTargetId: "deepseek",
+      laneId: MAIN_LANE_ID,
+      turnId: "t_main",
+    } as const;
+    session.appendEvent({
+      source: { type: "harness", harnessTargetId: "deepseek" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "dsh-child",
+        status: "in_progress",
+        title: "DeepSeek Harness subagent",
+        taskType: "dsh-subagent",
+        skipTranscript: true,
+      },
+    });
+
+    expect(project().parallel?.items).toEqual([
+      expect.objectContaining({
+        id: "task:dsh-child",
+        name: "dsh/dsh-subagent",
+        description: "DeepSeek Harness subagent",
+      }),
+    ]);
+    expect(project().timeline.items.find((item) => item.id === "dsh-child")).toBeUndefined();
+
+    session.appendEvent({
+      source: { type: "harness", harnessTargetId: "deepseek" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "dsh-child",
+        status: "completed",
+        skipTranscript: true,
+      },
+    });
+
+    expect(project().parallel).toBeUndefined();
+    expect(project().timeline.items.find((item) => item.id === "dsh-child")).toBeUndefined();
   });
 
   test("shows a live side Lane as one async agent and restores its terminal card", () => {

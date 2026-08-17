@@ -11,7 +11,7 @@ import { CodexAdapter } from "../src/harness/codex/adapter.ts";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -25,14 +25,14 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** 事件完全由测试脚本控制的 adapter：submit 只回执，终态由测试显式注入 */
 class ScriptedAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   submits: PromptInput[] = [];
   cancels = 0;
   onCancel?: () => void;
 
   constructor(readonly harness: string = "scripted") {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: `${this.harness}-ref` };
   }

@@ -153,8 +153,8 @@ reference and submits the turn.
 
 ```ts
 context.hooks.register({
-  hookId: "observe-human-input",
-  stage: "human.inbound.before",
+  hookId: "observe-view-input",
+  stage: "view.input",
   async run(hook) {
     if (hook.subject.input.kind !== "prompt") return;
     const decision = await hook.verbs.confirm({
@@ -169,32 +169,25 @@ context.hooks.register({
 });
 ```
 
-The eight stages are the Cartesian product of boundary (`human` or `harness`),
-direction (`inbound` or `outbound`), and phase (`before` or `after`). A `before`
-notification waits for every matching Hook concurrently; failure or timeout is
-logged and fails open. An `after` notification is best-effort and non-blocking,
-with a bounded host queue. `human.outbound.after` means Channel delivered the
-presentation into Human surface state, not that a person actually saw it.
+Hook exposes the four stable View and Harness IO boundaries:
 
-Human inbound subjects cover prompts, commands, Harness/model/effort/mode
-configuration, Interaction responses, and interrupts. Channel persists
-`input.received` before the before Hook. Prompt lowering creates a distinct
-HarnessInput/message identity linked by `parentEventId`; Core persists
-`input.settled` before the after Hook. Human outbound subjects cover
-transcript, queue, Interaction, status, toast, Board, and picker publication
-through Channel.
-Updates may coalesce while a before Hook is running. A reentrant Interaction
-opened by that Hook through a Verb is published without recursively invoking
-the same before stage, so the Hook cannot deadlock on a question hidden from
-the human; the reentrant publication still emits an after notification.
+| stage | subject | delivery |
+|---|---|---|
+| `view.input` | durable `ViewInputRecord` | inline, before Core lowering |
+| `view.output` | published `ViewOutput` | deferred, after publication |
+| `harness.input` | read-only `HarnessInputDispatch` | inline, before the Adapter call |
+| `harness.output` | committed `BatonEventReference` | deferred, after Event commit |
 
-Direction follows the Human-to-Harness path. Harness inbound subjects describe one prepared Adapter send. New turns reuse
-the durable Delivery Attempt identity; a steer identity only correlates that
-same-turn send. The before stage precedes the Adapter call. The after stage
-reports `accepted`, `rejected`, or `error` admission without waiting for Turn
-completion. Harness outbound receives a normalized Event record only after it
-has been appended to the Event Ledger. Both phases carry its `eventId` and `seq`;
-Hooks cannot delay or replace the durable Harness output.
+Inline stages wait for every matching Hook concurrently. Failure or timeout is
+logged and fails open. Deferred stages use a bounded, best-effort host queue and
+never extend the main IO path. `view.output` means Baton published a View update;
+it does not prove that a person saw it.
+
+The Hook itself returns no replacement, allow/deny decision, or output value.
+Request effects through typed `hook.verbs`; Core then owns authorization,
+persistence, routing, and lifecycle. Core mechanics such as `input.settled` and
+Adapter admission remain Event, Attempt, or Snapshot facts instead of becoming
+additional Hook stages.
 
 Controller Sources have two narrow roles:
 

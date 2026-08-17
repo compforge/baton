@@ -23,8 +23,8 @@ import type {
 import {
   BatonTui,
   type BatonTuiHandle,
-} from "../src/tui/app.tsx";
-import type { BatonChatProtocol } from "../src/tui/protocol/index.ts";
+} from "../src/view/chat-tui/app.tsx";
+import type { BatonChatProtocol } from "../src/view/chat-tui/protocol/index.ts";
 
 let mounted: { root: Root; setup: TestRendererSetup } | null = null;
 

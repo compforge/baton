@@ -4,17 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type {
-  HookStage,
-  HookSubjectMap,
-  HumanInputRecord,
-  HumanInputSettlement,
+  ViewInputRecord,
+  ViewOutput,
 } from "@compforge/baton-plugin";
 
 import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { SendTurnOptions } from "../src/controller/index.ts";
 import type { PromptBlock } from "../src/event/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
-import { BatonChatProtocol } from "../src/tui/protocol/index.ts";
+import { BatonChatProtocol } from "../src/view/chat-tui/protocol/index.ts";
 
 const roots: string[] = [];
 
@@ -36,28 +34,17 @@ afterEach(() => {
   }
 });
 
-describe("Human Hook integration", () => {
-  test("correlates prompt intake before and after Input enqueue", async () => {
+describe("View Hook integration", () => {
+  test("correlates a durable ViewInput before prompt enqueue", async () => {
     const chat = protocol();
     await chat.pluginManager.start();
     const calls: string[] = [];
-    let inputId = "";
     let inputEventId = "";
-    const plugins = chat.pluginManager as typeof chat.pluginManager & {
-      beforeHook<S extends Extract<HookStage, `${string}.before`>>(
-        stage: S,
-        subject: Readonly<HookSubjectMap[S]>,
-      ): Promise<void>;
-      afterHook<S extends Extract<HookStage, `${string}.after`>>(
-        stage: S,
-        subject: Readonly<HookSubjectMap[S]>,
-      ): void;
-    };
-    plugins.beforeHook = async (stage, subject) => {
-      if (stage !== "human.inbound.before") return;
-      const record = subject as unknown as HumanInputRecord;
-      calls.push("before");
-      inputId = record.inputId;
+    const plugins = chat.pluginManager;
+    plugins.inlineHook = async (stage, subject) => {
+      if (stage !== "view.input") return;
+      const record = subject as unknown as ViewInputRecord;
+      calls.push("input");
       inputEventId = record.eventId;
       expect(record.input).toMatchObject({
         kind: "prompt", text: "ship it", harnessTargetId: "codex",
@@ -67,14 +54,6 @@ describe("Human Hook integration", () => {
         .session.ledger.read()
         .find((event) => event.eventId === record.eventId);
       expect(durable?.kind).toBe("input.received");
-    };
-    plugins.afterHook = (stage, subject) => {
-      if (stage !== "human.inbound.after") return;
-      calls.push("after");
-      expect(subject as unknown as HumanInputSettlement).toMatchObject({
-        inputId,
-        outcome: "succeeded",
-      });
     };
     const controller = (chat as unknown as {
       controller: {
@@ -100,7 +79,7 @@ describe("Human Hook integration", () => {
     };
 
     await chat.submit("ship it");
-    expect(calls).toEqual(["before", "enqueue", "after"]);
+    expect(calls).toEqual(["input", "enqueue"]);
     await chat.exit();
   });
 
@@ -109,12 +88,11 @@ describe("Human Hook integration", () => {
     await chat.pluginManager.start();
     const kinds: string[] = [];
     const plugins = chat.pluginManager;
-    plugins.beforeHook = async (stage, subject) => {
-      if (stage === "human.inbound.before") {
-        kinds.push((subject as unknown as HumanInputRecord).input.kind);
+    plugins.inlineHook = async (stage, subject) => {
+      if (stage === "view.input") {
+        kinds.push((subject as unknown as ViewInputRecord).input.kind);
       }
     };
-    plugins.afterHook = () => {};
 
     await chat.command("status", "");
     await chat.command("cc", "");
@@ -132,33 +110,23 @@ describe("Human Hook integration", () => {
     await chat.exit();
   });
 
-  test("publishes state between outbound before and after notifications", async () => {
+  test("notifies Plugins after publishing a ViewOutput", async () => {
     const chat = protocol();
     await chat.pluginManager.start();
-    let release!: () => void;
-    const wait = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const calls: string[] = [];
+    const outputs: ViewOutput[] = [];
     const plugins = chat.pluginManager;
-    plugins.hasHook = (stage) => stage === "human.outbound.before";
-    plugins.beforeHook = async (stage) => {
-      if (stage !== "human.outbound.before") return;
-      calls.push("before");
-      await wait;
-    };
-    plugins.afterHook = (stage) => {
-      if (stage === "human.outbound.after") calls.push("after");
+    plugins.deferHook = (stage, subject) => {
+      if (stage === "view.output") {
+        outputs.push(subject as unknown as ViewOutput);
+      }
     };
 
     await chat.command("status", "");
-    expect(calls).toEqual(["before"]);
-
-    release();
-    for (let attempt = 0; attempt < 20 && calls.length < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && outputs.length === 0; attempt += 1) {
       await Bun.sleep(5);
     }
-    expect(calls).toEqual(["before", "after"]);
+    expect(outputs).not.toHaveLength(0);
+    expect(outputs[0]?.outputId).toMatch(/^vo_/);
     await chat.exit();
   });
 });

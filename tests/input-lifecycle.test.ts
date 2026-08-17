@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -26,7 +26,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 class HoldingAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
   readonly steering?: HarnessAdapter["steering"];
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   prompts: string[] = [];
   received: PromptInput[] = [];
   steerGate?: Promise<void>;
@@ -41,7 +41,7 @@ class HoldingAdapter implements HarnessAdapter {
       : { deliveryTracking: "ack-only", cancelOwnership: "survives" };
   }
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: `${this.harness}-ref`, resumed: false };
   }

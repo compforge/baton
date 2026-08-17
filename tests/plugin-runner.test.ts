@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { HookStage, HookSubjectMap } from "@compforge/baton-plugin";
+import type {
+  DeferredHookStage,
+  HookSubjectMap,
+  InlineHookStage,
+} from "@compforge/baton-plugin";
 
 import { Channel } from "../src/channel/index.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
@@ -183,7 +187,7 @@ describe("Plugin Runner process boundary", () => {
     });
     await manager.start();
 
-    const notification = manager.beforeHook("human.inbound.before", {
+    const notification = manager.inlineHook("view.input", {
       inputId: "in_runner_hook",
       eventId: "ev_runner_hook",
       seq: 1,
@@ -221,7 +225,7 @@ describe("Plugin Runner process boundary", () => {
     await manager.close();
   });
 
-  test("restores outbound Hook causality for Runner verb IPC", async () => {
+  test("routes deferred ViewOutput Hook verbs without blocking publication", async () => {
     const { instances, session, entry } = stores();
     instances.create({
       pluginInstanceId: "process_default",
@@ -243,7 +247,7 @@ describe("Plugin Runner process boundary", () => {
     });
     await manager.start();
 
-    const beforeKinds: string[] = [];
+    const outputKinds: string[] = [];
     const channel = new Channel({
       session,
       controller: {
@@ -255,29 +259,29 @@ describe("Plugin Runner process boundary", () => {
       },
       hooks: {
         has: (stage) => manager.hasHook(stage),
-        before: async <S extends Extract<HookStage, `${string}.before`>>(
+        inline: async <S extends InlineHookStage>(
+          stage: S,
+          subject: Readonly<HookSubjectMap[S]>,
+        ) => await manager.inlineHook(stage, subject),
+        defer: <S extends DeferredHookStage>(
           stage: S,
           subject: Readonly<HookSubjectMap[S]>,
         ) => {
-          if (stage === "human.outbound.before") {
-            beforeKinds.push((
-              subject as unknown as HookSubjectMap["human.outbound.before"]
+          if (stage === "view.output") {
+            outputKinds.push((
+              subject as unknown as HookSubjectMap["view.output"]
             ).kind);
           }
-          await manager.beforeHook(stage, subject);
+          manager.deferHook(stage, subject);
         },
-        after: <S extends Extract<HookStage, `${string}.after`>>(
-          stage: S,
-          subject: Readonly<HookSubjectMap[S]>,
-        ) => manager.afterHook(stage, subject),
       },
     });
     const unsubscribe = session.subscribe((event) => {
       if (event.kind !== "interaction.requested") return;
-      void channel.outbound("interaction", () => true);
+      void channel.publishViewOutput("interaction", () => true);
     });
 
-    const publication = channel.outbound("transcript", () => true);
+    await expect(channel.publishViewOutput("transcript", () => true)).resolves.toBe(true);
     await waitFor(() => session.loadState().interactions.size === 1, 1_000);
     const interaction = [...session.loadState().interactions.values()][0]!
       .interaction;
@@ -286,12 +290,10 @@ describe("Plugin Runner process boundary", () => {
       outcome: "answered",
       answers: { decision: ["continue"] },
     })).toBe(true);
-    await expect(publication).resolves.toBe(true);
-
     unsubscribe();
     await manager.close();
     await channel.close();
-    expect(beforeKinds).toEqual(["transcript"]);
+    expect(outputKinds).toEqual(["transcript", "interaction"]);
   });
 
   test("withdraws registrations and settles a waiting verb after a crash", async () => {

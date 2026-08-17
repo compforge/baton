@@ -10,26 +10,26 @@ import type {
   TranscriptItem,
 } from "chat-tui";
 
-import type { BatonConfig } from "../../config/config.ts";
-import type { Controller } from "../../controller/index.ts";
-import { textOf, type ContextWindowUpdate } from "../../event/index.ts";
+import type { BatonConfig } from "../../../config/config.ts";
+import type { Controller } from "../../../controller/index.ts";
+import { textOf, type ContextWindowUpdate } from "../../../event/index.ts";
 import {
   harnessDefinitionFor,
   harnessShortName,
-} from "../../harness/registry.ts";
+} from "../../../harness/registry.ts";
 import type {
   HookTrustInteraction,
   Interaction,
   PermissionOption,
-} from "../../interaction/types.ts";
-import type { BoardItem } from "../../plugin/board.ts";
-import type { ToastMessage } from "../../plugin/package.ts";
+} from "../../../interaction/types.ts";
+import type { BoardItem } from "../../../plugin/board.ts";
+import type { ToastMessage } from "../../../plugin/package.ts";
 import {
   laneTargetStateKey,
   type SessionState,
-} from "../../store/reduce.ts";
-import { MAIN_LANE_ID } from "../../lane.ts";
-import type { SessionHandle } from "../../store/store.ts";
+} from "../../../store/reduce.ts";
+import { MAIN_LANE_ID } from "../../../lane.ts";
+import type { SessionHandle } from "../../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
 import {
   buildTranscript,
@@ -359,7 +359,7 @@ export function parallelItems(
   }
 
   for (const task of state.tasks.values()) {
-    if (task.status !== "in_progress" || task.skipTranscript) continue;
+    if (task.status !== "in_progress") continue;
     const harness = harnessAuthor(task.harness);
     const author = [harness, task.taskType].filter(Boolean).join("/");
     const description = task.title ?? task.summary;

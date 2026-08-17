@@ -33,7 +33,7 @@
     "specgen": "specgen . -o spec.json --root .",
     "specgen:check": "specgen . -o spec.json --root . --check",
     "repl": "bun src/cli/main.ts",
-    "tui": "bun src/tui/main.tsx"
+    "tui": "bun src/view/chat-tui/main.tsx"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
@@ -47,7 +47,7 @@
     "@opentui/core": "^0.5.3",
     "@opentui/keymap": "^0.5.3",
     "@opentui/react": "^0.5.3",
-    "@compforge/baton-plugin": "0.5.0",
+    "@compforge/baton-plugin": "0.6.0",
     "bun": "^1.3.14",
     "chat-tui": "github:compforge/chat-tui#6e6bda4d61d4b4e0cf247884595cc702441fdeae",
     "cron-parser": "^5.6.2",

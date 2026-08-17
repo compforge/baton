@@ -9,7 +9,7 @@ import {
   archiveClipboardImage,
   composerPromptBlocks,
   composerTextOf,
-} from "../src/tui/prompt-images.ts";
+} from "../src/view/chat-tui/prompt-images.ts";
 
 describe("clipboard prompt images", () => {
   test("archives image bytes in the Baton attachment store and resolves the placeholder in order", async () => {

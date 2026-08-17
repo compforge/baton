@@ -13,10 +13,10 @@ import { createCliRenderer, RGBA } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { createRef } from "react";
 
-import { installTerminationHandlers } from "../cli/termination.ts";
-import { ensureConfigFile, loadConfig } from "../config/config.ts";
-import { openBatonSession, type OpenBatonSessionResult } from "../session/open.ts";
-import { SessionStore } from "../store/store.ts";
+import { installTerminationHandlers } from "../../cli/termination.ts";
+import { ensureConfigFile, loadConfig } from "../../config/config.ts";
+import { openBatonSession, type OpenBatonSessionResult } from "../../session/open.ts";
+import { SessionStore } from "../../store/store.ts";
 import { BatonTui, type BatonTuiHandle } from "./app.tsx";
 import { BatonChatProtocol } from "./protocol/index.ts";
 import { SessionPickerScreen } from "./session-picker.tsx";

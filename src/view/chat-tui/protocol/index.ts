@@ -14,27 +14,27 @@ import type {
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
 
-import { CommandRegistry, type CommandDefinition } from "../../commands/registry.ts";
+import { CommandRegistry, type CommandDefinition } from "../../../commands/registry.ts";
 import {
   Channel,
   type ChannelControllerOptions,
   type ChannelPluginOptions,
-} from "../../channel/index.ts";
-import { targetConfigFor, type BatonConfig } from "../../config/config.ts";
-import { loadEffortPreferences, saveEffortPreference } from "../../config/effort-preferences.ts";
-import { loadModelPreferences, saveModelPreference } from "../../config/model-preferences.ts";
+} from "../../../channel/index.ts";
+import { targetConfigFor, type BatonConfig } from "../../../config/config.ts";
+import { loadEffortPreferences, saveEffortPreference } from "../../../config/effort-preferences.ts";
+import { loadModelPreferences, saveModelPreference } from "../../../config/model-preferences.ts";
 import {
   expandMentions,
   parseMentions,
   sessionMention,
-} from "../../context/mention.ts";
-import { MentionRegistry } from "../../context/registry.ts";
-import { logError } from "../../logging.ts";
+} from "../../../context/mention.ts";
+import { MentionRegistry } from "../../../context/registry.ts";
+import { logError } from "../../../logging.ts";
 import {
   textOf,
   type ContentBlock,
   type PromptBlock,
-} from "../../event/index.ts";
+} from "../../../event/index.ts";
 import {
   createHarnessAdapter,
   configuredHarnessTargets,
@@ -42,29 +42,29 @@ import {
   probeHarnessTarget,
   resolveHarnessTarget,
   resolveHarnessTargetSelection,
-} from "../../harness/registry.ts";
-import { HARNESS_IDENTITIES, HARNESSES } from "../../harness/ids.ts";
-import { configuredTextgenTargets } from "../../session/title.ts";
-import type { InteractionResult } from "../../interaction/types.ts";
-import type { Manager } from "../../plugin/manager.ts";
-import { BATON_TURN_RESOURCE_KIND } from "../../plugin/builtin.ts";
+} from "../../../harness/registry.ts";
+import { HARNESS_IDENTITIES, HARNESSES } from "../../../harness/ids.ts";
+import { configuredTextgenTargets } from "../../../session/title.ts";
+import type { InteractionResult } from "../../../interaction/types.ts";
+import type { Manager } from "../../../plugin/manager.ts";
+import { BATON_TURN_RESOURCE_KIND } from "../../../plugin/builtin.ts";
 import type {
-  HumanInput,
   PluginCommandInput,
   PluginCommandResult,
   ToastMessage,
-} from "../../plugin/package.ts";
-import { MarketplaceRegistry } from "../../plugin/marketplace/index.ts";
+  ViewInput,
+} from "../../../plugin/package.ts";
+import { MarketplaceRegistry } from "../../../plugin/marketplace/index.ts";
 import {
   GlobalPluginInstanceStore,
   PluginSettingsStore,
-} from "../../plugin/settings.ts";
-import { PluginSupervisor } from "../../plugin/runner/index.ts";
-import { openBatonSession } from "../../session/open.ts";
-import type { Controller } from "../../controller/index.ts";
-import { MAIN_LANE_ID } from "../../lane.ts";
-import { laneTargetStateKey, type SessionState } from "../../store/reduce.ts";
-import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../store/store.ts";
+} from "../../../plugin/settings.ts";
+import { PluginSupervisor } from "../../../plugin/runner/index.ts";
+import { openBatonSession } from "../../../session/open.ts";
+import type { Controller } from "../../../controller/index.ts";
+import { MAIN_LANE_ID } from "../../../lane.ts";
+import { laneTargetStateKey, type SessionState } from "../../../store/reduce.ts";
+import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
 import { readClipboard, type ClipboardContent } from "../clipboard.ts";
@@ -83,7 +83,7 @@ import {
   type BoardMode,
   type BoardViewProjection,
 } from "./state.ts";
-import { ChatPresentation } from "./presentation.ts";
+import { ChatViewPublisher } from "./publisher.ts";
 
 export {
   thoughtDisplayBlocks,
@@ -117,7 +117,7 @@ export class BatonChatProtocol implements ChatProtocol {
   private session: SessionHandle;
   private state: SessionState;
   private channel: Channel;
-  private presentation: ChatPresentation;
+  private viewPublisher: ChatViewPublisher;
   private controller: Controller;
   private plugins: Manager;
   private readonly commandRegistry: CommandRegistry;
@@ -180,7 +180,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.seedHistoryFromState();
     this.plugins = this.requirePluginManager();
     this.stateStore = createChatStore(this.buildState());
-    this.presentation = new ChatPresentation(
+    this.viewPublisher = new ChatViewPublisher(
       this.channel,
       this.stateStore,
       () => this.buildState(),
@@ -192,7 +192,7 @@ export class BatonChatProtocol implements ChatProtocol {
   /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
   private subscribeChannel(channel: Channel): () => void {
     return channel.subscribe((_projection, event) =>
-      this.presentation.event(event.kind)
+      this.viewPublisher.event(event.kind)
     );
   }
 
@@ -328,7 +328,7 @@ export class BatonChatProtocol implements ChatProtocol {
    * @spec 一次 Commandable 提交先完整执行并结算 canonical Command；只有成功后，允许的 trailing text 才作为下一条普通 Prompt 提交。
    */
   async command(name: string, argument: string): Promise<void> {
-    const input: HumanInput = Object.freeze({
+    const input: ViewInput = Object.freeze({
       kind: "command",
       command: name,
       argument,
@@ -731,7 +731,7 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   cancel(): void {
-    const input: HumanInput = Object.freeze({
+    const input: ViewInput = Object.freeze({
       kind: "interrupt",
       harnessTargetId: this.controller.activeHarnessTargetId ?? this.harnessTargetId,
     });
@@ -752,7 +752,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private async shutdownActive(): Promise<void> {
     this.cancelPickerSearch();
-    this.presentation.close();
+    this.viewPublisher.close();
     this.unsubscribeSession();
     try {
       await this.channel.close();
@@ -873,7 +873,7 @@ export class BatonChatProtocol implements ChatProtocol {
     id: string,
     response: InteractionResponse,
   ): Promise<void> {
-    const input: HumanInput = Object.freeze({
+    const input: ViewInput = Object.freeze({
       kind: "interaction_response",
       interactionId: id,
     });
@@ -1221,7 +1221,7 @@ export class BatonChatProtocol implements ChatProtocol {
       throw new Error("Wait for the current turn to finish before switching BatonSession");
     }
     const next = open();
-    this.presentation.close();
+    this.viewPublisher.close();
     this.unsubscribeSession();
     this.session.log({
       level: "info",
@@ -1242,7 +1242,7 @@ export class BatonChatProtocol implements ChatProtocol {
       ? { text: `Opened session ${next.session.id} (recovered an interrupted turn)`, tone: "info" }
       : { text: `Opened session ${next.session.id}`, tone: "info" };
     this.plugins = this.requirePluginManager();
-    this.presentation = new ChatPresentation(
+    this.viewPublisher = new ChatViewPublisher(
       this.channel,
       this.stateStore,
       () => this.buildState(),
@@ -1254,7 +1254,7 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private async runHumanConfiguration(
-    setting: Extract<HumanInput, { kind: "configuration" }>["setting"],
+    setting: Extract<ViewInput, { kind: "configuration" }>["setting"],
     target: string,
     value: string | null,
     action: () => Promise<void>,
@@ -1492,14 +1492,14 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  /** 通用状态更新统一走 Channel outbound。 */
+  /** 通用状态更新统一发布为 ViewOutput。 */
   private changed(): void {
-    this.presentation.changed();
+    this.viewPublisher.changed();
   }
 
-  /** Board 与其他可见状态共用同一条 outbound 路径。 */
+  /** Board 与其他可见状态共用同一条 ViewOutput 路径。 */
   private boardChanged(): void {
-    this.presentation.boardChanged();
+    this.viewPublisher.boardChanged();
   }
 
   private completionsChanged(invalidateMentions = true): void {

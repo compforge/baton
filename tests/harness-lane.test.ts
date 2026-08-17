@@ -7,7 +7,7 @@ import { Controller } from "../src/controller/index.ts";
 import { textOf, type PromptBlock } from "../src/event/index.ts";
 import type {
   AdapterCapabilities,
-  EventSink,
+  HarnessEventSink,
   HarnessAdapter,
   HarnessSessionBindingSink,
   HarnessSessionHandle,
@@ -25,13 +25,13 @@ class LaneAdapter implements HarnessAdapter {
   readonly prompts: PromptInput[] = [];
   openOptions?: OpenOptions;
   cancelCalls = 0;
-  private sink?: EventSink;
+  private sink?: HarnessEventSink;
 
   constructor(readonly harness: string, readonly instance: number) {}
 
   async open(
     options: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     this.openOptions = options;
@@ -325,7 +325,7 @@ describe("Baton Lane scheduling", () => {
     expect(await second).toBe("completed");
   });
 
-  test("restores queued Human Inputs into their Lane Queues by first queued Event seq", async () => {
+  test("restores queued ViewInputs into their Lane Queues by first queued Event seq", async () => {
     session.ensureHarnessInvocationLane("hl_restore_old", "hinv_restore_old", MAIN_LANE_ID);
     session.ensureHarnessInvocationLane("hl_restore_new", "hinv_restore_new", MAIN_LANE_ID);
     const recordQueued = (messageId: string, turnId: string, laneId: string, text: string) =>

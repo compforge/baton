@@ -44,7 +44,7 @@ import type {
   AdapterCapabilities,
   HarnessAdapter,
   EffortOption,
-  EventSink,
+  HarnessEventSink,
   HarnessSessionBindingSink,
   ModelOption,
   NativeEventSink,
@@ -531,7 +531,7 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   cwd: string;
   env?: Record<string, string>;
   /** open 时绑定的事件出口；session 生命周期内所有事件（含跨 turn）都走它 */
-  sink: EventSink;
+  sink: HarnessEventSink;
   /** 稳定 HarnessSession 身份一旦可知，立即发布给宿主持久化。 */
   bindingSink?: HarnessSessionBindingSink;
   /** SDK 的 session_id，首个 turn 的 init 消息里拿到；resume 靠它 */
@@ -935,7 +935,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   /** SDK 无独立"启动"步骤：streaming query 在首个 sendTurn 时创建，这里只登记运行时。 */
   async open(
     opts: OpenOptions,
-    sink: EventSink,
+    sink: HarnessEventSink,
     binding?: HarnessSessionBindingSink,
   ): Promise<HarnessSessionHandle> {
     const id = newId("hs");
@@ -1299,7 +1299,7 @@ export class ClaudeAdapter implements HarnessAdapter {
           current = this.mintHarnessTurn(rt);
           rt.currentTurn = current;
         }
-        const emit: EventSink = (ev) => this.emit(rt, ev, current);
+        const emit: HarnessEventSink = (ev) => this.emit(rt, ev, current);
         this.handleMessage(rt, emit, msg, current);
       }
       const current = rt.currentTurn;
@@ -1316,7 +1316,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       if (rt.activeQuery !== q) return;
       const current = rt.currentTurn;
       if (!current) return;
-      const emit: EventSink = (ev) => this.emit(rt, ev, current);
+      const emit: HarnessEventSink = (ev) => this.emit(rt, ev, current);
       this.options.log?.({
         level: current.cancelRequested ? "info" : "error",
         source: "harness",
@@ -1408,7 +1408,7 @@ export class ClaudeAdapter implements HarnessAdapter {
    * 每个 turn 只发一次逻辑终态；result 消息、异常、流异常结束都收敛到这里。
    * 只允许终结传入的那个 turn：上一 turn 的流耗尽兜底不能误杀已经开始的下一 turn。
    */
-  private finishTurn(rt: ClaudeRuntime, emit: EventSink, turn: ClaudeTurn, stopReason: string, raw?: unknown): void {
+  private finishTurn(rt: ClaudeRuntime, emit: HarnessEventSink, turn: ClaudeTurn, stopReason: string, raw?: unknown): void {
     if (turn.finalized) return;
     turn.finalized = true;
     emit({
@@ -1420,7 +1420,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   /** 信封补齐：open 绑定的 sink + 所属 turnId。turn 内发射必须显式传 turn；跨 turn 的事件不带 turnId */
-  private emit(rt: ClaudeRuntime, ev: Parameters<EventSink>[0], turn?: Pick<ClaudeTurn, "turnId">): void {
+  private emit(rt: ClaudeRuntime, ev: Parameters<HarnessEventSink>[0], turn?: Pick<ClaudeTurn, "turnId">): void {
     rt.sink({
       ...ev,
       harnessSessionId: rt.claudeSessionId,
@@ -1492,7 +1492,7 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   private async handleCanUseTool(
     rt: Pick<ClaudeRuntime, "capturedProposedPlanKeys">,
-    emit: EventSink,
+    emit: HarnessEventSink,
     turnId: () => string,
     toolName: string,
     input: Record<string, unknown>,
@@ -1582,7 +1582,7 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   private captureProposedPlan(
     rt: Pick<ClaudeRuntime, "capturedProposedPlanKeys">,
-    emit: EventSink,
+    emit: HarnessEventSink,
     turnId: string,
     input: Record<string, unknown>,
     toolUseId: string | undefined,
@@ -1592,7 +1592,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (draft) emit(draft);
   }
 
-  private handleMessage(rt: ClaudeRuntime, emit: EventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
+  private handleMessage(rt: ClaudeRuntime, emit: HarnessEventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
     switch (msg.type) {
       case "command_lifecycle": {
         const key = commandLifecycleKey(msg);

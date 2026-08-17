@@ -1,16 +1,17 @@
 import type {
-  HarnessDelivery,
-  HarnessEventRecord,
+  BatonEventReference,
+  HarnessInputDispatch,
   HookStage,
   HookSubjectMap,
 } from "@compforge/baton-plugin";
 
 import type {
+  HarnessEvent,
   HarnessSessionHandle,
   PromptInput,
   SendTurnReceipt,
 } from "../harness/adapter.ts";
-import type { AnyEventDraft, AnyEventEnvelope } from "../event/index.ts";
+import type { AnyEventEnvelope } from "../event/index.ts";
 import type { HarnessBinding } from "../harness/binding.ts";
 import { logError, type LogSink } from "../logging.ts";
 
@@ -19,13 +20,13 @@ type HarnessHookStage = Extract<HookStage, `harness.${string}`>;
 /** Narrow Hook notification boundary used by Controller without owning Plugin Manager. */
 export interface HarnessHookGateway {
   has(stage: HarnessHookStage): boolean;
-  before<S extends Extract<HarnessHookStage, `${string}.before`>>(
-    stage: S,
-    subject: Readonly<HookSubjectMap[S]>,
+  inline(
+    stage: "harness.input",
+    subject: Readonly<HookSubjectMap["harness.input"]>,
   ): Promise<void>;
-  after<S extends Extract<HarnessHookStage, `${string}.after`>>(
-    stage: S,
-    subject: Readonly<HookSubjectMap[S]>,
+  defer(
+    stage: "harness.output",
+    subject: Readonly<HookSubjectMap["harness.output"]>,
   ): void;
 }
 
@@ -33,7 +34,7 @@ interface HarnessHookCoordinatorOptions {
   readonly gateway?: HarnessHookGateway;
   readonly append: (
     binding: HarnessBinding,
-    event: AnyEventDraft,
+    event: HarnessEvent,
   ) => AnyEventEnvelope;
   readonly log: LogSink;
 }
@@ -42,12 +43,12 @@ interface HarnessHookCoordinatorOptions {
 export class HarnessHookCoordinator {
   constructor(private readonly options: HarnessHookCoordinatorOptions) {}
 
-  delivery(
+  dispatch(
     binding: HarnessBinding,
     input: PromptInput,
     attemptId: string,
-    operation: HarnessDelivery["operation"],
-  ): HarnessDelivery {
+    operation: HarnessInputDispatch["operation"],
+  ): HarnessInputDispatch {
     return Object.freeze({
       attemptId,
       harnessTargetId: binding.target.id,
@@ -58,9 +59,9 @@ export class HarnessHookCoordinator {
     });
   }
 
-  beforeDelivery(delivery: HarnessDelivery): Promise<void> | undefined {
-    if (!this.has("harness.inbound.before")) return undefined;
-    return this.before("harness.inbound.before", delivery);
+  beforeInput(dispatch: HarnessInputDispatch): Promise<void> | undefined {
+    if (!this.has("harness.input")) return undefined;
+    return this.inline("harness.input", dispatch);
   }
 
   async send(
@@ -68,36 +69,21 @@ export class HarnessHookCoordinator {
     ref: HarnessSessionHandle,
     input: PromptInput,
     attemptId: string,
-    operation: HarnessDelivery["operation"],
-    notifyBefore = true,
+    operation: HarnessInputDispatch["operation"],
+    notifyInput = true,
   ): Promise<SendTurnReceipt> {
-    const delivery = this.delivery(binding, input, attemptId, operation);
-    const before = notifyBefore ? this.beforeDelivery(delivery) : undefined;
+    const dispatch = this.dispatch(binding, input, attemptId, operation);
+    const before = notifyInput ? this.beforeInput(dispatch) : undefined;
     if (before) await before;
-    try {
-      const receipt = await binding.adapter.sendTurn(ref, input);
-      this.after("harness.inbound.after", Object.freeze({
-        ...delivery,
-        outcome: receipt.accepted ? "accepted" : "rejected",
-        ...(receipt.accepted || !receipt.reason ? {} : { reason: receipt.reason }),
-      }));
-      return receipt;
-    } catch (error) {
-      this.after("harness.inbound.after", Object.freeze({
-        ...delivery,
-        outcome: "error",
-        reason: error instanceof Error ? error.message : String(error),
-      }));
-      throw error;
-    }
+    return await binding.adapter.sendTurn(ref, input);
   }
 
-  acceptEvent(binding: HarnessBinding, event: AnyEventDraft): void {
+  acceptHarnessEvent(binding: HarnessBinding, event: HarnessEvent): void {
     // BatonSession records and reduces the Harness output before Plugin
     // notification. Hooks can emit Verbs, so notifying them first would allow
     // durable effects whose triggering Harness fact was lost on crash.
     const envelope = this.options.append(binding, event);
-    const record: HarnessEventRecord = Object.freeze({
+    const record: BatonEventReference = Object.freeze({
       kind: event.kind,
       harnessTargetId: binding.target.id,
       laneId: binding.laneId,
@@ -105,12 +91,7 @@ export class HarnessHookCoordinator {
       eventId: envelope.eventId,
       seq: envelope.seq,
     });
-    if (!this.has("harness.outbound.before")) {
-      this.after("harness.outbound.after", record);
-      return;
-    }
-    void this.before("harness.outbound.before", record)
-      .finally(() => this.after("harness.outbound.after", record));
+    this.defer("harness.output", record);
   }
 
   async close(): Promise<void> {}
@@ -124,23 +105,23 @@ export class HarnessHookCoordinator {
     }
   }
 
-  private async before<S extends Extract<HarnessHookStage, `${string}.before`>>(
-    stage: S,
-    subject: Readonly<HookSubjectMap[S]>,
+  private async inline(
+    stage: "harness.input",
+    subject: Readonly<HookSubjectMap["harness.input"]>,
   ): Promise<void> {
     try {
-      await this.options.gateway?.before(stage, subject);
+      await this.options.gateway?.inline(stage, subject);
     } catch (error) {
       this.logFailure(stage, error);
     }
   }
 
-  private after<S extends Extract<HarnessHookStage, `${string}.after`>>(
-    stage: S,
-    subject: Readonly<HookSubjectMap[S]>,
+  private defer(
+    stage: "harness.output",
+    subject: Readonly<HookSubjectMap["harness.output"]>,
   ): void {
     try {
-      this.options.gateway?.after(stage, subject);
+      this.options.gateway?.defer(stage, subject);
     } catch (error) {
       this.logFailure(stage, error);
     }

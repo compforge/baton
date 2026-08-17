@@ -11,7 +11,7 @@ import { ClaudeAdapter, startsHarnessTurn } from "../src/harness/claude/adapter.
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   ModelOption,
   OpenOptions,
   PromptInput,
@@ -22,7 +22,7 @@ import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
-import { BatonChatProtocol } from "../src/tui/protocol/index.ts";
+import { BatonChatProtocol } from "../src/view/chat-tui/protocol/index.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
 let root: string;
@@ -156,11 +156,11 @@ describe("Harness-started Turn presentation", () => {
 class WakingAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   /** 只在首个 Queue-driven Turn 后唤醒一次，避免测试结束后仍有 pending 的异步 append。 */
   private woken = false;
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "waking-ref", resumed: false };
   }

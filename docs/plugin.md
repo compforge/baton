@@ -187,35 +187,31 @@ Lane 参数与 Input source 正交：`laneId:"main"` 继续主线，`newLane:tru
 
 ### 4.2 Hook 通知
 
-Hook 让 Core 把 human、Plugin、Harness 协调路径上的事实通知 Plugin。stage 由三个正交维度组成：
+Plugin 不是 Human 与 Harness 之间的流式 Adapter，因此不定义泛化的 `PluginInput/PluginEvent`。
+Core→Plugin 的入口是 activation、command/mention、reconcile 与 Hook；Plugin→Core 的动作通过注册结果、
+Resource API、typed Verb 和各扩展点的明确返回值完成。Hook 只是其中单向的观察面，不是 pub/sub 总线或
+可改写主链路的 middleware。
 
-| boundary | direction | phase | stages |
-|---|---|---|---|
-| `human` | `inbound` / `outbound` | `before` / `after` | `human.inbound.before/after`、`human.outbound.before/after` |
-| `harness` | `inbound` / `outbound` | `before` / `after` | `harness.inbound.before/after`、`harness.outbound.before/after` |
+Hook 只暴露 View 与 Harness 的四个稳定 IO 边界：
 
-direction 沿 Human→Harness 定义：Human 输入和 Core→Harness delivery 属于 inbound，Harness output
-和 Core→Human presentation 属于 outbound。Hook 回调返回 `void`，没有 replacement、allow/deny
-或控制流返回值；需要副作用时只能调用
-`HookContext.verbs`。因此 Hook 是通知面，Verb 是动作面。
+| stage | subject | 时序 |
+|---|---|---|
+| `view.input` | `ViewInputRecord` | durable record 之后、Core lowering 之前，inline |
+| `view.output` | `ViewOutput` | View publication 之后，deferred |
+| `harness.input` | `HarnessInputDispatch` | Adapter 调用之前，inline |
+| `harness.output` | `BatonEventReference` | HarnessEvent 提交为 Baton Event 之后，deferred |
 
-`before` 同一 stage 的回调并发执行，Core 等待全部 settled；单个回调抛错或超时只记录结构化日志，
-不阻断用户输入或 Harness 主链路。`after` 进入有界、best-effort 的异步队列，不延长主链路。
-`human.outbound.after` 只表示 Channel 已把 presentation 交给 Human surface state，不代表用户真实看见。
+inline stage 的同类 Hook 并发执行，Core 等待全部 settled；单个 Hook 抛错或超时只记录结构化日志并
+fail open。deferred stage 进入有界、best-effort 队列，不延长 View 或 Harness 主链路。
+`view.output` 只表示 View 更新已经发布，不代表人真实看见。
 
-Human inbound 的 typed subject 覆盖 prompt、command、Harness/model/effort/mode configuration、
-Interaction response 与 interrupt。Channel 先把 `input.received` 写入 Event Ledger，再把带稳定
-`inputId/eventId` 的 record 交给 before；lowering 完成后先写 `input.settled`，再触发 after。
-prompt lowering 出来的 HarnessInput 使用独立 `messageId`，通过 `parentEventId` 关联 Human Input。
-Human outbound 覆盖 transcript、queue、Interaction、status、toast、Board 与 picker 的 state
-publication，统一经 Channel 返回 surface。等待 outbound before 时允许合并连续更新；before Hook 通过 Verb 产生的重入
-Interaction 会直接发布并只发送 after，避免 Hook 等待尚未展示给人的问题而自锁。
+Hook 回调返回 `void`，没有 replacement、allow/deny 或控制流返回值；需要副作用时只能调用
+`HookContext.verbs`，由 Core 继续执行权限、持久化和生命周期规则。`input.settled`、Adapter admission
+和 delivery outcome 是 Core 的 Event、Attempt 或 Snapshot 事实，不为这些内部阶段增加 Hook stage。
 
-Harness inbound 的 subject 是一次准备发送的 `HarnessDelivery`。新 Turn 复用持久 Delivery
-Attempt 的 identity；steer 的 identity 只关联本次 same-turn send。before 位于 Adapter 调用之前，
-after 在 admission receipt 或 throw 后发送，并区分 `accepted/rejected/error`，不等待 Turn 完成。
-Harness outbound 的 subject 是已进入 Event Ledger、带 `eventId/seq` 的 `HarnessEventRecord`。
-before/after 都发生在 WAL commit 之后，不阻塞 Harness EventSink，也不提供事件替换能力。
+`PluginVerbs.harness()` 接收的是 `HarnessInvocationInput`：它先请求 Core 创建并 gate 一次
+HarnessInvocation，最终是否 lowering 为 Core-owned `HarnessInput` 由 Core 决定。两个类型不共享名称，
+避免把 Plugin 动作请求误认为已经等待 Adapter 执行的 Harness Input。
 
 ### 4.3 Board
 

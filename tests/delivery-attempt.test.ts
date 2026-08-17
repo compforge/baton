@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type {
   AdapterCapabilities,
-  EventSink,
+  HarnessEventSink,
   HarnessAdapter,
   HarnessSessionHandle,
   OpenOptions,
@@ -25,12 +25,12 @@ import { resolveTestTarget } from "./harness-target.ts";
 class DeliveryAdapter implements HarnessAdapter {
   readonly harness = "codex";
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   submission?: PromptInput;
 
   constructor(private readonly mode: "complete" | "reject" | "hold") {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: "hs-native", resumed: false };
   }

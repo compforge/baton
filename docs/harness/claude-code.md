@@ -64,7 +64,7 @@ Turn 时可能没有 lifecycle frame，此时 success result 的 `user_message_u
 只补 `deliveryOutcome`，不回迁 status。
 
 Harness 自行开始的 Turn 没有对应 Queue item。后台消息在上一 Queue-driven Turn 结束后到达时，
-Adapter 铸造新的普通 Turn；下一条 Human Input 到达前会先明确收口该 Turn，避免两类消息共用
+Adapter 铸造新的普通 Turn；下一条 ViewInput 到达前会先明确收口该 Turn，避免两类消息共用
 `currentTurn` 发生归属混淆。
 
 cancel 调用 SDK `interrupt()`，但保持 streaming query 存活，等待 SDK result 或消费循环给出

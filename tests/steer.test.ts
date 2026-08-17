@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type {
   AdapterCapabilities,
   HarnessAdapter,
-  EventSink,
+  HarnessEventSink,
   OpenOptions,
   PromptInput,
   SendTurnReceipt,
@@ -23,7 +23,7 @@ import { resolveTestTarget } from "./harness-target.ts";
 /** turn 不自动终结：由测试显式 finish()，制造稳定的"turn 进行中"窗口 */
 class SendTurnFakeAdapter implements HarnessAdapter {
   readonly capabilities: AdapterCapabilities = { prompt: {} };
-  sink?: EventSink;
+  sink?: HarnessEventSink;
   prompts: string[] = [];
   steers: Array<{ turnId: string; expectedTurnId: string; text: string }> = [];
   steerResult: SendTurnReceipt = { accepted: true, effective: "steer" };
@@ -33,7 +33,7 @@ class SendTurnFakeAdapter implements HarnessAdapter {
 
   constructor(readonly harness: string) {}
 
-  async open(_opts: OpenOptions, sink: EventSink): Promise<HarnessSessionHandle> {
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
     this.sink = sink;
     return { harness: this.harness, handleId: `${this.harness}-ref`, resumed: false };
   }

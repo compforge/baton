@@ -8,7 +8,7 @@ import {
   type ConfirmResult,
   type DraftInput,
   type DraftResult,
-  type HarnessInput,
+  type HarnessInvocationInput,
   type HarnessResult,
   type HookContext,
   type HookStage,
@@ -65,7 +65,7 @@ export type VerbRequest =
     }
   | {
       readonly verb: "harness";
-      readonly input: HarnessInput;
+      readonly input: HarnessInvocationInput;
     };
 
 export type VerbResponse =
@@ -133,7 +133,7 @@ function validateTimeout(name: string, timeoutMs: number): void {
   }
 }
 
-function validateHarness(input: HarnessInput): void {
+function validateHarness(input: HarnessInvocationInput): void {
   validateTimeout("harness", input.timeoutMs);
   nonEmpty("harness title", input.title);
   nonEmpty("harness prompt", input.prompt);
@@ -182,7 +182,7 @@ export function createPluginVerbs(
         input,
       }) as DraftResult;
     },
-    async harness(input: HarnessInput) {
+    async harness(input: HarnessInvocationInput) {
       validateHarness(input);
       return await invoke(scope, {
         verb: "harness",

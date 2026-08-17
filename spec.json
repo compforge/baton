@@ -110,7 +110,7 @@
       }
     ]
   },
-  "src/tui/protocol/index.ts::BatonChatProtocol.command": {
+  "src/view/chat-tui/protocol/index.ts::BatonChatProtocol.command": {
     "specs": [
       {
         "cases": [],
@@ -118,7 +118,7 @@
       }
     ]
   },
-  "src/tui/protocol/state.ts::projectChatState": {
+  "src/view/chat-tui/protocol/state.ts::projectChatState": {
     "specs": [
       {
         "cases": [],

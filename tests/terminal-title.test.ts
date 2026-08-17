@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { sanitizeTerminalTitle, setTerminalTabTitle } from "../src/tui/terminal-title.ts";
+import { sanitizeTerminalTitle, setTerminalTabTitle } from "../src/view/chat-tui/terminal-title.ts";
 
 describe("terminal tab title", () => {
   test("sanitizes control characters from user-controlled titles", () => {

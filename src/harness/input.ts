@@ -48,7 +48,7 @@ export interface HarnessInput {
   source: HarnessInputSource;
   /** Durable causal link; orthogonal to the actor recorded in source. */
   harnessInvocationId?: string;
-  /** Human Input or Plugin fact that caused this queued Turn. */
+  /** ViewInput or Plugin fact that caused this queued Turn. */
   parentEventId?: string;
   status: HarnessInputStatus;
   delivery: "prompt" | "steer";
