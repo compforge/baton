@@ -32,34 +32,59 @@ function project(controller: Controller) {
   });
 }
 
+function appendQueuedInput(input: {
+  messageId: string;
+  turnId: string;
+  laneId: string;
+  blocks: { type: "text"; text: string }[];
+  source?: { type: "user" } | { type: "plugin"; pluginInstanceId: string };
+  harnessInvocationId?: string;
+  status?: "queued" | "steering";
+  delivery?: "prompt" | "steer";
+}) {
+  const source = input.source ?? { type: "user" as const };
+  session.appendEvent({
+    kind: "harness_input.updated",
+    source,
+    harness: "codex",
+    harnessTargetId: "codex",
+    laneId: input.laneId,
+    turnId: input.turnId,
+    payload: {
+      messageId: input.messageId,
+      turnId: input.turnId,
+      harnessTargetId: "codex",
+      laneId: input.laneId,
+      blocks: input.blocks,
+      source,
+      status: input.status ?? "queued",
+      delivery: input.delivery ?? "prompt",
+      ...(input.harnessInvocationId
+        ? { harnessInvocationId: input.harnessInvocationId }
+        : {}),
+    },
+  });
+}
+
 describe("steer queue projection", () => {
   test("projects only the main Lane Queue into the composer", () => {
+    appendQueuedInput({
+      messageId: "m_main",
+      turnId: "t_main",
+      laneId: MAIN_LANE_ID,
+      blocks: [{ type: "text", text: "main follow-up" }],
+    });
+    appendQueuedInput({
+      messageId: "m_side",
+      turnId: "t_side",
+      laneId: "hl_side",
+      blocks: [{ type: "text", text: "side follow-up" }],
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      harnessInvocationId: "hinv_side",
+    });
     const controller = {
       activeHarnessTargetId: undefined,
       activeTurnId: undefined,
-      queuedHarnessInputs: [
-        {
-          messageId: "m_main",
-          enqueueSeq: 1,
-          turnId: "t_main",
-          harnessTargetId: "codex",
-          laneId: MAIN_LANE_ID,
-          harness: "codex",
-          blocks: [{ type: "text", text: "main follow-up" }],
-          source: { type: "user" },
-        },
-        {
-          messageId: "m_side",
-          enqueueSeq: 2,
-          turnId: "t_side",
-          harnessTargetId: "codex",
-          laneId: "hl_side",
-          harness: "codex",
-          blocks: [{ type: "text", text: "side follow-up" }],
-          source: { type: "plugin", pluginInstanceId: "reqloop_default" },
-          harnessInvocationId: "hinv_side",
-        },
-      ],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
@@ -83,6 +108,14 @@ describe("steer queue projection", () => {
       turnId,
       payload: { state: "running" },
     });
+    appendQueuedInput({
+      messageId: "m_steer",
+      turnId,
+      laneId: MAIN_LANE_ID,
+      blocks: [{ type: "text", text: "prefer approach B" }],
+      status: "steering",
+      delivery: "steer",
+    });
     session.appendEvent({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
@@ -94,14 +127,12 @@ describe("steer queue projection", () => {
         messageId: "m_steer",
         content: [{ type: "text", text: "prefer approach B" }],
         delivery: "steer",
-        deliveryState: "pending",
       },
     });
     const controller = {
       activeHarnessTargetId: "codex",
       activeTurnId: turnId,
       activeStartedAt: Date.now(),
-      queuedHarnessInputs: [],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
@@ -123,7 +154,7 @@ describe("steer queue projection", () => {
     expect(pending.footer.text).toContain("queue:1");
 
     // Claude may keep a steer in its native queue after the turn it was offered to has ended.
-    // Pending delivery remains future state until the lifecycle reports started/completed.
+    // Pending delivery remains future state until the delivery receipt arrives.
     session.appendEvent({
       kind: "state_update",
       source: { type: "harness", harnessTargetId: "codex" },
@@ -147,17 +178,13 @@ describe("steer queue projection", () => {
     ).toBe(false);
 
     session.appendEvent({
-      kind: "user_message",
+      kind: "input_delivery_update",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
       harnessTargetId: "codex",
       laneId: MAIN_LANE_ID,
       turnId,
-      payload: {
-        messageId: "m_steer",
-        delivery: "steer",
-        deliveryState: "applied",
-      },
+      payload: { messageId: "m_steer", state: "applied" },
     });
 
     const applied = project(controller);
@@ -172,6 +199,14 @@ describe("steer queue projection", () => {
 
   test("hides an orphaned pending steer when its Adapter cannot preserve a native queue", () => {
     const turnId = "t_interrupted";
+    appendQueuedInput({
+      messageId: "m_orphaned",
+      turnId,
+      laneId: MAIN_LANE_ID,
+      blocks: [{ type: "text", text: "stale interrupted steer" }],
+      status: "steering",
+      delivery: "steer",
+    });
     session.appendEvent({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
@@ -183,13 +218,11 @@ describe("steer queue projection", () => {
         messageId: "m_orphaned",
         content: [{ type: "text", text: "stale interrupted steer" }],
         delivery: "steer",
-        deliveryState: "pending",
       },
     });
     const controller = {
       activeHarnessTargetId: undefined,
       activeTurnId: undefined,
-      queuedHarnessInputs: [],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
@@ -206,6 +239,14 @@ describe("steer queue projection", () => {
 
   test("removes failed native steer without presenting it as applied history", () => {
     const turnId = "t_failed";
+    appendQueuedInput({
+      messageId: "m_failed",
+      turnId,
+      laneId: MAIN_LANE_ID,
+      blocks: [{ type: "text", text: "do not lose this" }],
+      status: "steering",
+      delivery: "steer",
+    });
     session.appendEvent({
       kind: "user_message",
       source: { type: "harness", harnessTargetId: "codex" },
@@ -217,26 +258,20 @@ describe("steer queue projection", () => {
         messageId: "m_failed",
         content: [{ type: "text", text: "do not lose this" }],
         delivery: "steer",
-        deliveryState: "pending",
       },
     });
     session.appendEvent({
-      kind: "user_message",
+      kind: "input_delivery_update",
       source: { type: "harness", harnessTargetId: "codex" },
       harness: "codex",
       harnessTargetId: "codex",
       laneId: MAIN_LANE_ID,
       turnId,
-      payload: {
-        messageId: "m_failed",
-        delivery: "steer",
-        deliveryState: "failed",
-      },
+      payload: { messageId: "m_failed", state: "failed" },
     });
     const controller = {
       activeHarnessTargetId: undefined,
       activeTurnId: undefined,
-      queuedHarnessInputs: [],
       currentModel: () => null,
       currentEffort: () => null,
       currentMode: () => "default",
@@ -253,5 +288,93 @@ describe("steer queue projection", () => {
         (item) => item.type === "message" && item.role === "user" && item.text === "do not lose this",
       ),
     ).toBe(false);
+  });
+
+  test("legacy ledger: bridges user_message deliveryState into the input projection", () => {
+    const turnId = "t_legacy";
+    session.appendEvent({
+      kind: "state_update",
+      source: { type: "baton" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: { state: "running" },
+    });
+    // 老 ledger 没有 harness_input.updated 记录？不——accepted_steer 归一为 steering。
+    session.appendEvent({
+      kind: "harness_input.updated",
+      source: { type: "user" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_legacy",
+        turnId,
+        harnessTargetId: "codex",
+        laneId: MAIN_LANE_ID,
+        blocks: [{ type: "text", text: "legacy steer" }],
+        source: { type: "user" },
+        // 老 ledger 的接受态词汇；replay 归一到 steering。
+        status: "accepted_steer" as never,
+        delivery: "steer",
+      },
+    });
+    session.appendEvent({
+      kind: "user_message",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_legacy",
+        content: [{ type: "text", text: "legacy steer" }],
+        delivery: "steer",
+        deliveryState: "pending",
+      },
+    });
+    const controller = {
+      activeHarnessTargetId: "codex",
+      activeTurnId: turnId,
+      activeStartedAt: Date.now(),
+      currentModel: () => null,
+      currentEffort: () => null,
+      currentMode: () => "default",
+      approvalRoute: () => null,
+      preservesPendingSteers: () => true,
+      isBusy: true,
+      harnessQueueLength: 0,
+    } as unknown as Controller;
+
+    const pending = project(controller);
+    expect(pending.composer.queued).toEqual([{
+      id: "m_legacy",
+      text: "legacy steer",
+      tag: "codex · current turn",
+    }]);
+
+    // 老 applied 补丁桥接成 deliveryOutcome，Transcript 随之可见。
+    session.appendEvent({
+      kind: "user_message",
+      source: { type: "harness", harnessTargetId: "codex" },
+      harness: "codex",
+      harnessTargetId: "codex",
+      laneId: MAIN_LANE_ID,
+      turnId,
+      payload: {
+        messageId: "m_legacy",
+        delivery: "steer",
+        deliveryState: "applied",
+      },
+    });
+    const applied = project(controller);
+    expect(applied.composer.queued).toEqual([]);
+    expect(
+      applied.timeline.items.some(
+        (item) => item.type === "message" && item.role === "user" && item.text === "legacy steer",
+      ),
+    ).toBe(true);
   });
 });

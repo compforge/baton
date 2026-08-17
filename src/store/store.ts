@@ -1392,6 +1392,13 @@ function materializedHistoryTurns(
   summaries: readonly EventEnvelope<"_baton_turn_summary">[],
 ): HarnessHistoryTurn[] {
   const events = session.ledger.read();
+  // 新事件流里 steer 的投递事实在 input_delivery_update；未证应用的 steer 内容不进历史。
+  const appliedSteers = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "input_delivery_update" && event.payload.state === "applied") {
+      appliedSteers.add(event.payload.messageId);
+    }
+  }
   return summaries.map((summary) => ({
     turnId: summary.turnId,
     userText: summary.payload.userText,
@@ -1403,8 +1410,10 @@ function materializedHistoryTurns(
         HISTORY_OPERATIONAL_KINDS.has(event.kind) ||
         (event.kind === "user_message" &&
           event.payload.delivery === "steer" &&
-          event.payload.deliveryState !== undefined &&
-          event.payload.deliveryState !== "applied")
+          (event.payload.deliveryState !== undefined
+            ? // Legacy 补丁语义不变：状态补丁事件本身不进历史，applied 补丁进。
+              event.payload.deliveryState !== "applied"
+            : !appliedSteers.has(event.payload.messageId)))
       ) {
         return [];
       }
@@ -1441,13 +1450,15 @@ function joinMessages(state: SessionState, role: "user" | "agent"): string {
     if (item.type !== "message") continue;
     const msg = state.messages.get(item.id);
     if (msg && msg.role === role) {
-      if (
-        role === "user" &&
-        msg.delivery === "steer" &&
-        msg.deliveryState !== undefined &&
-        msg.deliveryState !== "applied"
-      ) {
-        continue;
+      if (role === "user" && msg.delivery === "steer") {
+        // 投递事实以 input 投影为准：有 input 记录时 outcome 未填写即未应用；
+        // 没有 input 记录的老 ledger 才回落 user_message.deliveryState。
+        const input = state.harnessInputs.get(msg.messageId);
+        if (input) {
+          if (input.deliveryOutcome !== "applied") continue;
+        } else if (msg.deliveryState !== undefined && msg.deliveryState !== "applied") {
+          continue;
+        }
       }
       const text = textOf(msg.content);
       if (text) parts.push(text);

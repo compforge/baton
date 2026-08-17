@@ -68,16 +68,24 @@ queued ── ↑ recall latest user Input ────────────�
   │
   └─ active steerable Turn / claim head ─→ dispatching
                                                 │
-                    Adapter accepts steer ──────┼→ accepted_steer
-                                                │       ├─ Turn completes ─→ finalized
+                    Adapter accepts steer ──────┼→ steering
+                                                │       ├─ 回执 applied + Turn completes ─→ finalized
+                                                │       ├─ 回执 failed（Harness 丢弃）─────→ failed
                                                 │       └─ Esc / cancel ───→ interrupted
+                                                │            （仅已 applied 者随 Turn 收口；
+                                                │             未决者留 steering 等迟到回执）
                     Adapter rejects / throws ───┴→ queued (same messageId, queue head)
 ```
 
 `dispatching` 表示 Controller 已原子 claim 该 HarnessInput 并正在等待 same-turn Adapter admission；此时
 不再允许 recall。Adapter 拒绝后，同一个 `messageId` 回到队头并降级为 follow-up，不能重建成另一条
 HarnessInput。`queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
-不能再伪装成“从未提交”；此后只能 cancel/interrupt。Controller 按 `laneId` 调度，而不按
+不能再伪装成“从未提交”；此后只能 cancel/interrupt。
+
+`steering` 只表达调度阶段（Adapter 已接受、等待原生投递边界）；投递结果是与 status 正交的
+`deliveryOutcome`，由一等事件 `input_delivery_update` 携带：回执可以迟到于 Turn 收口
+（原生队列跨 Turn），迟到事实只补 outcome，不回迁 status。老 ledger 的 `accepted_steer` 状态与
+`user_message.deliveryState` 补丁在 replay 时归一到这套词汇。Controller 按 `laneId` 调度，而不按
 HarnessInput source 调度：
 
 - `laneId` 指定要继续的既有 Lane；保留值 `main` 表示主线；
@@ -263,32 +271,33 @@ Queue item 需要释放。Turn 本身不携带发起方向或角色分类。
 
 1. Controller 先创建稳定 Input/message identity 并入队；若它位于队头、目标支持且当前 turn
    identity 匹配，再 claim 为 `dispatching` 并尝试 `sendTurn`；
-2. Adapter 原生接受后，输入成为 `accepted_steer`，并以 `delivery:"steer"`
-   绑定当前 Turn。若接受只代表进入 Harness 原生队列，其 delivery state 为
-   `pending`；
-3. Harness 确认该用户输入已写入模型上下文后，Adapter 将 delivery state 更新为
-   `applied`；若 Harness 明确取消或丢弃该输入，则更新为 `failed` 并产生可见诊断。
-   不能区分这些边界的 Harness，以原生接受作为 applied 边界；
+2. Adapter 原生接受后，输入进入 `steering`，并以 `delivery:"steer"` 绑定当前 Turn。
+   若接受只代表进入 Harness 原生队列，投递结果留待回执（`deliveryOutcome` 未填写）；
+3. Harness 确认该用户输入已写入模型上下文后，Adapter 发 `input_delivery_update(applied)`；
+   若 Harness 明确取消或丢弃该输入，则发 `failed` 并产生可见诊断。不能区分这些边界的
+   Harness 声明 `steering.deliveryTracking: "ack-only"`，以原生接受作为 applied 边界，
+   由 Core 在 accept 时合成回执；
 4. Adapter 拒绝、原生 race 或无法安全定向时，同一 Input 回到队头，当前 Turn 结束后作为新 Turn
    执行。
 
-`pending` steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在
+未决 steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在
 Composer Queue，收到 `applied` 回执后再投影到 Transcript；`failed` 则离开 Queue
-但不冒充成 Transcript 历史。原生队列可能跨过当时尝试注入的 Turn，因此 Turn 收口不能
-把 pending 自动当成 applied；它会留在 Queue，直到 Harness 报告应用或失败。queued follow-up
-与 pending steer 共用 Queue surface，但前者等待 Controller 开启新 Turn，后者等待 Harness
-原生投递边界，两者不能互相冒充。
+但不冒充成 Transcript 历史。原生队列可能跨过当时尝试注入的 Turn，因此 Turn 收口不能把
+未决 steer 自动当成 applied，也不强迁它的 status：它留在 Queue（`steering` 且无 outcome），
+直到 Harness 报告应用或失败。queued follow-up 与未决 steer 共用 Queue surface，但前者等待
+Controller 开启新 Turn，后者等待 Harness 原生投递边界，两者不能互相冒充。
 
-`pending` / `failed` 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
+未决 / `failed` 的 steer 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
 `started` 时开启新的 Turn，由该 Turn 承接实际 `applied` 的用户正文，避免尚未执行或
 已经丢弃的指令提前污染下一棒上下文。
 
 Esc 只打断主 Lane 当前 active Queue run 所关联的 Turn，不影响支线 Lane。已经 `applied` 的 steer
-与该 Turn 共命运；仍是 `pending` 的 steer 由 Adapter 声明 cancel 后的所有权：原生队列能继续时
-仍由 Harness lifecycle 报告 applied/failed；interrupt 会让它不可达时，Controller 在发 cancel 前
-用同一个 `messageId` 和原先保留的 Turn identity 把它收回 Baton Queue，并把旧 steer delivery
-标成 failed。它随后以 `follow_up` 开启新 Turn，不会因 Esc 丢失，也不会与 Harness 原生队列
-双重执行。仍在 queue 的 follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
+与该 Turn 共命运；未决 steer 由 Adapter 的 `steering.cancelOwnership` 声明 cancel 后的所有权：
+原生队列能继续（`survives`）时仍由 Harness lifecycle 报告 applied/failed；interrupt 会让它不可达
+（`unreachable`）时，Controller 在发 cancel 前先落 `input_delivery_update(failed)` 收口这次
+steer 尝试，再用同一个 `messageId` 和原先保留的 Turn identity 把它收回 Baton Queue。它随后以
+`follow_up` 开启新 Turn，不会因 Esc 丢失，也不会与 Harness 原生队列双重执行。仍在 queue 的
+follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于完成，
 最终以 Harness 的 `idle/cancelled` 为准；超过 cancel 宽限且 transport 状态足够明确时，Controller
 可以合成终态兜底。
 HarnessInvocation 只用 invocation identity 定向取消自己的 queued HarnessInput 或 active Queue run，不论它位于主 Lane

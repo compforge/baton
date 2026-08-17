@@ -64,11 +64,16 @@ turn/steer(threadId, expectedTurnId, input)
 
 `expectedTurnId` 是 race 防线。原生拒绝、Turn 不匹配或 native ID 尚未返回时，Adapter 返回
 `rejected`，由 Controller 排成 follow-up；不能向未知 Turn 注入，也不能并行 `turn/start`。
+Adapter 声明 `steering: { deliveryTracking: "explicit", cancelOwnership: "unreachable" }`：
+RPC 成功只证明进入 Codex `pending_input`，`userMessage` completed 通知才经
+`input_delivery_update(applied)` 证明已写入模型上下文；正常结束的 Turn 未消费的 steer 会随
+下一 Turn 应用，回执允许跨 Turn 迟到。
 
 cancel 映射 `turn/interrupt`。fast-submit 窗口里原生 turn ID 可能尚未返回，Adapter 先记录
 pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最终兜底。Codex interrupt
 不会把未消费的 `turn/steer` 变成后续 Turn，因此 Adapter 声明 pending steer 由 Controller 收回
-Baton Queue。
+Baton Queue（先落 `input_delivery_update(failed)` 收口这次 steer 尝试，再以原 `messageId`
+重放为 follow-up）。
 
 运行中的 unified-exec 可能脱离 Turn cancellation 继续执行。Adapter 从 `commandExecution`
 生命周期追踪原生 PTY `processId`，Esc 对仍在运行的命令发送 Ctrl-C，同时保留 app-server 和

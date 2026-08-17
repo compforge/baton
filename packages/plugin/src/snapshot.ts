@@ -4,7 +4,8 @@ export type HarnessInputStatus =
   | "queued"
   | "dispatching"
   | "admitted"
-  | "accepted_steer"
+  | "steering"
+  | "failed"
   | "finalized"
   | "recalled"
   | "interrupted";
@@ -75,6 +76,8 @@ export interface HarnessInputSnapshot {
   readonly harness: string;
   readonly status: HarnessInputStatus;
   readonly delivery: "prompt" | "steer";
+  /** steer 的投递结果；undefined = 仍在等待 Harness 原生投递边界。 */
+  readonly deliveryOutcome?: "applied" | "failed";
   readonly source: HarnessInputSource;
   readonly harnessInvocationId?: string;
 }

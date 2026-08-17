@@ -1,6 +1,6 @@
 // codex sendTurn 的 active-turn 映射（见 docs/harness/codex.md）：baton turnId → codex turn id、
-// RPC 接受后先落 pending steer，原生 userMessage 回执再转 applied；stale/finalized/wire 失败
-// 一律 rejected 且不发事件（降级由 controller 决定）。
+// RPC 接受后落 steer 正文 upsert，原生 userMessage 回执经 input_delivery_update 报告 applied；
+// stale/finalized/wire 失败一律 rejected 且不发事件（降级由 controller 决定）。
 import type { OpenInteraction } from "../src/harness/adapter.ts";
 import { expect, test } from "bun:test";
 
@@ -81,7 +81,6 @@ test("codex steer: stays pending until codex emits the correlated userMessage", 
     payload: {
       messageId: "m_steer",
       delivery: "steer",
-      deliveryState: "pending",
     },
   });
 
@@ -97,12 +96,11 @@ test("codex steer: stays pending until codex emits the correlated userMessage", 
 
   expect(events).toHaveLength(2);
   expect(events[1]).toMatchObject({
-    kind: "user_message",
+    kind: "input_delivery_update",
     turnId: "t_A",
     payload: {
       messageId: "m_steer",
-      delivery: "steer",
-      deliveryState: "applied",
+      state: "applied",
     },
   });
 });

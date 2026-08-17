@@ -13,15 +13,25 @@ export type HarnessInputSource =
  * 一条 prompt Input 的生命周期状态（见 docs/workflow.md“采集与准入”）。让 recall /
  * interrupt / steer / race 的迁移成为对同一 Input 的状态查询，而不是散落在 submit /
  * steer / Esc 里的时序特判。
+ *
+ * steer 的调度阶段是 `steering`（Adapter 已接受、等待 Harness 原生投递边界）；
+ * 投递结果（applied/failed）记录在 `HarnessInput.deliveryOutcome`，与调度状态正交——
+ * 回执可能迟到于 Turn 收口，迟到事实只补 outcome，不回迁 status。
  */
 export type HarnessInputStatus =
   | "queued"
   | "dispatching"
   | "admitted"
-  | "accepted_steer"
+  | "steering"
+  | "failed"
   | "finalized"
   | "recalled"
   | "interrupted";
+
+/** 老 ledger 里 steer 接受态叫 accepted_steer；replay 归一到 steering。 */
+export function normalizeHarnessInputStatus(status: string): HarnessInputStatus {
+  return status === "accepted_steer" ? "steering" : (status as HarnessInputStatus);
+}
 
 /**
  * 一条输入的 controller 生命周期记录。身份即 `messageId`：durable 形态是事件流里的
@@ -42,6 +52,12 @@ export interface HarnessInput {
   parentEventId?: string;
   status: HarnessInputStatus;
   delivery: "prompt" | "steer";
+  /**
+   * steer 的投递结果：applied = 已写入模型上下文，failed = Harness 明确丢弃；
+   * undefined = 仍在等待原生投递边界。与 status 正交：Turn 收口不改变它，
+   * Harness 回执迟到时只补它不迁 status。
+   */
+  deliveryOutcome?: "applied" | "failed";
   /** 本 turn 是用户对某个已完成计划提案的明确执行请求。 */
   sourceProposedPlanId?: string;
 }
@@ -70,6 +86,7 @@ export interface HarnessInputSnapshot {
   harness: string;
   status: HarnessInputStatus;
   delivery: "prompt" | "steer";
+  deliveryOutcome?: "applied" | "failed";
   source: HarnessInputSource;
   harnessInvocationId?: string;
   sourceProposedPlanId?: string;
@@ -110,6 +127,9 @@ export function harnessInputSnapshot(input: HarnessInput): HarnessInputSnapshot 
     harness: input.target.harness,
     status: input.status,
     delivery: input.delivery,
+    ...(input.deliveryOutcome === undefined
+      ? {}
+      : { deliveryOutcome: input.deliveryOutcome }),
     source: { ...input.source },
     ...(input.harnessInvocationId === undefined
       ? {}

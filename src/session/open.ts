@@ -3,6 +3,7 @@ import {
   type HarnessDeliveryAttemptState,
 } from "../controller/attempt.ts";
 import type { AnyEventEnvelope, EventEnvelope } from "../event/index.ts";
+import { normalizeHarnessInputStatus } from "../harness/input.ts";
 import { reduceEvents } from "../store/reduce.ts";
 import type { SessionHandle, SessionStore } from "../store/store.ts";
 
@@ -97,12 +98,15 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   if (events.length === 0) return false;
   const state = reduceEvents(events);
   const recoveredAttempt = recoverDeliveryAttempts(session, events);
-  const pendingSteers = [...state.messages.values()].filter(
-    (message) =>
-      message.role === "user" &&
-      message.delivery === "steer" &&
-      message.deliveryState === "pending",
-  );
+  // 未决 steer = input 投影里 steering 且无投递结果（新事实）；老 ledger 回落
+  // user_message.deliveryState === "pending"。
+  const pendingSteers = [...state.messages.values()].filter((message) => {
+    if (message.role !== "user" || message.delivery !== "steer") return false;
+    const input = state.harnessInputs.get(message.messageId);
+    if (input?.deliveryOutcome !== undefined) return false;
+    if (input && normalizeHarnessInputStatus(input.status) === "steering") return true;
+    return message.deliveryState === "pending";
+  });
 
   const summarized = new Set<string>();
   for (const ev of events) {
@@ -129,7 +133,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   for (const message of pendingSteers) {
     const harness = message.harness ?? "baton";
     session.appendEvent({
-      kind: "user_message",
+      kind: "input_delivery_update",
       source: { type: "baton" },
       harness,
       ...(message.harnessTargetId ? { harnessTargetId: message.harnessTargetId } : {}),
@@ -137,8 +141,8 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       ...(message.turnId ? { turnId: message.turnId } : {}),
       payload: {
         messageId: message.messageId,
-        delivery: "steer",
-        deliveryState: "failed",
+        state: "failed",
+        detail: "session reopened before the steer delivery was confirmed",
       },
     });
     session.appendEvent({

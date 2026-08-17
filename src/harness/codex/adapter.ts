@@ -967,7 +967,13 @@ export function codexPromptInput(blocks: PromptBlock[]): CodexPromptItem[] {
 
 export class CodexAdapter implements HarnessAdapter {
   readonly harness = "codex";
-  readonly cancelPendingSteers = "requeue";
+  // steer 经 userMessage completed 回执显式报告 applied；cancel 会把原生
+  // pending_input 变成不可达（Controller 在发 cancel 前 reclaim），正常结束的
+  // turn 不消费完的 steer 则随下一 turn 应用、回执可能跨 Turn 迟到。
+  readonly steering = {
+    deliveryTracking: "explicit",
+    cancelOwnership: "unreachable",
+  } as const;
   // 可选能力接口落地并验证后才声明对应 marker——契约测试钉住
   // "声明支持就必须实现对应接口"。
   // sync：catch-up 走 turn/start.additionalContext（experimental API，initialize 已声明
@@ -1447,7 +1453,7 @@ export class CodexAdapter implements HarnessAdapter {
         });
       }
       // RPC 成功只证明进入 Codex pending_input；userMessage 通知才证明
-      // 它已经在下一次 sampling 前写入模型上下文。
+      // 它已经在下一次 sampling 前写入模型上下文（回执走 input_delivery_update）。
       this.emit(
         rt,
         {
@@ -1456,7 +1462,6 @@ export class CodexAdapter implements HarnessAdapter {
             messageId: input.messageId,
             content: input.blocks,
             delivery: "steer",
-            deliveryState: pendingSteers.has(input.messageId) ? "pending" : "applied",
           },
         },
         undefined,
@@ -1613,7 +1618,11 @@ export class CodexAdapter implements HarnessAdapter {
       rt.activeTurn = undefined;
       rt.codexTurnId = undefined;
       rt.activeCommandProcesses?.clear();
-      rt.pendingSteerMessageIds?.clear();
+      // cancel 后原生 pending_input 不可达（Controller reclaim 已收口）；正常结束的
+      // turn 未消费的 steer 会随下一 turn 应用，userMessage 回执跨 Turn 迟到，记账保留。
+      if (stopReasonOf(turnStatus) === "cancelled") {
+        rt.pendingSteerMessageIds?.clear();
+      }
       rt.pendingCancel = undefined; // turn 已终结，挂起的取消意图随之失效
     }
   }
@@ -1738,12 +1747,8 @@ export class CodexAdapter implements HarnessAdapter {
             this.emit(
               rt,
               {
-                kind: "user_message",
-                payload: {
-                  messageId: clientId,
-                  delivery: "steer",
-                  deliveryState: "applied",
-                },
+                kind: "input_delivery_update",
+                payload: { messageId: clientId, state: "applied" },
               },
               params,
             );

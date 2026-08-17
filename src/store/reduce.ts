@@ -18,6 +18,7 @@ import type {
   MessageRole,
   Notice,
   PlanUpdate,
+  PromptBlock,
   ProposedPlan,
   SessionConfigOption,
   SessionRunState,
@@ -31,6 +32,11 @@ import type {
   Interaction,
   InteractionResult,
 } from "../interaction/types.ts";
+import {
+  normalizeHarnessInputStatus,
+  type HarnessInputSource,
+  type HarnessInputStatus,
+} from "../harness/input.ts";
 
 export interface MessageState {
   messageId: string;
@@ -184,6 +190,20 @@ export interface InteractionState {
   result?: InteractionResult;
 }
 
+export interface HarnessInputState {
+  messageId: string;
+  turnId: string;
+  harnessTargetId: string;
+  laneId: string;
+  harness?: string;
+  status: HarnessInputStatus;
+  delivery: "prompt" | "steer";
+  deliveryOutcome?: "applied" | "failed";
+  blocks: PromptBlock[];
+  source: HarnessInputSource;
+  harnessInvocationId?: string;
+}
+
 export interface SessionState {
   /** 派生值：pending Interaction 或任一 turn requires_action ⇒ requires_action；activeTurns 空 ⇒ idle；否则 running。 */
   runState: SessionRunState;
@@ -197,6 +217,11 @@ export interface SessionState {
   stopReasons: Map<string, StopReason>;
   timeline: TimelineItem[];
   messages: Map<string, MessageState>;
+  /**
+   * 全部 HarnessInput 的投影（含终态）：Queue 区与 Transcript 的单源。
+   * steer 投递结果在 deliveryOutcome，与调度 status 正交（回执可迟到于 Turn 收口）。
+   */
+  harnessInputs: Map<string, HarnessInputState>;
   toolCalls: Map<string, ToolCallState>;
   plans: Map<string, PlanState>;
   /** 已完成、尚未表示执行授权的计划提案；按 planId 首写即定。 */
@@ -241,6 +266,7 @@ export function emptySessionState(): SessionState {
     stopReasons: new Map(),
     timeline: [],
     messages: new Map(),
+    harnessInputs: new Map(),
     toolCalls: new Map(),
     plans: new Map(),
     proposedPlans: new Map(),
@@ -359,7 +385,18 @@ function applyMessageUpsert(
     const userMessage = (ev as EventEnvelope<"user_message">).payload;
     const delivery = userMessage.delivery;
     if (delivery !== undefined) msg.delivery = delivery;
-    if (userMessage.deliveryState !== undefined) msg.deliveryState = userMessage.deliveryState;
+    if (userMessage.deliveryState !== undefined) {
+      msg.deliveryState = userMessage.deliveryState;
+      // 老 ledger 兼容桥:steer 投递进度曾寄生在消息补丁上,还原时同步到 Input 投影。
+      const input = state.harnessInputs.get(msg.messageId);
+      if (input) {
+        if (userMessage.deliveryState === "applied") input.deliveryOutcome = "applied";
+        if (userMessage.deliveryState === "failed") {
+          input.deliveryOutcome = "failed";
+          input.status = "failed";
+        }
+      }
+    }
     if (delivery === "follow_up") {
       // Esc may reclaim an unapplied native steer without changing messageId.
       // Its eventual prompt belongs to the new Turn and should appear after the
@@ -398,6 +435,53 @@ function applyMessageChunk(
   );
   msg.content.push(p.content);
   if (role !== "user") msg.streamStatus = "in_progress";
+}
+
+function applyHarnessInputUpdate(
+  state: SessionState,
+  ev: EventEnvelope<"harness_input.updated">,
+): void {
+  const p = ev.payload;
+  const status = normalizeHarnessInputStatus(p.status);
+  const existing = state.harnessInputs.get(p.messageId);
+  if (existing) {
+    existing.status = status;
+    existing.turnId = p.turnId;
+    existing.delivery = p.delivery;
+    if (p.blocks.length > 0) existing.blocks = [...p.blocks];
+    return;
+  }
+  state.harnessInputs.set(p.messageId, {
+    messageId: p.messageId,
+    turnId: p.turnId,
+    harnessTargetId: p.harnessTargetId,
+    laneId: p.laneId,
+    ...(ev.harness === undefined ? {} : { harness: ev.harness }),
+    status,
+    delivery: p.delivery,
+    blocks: [...p.blocks],
+    source: p.source,
+    ...(p.harnessInvocationId === undefined
+      ? {}
+      : { harnessInvocationId: p.harnessInvocationId }),
+  });
+}
+
+function applyInputDeliveryUpdate(
+  state: SessionState,
+  ev: EventEnvelope<"input_delivery_update">,
+): void {
+  const input = state.harnessInputs.get(ev.payload.messageId);
+  // 迟到 applied(turn 已收口)是合法事实，只补 outcome 不回迁 status。
+  if (input) {
+    input.deliveryOutcome = ev.payload.state;
+    if (ev.payload.state === "failed") input.status = "failed";
+    return;
+  }
+  // 指向无 input 记录的老消息（老 ledger 没有 harness_input.updated）：镜像到
+  // legacy deliveryState，消费侧的回落路径才能看到回执。
+  const message = state.messages.get(ev.payload.messageId);
+  if (message) message.deliveryState = ev.payload.state;
 }
 
 function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_update">): void {
@@ -511,6 +595,12 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       break;
     case "tool_call_update":
       applyToolCallUpdate(state, ev);
+      break;
+    case "harness_input.updated":
+      applyHarnessInputUpdate(state, ev);
+      break;
+    case "input_delivery_update":
+      applyInputDeliveryUpdate(state, ev);
       break;
     case "tool_call_content_chunk": {
       const p = ev.payload;

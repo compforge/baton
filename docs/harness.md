@@ -126,12 +126,25 @@ side-channel。Adapter 必须在 admission 前拒绝不支持的 block 类型，
 `sendTurn` 只返回 admission 结果：
 
 - `accepted/new_turn`：Adapter 接受开启新 Turn 的责任；
-- `accepted/steer`：Adapter 接受向匹配的当前 Turn 投递；若原生 Harness 还有队列，
-  后续用 user message delivery state 报告实际应用或失败；
+- `accepted/steer`：Adapter 接受向匹配的当前 Turn 投递；投递进度按 `steering`
+  descriptor 的约定报告（见下）；
 - `rejected`：没有接受，Controller 可以安全排成 follow-up。
 
 有活跃 Turn 时，Adapter 不得擅自并行开启新 Turn。throw 只允许发生在接受责任之前；accepted
 后的失败通过 Event sink 报告终态。
+
+支持 same-turn steer 的 Adapter 必须声明 `steering` descriptor，把能力差异压缩成两个声明，
+而不是散落在各家的控制流里：
+
+- `deliveryTracking`：`explicit` = 接受后必须经一等事件 `input_delivery_update`
+  报告 `applied`（已写入模型上下文）/ `failed`（明确丢弃），回执允许迟到于 Turn 收口；
+  `ack-only` = 接受即应用，没有后续回执，由 Core 在 accept 时合成 `applied`；
+- `cancelOwnership`：cancel/interrupt 后原生队列里未应用的 steer 是否仍可达。
+  `survives` = Harness 继续拥有并报告回执；`unreachable` = 不可达，Controller 会在
+  发 cancel 前把它们收回 Baton Queue 并重放为 follow-up。
+
+投递事实是 Input 的一等状态（`HarnessInput.deliveryOutcome`），不再寄生
+`user_message.deliveryState`（该字段仅剩老 ledger replay 兼容）。
 
 Controller 在实际调用 `sendTurn` 前后发送 `harness.inbound.before/after` Hook。方向沿
 Human→Harness 定义，因此 Core 向 Harness 投递属于 inbound。新 Turn 的
@@ -142,9 +155,10 @@ before 位于持久 Delivery Attempt 的 `prepared` 与 `dispatching` 之间；a
 ### 3.3 cancel 与 close
 
 `cancel` 只是请求中断，确认以最终 `idle/cancelled` Event 为准，发出后仍接收在途 update。
-若 Harness 的 pending steer 在 interrupt 后无法继续，Adapter 以 `cancelPendingSteers:"requeue"`
-把这项所有权约束交给 Controller；Controller 会在 cancel 前收回仍未 applied 的 Input。能自行继续
-原生队列的 Adapter 不声明该策略，后续仍以 delivery lifecycle 为准。
+若 Harness 的 pending steer 在 interrupt 后无法继续，Adapter 以
+`steering.cancelOwnership: "unreachable"` 把这项所有权约束交给 Controller；Controller 会在
+cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapter 声明 `"survives"`，
+后续仍以 `input_delivery_update` 回执为准。
 `close` 释放 Adapter-owned 进程、query、订阅和句柄；若仍有已接受 Turn，必须先报告或合成终态。
 
 ## 4. Capability
@@ -246,8 +260,9 @@ BatonSession 历史。
 1. 在 `src/harness/ids.ts` 注册 canonical ID 与 aliases；
 2. 实现 `src/harness/<name>/adapter.ts`，集中所有 wire lowering/normalization；
 3. 在 `registry.ts` 注册 Definition、工厂、session key、可选 probe 和 Inspector；
-4. 仅声明已经实现并有契约测试的 Capability；
-5. 覆盖 open 失败、accepted 后失败、cancel、transport close 和迟到终态；
+4. 仅声明已经实现并有契约测试的 Capability；支持 same-turn steer 时声明 `steering`
+   descriptor（deliveryTracking / cancelOwnership），投递回执只走 `input_delivery_update`；
+5. 覆盖 open 失败、accepted 后失败、cancel、transport close 和迟到终态（含迟到的投递回执）；
 6. 若支持原生历史，Inspector 必须只读并生成完整 Boundary；
 7. 用参数化测试证明 Store、Projection、Interaction 与队列无需 Harness 分支。
 

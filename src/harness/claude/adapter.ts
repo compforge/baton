@@ -914,6 +914,12 @@ export class ClaudeAdapter implements HarnessAdapter {
     config: { supported: true },
     textgen: { supported: true },
   };
+  // Claude 原生队列跨 Turn 存活（command_lifecycle/result UUID 回执迟到也会到），
+  // 投递进度由 input_delivery_update 显式报告。
+  readonly steering = {
+    deliveryTracking: "explicit",
+    cancelOwnership: "survives",
+  } as const;
   private sessions = new Map<string, ClaudeRuntime>();
 
   constructor(private options: ClaudeAdapterOptions) {}
@@ -1162,7 +1168,8 @@ export class ClaudeAdapter implements HarnessAdapter {
         };
       }
       // offer 只代表 Baton 把消息交给 SDK input stream；原生 queued/started
-      // lifecycle 才决定它何时离开 Composer Queue。
+      // lifecycle 才决定它何时离开 Composer Queue。投递回执走 input_delivery_update，
+      // 不再寄生 user_message.deliveryState。
       const pendingOffers = (rt.pendingOfferUuids ??= new Map());
       pendingOffers.set(message.uuid as string, {
         turnId: active.turnId,
@@ -1177,7 +1184,6 @@ export class ClaudeAdapter implements HarnessAdapter {
             messageId: input.messageId,
             content: input.blocks,
             delivery: "steer",
-            deliveryState: "pending",
           },
         },
         active,
@@ -1358,11 +1364,11 @@ export class ClaudeAdapter implements HarnessAdapter {
       this.emit(
         rt,
         {
-          kind: "user_message",
+          kind: "input_delivery_update",
           payload: {
             messageId: offer.messageId,
-            delivery: "steer",
-            deliveryState: "failed",
+            state: "failed",
+            detail: reason,
           },
         },
         offer,
@@ -1597,13 +1603,8 @@ export class ClaudeAdapter implements HarnessAdapter {
         if (msg.state === "started" || msg.state === "completed") {
           rt.pendingOfferUuids?.delete(key);
           emit({
-            kind: "user_message",
-            payload: {
-              messageId: offer.messageId,
-              content: offer.blocks,
-              delivery: "steer",
-              deliveryState: "applied",
-            },
+            kind: "input_delivery_update",
+            payload: { messageId: offer.messageId, state: "applied" },
             raw: msg,
           });
           break;
@@ -1611,11 +1612,11 @@ export class ClaudeAdapter implements HarnessAdapter {
         if (msg.state === "cancelled" || msg.state === "discarded") {
           rt.pendingOfferUuids?.delete(key);
           emit({
-            kind: "user_message",
+            kind: "input_delivery_update",
             payload: {
               messageId: offer.messageId,
-              delivery: "steer",
-              deliveryState: "failed",
+              state: "failed",
+              detail: `Claude reported ${msg.state}`,
             },
             raw: msg,
           });
@@ -1799,13 +1800,8 @@ export class ClaudeAdapter implements HarnessAdapter {
             // The result's correlated input UUID is then the authoritative applied receipt.
             rt.pendingOfferUuids?.delete(msg.user_message_uuid);
             emit({
-              kind: "user_message",
-              payload: {
-                messageId: offer.messageId,
-                content: offer.blocks,
-                delivery: "steer",
-                deliveryState: "applied",
-              },
+              kind: "input_delivery_update",
+              payload: { messageId: offer.messageId, state: "applied" },
               raw: msg,
             });
           }

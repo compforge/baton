@@ -52,14 +52,16 @@ Harness-neutral 的 L1 notice，不根据启发式采样自动 finalize。用户
 `new_turn`。Controller 已经持久化原始 `user_message` 和 Baton running 开界，Adapter 不重复发送。
 
 运行中且 Baton turn ID 匹配时，同一 prompt channel 接受新的 `SDKUserMessage`，登记
-调用方签发的 UUID，并补 `delivery:"steer", deliveryState:"pending"` 用户消息。
+调用方签发的 UUID，并补 `delivery:"steer"` 用户消息正文。Adapter 声明
+`steering: { deliveryTracking: "explicit", cancelOwnership: "survives" }`。
 Turn 不匹配或 channel 已关闭时返回 `rejected`，由 Controller 排成 follow-up。
 
-Claude CLI 的投递回执是 Queue 事实源：`command_lifecycle.queued` 仍留在 Composer Queue；
-`started` / `completed` 更新为 `applied` 并进入 Transcript；`cancelled` / `discarded`
-更新为 `failed` 并生成 warning。消息直接折入活跃 Turn 时可能没有 lifecycle frame，此时 success
-result 的 `user_message_uuid` 是关联后的 `applied` 回执。CLI 可能让 queued command 跨过当前 Turn 才启动，
-所以 Turn 收口不清理该 UUID，也不把 pending 乐观放入 Transcript。
+Claude CLI 的投递回执是 Queue 事实源，经一等事件 `input_delivery_update` 报告：
+`command_lifecycle.queued` 仍留在 Composer Queue；`started` / `completed` 报告 `applied`
+并进入 Transcript；`cancelled` / `discarded` 报告 `failed` 并生成 warning。消息直接折入活跃
+Turn 时可能没有 lifecycle frame，此时 success result 的 `user_message_uuid` 是关联后的
+`applied` 回执。CLI 可能让 queued command 跨过当前 Turn 才启动，回执允许迟到于 Turn 收口，
+只补 `deliveryOutcome`，不回迁 status。
 
 Harness 自行开始的 Turn 没有对应 Queue item。后台消息在上一 Queue-driven Turn 结束后到达时，
 Adapter 铸造新的普通 Turn；下一条 Human Input 到达前会先明确收口该 Turn，避免两类消息共用

@@ -47,6 +47,7 @@ import { DeliveryAttempts } from "./attempt.ts";
 import {
   harnessInputUpdate,
   harnessInputSnapshot,
+  normalizeHarnessInputStatus,
   type HarnessInputSource,
   type HarnessInputSnapshot,
 } from "../harness/input.ts";
@@ -113,7 +114,7 @@ export type Control = { kind: "interrupt" };
 /**
  * 用户 sendTurn 的调度结果（workflow：requested 与 effective 分开呈现）：
  * - `steer`：Adapter 已承担向当前 turn 投递的责任；原生队列是否已应用
- *   由 user_message deliveryState 继续报告；
+ *   由 HarnessInput 的 deliveryOutcome（input_delivery_update 回执）继续报告；
  * - `new_turn`：已进入主 Lane Queue；`queued` 说明它是否在等待当前
  *   turn。outcome 在该 turn 完成/被撤回时 resolve。
  */
@@ -274,8 +275,13 @@ export class Controller {
         latest.set(event.payload.messageId, event);
       }
     }
+    // steering 中的 Input 已被 Harness 接受但投递结果未知（crash 前无回执）；
+    // 与 queued 一样恢复重放，重新 admit 时按回收 steer 语义落成可见 follow-up。
     const queued = [...latest.values()]
-      .filter((event) => event.payload.status === "queued")
+      .filter((event) => {
+        const status = normalizeHarnessInputStatus(event.payload.status);
+        return status === "queued" || status === "steering";
+      })
       .sort(
         (left, right) =>
           (enqueueSeq.get(left.payload.messageId) ?? left.seq) -
@@ -307,6 +313,8 @@ export class Controller {
         identity: { messageId: input.messageId, turnId: input.turnId },
         enqueueSeq: enqueueSeq.get(input.messageId) ?? event.seq,
         restore: true,
+        requeuedFromSteer:
+          normalizeHarnessInputStatus(input.status) === "steering",
         ...(input.causeEventId === undefined
           ? {}
           : { parentEventId: input.causeEventId }),
@@ -444,7 +452,10 @@ export class Controller {
   preservesPendingSteers(harnessTargetId: string): boolean {
     const target = this.options.resolveTarget(harnessTargetId);
     if (!target) return false;
-    return this.bindingFor(MAIN_LANE_ID, target.id).adapter.cancelPendingSteers !== "requeue";
+    return (
+      this.bindingFor(MAIN_LANE_ID, target.id).adapter.steering
+        ?.cancelOwnership !== "unreachable"
+    );
   }
 
   get sideRunCount(): number {
@@ -632,14 +643,16 @@ export class Controller {
         if (
           active.status === "finalized" &&
           active.stopReason === "cancelled" &&
-          active.binding.adapter.cancelPendingSteers === "requeue" &&
-          this.options.session.loadState().messages.get(input.messageId)?.deliveryState !== "applied"
+          active.binding.adapter.steering?.cancelOwnership === "unreachable" &&
+          this.options.session.loadState().harnessInputs.get(input.messageId)
+            ?.deliveryOutcome !== "applied"
         ) {
           // The admission receipt lost the race with Esc. This Adapter cannot
           // carry native pending input across cancel, so the still-unapplied
           // claimed Input returns to Baton's queue instead of being attached
-          // to an already retired Turn.
-          queue.requeueClaimed(input);
+          // to an already retired Turn. Adapter 已接受并落过 steer 正文，
+          // 重放按回收 steer 语义落成可见 follow-up。
+          queue.requeueClaimed(input, { fromAcceptedSteer: true });
           this.changed();
           void this.drainMain();
           return {
@@ -649,6 +662,18 @@ export class Controller {
           };
         }
         queue.acceptClaimedSteer(input, active.turnId);
+        if (active.binding.adapter.steering?.deliveryTracking !== "explicit") {
+          // ack-only：sendTurn 接受即应用，没有后续回执，Core 直接合成投递事实。
+          this.appendEvent(
+            active.binding,
+            {
+              kind: "input_delivery_update",
+              turnId: active.turnId,
+              payload: { messageId: input.messageId, state: "applied" },
+            },
+            { type: "baton" },
+          );
+        }
         if (active.status === "active") {
           // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
           active.steers.push(input);
@@ -909,30 +934,36 @@ export class Controller {
    * reclaim it into Baton's Queue before cancel can synchronously emit idle.
    */
   private reclaimPendingSteers(active: QueueRun<HarnessBinding>): void {
-    if (active.binding.adapter.cancelPendingSteers !== "requeue") return;
-    const messages = this.options.session.loadState().messages;
+    if (active.binding.adapter.steering?.cancelOwnership !== "unreachable") return;
+    const harnessInputs = this.options.session.loadState().harnessInputs;
     const pendingIds = new Set(
       active.steers
-        .filter((input) => messages.get(input.messageId)?.deliveryState === "pending")
+        .filter(
+          (input) =>
+            harnessInputs.get(input.messageId)?.deliveryOutcome === undefined,
+        )
         .map((input) => input.messageId),
     );
     if (pendingIds.size === 0) return;
-    const reclaimed = this.queueForLane(active.laneId).requeueSteers(active, pendingIds);
-    for (const input of reclaimed) {
+    // 先落 failed 回执（这次 steer 投递已证伪），再重排——requeueSteers 的
+    // harness_input.updated(queued) 是后写的事实，投影里 status 回到 queued。
+    for (const input of active.steers) {
+      if (!pendingIds.has(input.messageId)) continue;
       this.appendEvent(
         active.binding,
         {
-          kind: "user_message",
+          kind: "input_delivery_update",
           turnId: active.turnId,
           payload: {
             messageId: input.messageId,
-            delivery: "steer",
-            deliveryState: "failed",
+            state: "failed",
+            detail: "steer became unreachable after cancel; reclaimed into the queue",
           },
         },
         { type: "baton" },
       );
     }
+    this.queueForLane(active.laneId).requeueSteers(active, pendingIds);
     this.changed();
   }
 
@@ -1055,7 +1086,7 @@ export class Controller {
             messageId: opts.input.messageId,
             content: opts.input.blocks,
             ...(opts.input.requeuedFromSteer
-              ? { delivery: "follow_up", deliveryState: "applied" }
+              ? { delivery: "follow_up" }
               : {}),
           },
         },
@@ -1426,15 +1457,13 @@ export class Controller {
     session.summarizeTurnEvent(turnId);
     if (run) record.binding.freshHarnessSession = false;
 
-    const inputStatus = stopReason === "cancelled" ? "interrupted" : "finalized";
-    if (run?.input) {
-      this.recordHarnessInputTransition(run.input, inputStatus);
+    // 终态迁移（input 与已投递 steer）由 finishRun 内经 beforeTransition 落 WAL；
+    // 未投递的 steer 保持 steering，等迟到的 Harness 回执只补 deliveryOutcome。
+    if (run) {
+      this.queueForLane(run.laneId).finishRun(run, stopReason, (messageId) =>
+        session.loadState().harnessInputs.get(messageId)?.deliveryOutcome,
+      );
     }
-    for (const steer of run?.steers ?? []) {
-      this.recordHarnessInputTransition(steer, inputStatus);
-    }
-
-    if (run) this.queueForLane(run.laneId).finishRun(run, stopReason);
     if (run && record.laneId === MAIN_LANE_ID) {
       this.maybeGenerateTitle(record.harnessTargetId);
     }
