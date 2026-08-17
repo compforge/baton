@@ -1,6 +1,12 @@
 import type { ReadOnlyCommandRule } from "./shell.ts";
 
-const UNSAFE_REVISION_QUERY_OPTIONS = ["--output", "--ext-diff", "--textconv"] as const;
+const UNSAFE_QUERY_OPTIONS = [
+  "--output",
+  "--ext-diff",
+  "--textconv",
+  "--ext-grep",
+  "--open-files-in-pager",
+] as const;
 
 const TAG_LIST_OPTIONS = new Set([
   "-l",
@@ -34,8 +40,13 @@ const TAG_LIST_OPTION_PREFIXES = [
 
 function revisionQueryIsReadOnly(args: readonly string[]): boolean {
   return !args.some((arg) =>
-    UNSAFE_REVISION_QUERY_OPTIONS.some((option) => arg === option || arg.startsWith(`${option}=`)),
+    UNSAFE_QUERY_OPTIONS.some((option) => arg === option || arg.startsWith(`${option}=`)),
   );
+}
+
+function grepIsReadOnly(args: readonly string[]): boolean {
+  return revisionQueryIsReadOnly(args)
+    && !args.some((arg) => arg === "-O" || arg.startsWith("-O"));
 }
 
 function branchListsOnly(args: readonly string[]): boolean {
@@ -79,7 +90,14 @@ export const gitCommandIsReadOnly: ReadOnlyCommandRule = ([subcommand, ...args])
       return true;
     case "log":
     case "show":
+    case "rev-list":
+    case "for-each-ref":
+    case "diff":
+    case "cherry":
+    case "rev-parse":
       return revisionQueryIsReadOnly(args);
+    case "grep":
+      return grepIsReadOnly(args);
     case "branch":
       return branchListsOnly(args);
     case "remote":

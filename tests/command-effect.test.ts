@@ -28,6 +28,22 @@ describe("shell command read effects", () => {
       "git status --short --branch && git log --oneline --decorate -12"
         + " && git tag --sort=-version:refname | head -20",
       "/usr/bin/git status | /usr/bin/head -20",
+      "git rev-list --left-right --count HEAD...origin/main",
+      "git for-each-ref refs/tags --sort=-creatordate --format='%(refname:short)' | head -20",
+      "git diff --dirstat=files,0 HEAD~1..HEAD | sort -rn | head -35",
+      "git diff --check origin/main...HEAD && git diff --stat origin/main...HEAD",
+      "git cherry -v origin/main HEAD",
+      "git grep -n \"credentials-local\\|id: credentials\" origin/main -- src | head -100",
+      "git rev-parse origin/main v0.3.27",
+    ], true);
+  });
+
+  test("accepts the session's structured read compositions", () => {
+    expectCommands([
+      "find . -type f 2>/dev/null && rg -n commandActions src",
+      "for c in 28fcda2751 219d2a1fb9; do git show --no-patch --format='%H%n%s' \"$c\"; done",
+      "gh release list --repo compforge/baton --limit 10",
+      "gh release view v0.3.27 --repo compforge/baton --json name,tagName,url",
     ], true);
   });
 
@@ -63,6 +79,9 @@ describe("shell command read effects", () => {
       "git log --textconv",
       "git show --output=/tmp/show HEAD",
       "git show --ext-diff HEAD",
+      "git grep --open-files-in-pager pattern",
+      "git grep -Ovim pattern",
+      "git grep --textconv pattern",
       "git branch feat/new",
       "git branch -d old",
       "git branch --list --sort=-committerdate",
@@ -81,6 +100,11 @@ describe("shell command read effects", () => {
       "sed -n '1,2w output' file",
       "sed -n -e '1,2p' -e '3w output' file",
       "sed -n '1,2p' -i file",
+      "sort -o output.txt input.txt",
+      "sort --output=output.txt input.txt",
+      "sort --compress-program=gzip input.txt",
+      "gh release delete v1.2.3",
+      "gh release view v1.2.3 --web",
     ], false);
   });
 
@@ -91,11 +115,15 @@ describe("shell command read effects", () => {
       "git branch",
       "git status && rm victim.txt",
       "git status $(rm victim.txt)",
+      "git show \"$REV\"",
+      "GIT_EXTERNAL_DIFF=helper git diff HEAD~1",
       "git status > /tmp/status",
+      "git status 2>/tmp/status",
       "git status & touch victim.txt",
       "git status \\ && git log -1",
       "git status ||",
       "git tag --list 'unterminated",
+      "for c in $(touch victim.txt); do git show \"$c\"; done",
     ], false);
   });
 

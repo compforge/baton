@@ -73,8 +73,10 @@ context window 只有在本次占用与容量能严格配对时才作为完整�
 `read`，写工具直接 `write`；Codex `commandExecution` 只在其原生 `commandActions`
 非空且全部能证明为只读时上报 `read`。原生 `read` / `listFiles` / `search` 是首选证据；Codex
 把查询命令折叠为 `unknown` 时，Adapter 只对规则表已收录且参数形态无副作用的命令做
-fail-closed 兜底（当前包括 Git 查询、ripgrep 与 sed 的窄只读子集）。空 action、未收录命令、
-重定向、substitution 或写入型参数仍显式上报 `write`。
+fail-closed 兜底。Bash 结构由 Tree-sitter AST 解析，再由命令级规则判定 Git 与 GitHub release
+查询、ripgrep、sed、find、sort 等参数语义；管道、条件链、静态值 `for` 循环，以及输出仅丢弃到
+`/dev/null` 的重定向可组合证明为只读。空 action、未收录命令、命令替换、动态变量、后台任务、
+真实文件输出或写入型参数仍显式上报 `write`。
 该字段当前驱动 TUI 的只读聚合展示，也可服务自动审批、并行调度等策略，因此
 provider fallback 必须留在对应 Adapter，并以参数级反例测试约束，不能由通用展示启发式签发。
 

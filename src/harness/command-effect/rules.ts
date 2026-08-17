@@ -1,8 +1,10 @@
 import { findCommandIsReadOnly } from "./find.ts";
+import { ghCommandIsReadOnly } from "./gh.ts";
 import { gitCommandIsReadOnly } from "./git.ts";
 import { rgCommandIsReadOnly } from "./rg.ts";
 import { sedCommandIsReadOnly } from "./sed.ts";
 import type { ReadOnlyCommandRules } from "./shell.ts";
+import { sortCommandIsReadOnly } from "./sort.ts";
 
 /**
  * Registry for command-level semantics. Add simple readers here; move commands
@@ -10,8 +12,10 @@ import type { ReadOnlyCommandRules } from "./shell.ts";
  */
 export const READ_ONLY_COMMAND_RULES: ReadOnlyCommandRules = new Map([
   ["find", findCommandIsReadOnly],
+  ["gh", ghCommandIsReadOnly],
   ["git", gitCommandIsReadOnly],
   ["head", () => true],
   ["rg", rgCommandIsReadOnly],
   ["sed", sedCommandIsReadOnly],
+  ["sort", sortCommandIsReadOnly],
 ]);
