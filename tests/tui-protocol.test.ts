@@ -1702,7 +1702,7 @@ describe("tool call grouping", () => {
         id: "group:tc_one:summary",
         kind: "tool",
         author: "codex",
-        title: "Ran ×2",
+        title: "Ran ×2 · grep -rn task src/ | head -20",
         status: "in_progress",
       },
       members: [
@@ -1747,7 +1747,7 @@ describe("tool call grouping", () => {
         id: "group:src/one:summary",
         kind: "tool",
         author: "codex",
-        title: "Read ×2",
+        title: "Read ×2 · src/two.ts",
         status: "in_progress",
       },
       members: [
@@ -1823,7 +1823,7 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:one",
           collapsedByDefault: true,
-          summary: { title: "Read ×2" },
+          summary: { title: "Read ×2 · two.ts" },
           members: [{ id: "one" }, { id: "two" }],
         },
         {
@@ -1854,7 +1854,7 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:probe1",
           collapsedByDefault: true,
-          summary: { title: "Ran ×2" },
+          summary: { title: "Ran ×2 · probe2" },
           members: [{ id: "probe1" }, { id: "probe2" }],
         },
       ]);
@@ -1921,7 +1921,7 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:read-1",
           collapsedByDefault: true,
-          summary: { kind: "tool", title: "Read ×2" },
+          summary: { kind: "tool", title: "Read ×2 · read-2.ts" },
           members: [{ id: "read-1" }, { id: "read-2" }],
         },
         {

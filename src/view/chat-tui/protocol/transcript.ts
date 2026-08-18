@@ -342,9 +342,12 @@ export function toolGroupTranscriptItem(
   tcs: readonly ToolCallState[],
 ): TranscriptGroupItem {
   const first = tcs[0]!;
+  const last = tcs[tcs.length - 1]!;
+  const label = TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind;
+  const detail = toolKeyArg(last, last.title ?? last.toolCallId);
   return transcriptGroup(
     tcs.map(toolTranscriptItem),
-    `${TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind} ×${tcs.length}`,
+    `${label} ×${tcs.length}${detail ? ` · ${detail}` : ""}`,
   );
 }
 
@@ -354,6 +357,7 @@ interface CompactBlockCandidate {
   mergeKey: string;
   family: CompactBlockFamily;
   label: string;
+  detail?: string;
   block: TranscriptBlockItem;
 }
 
@@ -364,7 +368,7 @@ function compactBlockGroup(candidates: CompactBlockCandidate[]): TranscriptGroup
     ? first.block.title
     : first.family === "thought"
       ? `Thought ×${candidates.length} · ${compactText(last.block.title, 48)}`
-      : `${first.label} ×${candidates.length}`;
+      : `${first.label} ×${candidates.length}${last.detail ? ` · ${last.detail}` : ""}`;
   return transcriptGroup(candidates.map((candidate) => candidate.block), title);
 }
 
@@ -437,6 +441,7 @@ export function buildTranscript(
           mergeKey: groupKey,
           family: "read",
           label: TOOL_KIND_LABELS[tc.kind ?? ""] ?? tc.kind ?? "Read",
+          detail: toolKeyArg(tc, tc.title ?? tc.toolCallId),
           block: toolTranscriptItem(tc),
         });
         continue;

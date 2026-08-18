@@ -1,6 +1,7 @@
 import { findCommandIsReadOnly } from "./find.ts";
 import { ghCommandIsReadOnly } from "./gh.ts";
 import { gitCommandIsReadOnly } from "./git.ts";
+import { npmCommandIsReadOnly } from "./npm.ts";
 import { rgCommandIsReadOnly } from "./rg.ts";
 import { sedCommandIsReadOnly } from "./sed.ts";
 import type { ReadOnlyCommandRules } from "./shell.ts";
@@ -15,6 +16,7 @@ export const READ_ONLY_COMMAND_RULES: ReadOnlyCommandRules = new Map([
   ["gh", ghCommandIsReadOnly],
   ["git", gitCommandIsReadOnly],
   ["head", () => true],
+  ["npm", npmCommandIsReadOnly],
   ["rg", rgCommandIsReadOnly],
   ["sed", sedCommandIsReadOnly],
   ["sort", sortCommandIsReadOnly],
