@@ -47,6 +47,15 @@ describe("shell command read effects", () => {
     ], true);
   });
 
+  test("accepts npm registry queries used by release preparation", () => {
+    expectCommands([
+      "npm whoami",
+      "npm --cache /private/tmp/baton-npm-cache whoami",
+      "npm view @compforge/baton version",
+      "npm --cache=/private/tmp/baton-npm-cache view @compforge/baton@0.3.28 version",
+    ], true);
+  });
+
   test("accepts ripgrep and the narrow sed print subset", () => {
     expectCommands([
       "rg --files",
@@ -105,6 +114,11 @@ describe("shell command read effects", () => {
       "sort --compress-program=gzip input.txt",
       "gh release delete v1.2.3",
       "gh release view v1.2.3 --web",
+      "npm publish --access public",
+      "npm install",
+      "npm login --auth-type=web",
+      "npm config set registry https://registry.example.com",
+      "npm --cache view",
     ], false);
   });
 
