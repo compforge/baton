@@ -93,7 +93,7 @@ import {
 } from "../logging.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
-import { Verb } from "./verb.ts";
+import { Verb, type VerbOptions } from "./verb.ts";
 import { HookRegistry, HookRuntime } from "./hook.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
@@ -121,7 +121,7 @@ export interface ControllerDefinition<TSpec, TStatus>
 
 type BuiltinControllerDefinition<K extends BuiltinResourceKind> = Pick<
   BuiltinControllerOptions<K>,
-  "pluginInstanceId" | "resourceKind" | "sources" | "watches" | "reconcile" | "maxConcurrency" | "now"
+  "pluginInstanceId" | "namespace" | "resourceKind" | "sources" | "watches" | "reconcile" | "maxConcurrency" | "now"
 >;
 
 export interface PluginToast {
@@ -175,6 +175,8 @@ export interface ManagerOptions {
   cancelHarnessInvocation?(
     harnessInvocationId: string,
   ): "queued" | "running" | undefined;
+  /** Daemon-owned Human Inbox path for a namespace-scoped Worker. */
+  performVerb?: VerbOptions["performVerb"];
   /** Board 展示内容变化；宿主据此重建展示快照。 */
   onBoardChanged?(): void;
   /** Plugin 发出的 session-scoped 瞬时提示；不进入 Event Ledger。 */
@@ -347,6 +349,7 @@ export class Manager {
       cancelHarnessInvocation: options.cancelHarnessInvocation,
       now: this.now,
       log: this.log,
+      performVerb: options.performVerb,
     });
     this.hooks = new HookRuntime(this.hookRegistry, {
       snapshot: this.snapshot,
@@ -438,6 +441,7 @@ export class Manager {
       onResourceDeleted: (resource) => {
         this.handlePluginResourceChange(Object.freeze({
           kind: "deleted",
+          pluginInstanceId: definition.store.pluginInstanceId,
           resource,
         }));
       },
@@ -545,6 +549,7 @@ export class Manager {
       new PluginResourceStore({
         session: this.instances.session,
         pluginInstanceId: instance.pluginInstanceId,
+        namespace: instance.namespace,
       }),
       (change) => this.handlePluginResourceChange(change),
       (resourceType) =>
@@ -1028,6 +1033,7 @@ export class Manager {
     const store = new PluginResourceStore({
       session: this.instances.session,
       pluginInstanceId,
+      namespace: this.instances.get(pluginInstanceId).namespace,
     });
     const registration = this.registerControllerInternal(
       {
@@ -1040,6 +1046,7 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.instances.session.id,
       pluginInstanceId,
+      namespace: store.namespace,
       resourceApiVersion: pluginController.resourceType.apiVersion,
       resourceKind: pluginController.resourceType.kind,
     });
@@ -1076,6 +1083,7 @@ export class Manager {
       );
     }
     const resourceKind = BATON_TURN_RESOURCE_TYPE.kind;
+    const namespace = this.instances.get(pluginInstanceId).namespace;
     const sources = pluginController.sources ?? [];
     if (sources.some((source) => source.type === "resource")) {
       throw new Error(
@@ -1088,6 +1096,7 @@ export class Manager {
     const registration = this.registerBuiltinControllerInternal(
       {
         pluginInstanceId,
+        namespace,
         resourceKind,
         sources: cronSources,
         watches: pluginController.watches,
@@ -1107,6 +1116,7 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.instances.session.id,
       pluginInstanceId,
+      namespace,
       resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       resourceKind,
       resourceOwner: "baton",
@@ -1279,8 +1289,8 @@ export class Manager {
     for (const controller of this.controllers.values()) {
       const scopeId = reconcileScopeId(controller.scope);
       if (
-        controller.scope.pluginInstanceId !==
-          change.resource.metadata.namespace ||
+        controller.scope.pluginInstanceId !== change.pluginInstanceId ||
+        controller.scope.namespace !== change.resource.metadata.namespace ||
         this.suspendedControllers.has(scopeId)
       ) {
         continue;

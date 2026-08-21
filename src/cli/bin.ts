@@ -7,6 +7,7 @@
 //   baton fork       fork BatonSession 并进入新会话
 //   baton sessions   列出当前项目的 baton 会话
 //   baton plugins    管理 Marketplace 与 Plugin Package
+//   baton daemon     管理用户级 Baton Daemon
 //   baton version    显示版本
 //   baton help       帮助
 
@@ -68,6 +69,8 @@ Usage:
                         install and globally enable an immutable Plugin Package
   baton plugins list [--root <dir>]
                         list installed Plugin Packages
+  baton daemon start|status|stop [--root <dir>]
+                        manage the user-level Baton control-plane process
   baton version         show version (also --version / -V)
   baton help            this help
 
@@ -176,6 +179,34 @@ async function run(command: string): Promise<void> {
     case "repl":
       await import("./main.ts");
       break;
+    case "daemon": {
+      const action = positionalAfterCommand() ?? "status";
+      const root = argValue("--root");
+      const {
+        batonDaemonStatus,
+        startBatonDaemon,
+        stopBatonDaemon,
+      } = await import("../daemon/client.ts");
+      if (action === "start") {
+        const status = await startBatonDaemon(root);
+        console.log(`baton daemon ${status.pid} started`);
+        break;
+      }
+      if (action === "status") {
+        const status = await batonDaemonStatus(root);
+        if (!status) fail("baton daemon is not running");
+        console.log(
+          `baton daemon ${status.pid} running (${status.batonVersion}, protocol ${status.protocolVersion})`,
+        );
+        break;
+      }
+      if (action === "stop") {
+        const stopped = await stopBatonDaemon(root);
+        console.log(stopped ? "baton daemon stopping" : "baton daemon is not running");
+        break;
+      }
+      fail(`unknown daemon action: ${action}`);
+    }
     // resume/fork 都转译成 TUI 入口已支持的 flags 再进 TUI，
     // 打开语义（锁、crash recovery）统一收在 openBatonSession，不在这里分叉。
     // 无 id 时默认进前置会话选择屏（对齐 codex CLI）：不预先打开任何会话，

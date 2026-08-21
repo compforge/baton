@@ -57,10 +57,15 @@ function stores(root: string): {
   };
 }
 
-function resourceStore(root: string, pluginInstanceId: string): PluginResourceStore {
+function resourceStore(
+  root: string,
+  pluginInstanceId: string,
+  namespace: "v1" | `v1/project/${string}` = "v1",
+): PluginResourceStore {
   return new PluginResourceStore({
     session: testSession(root),
     pluginInstanceId,
+    namespace,
   });
 }
 
@@ -68,6 +73,7 @@ function key(pluginInstanceId: string, resourceId: string) {
   return {
     batonSessionId: "bs_test",
     pluginInstanceId,
+    namespace: "v1" as const,
     resourceApiVersion: REQ_LOOP_RUN.apiVersion,
     resourceKind: "Requirement",
     resourceId,
@@ -456,7 +462,7 @@ describe("Plugin Package lifecycle", () => {
       { phase: string }
     >({
       ...REQ_LOOP_RUN,
-      namespace: "reqloop_default",
+      namespace: "v1",
       name: "run_1",
     });
     if (!resource) throw new Error("expected Requirement/run_1");
@@ -488,7 +494,11 @@ describe("Plugin Package lifecycle", () => {
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
-    const foreign = resourceStore(root, "another_instance").create({
+    const foreign = resourceStore(
+      root,
+      "another_instance",
+      "v1/project/another-project",
+    ).create({
       type: REQ_LOOP_RUN,
       name: "run_2",
       spec: { requirement: "do not touch" },
@@ -577,7 +587,7 @@ describe("Plugin Package lifecycle", () => {
       { phase: string }
     >({
       ...REQ_LOOP_RUN,
-      namespace: "reqloop_default",
+      namespace: "v1",
       name: "run_1",
     });
     if (!resource) throw new Error("expected Requirement/run_1");
@@ -605,20 +615,20 @@ describe("Plugin Package lifecycle", () => {
     })).toBeUndefined();
     await expect(context!.resources.get({
       ...ref,
-      namespace: "another_instance",
-    })).rejects.toThrow("outside reqloop_default");
+      namespace: "v1/project/another-project",
+    })).rejects.toThrow("outside v1");
     const updated = await context!.resources.patchStatus(resource, {
       phase: "running",
     });
     expect(updated.status.phase).toBe("running");
     await expect(
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
-    ).rejects.toThrow("outside reqloop_default");
+    ).rejects.toThrow("outside v1");
     await expect(
       context!.resources.patchMetadata(foreign, {
         annotations: { "example.com/forbidden": "true" },
       }),
-    ).rejects.toThrow("outside reqloop_default");
+    ).rejects.toThrow("outside v1");
     await expect(
       context!.resources.create(BATON_TURN_RESOURCE_TYPE, {
         name: "forged_turn",
@@ -714,7 +724,9 @@ describe("Plugin Package lifecycle", () => {
           context.controllers.register({
             resourceType: REQ_LOOP_RUN,
             async reconcile(_ctx, resource) {
-                reconciled.push(resource.metadata.namespace);
+                reconciled.push(
+                  (resource.spec as { requirement: string }).requirement,
+                );
               },
           });
         }),

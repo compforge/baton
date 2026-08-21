@@ -36,6 +36,7 @@ function scope(pluginInstanceId: string, resourceKind: string = "Requirement"): 
   return {
     batonSessionId: "bs_test",
     pluginInstanceId,
+    namespace: "v1",
     resourceApiVersion: API_VERSION,
     resourceKind,
   };
@@ -145,6 +146,7 @@ describe("plugin Manager", () => {
     const reconcileKey = {
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -213,6 +215,7 @@ describe("plugin Manager", () => {
     await manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -258,6 +261,7 @@ describe("plugin Manager", () => {
     const reconcile = manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -322,6 +326,7 @@ describe("plugin Manager", () => {
     const reconcileKey = {
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -449,6 +454,7 @@ describe("plugin Manager", () => {
     const firstReconcile = manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -492,6 +498,7 @@ describe("plugin Manager", () => {
     const secondReconcile = manager.enqueue({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_2",
@@ -572,6 +579,7 @@ describe("plugin Manager", () => {
     const reconcileKey = (resourceId: string) => ({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId,
@@ -655,6 +663,7 @@ describe("plugin Manager", () => {
     const reconcileKey = {
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId: "run_1",
@@ -720,6 +729,7 @@ describe("plugin Manager", () => {
     const reconcileKey = (resourceId: string) => ({
       batonSessionId: session.id,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1" as const,
       resourceApiVersion: API_VERSION,
       resourceKind: "Requirement",
       resourceId,
@@ -777,8 +787,8 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: reqloopStore,
       resourceType: resourceType("Requirement"),
-      async reconcile(_ctx, resource) {
-          started.push(resource.metadata.namespace);
+      async reconcile() {
+          started.push("reqloop_default");
           await gate.promise;
           return;
         },
@@ -786,8 +796,8 @@ describe("plugin Manager", () => {
     manager.registerController<Spec, Record<string, never>>({
       store: deployStore,
       resourceType: resourceType("Deployment"),
-      async reconcile(_ctx, resource) {
-          started.push(resource.metadata.namespace);
+      async reconcile() {
+          started.push("deploy_default");
         },
     });
 
@@ -813,10 +823,10 @@ describe("plugin Manager", () => {
     manager.registerController(definition);
 
     expect(() => manager.registerController(definition)).toThrow(
-      `plugin Controller already registered for bs_test/reqloop_default/${API_VERSION}/Requirement`,
+      `plugin Controller already registered for bs_test/reqloop_default/v1/${API_VERSION}/Requirement`,
     );
     await expect(manager.enqueue(key("missing", "run_1"))).rejects.toThrow(
-      `no plugin Controller registered for bs_test/missing/${API_VERSION}/Requirement`,
+      `no plugin Controller registered for bs_test/missing/v1/${API_VERSION}/Requirement`,
     );
   });
 
@@ -835,7 +845,7 @@ describe("plugin Manager", () => {
     registration.close();
     registration.close();
     await expect(manager.enqueue(key("reqloop_default", "run_1"))).rejects.toThrow(
-      `no plugin Controller registered for bs_test/reqloop_default/${API_VERSION}/Requirement`,
+      `no plugin Controller registered for bs_test/reqloop_default/v1/${API_VERSION}/Requirement`,
     );
   });
 
@@ -904,7 +914,7 @@ describe("plugin Manager", () => {
       maxConcurrency: 1,
       async reconcile(_ctx, resource) {
           started.push(
-            `${resource.metadata.namespace}/${resource.metadata.name}`,
+            `reqloop_default/${resource.metadata.name}`,
           );
           await gate.promise;
         },
@@ -915,7 +925,7 @@ describe("plugin Manager", () => {
       maxConcurrency: 1,
       async reconcile(_ctx, resource) {
           started.push(
-            `${resource.metadata.namespace}/${resource.metadata.name}`,
+            `deploy_default/${resource.metadata.name}`,
           );
           await gate.promise;
         },

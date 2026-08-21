@@ -58,7 +58,7 @@ describe("PluginResourceStore", () => {
     expect(created).toMatchObject({
       ...REQ_LOOP_RUN,
       metadata: {
-        namespace: "reqloop_default",
+        namespace: "v1",
         generation: 1,
         resourceVersion: "1",
         labels: {
@@ -87,6 +87,8 @@ describe("PluginResourceStore", () => {
       "bs_test",
       "plugins",
       "reqloop_default",
+      "namespaces",
+      "v1",
       "resources",
       "reqloop.baton.dev",
       "v1alpha1",
@@ -358,6 +360,8 @@ describe("PluginResourceStore", () => {
       "bs_test",
       "plugins",
       "reqloop_default",
+      "namespaces",
+      "v1",
       "resources",
       "reqloop.baton.dev",
       "v1alpha1",
@@ -372,7 +376,7 @@ describe("PluginResourceStore", () => {
           ...REQ_LOOP_RUN,
           metadata: {
             name: "run_1",
-            namespace: "another_instance",
+            namespace: "v1/project/another-project",
             uid: "pr_test",
             generation: 1,
             resourceVersion: "1",
@@ -386,9 +390,9 @@ describe("PluginResourceStore", () => {
     );
 
     expect(() => store(root).get(REQ_LOOP_RUN, "run_1")).toThrow(
-      `invalid plugin resource ${path}: namespace must be reqloop_default`,
+      `invalid plugin resource ${path}: namespace must be v1`,
     );
-    expect(readFileSync(path, "utf8")).toContain("another_instance");
+    expect(readFileSync(path, "utf8")).toContain("another-project");
   });
 
   test("assigns a new uid when the same name is recreated", () => {

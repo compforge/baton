@@ -17,6 +17,7 @@ export function reconcileScopeId(scope: ReconcileScope): string {
   return JSON.stringify([
     scope.batonSessionId,
     scope.pluginInstanceId,
+    scope.namespace,
     reconcileResourceOwner(scope),
     scope.resourceApiVersion,
     scope.resourceKind,
@@ -28,7 +29,7 @@ export function reconcileScopeLabel(scope: ReconcileScope): string {
     reconcileResourceOwner(scope) === "plugin"
       ? scope.resourceKind
       : `baton:${scope.resourceKind}`;
-  return `${scope.batonSessionId}/${scope.pluginInstanceId}/${scope.resourceApiVersion}/${kind}`;
+  return `${scope.batonSessionId}/${scope.pluginInstanceId}/${scope.namespace}/${scope.resourceApiVersion}/${kind}`;
 }
 
 export function sameReconcileScope(
@@ -38,6 +39,7 @@ export function sameReconcileScope(
   return (
     left.batonSessionId === right.batonSessionId &&
     left.pluginInstanceId === right.pluginInstanceId &&
+    left.namespace === right.namespace &&
     left.resourceApiVersion === right.resourceApiVersion &&
     left.resourceKind === right.resourceKind &&
     reconcileResourceOwner(left) === reconcileResourceOwner(right)

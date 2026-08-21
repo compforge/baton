@@ -6,6 +6,7 @@ import type {
 import type {
   ReconcileContext,
   ResourceRef,
+  PluginNamespace,
   Watch,
 } from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
@@ -215,6 +216,7 @@ export class BatonResourceIndex {
 export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   resources: BatonResourceIndex;
   pluginInstanceId: string;
+  namespace: PluginNamespace;
   resourceKind: K;
   sources?: readonly ControllerSource[];
   watches?: readonly Watch[];
@@ -298,6 +300,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
       pluginInstanceId: options.pluginInstanceId,
+      namespace: options.namespace,
       resourceApiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
       resourceKind: options.resourceKind,
       resourceOwner: "baton",
@@ -378,7 +381,10 @@ export class BuiltinController<K extends BuiltinResourceKind> {
   async reconcileKeys(
     change: ResourceClientChange,
   ): Promise<readonly ReconcileKey[]> {
-    if (change.resource.metadata.namespace !== this.scope.pluginInstanceId) {
+    if (
+      change.pluginInstanceId !== this.scope.pluginInstanceId ||
+      change.resource.metadata.namespace !== this.scope.namespace
+    ) {
       return [];
     }
     let requests;
@@ -439,6 +445,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
     if (
       key.batonSessionId !== this.scope.batonSessionId ||
       key.pluginInstanceId !== this.scope.pluginInstanceId ||
+      key.namespace !== this.scope.namespace ||
       key.resourceApiVersion !== this.scope.resourceApiVersion ||
       key.resourceKind !== this.scope.resourceKind ||
       reconcileResourceOwner(key) !== "baton"

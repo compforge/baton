@@ -11,6 +11,7 @@ import {
 import { basename, dirname, join } from "node:path";
 
 import type {
+  PluginNamespace,
   Resource,
   ResourceListOptions,
   ResourceOwnerReference,
@@ -20,6 +21,7 @@ import type {
 import { newId } from "../event/ids.ts";
 import { withAsyncFileLock, withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
+import { parsePluginNamespace } from "./namespace.ts";
 
 export type PluginResource<
   TSpec = Record<string, unknown>,
@@ -29,6 +31,7 @@ export type PluginResource<
 export interface PluginResourceStoreOptions {
   session: Pick<SessionHandle, "id" | "dir">;
   pluginInstanceId: string;
+  namespace?: PluginNamespace;
 }
 
 interface MutationOptions {
@@ -290,6 +293,7 @@ export class PluginResourceStore {
   private readonly sessionDir: string;
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
+  readonly namespace: PluginNamespace;
 
   constructor(options: PluginResourceStoreOptions) {
     assertPathSegment("batonSessionId", options.session.id);
@@ -297,6 +301,7 @@ export class PluginResourceStore {
     this.sessionDir = options.session.dir;
     this.batonSessionId = options.session.id;
     this.pluginInstanceId = options.pluginInstanceId;
+    this.namespace = parsePluginNamespace(options.namespace ?? "v1");
   }
 
   create<TSpec, TStatus = Record<string, unknown>>(
@@ -764,8 +769,8 @@ export class PluginResourceStore {
       throw new Error("metadata must be an object");
     }
     if (metadata.name !== name) throw new Error(`name must be ${name}`);
-    if (metadata.namespace !== this.pluginInstanceId) {
-      throw new Error(`namespace must be ${this.pluginInstanceId}`);
+    if (metadata.namespace !== this.namespace) {
+      throw new Error(`namespace must be ${this.namespace}`);
     }
     assertPathSegment("metadata.uid", metadata.uid);
     positiveInteger("metadata.generation", metadata.generation);
@@ -815,7 +820,7 @@ export class PluginResourceStore {
       kind: input.type.kind,
       metadata: {
         name: input.name,
-        namespace: this.pluginInstanceId,
+        namespace: this.namespace,
         uid: newId("pr"),
         generation: 1,
         resourceVersion: "1",
@@ -842,9 +847,9 @@ export class PluginResourceStore {
     validateResourceType(owner);
     assertPathSegment("metadata.owner.name", owner.name);
     assertPathSegment("metadata.owner.uid", owner.uid);
-    if (owner.namespace !== this.pluginInstanceId) {
+    if (owner.namespace !== this.namespace) {
       throw new Error(
-        `metadata.owner.namespace must be ${this.pluginInstanceId}`,
+        `metadata.owner.namespace must be ${this.namespace}`,
       );
     }
     if (
@@ -913,6 +918,8 @@ export class PluginResourceStore {
       this.sessionDir,
       "plugins",
       this.pluginInstanceId,
+      "namespaces",
+      encodeURIComponent(this.namespace),
       "resources",
     );
   }

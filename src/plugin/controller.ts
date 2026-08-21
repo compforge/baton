@@ -2,6 +2,7 @@ import type {
   Controller as PluginController,
   ControllerSource,
   CronSource,
+  ResourceNamespace,
   ResourceRef,
   ResourceType,
   Watch,
@@ -34,6 +35,7 @@ export type ReconcileResourceOwner = "plugin" | "baton";
 export interface ReconcileScope {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
+  readonly namespace: ResourceNamespace;
   readonly resourceApiVersion: string;
   readonly resourceKind: string;
   /** 旧 key 缺省为 plugin；baton 表示只读 Baton-owned Resource。 */
@@ -190,6 +192,7 @@ function ownedKey(key: ReconcileKey): ReconcileKey {
   const copy = {
     batonSessionId: key.batonSessionId,
     pluginInstanceId: key.pluginInstanceId,
+    namespace: key.namespace,
     resourceApiVersion: key.resourceApiVersion,
     resourceKind: key.resourceKind,
     resourceId: key.resourceId,
@@ -200,6 +203,7 @@ function ownedKey(key: ReconcileKey): ReconcileKey {
   for (const [name, value] of Object.entries({
     batonSessionId: copy.batonSessionId,
     pluginInstanceId: copy.pluginInstanceId,
+    namespace: copy.namespace,
     resourceApiVersion: copy.resourceApiVersion,
     resourceKind: copy.resourceKind,
     resourceId: copy.resourceId,
@@ -291,6 +295,7 @@ export class Controller<TSpec, TStatus> {
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
+      namespace: options.store.namespace,
       resourceApiVersion: options.resourceType.apiVersion,
       resourceKind: options.resourceType.kind,
     });
@@ -365,7 +370,10 @@ export class Controller<TSpec, TStatus> {
   async reconcileKeys(
     change: ResourceClientChange,
   ): Promise<readonly ReconcileKey[]> {
-    if (change.resource.metadata.namespace !== this.scope.pluginInstanceId) {
+    if (
+      change.pluginInstanceId !== this.scope.pluginInstanceId ||
+      change.resource.metadata.namespace !== this.scope.namespace
+    ) {
       return [];
     }
     const keys = new Map<string, ReconcileKey>();
@@ -538,6 +546,7 @@ export class Controller<TSpec, TStatus> {
     if (
       key.batonSessionId !== this.scope.batonSessionId ||
       key.pluginInstanceId !== this.scope.pluginInstanceId ||
+      key.namespace !== this.scope.namespace ||
       key.resourceApiVersion !== this.scope.resourceApiVersion ||
       key.resourceKind !== this.scope.resourceKind ||
       reconcileResourceOwner(key) !== reconcileResourceOwner(this.scope)

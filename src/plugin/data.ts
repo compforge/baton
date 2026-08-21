@@ -52,8 +52,8 @@ function projectDirectory(sessionDir: string): {
 
 /**
  * Creates the writable directories owned by one Plugin at each persistence
- * scope. Plugin identity owns global/Project/Session paths; the runtime
- * PluginInstance owns the narrowest path inside its BatonSession.
+ * scope. Plugin identity owns global/Project/Session paths; the concrete
+ * Plugin Binding owns the narrowest path.
  */
 export function preparePluginDataDirectories(
   session: PluginSessionContext & { readonly dir: string },

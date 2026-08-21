@@ -263,6 +263,8 @@ export interface VerbOptions {
   ): "queued" | "running" | undefined;
   now?: () => Date;
   log?: LogSink;
+  /** Daemon-owned Human Inbox path used by namespace-scoped Plugin Workers. */
+  performVerb?(context: ExecutionScope, request: VerbRequest): Promise<VerbResponse>;
 }
 
 /** Plugin typed verbs and the live executions suspended while those verbs settle. */
@@ -280,6 +282,7 @@ export class Verb {
   private readonly executions = new Map<string, ActiveExecution>();
   private readonly now: () => Date;
   private readonly log?: LogSink;
+  private readonly performVerb?: NonNullable<VerbOptions["performVerb"]>;
 
   constructor(options: VerbOptions) {
     this.capacity = options.capacity;
@@ -289,6 +292,7 @@ export class Verb {
     this.cancelHostHarnessInvocation = options.cancelHarnessInvocation;
     this.now = options.now ?? (() => new Date());
     this.log = options.log;
+    this.performVerb = options.performVerb;
     if (options.session) {
       this.interactions = new ReconcileInteractionStore(options.session, {
         now: this.now,
@@ -398,6 +402,7 @@ export class Verb {
     context: ExecutionScope,
     request: VerbRequest,
   ): Promise<VerbResponse> {
+    if (this.performVerb) return await this.performVerb(context, request);
     if (!this.interactions) {
       throw new Error(
         `Plugin verb ${request.verb}() requires a SessionHandle`,
