@@ -241,6 +241,10 @@ export interface HarnessTaskUpdate {
   status: "in_progress" | "completed" | "failed" | "stopped";
   title?: string;
   taskType?: string;
+  /** false 表示仍阻塞主 Turn；转为 true 后才进入 Parallel 区域。 */
+  backgrounded?: boolean;
+  /** subagent 嵌套深度；顶层为 1。 */
+  spawnDepth?: number;
   summary?: string;
   lastToolName?: string;
   usage?: HarnessTaskUsage;

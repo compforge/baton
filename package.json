@@ -42,7 +42,7 @@
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.226",
+    "@anthropic-ai/claude-agent-sdk": "0.3.238",
     "@compforge/baton-plugin": "0.8.1",
     "@compforge/dsh-agent-sdk": "0.0.1",
     "@lumis-sh/wasm-bash": "0.26.4",

@@ -138,6 +138,46 @@ describe("Parallel projection", () => {
     ]);
   });
 
+  test("shows a foreground subagent only after Claude backgrounds it", () => {
+    const coordinate = {
+      harness: "claude-code",
+      harnessTargetId: "claude",
+      laneId: MAIN_LANE_ID,
+      turnId: "t_main",
+    } as const;
+    session.appendEvent({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "task-nested",
+        status: "in_progress",
+        title: "Inspect nested flow",
+        taskType: "Explore",
+        backgrounded: false,
+        spawnDepth: 2,
+      },
+    });
+    expect(project().parallel).toBeUndefined();
+
+    session.appendEvent({
+      source: { type: "harness", harnessTargetId: "claude" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "task-nested",
+        status: "in_progress",
+        backgrounded: true,
+      },
+    });
+    expect(project().parallel?.items).toEqual([
+      expect.objectContaining({
+        id: "task:task-nested",
+        progress: "running · depth 2",
+      }),
+    ]);
+  });
+
   test("shows skipTranscript tasks while live without adding terminal history", () => {
     const coordinate = {
       harness: "deepseek-harness",

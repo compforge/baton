@@ -16,6 +16,7 @@ import {
   type PermissionUpdate,
   type Query,
   type SDKControlInitializeResponse,
+  type SDKContextUsage,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -26,6 +27,7 @@ import { logError } from "../../logging.ts";
 import { readClaudeSettings } from "./settings.ts";
 import type {
   AnyEventDraft,
+  AvailableCommand,
   ConfigValue,
   ContentBlock,
   DiffBlock,
@@ -545,6 +547,8 @@ interface ClaudeTurn {
   cancelRequested: boolean;
   /** 当前正在流式输出的 assistant 消息的内部 messageId（chunk 与最终 upsert 共用） */
   streamMessageId?: string;
+  /** 本 Turn 已收到 SDK 的结构化 /context 快照，result 不再用累计 modelUsage 覆盖它。 */
+  structuredContextReported?: boolean;
 }
 
 /**
@@ -581,6 +585,8 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   modelInfos?: ModelInfo[];
   /** 用户在 baton 中选择的推理强度；下次 query 创建时生效。 */
   effort?: EffortLevel;
+  /** SDK 报告的实际 effort，仅用于解释 default，不反向固定用户选择。 */
+  appliedEffort?: EffortLevel;
   /** Baton 只统一 Claude Code 与 Codex 共有的 Default / Plan 两态。 */
   permissionMode?: Extract<PermissionMode, "default" | "plan">;
   /** 已归一成 plan_update 的 tool_use id：其 tool_result 也要跳过，避免时间线出现重复工具卡 */
@@ -607,6 +613,10 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   }>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
   lastContextSample?: ClaudeContextSample;
+  /** system/init 声明的终端专属 slash command；Baton 作为 SDK host 不展示这些命令。 */
+  terminalSlashCommands?: Set<string>;
+  /** 最近一次 command catalog；system/init 每 Turn 重发名称时用它保留已知描述。 */
+  availableCommands?: Map<string, AvailableCommand>;
   /** 从 .claude/settings.json 读取的 plugins 和 mcpServers 配置 */
   settings?: import("./settings.ts").ClaudeSettings;
 }
@@ -869,11 +879,32 @@ function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
+function claudeCommandName(name: string): string {
+  return name.replace(/^\/+/, "");
+}
+
+function claudeAvailableCommands(
+  commands: ReadonlyArray<{ name: string; description?: string; argumentHint?: string }>,
+  terminalCommands?: ReadonlySet<string>,
+): AvailableCommand[] {
+  return commands.flatMap((command) => {
+    const name = claudeCommandName(command.name);
+    if (terminalCommands?.has(name)) return [];
+    return [{
+      name,
+      ...(command.description ? { description: command.description } : {}),
+      ...(command.argumentHint ? { input: { hint: command.argumentHint } } : {}),
+    }];
+  });
+}
+
 function claudeEffortsForModel(rt: ClaudeRuntime, modelId: string | undefined): EffortOption[] {
   const defaultOption: EffortOption = {
     id: "default",
     label: "Default",
-    description: "Use the Claude Code default effort",
+    description: rt.appliedEffort
+      ? `Use the Claude Code default effort (currently ${effortLabel(rt.appliedEffort)})`
+      : "Use the Claude Code default effort",
   };
   const model = modelId
     ? rt.modelInfos?.find((candidate) => candidate.value === modelId || candidate.resolvedModel === modelId)
@@ -921,6 +952,24 @@ function claudeContextWindow(
       ? contextSample.inputTokens + contextSample.cacheReadInputTokens + contextSample.cacheCreationInputTokens
       : used(selected[1]),
     capacityTokens: selected[1].contextWindow,
+  };
+}
+
+function claudeStructuredContextWindow(
+  usage: SDKContextUsage,
+): { effectiveModel: string; usedTokens: number; capacityTokens: number } | undefined {
+  if (
+    !Number.isFinite(usage.total_tokens) ||
+    usage.total_tokens < 0 ||
+    !Number.isFinite(usage.raw_max_tokens) ||
+    usage.raw_max_tokens <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    effectiveModel: usage.model,
+    usedTokens: usage.total_tokens,
+    capacityTokens: usage.raw_max_tokens,
   };
 }
 
@@ -1254,7 +1303,13 @@ export class ClaudeAdapter implements HarnessAdapter {
     const executable = this.options.executablePath ?? process.env.BATON_CLAUDE_BIN;
     const sdkOptions: Options = {
       cwd: rt.cwd,
-      env: { ...(process.env as Record<string, string>), ...rt.env },
+      env: {
+        ...(process.env as Record<string, string>),
+        // 新模型不再默认暴露 Task/Todo 工具；用 SDK 公布的兼容开关恢复工具面，
+        // 但仍让 canUseTool 保持唯一权限入口。Target env 可显式覆盖这个默认值。
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
+        ...rt.env,
+      },
       resume: rt.claudeSessionId,
       includePartialMessages: true,
       // Agent SDK 默认使用空 system prompt；显式恢复 Claude Code 语义，确保
@@ -1639,7 +1694,7 @@ export class ClaudeAdapter implements HarnessAdapter {
           });
           break;
         }
-        if (msg.state === "cancelled" || msg.state === "discarded") {
+        if (msg.state === "cancelled" || msg.state === "discarded" || msg.state === "refused") {
           rt.pendingOfferUuids?.delete(key);
           emit({
             kind: "input_delivery_update",
@@ -1665,8 +1720,24 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       case "system":
-        if (msg.subtype === "init") this.publishSessionBinding(rt, msg.session_id);
-        else if (msg.subtype === "status") {
+        if (msg.subtype === "init") {
+          this.publishSessionBinding(rt, msg.session_id);
+          rt.appliedEffort = msg.effort ?? undefined;
+          rt.terminalSlashCommands = new Set(
+            (msg.terminal_slash_commands ?? []).map(claudeCommandName),
+          );
+          const commands = msg.slash_commands.flatMap((rawName) => {
+            const name = claudeCommandName(rawName);
+            if (rt.terminalSlashCommands?.has(name)) return [];
+            return [rt.availableCommands?.get(name) ?? { name }];
+          });
+          rt.availableCommands = new Map(commands.map((command) => [command.name, command]));
+          emit({
+            kind: "available_commands_update",
+            payload: { commands },
+            raw: msg,
+          });
+        } else if (msg.subtype === "status") {
           // SDK 的 status 原生就是 phase-or-null 形状（'compacting' | 'requesting' | null）。
           // 只有 compacting 值得成为可见阶段；requesting 是普通运行态，与 null 一样
           // 归一成"无阶段"（回落默认 thinking），未来未知 status 同样安全降级。
@@ -1679,15 +1750,11 @@ export class ClaudeAdapter implements HarnessAdapter {
             raw: msg,
           });
         } else if (msg.subtype === "commands_changed") {
+          const commands = claudeAvailableCommands(msg.commands, rt.terminalSlashCommands);
+          rt.availableCommands = new Map(commands.map((command) => [command.name, command]));
           emit({
             kind: "available_commands_update",
-            payload: {
-              commands: msg.commands.map((command) => ({
-                name: command.name,
-                ...(command.description ? { description: command.description } : {}),
-                ...(command.argumentHint ? { input: { hint: command.argumentHint } } : {}),
-              })),
-            },
+            payload: { commands },
             raw: msg,
           });
         } else if (msg.subtype === "task_started") {
@@ -1702,6 +1769,32 @@ export class ClaudeAdapter implements HarnessAdapter {
                 : {}),
               ...(msg.skip_transcript !== undefined
                 ? { skipTranscript: msg.skip_transcript }
+                : {}),
+              ...(msg.is_backgrounded !== undefined
+                ? { backgrounded: msg.is_backgrounded }
+                : {}),
+              ...(msg.spawn_depth !== undefined ? { spawnDepth: msg.spawn_depth } : {}),
+            },
+            raw: msg,
+          });
+        } else if (msg.subtype === "task_updated") {
+          const status = msg.patch.status;
+          emit({
+            kind: "task_update",
+            payload: {
+              taskId: msg.task_id,
+              status:
+                status === "completed"
+                  ? "completed"
+                  : status === "failed"
+                    ? "failed"
+                    : status === "killed"
+                      ? "stopped"
+                      : "in_progress",
+              ...(msg.patch.description ? { title: msg.patch.description } : {}),
+              ...(msg.patch.error ? { summary: msg.patch.error } : {}),
+              ...(msg.patch.is_backgrounded !== undefined
+                ? { backgrounded: msg.patch.is_backgrounded }
                 : {}),
             },
             raw: msg,
@@ -1795,6 +1888,17 @@ export class ClaudeAdapter implements HarnessAdapter {
         break;
       }
       case "assistant": {
+        if (msg.context_usage) {
+          const context = claudeStructuredContextWindow(msg.context_usage);
+          if (context) {
+            emit({
+              kind: "context_window_update",
+              payload: { modelSelection: rt.model ?? "default", ...context },
+              raw: msg,
+            });
+            turn.structuredContextReported = true;
+          }
+        }
         const blocks = (msg.message.content ?? []) as unknown as Array<Record<string, unknown>>;
         const hasDurableMessage = blocks.some(
           (block) => block.type === "text" || block.type === "thinking",
@@ -1849,7 +1953,9 @@ export class ClaudeAdapter implements HarnessAdapter {
             raw: msg,
           });
         }
-        const context = claudeContextWindow(msg.modelUsage, rt.model, rt.lastContextSample);
+        const context = turn.structuredContextReported
+          ? undefined
+          : claudeContextWindow(msg.modelUsage, rt.model, rt.lastContextSample);
         if (context) {
           emit({
             kind: "context_window_update",
@@ -1917,7 +2023,6 @@ const CLAUDE_IGNORED_SYSTEM_SUBTYPES = new Set<string>([
   "hook_started",
   "memory_recall",
   "plugin_install",
-  "task_updated",
 ]);
 
 const CLAUDE_IGNORED_MESSAGE_TYPES = new Set<string>([

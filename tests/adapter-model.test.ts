@@ -209,6 +209,8 @@ describe("Claude model capability", () => {
 
     expect(queryOptions?.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
     expect(queryOptions?.settingSources).toEqual(["user", "project", "local"]);
+    expect(queryOptions?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe("1");
+    expect(queryOptions?.allowedTools).toBeUndefined();
   });
 
   test("requires an existing native conversation before compacting", async () => {

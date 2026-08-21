@@ -270,7 +270,7 @@ describe("claude: command lifecycle → steer delivery", () => {
     expect(pendingOfferUuids.has("native-steer")).toBe(false);
   });
 
-  for (const state of ["cancelled", "discarded"] as const) {
+  for (const state of ["cancelled", "discarded", "refused"] as const) {
     test(`marks ${state} steer failed without putting it in Transcript`, () => {
       const { events, feed, pendingOfferUuids } = claudeQueueHarness();
 
@@ -566,6 +566,14 @@ describe("background task / subagent lifecycle", () => {
       task_id: "task-1",
       description: "Inspect the adapter",
       subagent_type: "Explore",
+      is_backgrounded: false,
+      spawn_depth: 2,
+    });
+    feed({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "task-1",
+      patch: { is_backgrounded: true },
     });
     feed({
       type: "system",
@@ -589,7 +597,19 @@ describe("background task / subagent lifecycle", () => {
       "task_update",
       "task_update",
       "task_update",
+      "task_update",
     ]);
+    expect(events[0]).toMatchObject({
+      payload: {
+        taskId: "task-1",
+        status: "in_progress",
+        backgrounded: false,
+        spawnDepth: 2,
+      },
+    });
+    expect(events[1]).toMatchObject({
+      payload: { taskId: "task-1", status: "in_progress", backgrounded: true },
+    });
     expect(events.at(-1)).toMatchObject({
       payload: { taskId: "task-1", status: "completed", summary: "Done" },
     });
@@ -1206,6 +1226,89 @@ describe("context window → context_window_update", () => {
       usedTokens: 5_000,
       capacityTokens: 200_000,
     });
+  });
+
+  test("claude prefers structured /context usage over cumulative result usage", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { content: [] },
+      context_usage: {
+        model: "claude-opus-4-8",
+        total_tokens: 42_000,
+        raw_max_tokens: 1_000_000,
+        percentage: 4,
+        categories: [],
+        mcp_tools: [],
+        memory_files: [],
+        agents: [],
+      },
+    });
+    feed({
+      type: "result",
+      subtype: "success",
+      usage: {},
+      modelUsage: {
+        "claude-opus-4-8": {
+          inputTokens: 120_000,
+          outputTokens: 5_000,
+          cacheReadInputTokens: 200_000,
+          cacheCreationInputTokens: 10_000,
+          webSearchRequests: 0,
+          costUSD: 1,
+          contextWindow: 1_000_000,
+          maxOutputTokens: 64_000,
+        },
+      },
+    });
+
+    const snapshots = events.filter((event) => event.kind === "context_window_update");
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.payload).toEqual({
+      modelSelection: "default",
+      effectiveModel: "claude-opus-4-8",
+      usedTokens: 42_000,
+      capacityTokens: 1_000_000,
+    });
+  });
+});
+
+describe("claude: native command catalog", () => {
+  test("filters terminal-only slash commands from init and later snapshots", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "system",
+      subtype: "init",
+      session_id: "sess1",
+      slash_commands: ["/compact", "/exit"],
+      terminal_slash_commands: ["/exit"],
+      effort: "high",
+    });
+    feed({
+      type: "system",
+      subtype: "commands_changed",
+      commands: [
+        { name: "compact", description: "Compact context", argumentHint: "" },
+        { name: "exit", description: "Exit terminal", argumentHint: "" },
+      ],
+    });
+    // init is emitted again at later turn starts; keep the richer command snapshot.
+    feed({
+      type: "system",
+      subtype: "init",
+      session_id: "sess1",
+      slash_commands: ["/compact", "/exit"],
+      terminal_slash_commands: ["/exit"],
+      effort: "high",
+    });
+
+    const snapshots = events.filter((event) => event.kind === "available_commands_update");
+    expect(snapshots.map((event) => event.payload)).toEqual([
+      { commands: [{ name: "compact" }] },
+      { commands: [{ name: "compact", description: "Compact context" }] },
+      { commands: [{ name: "compact", description: "Compact context" }] },
+    ]);
   });
 });
 
