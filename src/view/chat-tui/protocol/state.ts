@@ -359,11 +359,14 @@ export function parallelItems(
   }
 
   for (const task of state.tasks.values()) {
-    if (task.status !== "in_progress") continue;
+    if (task.status !== "in_progress" || task.backgrounded === false) continue;
     const harness = harnessAuthor(task.harness);
     const author = [harness, task.taskType].filter(Boolean).join("/");
     const description = task.title ?? task.summary;
     const detail = [
+      task.spawnDepth !== undefined && task.spawnDepth > 1
+        ? `depth ${task.spawnDepth}`
+        : undefined,
       task.lastToolName,
       task.summary === description ? undefined : task.summary,
     ].filter((value): value is string => Boolean(value)).join(" · ");

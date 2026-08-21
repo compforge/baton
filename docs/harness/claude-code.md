@@ -89,6 +89,8 @@ Controller 拥有，Claude `toolUseID` 只用于关联原生请求。
 - TodoWrite → 带确定性 entry ID 的 plan snapshot；TaskCreate/TaskUpdate 保留原生 task ID，删除最后
   一个 entry 时发 `plan_remove`；两条路径都抑制重复工具卡；
 - task started/progress/notification → task lifecycle；
+- task started/updated 的前后台状态与 subagent 深度 → Parallel 任务投影；
+- `/context` 的结构化 context usage → 严格配对的 context window 快照；
 - result modelUsage → usage、context window 与 cost snapshot；
 - result、query error、stream close → Turn 终态。
 
