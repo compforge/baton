@@ -15,7 +15,7 @@ import type {
   HumanInboxSession,
 } from "../inbox/human.ts";
 import type { VerbResponse } from "../plugin/verb.ts";
-import type { PluginHostSession } from "../plugin/host.ts";
+import type { BatonSessionAttachment } from "./daemon.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 2_000;
 const DEFAULT_START_TIMEOUT_MS = 5_000;
@@ -124,7 +124,7 @@ async function callResult(
 
 export async function attachBatonSession(
   rootDir: string | undefined,
-  session: PluginHostSession,
+  session: BatonSessionAttachment,
 ): Promise<readonly DeliveredHumanAction[]> {
   return await callResult(rootDir, {
     method: "session.attach",

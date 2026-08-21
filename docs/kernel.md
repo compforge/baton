@@ -20,8 +20,8 @@ Baton Core 位于三类参与者之间：
 | **Plugin** | 领域 loop、Connector 和完成条件 | 通过 Hook 或 reconcile 被唤醒，通过 Verb 请求 Core 行动 |
 
 Core 是三方的协调者，不代替任何一方完成其工作。用户级 `Baton Daemon` 是长期存活的控制面进程；
-它拥有 Plugin Host、Human Inbox 与 Session Gateway。Plugin Host 按 canonical namespace 管理
-Binding，并驱动该 namespace 下的 Resource/Controller。`Channel` 只是一份
+它拥有 Plugin Host、Human Inbox 与 Session Gateway。Plugin Host 按启用的 PluginInstance 管理
+Binding 与 Worker，并按每份 Resource 自身的 namespace 驱动 Controller/reconcile。`Channel` 只是一份
 BatonSession lease 期间的交互与 Harness 执行入口：它装配 Session、Queue、Interaction gateway 与
 Harness ports，也是 typed ViewInput 的统一 facade 和 ViewOutput 的发布边界。各 owner 仍分别拥有
 事实、状态机、调度与执行职责。参与者不能互持进程句柄、私建回调通道，也不能绕过 Core 直接改变
@@ -41,11 +41,11 @@ Review 等领域语义。完整边界见 [View](./view.md)。
 
 | 概念 | 语义与 owner |
 |---|---|
-| **Baton Daemon** | 用户级常驻控制面进程；拥有 Plugin Host、Human Inbox、Session Gateway 及 namespace 级控制面服务 |
-| **Plugin Host** | Daemon 内的 namespace 管理组件；按 Binding 持有 Resource/Controller、驱动 reconcile，并启停、监督和回收对应 Plugin Worker |
+| **Baton Daemon** | 用户级常驻控制面进程；拥有 Plugin Host、Human Inbox、Session Gateway 及 Resource 控制面服务 |
+| **Plugin Host** | Daemon 内的 Plugin 管理组件；按 Instance 管理 Binding 与 Worker，按 Resource namespace 持有 Resource/Controller 并驱动 reconcile |
 | **BatonSession** | Human 拥有的持久协作空间和交互/执行入口；承载 Event Ledger 与 Lane，不因 Plugin 的全局或项目 scope 复制领域事实 |
 | **Channel** | BatonSession 的 active composition root 与 typed coordination facade；拥有进程期组件引用、订阅和 `open/closing/closed`，不拥有任何可恢复业务状态或状态机 |
-| **PluginBinding** | `plugin@marketplace + canonical namespace` 的具体激活；决定 Worker 基数和 Resource 默认归属 |
+| **PluginBinding** | 一份启用 PluginInstance 的具体激活；拥有注册与清理生命周期，不决定 Resource namespace |
 | **Human Inbox** | Baton 与 Human 之间的持久待决/复核列表；所有 Plugin 发起的 human-facing action 都先进入这里 |
 | **ViewInput** | View 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
 | **ViewOutput** | Core 发布给 View 的投影更新；表示可供 surface 消费，不证明用户已经看见 |
@@ -163,8 +163,8 @@ Plugin 决定领域下一步，Core 决定协作动作如何授权、持久化�
 ```text
 User-level Baton Daemon
 ├── Plugin Host
-│     └── Binding × canonical namespace
-│           ├── Resource / Controller / reconcile
+│     └── enabled PluginInstance × one Binding / Worker
+│           ├── Resource(namespace) / Controller / reconcile
 │           └── Plugin Worker ── typed Plugin verb ──┐
 ├── Human Inbox ◀────────────────────────────────────┘
 └── Session Gateway
@@ -176,22 +176,24 @@ Session process × active terminal tab
 └── Harness Adapter ↔ Harness
 ```
 
-`Plugin Host` 不是第二个 daemon，也不是独立进程；它是 Baton Daemon 内按 namespace 管理 Binding
-的组件。每个 Binding 把 Resource store、Controller/reconcile 调度和 Worker 生命周期收在同一边界；
+`Plugin Host` 不是第二个 daemon，也不是独立进程；它是 Baton Daemon 内按 PluginInstance 管理
+Binding 和 Worker 的组件。每个 Binding 把 Package 注册、Controller/reconcile 调度和 Worker 生命周期
+收在同一边界；
 Human Inbox 与 Session Gateway 仍是 Host 的同级服务。第三方 Package 运行在独立 Plugin Worker 中；
 Worker 是 Daemon 的子进程。Harness 进程或 SDK 生命周期仍由领取工作的 Session Adapter 持有。
 
-Plugin Package 用 namespace 模板声明 Binding 基数，省略时等同 `v1`：
+Plugin 不声明 scope 或 namespace；它只是 Resource schema、Controller、Source 与 Connector 的组织单位。
+每个启用的 PluginInstance 只有一份 Binding 和 Worker，不随 terminal tab、Project 或 Resource 数量复制。
+Resource 自己携带 canonical namespace：
 
-| Package 声明 | 持久 canonical namespace | Worker / 分发语义 |
-|---|---|---|
-| `v1` | `v1` | 当前用户一份 Worker；所有 Session 可见，只有一个 Session 收到瞬时提示 |
-| `v1/project` | `v1/project/<projectId>` | 每个 Project 一份 Worker；同 Project Session 共享 Resource 和待决事项 |
-| `v1/project/session` | `v1/project/<projectId>/session/<sessionId>` | 每个 Session 一份 Worker；Inbox 持久化后直达目标 Session |
+| Resource namespace | 归属与 Inbox 分发语义 |
+|---|---|
+| `v1` | 用户全局；所有 Session 可见，只有一个 Session 收到瞬时提示 |
+| `v1/project/<projectId>` | Project 级；同 Project Session 共享 Resource 和待决事项 |
+| `v1/project/<projectId>/session/<sessionId>` | Session 级；Inbox 持久化后直达目标 Session |
 
-ResourceType 不声明 scope；同一个 kind 可以存在于不同 namespace。当前一份 Binding 创建的 Resource
-固定继承其 canonical namespace，不能逃逸到另一个 Project。Worker 唯一性由
-`plugin@marketplace + canonical namespace` 决定，不由打开了多少 terminal tab 决定。
+ResourceType 不声明 scope；同一个 Plugin、Controller 和 kind 可以同时管理不同 namespace 的对象。
+namespace 是 Resource identity 与 action 路由的一部分，不是 Package、PluginInstance 或 Worker identity。
 
 内核只有一条双向流水线。这里给出概念拓扑，完整状态迁移和时序以[工作流](./workflow.md)为准。
 

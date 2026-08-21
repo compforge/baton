@@ -1,6 +1,7 @@
 import type {
   ControllerSource,
   CronSource,
+  ResourceNamespace,
   ResourceType,
   Source,
   SourceContext,
@@ -60,7 +61,10 @@ interface ControllerSourcesOptions<TSpec, TStatus> {
   readonly onResource?: (
     resource: Readonly<PluginResource<TSpec, TStatus>>,
   ) => void;
-  enqueue(resourceId: string): void;
+  enqueue(resource: {
+    readonly namespace: ResourceNamespace;
+    readonly name: string;
+  }): void;
 }
 
 /**
@@ -140,7 +144,10 @@ export class ControllerSources<TSpec, TStatus> {
               }
             }
             if (this.ready) {
-              this.options.enqueue(resource.metadata.name);
+              this.options.enqueue({
+                namespace: resource.metadata.namespace as ResourceNamespace,
+                name: resource.metadata.name,
+              });
             }
           } catch (error) {
             reportError(error);

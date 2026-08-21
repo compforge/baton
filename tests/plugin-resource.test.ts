@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PluginResourceStore } from "../src/plugin/resource.ts";
+import { createResourceClient } from "../src/plugin/resource-client.ts";
 
 const roots: string[] = [];
 const REQ_LOOP_RUN = {
@@ -40,7 +41,55 @@ afterEach(() => {
 });
 
 describe("PluginResourceStore", () => {
-  test("creates a resource in its BatonSession and plugin instance scope", () => {
+  test("lets one global Plugin manage Resources across its namespace tree", async () => {
+    const root = testRoot();
+    const resources = store(root);
+    const client = createResourceClient(resources);
+    const global = await client.create(REQ_LOOP_RUN, {
+      name: "shared",
+      spec: { scope: "global" },
+    });
+    const project = await client.create(REQ_LOOP_RUN, {
+      name: "shared",
+      namespace: "v1/project/project-a",
+      spec: { scope: "project" },
+    });
+    const session = await client.create(REQ_LOOP_RUN, {
+      name: "shared",
+      namespace: "v1/project/project-a/session/session-a",
+      spec: { scope: "session" },
+    });
+
+    expect((await client.list(REQ_LOOP_RUN)).map((resource) => resource.spec)).toEqual([
+      { scope: "global" },
+    ]);
+    expect((await client.list(REQ_LOOP_RUN, {
+      includeDescendants: true,
+    })).map((resource) => resource.metadata.namespace)).toEqual([
+      "v1",
+      "v1/project/project-a",
+      "v1/project/project-a/session/session-a",
+    ]);
+    expect(await client.get({
+      ...REQ_LOOP_RUN,
+      namespace: project.metadata.namespace,
+      name: project.metadata.name,
+      uid: project.metadata.uid,
+    })).toEqual(project);
+    expect(global.metadata.uid).not.toBe(project.metadata.uid);
+    expect(project.metadata.uid).not.toBe(session.metadata.uid);
+
+    const samePluginResources = new PluginResourceStore({
+      session: testSession(root),
+      pluginInstanceId: "reqloop_default",
+    });
+    expect(samePluginResources.list(REQ_LOOP_RUN, {
+      namespace: "v1/project/project-a",
+      includeDescendants: true,
+    })).toHaveLength(2);
+  });
+
+  test("creates a global Resource owned by its PluginInstance", () => {
     const root = testRoot();
     const resources = store(root);
     const created = resources.create({

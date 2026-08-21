@@ -70,7 +70,7 @@ Usage:
   baton plugins list [--root <dir>]
                         list installed Plugin Packages
   baton daemon start|status|stop [--root <dir>]
-                        manage the user-level Baton control-plane process
+                        manage the user-level Baton daemon process
   baton version         show version (also --version / -V)
   baton help            this help
 

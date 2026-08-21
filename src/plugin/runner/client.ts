@@ -414,7 +414,11 @@ export class PluginRunnerClient {
           request.init,
         );
       case "resource.delete":
-        await this.callbacks.resources.delete(request.type, request.name);
+        await this.callbacks.resources.delete(
+          request.type,
+          request.name,
+          request.namespace,
+        );
         return undefined;
       case "resource.patchMetadata":
         return await this.callbacks.resources.patchMetadata(

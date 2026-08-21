@@ -1,3 +1,4 @@
+import type { ResourceNamespace } from "./namespace.ts";
 import type { ResourceOwnerReference } from "./resource.ts";
 
 /** Minimal AbortSignal contract without imposing DOM or Node types on Plugins. */
@@ -20,6 +21,8 @@ export interface SourceContext<TSpec> {
    */
   emit(resource: {
     readonly name: string;
+    /** Concrete Resource namespace. Defaults to the user-global `v1`. */
+    readonly namespace?: ResourceNamespace;
     readonly labels?: Readonly<Record<string, string>>;
     readonly annotations?: Readonly<Record<string, string>>;
     readonly owner?: ResourceOwnerReference;

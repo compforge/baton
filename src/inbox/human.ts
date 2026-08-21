@@ -8,12 +8,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { PluginNamespace } from "@compforge/baton-plugin";
+import type { ResourceNamespace } from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
 import {
-  parsePluginNamespace,
-  pluginNamespaceTemplate,
+  parseResourceNamespace,
+  resourceNamespaceScope,
 } from "../plugin/namespace.ts";
 import type { VerbRequest, VerbResponse } from "../plugin/verb.ts";
 import { withFileLock } from "../store/file-lock.ts";
@@ -33,7 +33,7 @@ export interface HumanInboxSession {
 
 export interface HumanAction {
   readonly actionId: string;
-  readonly namespace: PluginNamespace;
+  readonly namespace: ResourceNamespace;
   readonly pluginId: string;
   readonly pluginInstanceId: string;
   readonly executionId: string;
@@ -92,9 +92,9 @@ function copyAction(action: HumanAction): HumanAction {
 }
 
 function namespaceSession(
-  namespace: PluginNamespace,
+  namespace: ResourceNamespace,
 ): HumanInboxSession | undefined {
-  if (pluginNamespaceTemplate(namespace) !== "v1/project/session") return;
+  if (resourceNamespaceScope(namespace) !== "session") return;
   const parts = namespace.split("/");
   return { projectId: parts[2]!, sessionId: parts[4]! };
 }
@@ -103,7 +103,7 @@ export function humanActionBelongsToSession(
   action: Pick<HumanAction, "namespace">,
   session: HumanInboxSession,
 ): boolean {
-  const namespace = parsePluginNamespace(action.namespace);
+  const namespace = parseResourceNamespace(action.namespace);
   if (namespace === "v1") return true;
   const parts = namespace.split("/");
   if (parts[2] !== session.projectId) return false;
@@ -125,13 +125,13 @@ export class HumanInboxStore {
   }
 
   create(input: {
-    namespace: PluginNamespace;
+    namespace: ResourceNamespace;
     pluginId: string;
     pluginInstanceId: string;
     executionId: string;
     request: VerbRequest;
   }): HumanAction {
-    const namespace = parsePluginNamespace(input.namespace);
+    const namespace = parseResourceNamespace(input.namespace);
     return withFileLock(this.path, () => {
       const inbox = this.read();
       const timestamp = this.timestamp();
@@ -160,7 +160,7 @@ export class HumanInboxStore {
 
   /** Creates one durable action before suspending the Plugin execution. */
   async request(input: {
-    namespace: PluginNamespace;
+    namespace: ResourceNamespace;
     pluginId: string;
     pluginInstanceId: string;
     executionId: string;
@@ -436,7 +436,7 @@ export class HumanInboxStore {
       throw new Error(`could not read Human Inbox ${this.path}: invalid schema`);
     }
     for (const action of Object.values(inbox.actions)) {
-      parsePluginNamespace(action.namespace);
+      parseResourceNamespace(action.namespace);
     }
     return inbox as HumanInboxFile;
   }

@@ -15,8 +15,6 @@ import { parse, stringify } from "yaml";
 
 import { withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
-import type { PluginNamespace } from "@compforge/baton-plugin";
-import { parsePluginNamespace } from "./namespace.ts";
 import { parsePluginKey, pluginKey } from "./identity.ts";
 import type {
   CreatePluginInstance,
@@ -286,23 +284,20 @@ export class PluginSettingsStore {
 
 /**
  * 兼容 Channel 内 Plugin Manager 的 Instance adapter。Daemon Plugin Host 使用
- * plugin@marketplace + canonical namespace 创建真正的 Binding。
+ * plugin@marketplace 创建真正的 Binding。
  */
 export class GlobalPluginInstanceStore implements PluginInstanceRepository {
   readonly batonSessionId: string;
-  readonly namespace: PluginNamespace;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly settings: PluginSettingsStore;
 
   constructor(options: {
     settings: PluginSettingsStore;
     session: Pick<SessionHandle, "id" | "dir">;
-    namespace?: PluginNamespace;
   }) {
     this.settings = options.settings;
     this.session = Object.freeze({ id: options.session.id, dir: options.session.dir });
     this.batonSessionId = options.session.id;
-    this.namespace = parsePluginNamespace(options.namespace ?? "v1");
   }
 
   create(input: CreatePluginInstance): PluginInstance {
@@ -369,7 +364,6 @@ export class GlobalPluginInstanceStore implements PluginInstanceRepository {
     return deepFreeze({
       pluginInstanceId: configuredInstanceId(setting.key),
       batonSessionId: this.batonSessionId,
-      namespace: this.namespace,
       pluginId: setting.pluginId,
       marketplace: setting.marketplace,
       packageVersion: setting.packageVersion,

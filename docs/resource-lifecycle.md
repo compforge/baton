@@ -20,8 +20,9 @@ Resource 进入 Baton 后有三层彼此独立的状态：
 因此，“Source 本轮没有发现”“外部对象已经关闭”和“Board 不再展示”都不等于 Resource 已经
 删除。只有显式删除请求会进入 Baton 的 terminating 流程。
 
-canonical namespace 是 Resource 的归属与隔离边界；Baton Daemon 按 namespace 持久化 Resource，
-不会因为多个 Session 打开同一 Project 而复制数据。
+canonical namespace 是 Resource 的归属与路由边界；Baton Daemon 在 PluginInstance 内按 namespace
+持久化 Resource，不会因为多个 Session 打开同一 Project 而复制数据。同一个 Plugin 可以同时拥有
+global、Project 和 Session namespace 的 Resource。
 `metadata.owner` 只表示 namespace 内 Resource 之间的结构所有权，不表示 Source provenance、
 使用关系或一般领域关联。
 
@@ -53,7 +54,7 @@ Baton 拒绝该 emit；Source 本次提供的 label / annotation 键也必须仍
 这两条路径共享以下约束：
 
 - `uid` 由 Baton 为本次 incarnation 分配；删除后以同名重建会得到新的 `uid`；
-- namespace 固定继承当前 Binding，Plugin 不能逃逸或跨 Project；
+- namespace 由每次创建或 emit 明确选择，省略时为全局 `v1`，且必须是 canonical Resource namespace；
 - owner 如果存在，必须指向同 namespace 内一份已存在且未 terminating 的 Resource；
 - owner 必须携带 `uid`，避免同名 owner 重建后意外继承旧 dependents；
 - owner 在当前 incarnation 内不可变。
@@ -86,7 +87,7 @@ Resource 创建后由所属 Controller 进行 level-based reconcile。Source、W
 
 `ResourceClient.get(ref)` 在省略 uid 时按名称读取当前对象，带 uid 时重新读取同一 incarnation。
 带 uid 的对象已删除或被同名重建时返回 `undefined`，避免 continuation 把旧决定写到
-replacement；namespace 越界仍会失败。
+replacement；Baton-owned namespace 不通过 Plugin 的可写 ResourceClient 暴露。
 
 Source 只证明“这次观察到了候选”，不维护完整集合真相。一次 list 可能分页、超时、权限变化或
 只覆盖滑动窗口，所以 Source omission 不会触发删除。Plugin 若要自动回收，必须基于可恢复的
@@ -152,7 +153,7 @@ Owner Resource (uid=A)
 - Repository 暂时出现在 Workspace 的扫描结果中，离开后仍希望保留以便复用。
 
 这些关系应使用领域 status、ResourceRef 或未来的 Usage / lease 模型表达。顶层 Resource 可以
-没有 owner；它仍物理归属于当前 Binding 的 canonical namespace。
+没有 owner；它仍物理归属于当前 PluginInstance 和自身 canonical namespace。
 
 ## 7. 与 controller-runtime 的当前差距
 

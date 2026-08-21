@@ -3,18 +3,12 @@ import type { ResourceClient } from "./resource.ts";
 import type { Command } from "./command.ts";
 import type { Hook, HookStage } from "./hook.ts";
 import type { Mention } from "./mention.ts";
-import type {
-  PluginNamespace,
-  PluginNamespaceTemplate,
-} from "./namespace.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
 export interface PluginInstance {
   readonly pluginInstanceId: string;
   readonly batonSessionId: string;
-  /** Canonical namespace of this concrete Binding. */
-  readonly namespace: PluginNamespace;
   readonly pluginId: string;
   readonly marketplace?: string;
   readonly packageVersion: string;
@@ -120,10 +114,13 @@ export interface PluginContext {
   readonly lifecycle: PluginLifecycle;
 }
 
+/**
+ * One installable group of Resource schemas, Controllers, Sources, and Connectors.
+ *
+ * @spec A Plugin Package does not declare scope or namespace; one enabled PluginInstance activates one Worker, while each Resource carries its own namespace.
+ */
 export interface PluginPackage {
   readonly pluginId: string;
   readonly version: string;
-  /** Binding cardinality. Omit to bind once at the user-global `v1` namespace. */
-  readonly namespace?: PluginNamespaceTemplate;
   activate(context: PluginContext): Promise<void>;
 }

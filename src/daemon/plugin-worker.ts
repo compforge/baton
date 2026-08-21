@@ -1,8 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { PluginNamespace } from "@compforge/baton-plugin";
-
 import { HumanInboxStore } from "../inbox/human.ts";
 import type {
   CreatePluginInstance,
@@ -24,19 +22,16 @@ import { PluginSettingsStore } from "../plugin/settings.ts";
 
 class BindingInstanceRepository implements PluginInstanceRepository {
   readonly batonSessionId: string;
-  readonly namespace: PluginNamespace;
   readonly session: Readonly<{ id: string; dir: string }>;
   private readonly instance: PluginInstance;
 
   constructor(binding: PluginBindingDefinition, dir: string, now = new Date()) {
     this.batonSessionId = binding.bindingId;
-    this.namespace = binding.namespace;
     this.session = Object.freeze({ id: binding.bindingId, dir });
     const timestamp = now.toISOString();
     this.instance = Object.freeze({
       pluginInstanceId: binding.bindingId,
       batonSessionId: binding.bindingId,
-      namespace: binding.namespace,
       pluginId: binding.pluginId,
       marketplace: binding.marketplace,
       packageVersion: binding.packageVersion,
@@ -124,7 +119,6 @@ export class DaemonPluginWorkerLauncher implements PluginWorkerLauncher {
             pluginId: setting.pluginId,
             marketplace: setting.marketplace,
             packageVersion: setting.packageVersion,
-            namespace: entry.manifest.namespace,
             config: setting.config,
           });
         }),
@@ -140,13 +134,7 @@ export class DaemonPluginWorkerLauncher implements PluginWorkerLauncher {
       instances,
       snapshot: () => {
         const snapshot = emptyReconcileSnapshot(binding.bindingId);
-        return Object.freeze({
-          ...snapshot,
-          session: Object.freeze({
-            ...snapshot.session,
-            ...(binding.cwd === undefined ? {} : { cwd: binding.cwd }),
-          }),
-        });
+        return snapshot;
       },
       loadPackageEntry: (pluginId, version, options) => {
         if (!options.marketplace) {
@@ -162,7 +150,7 @@ export class DaemonPluginWorkerLauncher implements PluginWorkerLauncher {
       pluginSupervisor: supervisor,
       performVerb: (execution, request) =>
         this.inbox.request({
-          namespace: binding.namespace,
+          namespace: execution.namespace,
           pluginId: binding.pluginId,
           pluginInstanceId: binding.bindingId,
           executionId: execution.executionId,
@@ -188,19 +176,10 @@ export class DaemonPluginWorkerLauncher implements PluginWorkerLauncher {
   }
 
   private bindingDir(binding: PluginBindingDefinition): string {
-    if (binding.sessionId && binding.projectId) {
-      return join(
-        this.rootDir,
-        "projects",
-        binding.projectId,
-        "sessions",
-        binding.sessionId,
-      );
-    }
     return join(
       this.rootDir,
       "projects",
-      binding.projectId ?? "_global",
+      "_global",
       "sessions",
       binding.bindingId,
     );

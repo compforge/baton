@@ -19,6 +19,7 @@ import type {
   ResourceListOptions,
   ResourceOwnerReference,
   ResourceRef,
+  ResourceNamespace,
   ResourceType,
   Source,
   SourceContext,
@@ -62,7 +63,6 @@ let nextHandlerId = 1;
 let nextHostCallId = 1;
 let active = false;
 let closing = false;
-let resourceNamespace: PluginInstance["namespace"] = "v1";
 
 function send(message: ChildMessage): void {
   if (!process.send) throw new Error("Plugin Runner IPC is unavailable");
@@ -108,9 +108,6 @@ async function getResource<TSpec, TStatus>(
 }
 
 const resources: ResourceClient = Object.freeze({
-  get namespace() {
-    return resourceNamespace;
-  },
   get: getResource,
   async list<TSpec, TStatus>(
     type: ResourceType,
@@ -126,6 +123,7 @@ const resources: ResourceClient = Object.freeze({
     type: ResourceType,
     init: {
       name: string;
+      namespace?: ResourceNamespace;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
       owner?: ResourceOwnerReference;
@@ -138,11 +136,16 @@ const resources: ResourceClient = Object.freeze({
       init,
     });
   },
-  async delete(type: ResourceType, name: string) {
+  async delete(
+    type: ResourceType,
+    name: string,
+    namespace?: ResourceNamespace,
+  ) {
     await callHost<void>({
       method: "resource.delete",
       type,
       name,
+      ...(namespace === undefined ? {} : { namespace }),
     });
   },
   async patchMetadata<TSpec, TStatus>(
@@ -335,14 +338,6 @@ async function activate(
       `loaded Package identity ${plugin.pluginId}@${plugin.version} does not match ${entry.pluginId}@${entry.version}`,
     );
   }
-  const packageNamespace = plugin.namespace ?? "v1";
-  if (packageNamespace !== entry.namespace) {
-    throw new Error(
-      `loaded Package namespace ${packageNamespace} does not match manifest ${entry.namespace}`,
-    );
-  }
-  resourceNamespace = instance.namespace;
-
   const registrations: PluginRegistration[] = [];
   let sealed = false;
   const assertRegistering = (): void => {

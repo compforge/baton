@@ -1,5 +1,4 @@
 import type {
-  PluginNamespaceTemplate,
   PluginDataDirectories,
   PluginInstance,
   PluginSessionContext,
@@ -8,6 +7,7 @@ import type {
   ResourceListOptions,
   ResourceOwnerReference,
   ResourceRef,
+  ResourceNamespace,
   ResourceType,
   ToastMessage,
 } from "@compforge/baton-plugin";
@@ -20,7 +20,6 @@ import type {
 export interface PluginPackageEntry {
   readonly pluginId: string;
   readonly version: string;
-  readonly namespace: PluginNamespaceTemplate;
   readonly entryUrl: string;
 }
 
@@ -138,6 +137,7 @@ export type HostRequest =
       readonly type: ResourceType;
       readonly init: {
         readonly name: string;
+        readonly namespace?: ResourceNamespace;
         readonly labels?: Readonly<Record<string, string>>;
         readonly annotations?: Readonly<Record<string, string>>;
         readonly owner?: ResourceOwnerReference;
@@ -148,6 +148,7 @@ export type HostRequest =
       readonly method: "resource.delete";
       readonly type: ResourceType;
       readonly name: string;
+      readonly namespace?: ResourceNamespace;
     }
   | {
       readonly method: "resource.patchMetadata";

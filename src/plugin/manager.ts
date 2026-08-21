@@ -93,6 +93,8 @@ import {
 } from "../logging.ts";
 import { preparePluginDataDirectories } from "./data.ts";
 import type { ScheduledHarnessInvocation } from "./harness-invocation.ts";
+import { namespaceContains } from "./namespace.ts";
+import type { ResourceNamespace } from "@compforge/baton-plugin";
 import { Verb, type VerbOptions } from "./verb.ts";
 import { HookRegistry, HookRuntime } from "./hook.ts";
 
@@ -429,11 +431,11 @@ export class Manager {
         backoff: this.retryBackoff,
         now: this.now,
         schedule: (key, next) => {
-          if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
+          if (this.controllerForKey(key) !== controller) return;
           if (this.started) this.dueQueue.schedule(key, next);
         },
         report: (failure) => {
-          if (this.controllers.get(reconcileScopeId(failure.key)) !== controller) return;
+          if (this.controllerForKey(failure.key) !== controller) return;
           this.reportFailure(failure);
         },
       },
@@ -478,11 +480,11 @@ export class Manager {
         backoff: this.retryBackoff,
         now: this.now,
         schedule: (key, next) => {
-          if (this.controllers.get(reconcileScopeId(key)) !== controller) return;
+          if (this.controllerForKey(key) !== controller) return;
           if (this.started) this.dueQueue.schedule(key, next);
         },
         report: (failure) => {
-          if (this.controllers.get(reconcileScopeId(failure.key)) !== controller) return;
+          if (this.controllerForKey(failure.key) !== controller) return;
           this.reportFailure(failure);
         },
       },
@@ -494,16 +496,40 @@ export class Manager {
 
   enqueue(key: ReconcileKey): Promise<void> {
     if (this.closed) return Promise.reject(new Error("plugin Manager is closed"));
-    const controller = this.controllers.get(reconcileScopeId(key));
+    const controller = this.controllerForKey(key);
     if (!controller) {
       return Promise.reject(
         new Error(`no plugin Controller registered for ${reconcileScopeLabel(key)}`),
       );
     }
-    if (this.suspendedControllers.has(reconcileScopeId(key))) {
+    if (this.suspendedControllers.has(reconcileScopeId(controller.scope))) {
       return Promise.reject(new Error("plugin Controller is not active"));
     }
     return controller.enqueue(key);
+  }
+
+  private controllerForKey(key: ReconcileScope): ManagedController | undefined {
+    const exact = this.controllers.get(reconcileScopeId(key));
+    if (exact) return exact;
+    if (
+      reconcileResourceOwner(key) !== "plugin" ||
+      key.namespace === BATON_SYSTEM_NAMESPACE
+    ) {
+      return;
+    }
+    return [...this.controllers.values()].find((controller) => {
+      const scope = controller.scope;
+      return reconcileResourceOwner(scope) === "plugin" &&
+        scope.namespace !== BATON_SYSTEM_NAMESPACE &&
+        scope.batonSessionId === key.batonSessionId &&
+        scope.pluginInstanceId === key.pluginInstanceId &&
+        scope.resourceApiVersion === key.resourceApiVersion &&
+        scope.resourceKind === key.resourceKind &&
+        namespaceContains(
+          scope.namespace as ResourceNamespace,
+          key.namespace as ResourceNamespace,
+        );
+    });
   }
 
   /** 收口崩溃遗留的 Plugin execution，再恢复 Resource due time。 */
@@ -549,7 +575,6 @@ export class Manager {
       new PluginResourceStore({
         session: this.instances.session,
         pluginInstanceId: instance.pluginInstanceId,
-        namespace: instance.namespace,
       }),
       (change) => this.handlePluginResourceChange(change),
       (resourceType) =>
@@ -584,6 +609,7 @@ export class Manager {
               batonSessionId: instance.batonSessionId,
               pluginInstanceId: instance.pluginInstanceId,
               pluginId: instance.pluginId,
+              namespace: "v1",
             },
             hook,
           ),
@@ -1033,7 +1059,6 @@ export class Manager {
     const store = new PluginResourceStore({
       session: this.instances.session,
       pluginInstanceId,
-      namespace: this.instances.get(pluginInstanceId).namespace,
     });
     const registration = this.registerControllerInternal(
       {
@@ -1046,7 +1071,7 @@ export class Manager {
     const sourceId = reconcileScopeId({
       batonSessionId: this.instances.session.id,
       pluginInstanceId,
-      namespace: store.namespace,
+      namespace: "v1",
       resourceApiVersion: pluginController.resourceType.apiVersion,
       resourceKind: pluginController.resourceType.kind,
     });
@@ -1062,7 +1087,10 @@ export class Manager {
             pluginInstanceId,
             resourceType: pluginController.resourceType,
             list: () =>
-              store.list<TSpec, TStatus>(pluginController.resourceType),
+              store.list<TSpec, TStatus>(pluginController.resourceType, {
+                namespace: "v1",
+                includeDescendants: true,
+              }),
             present,
           }),
       });
@@ -1083,7 +1111,7 @@ export class Manager {
       );
     }
     const resourceKind = BATON_TURN_RESOURCE_TYPE.kind;
-    const namespace = this.instances.get(pluginInstanceId).namespace;
+    const namespace = "v1" as const;
     const sources = pluginController.sources ?? [];
     if (sources.some((source) => source.type === "resource")) {
       throw new Error(
@@ -1290,11 +1318,21 @@ export class Manager {
       const scopeId = reconcileScopeId(controller.scope);
       if (
         controller.scope.pluginInstanceId !== change.pluginInstanceId ||
-        controller.scope.namespace !== change.resource.metadata.namespace ||
         this.suspendedControllers.has(scopeId)
       ) {
         continue;
       }
+      if (
+        reconcileResourceOwner(controller.scope) === "plugin" &&
+        (
+          controller.scope.namespace === BATON_SYSTEM_NAMESPACE ||
+          change.resource.metadata.namespace === BATON_SYSTEM_NAMESPACE ||
+          !namespaceContains(
+            controller.scope.namespace,
+            change.resource.metadata.namespace,
+          )
+        )
+      ) continue;
       let requests;
       try {
         requests = await controller.reconcileKeys(change);

@@ -1,3 +1,4 @@
+import type { ResourceNamespace } from "./namespace.ts";
 import type { Resource, ResourceType } from "./resource.ts";
 import type { ReconcileContext } from "./reconcile-context.ts";
 import type { BoardPresentation } from "./board.ts";
@@ -7,6 +8,8 @@ import type { Watch } from "./watch.ts";
 /** Identifies one primary Resource in the registering Controller's scope. */
 export interface ReconcileRequest {
   readonly name: string;
+  /** Primary Resource namespace. Defaults to the changed Resource namespace. */
+  readonly namespace?: ResourceNamespace;
 }
 
 export interface ReconcileResult {

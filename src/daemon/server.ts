@@ -19,7 +19,7 @@ import {
   type BatonDaemonResponse,
   type BatonDaemonStatus,
 } from "./protocol.ts";
-import { BatonControlPlane } from "./control-plane.ts";
+import { BatonDaemon } from "./daemon.ts";
 import type { VerbResponse } from "../plugin/verb.ts";
 
 const MAX_REQUEST_CHARS = 64 * 1024;
@@ -69,32 +69,32 @@ export async function listenBatonDaemon(
   rmSync(paths.socket, { force: true });
 
   const startedAt = new Date().toISOString();
-  const controlPlane = new BatonControlPlane({ rootDir: paths.rootDir });
+  const daemon = new BatonDaemon({ rootDir: paths.rootDir });
   try {
-    await controlPlane.start();
+    await daemon.start();
   } catch (error) {
-    await controlPlane.close().catch(() => {});
+    await daemon.close().catch(() => {});
     releaseOwner(paths);
     throw error;
   }
   const currentStatus = (): BatonDaemonStatus => {
-    const control = controlPlane.status();
+    const snapshot = daemon.snapshot();
     return Object.freeze({
       protocolVersion: BATON_DAEMON_PROTOCOL_VERSION,
       batonVersion: BATON_VERSION,
       pid: process.pid,
       startedAt,
       rootDir: paths.rootDir,
-      sessionCount: control.sessions.length,
-      pluginWorkerCount: control.workers.length,
-      pendingHumanActions: control.pendingHumanActions,
+      sessionCount: snapshot.sessions.length,
+      pluginWorkerCount: snapshot.workers.length,
+      pendingHumanActions: snapshot.pendingHumanActions,
     });
   };
   writeJsonAtomic(paths.owner, currentStatus());
 
   let closeDaemon!: () => Promise<void>;
   const server = createServer((socket) =>
-    handleSocket(socket, currentStatus, controlPlane, () => closeDaemon())
+    handleSocket(socket, currentStatus, daemon, () => closeDaemon())
   );
   try {
     await new Promise<void>((resolve, reject) => {
@@ -106,7 +106,7 @@ export async function listenBatonDaemon(
     });
     chmodSync(paths.socket, 0o600);
   } catch (error) {
-    await controlPlane.close().catch(() => {});
+    await daemon.close().catch(() => {});
     releaseOwner(paths);
     throw error;
   }
@@ -116,7 +116,7 @@ export async function listenBatonDaemon(
     closing ??= (async () => {
       let closeError: unknown;
       try {
-        await controlPlane.close();
+        await daemon.close();
       } catch (error) {
         closeError = error;
       }
@@ -189,7 +189,7 @@ function stringParam(
 function handleSocket(
   socket: Socket,
   status: () => BatonDaemonStatus,
-  controlPlane: BatonControlPlane,
+  daemon: BatonDaemon,
   close: () => Promise<void>,
 ): void {
   socket.setEncoding("utf8");
@@ -238,25 +238,25 @@ function handleSocket(
     try {
       let result: unknown;
       if (request.method === "session.attach") {
-        result = await controlPlane.attach({
+        result = await daemon.attach({
           sessionId: stringParam(params, "sessionId"),
           projectId: stringParam(params, "projectId"),
           cwd: stringParam(params, "cwd"),
         });
       } else if (request.method === "session.heartbeat") {
-        result = await controlPlane.heartbeat(stringParam(params, "sessionId"));
+        result = await daemon.heartbeat(stringParam(params, "sessionId"));
       } else if (request.method === "session.detach") {
-        await controlPlane.detach(stringParam(params, "sessionId"));
+        await daemon.detach(stringParam(params, "sessionId"));
         result = { detached: true };
       } else if (request.method === "inbox.list") {
-        result = await controlPlane.heartbeat(stringParam(params, "sessionId"));
+        result = await daemon.heartbeat(stringParam(params, "sessionId"));
       } else if (request.method === "inbox.claim") {
-        result = controlPlane.claim(
+        result = daemon.claim(
           stringParam(params, "actionId"),
           stringParam(params, "sessionId"),
         );
       } else if (request.method === "inbox.begin-execution") {
-        result = controlPlane.beginExecution(
+        result = daemon.beginExecution(
           stringParam(params, "actionId"),
           stringParam(params, "sessionId"),
         );
@@ -264,7 +264,7 @@ function handleSocket(
         if (typeof params.review !== "boolean") {
           throw new Error("review must be a boolean");
         }
-        result = controlPlane.complete(
+        result = daemon.complete(
           stringParam(params, "actionId"),
           stringParam(params, "sessionId"),
           params.result as VerbResponse,
@@ -274,7 +274,7 @@ function handleSocket(
         if (typeof params.accepted !== "boolean") {
           throw new Error("accepted must be a boolean");
         }
-        result = controlPlane.review(
+        result = daemon.review(
           stringParam(params, "actionId"),
           stringParam(params, "sessionId"),
           params.accepted,

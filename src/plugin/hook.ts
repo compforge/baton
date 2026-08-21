@@ -4,6 +4,7 @@ import type {
   HookStage,
   HookSubjectMap,
   InlineHookStage,
+  ResourceNamespace,
 } from "@compforge/baton-plugin";
 
 import { newId } from "../event/ids.ts";
@@ -23,6 +24,7 @@ export interface HookRegistrationOwner {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
   readonly pluginId: string;
+  readonly namespace: ResourceNamespace;
 }
 
 export interface RegisteredHook<S extends HookStage = HookStage> {
@@ -146,6 +148,7 @@ export class HookRuntime {
     const scope: ExecutionScope = Object.freeze({
       batonSessionId: registration.owner.batonSessionId,
       pluginInstanceId: registration.owner.pluginInstanceId,
+      namespace: registration.owner.namespace,
       executionId: newId("pex"),
     });
     const context = createHookContext(

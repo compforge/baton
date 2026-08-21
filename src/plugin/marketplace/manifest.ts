@@ -1,10 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import type { PluginNamespaceTemplate } from "@compforge/baton-plugin";
-
-import { parsePluginNamespaceTemplate } from "../namespace.ts";
-
 export const MARKETPLACE_MANIFEST_PATH = ".baton-plugin/marketplace.json";
 export const PLUGIN_MANIFEST_PATH = ".baton-plugin/plugin.json";
 
@@ -30,8 +26,6 @@ export interface PluginManifest {
   readonly manifestVersion: 1;
   readonly pluginId: string;
   readonly version: string;
-  /** Binding cardinality. Omit for the user-global `v1` namespace. */
-  readonly namespace: PluginNamespaceTemplate;
   /** Package 根目录内的进程内激活模块。模块必须 default export PluginPackage。 */
   readonly entry: string;
   readonly displayName?: string;
@@ -127,7 +121,6 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     manifestVersion: 1,
     pluginId: validatePluginId(manifest.pluginId),
     version: validatePackageVersion(manifest.version),
-    namespace: parsePluginNamespaceTemplate(manifest.namespace ?? "v1"),
     entry: relativePath("plugin manifest entry", manifest.entry),
     displayName: optionalString("plugin manifest displayName", manifest.displayName),
     description: optionalString("plugin manifest description", manifest.description),

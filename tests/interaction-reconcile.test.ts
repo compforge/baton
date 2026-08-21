@@ -19,6 +19,7 @@ function scope(batonSessionId: string, executionId = "pex_1"): ExecutionScope {
   return {
     batonSessionId,
     pluginInstanceId: "reqloop_default",
+    namespace: "v1",
     executionId,
   };
 }

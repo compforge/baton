@@ -830,6 +830,33 @@ describe("plugin Manager", () => {
     );
   });
 
+  test("routes descendant namespace keys to a global Plugin Controller", async () => {
+    const root = testRoot();
+    const resources = store(root, "reqloop_default");
+    resources.create<Spec>({
+      type: resourceType("Requirement"),
+      name: "run_1",
+      namespace: "v1/project/project-a",
+      spec: { value: "run_1" },
+    });
+    const reconciled: string[] = [];
+    const manager = new Manager({ instances: instanceStore(root) });
+    manager.registerController<Spec, Record<string, never>>({
+      store: resources,
+      resourceType: resourceType("Requirement"),
+      async reconcile(_context, resource) {
+        reconciled.push(resource.metadata.namespace);
+      },
+    });
+
+    await manager.enqueue({
+      ...key("reqloop_default", "run_1"),
+      namespace: "v1/project/project-a",
+    });
+    expect(reconciled).toEqual(["v1/project/project-a"]);
+    await manager.close();
+  });
+
   test("registration close is idempotent and removes only its Controller", async () => {
     const root = testRoot();
     const resources = store(root, "reqloop_default");

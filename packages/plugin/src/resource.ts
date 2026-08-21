@@ -1,6 +1,6 @@
 import type { TurnSummary } from "./snapshot.ts";
 import type {
-  PluginNamespace,
+  AnyResourceNamespace,
   ResourceNamespace,
 } from "./namespace.ts";
 
@@ -19,7 +19,7 @@ export interface ResourceType {
  * name-based lookup that may resolve to a replacement Resource.
  */
 export interface ResourceRef extends ResourceType {
-  readonly namespace: ResourceNamespace;
+  readonly namespace: AnyResourceNamespace;
   readonly name: string;
   readonly uid?: string;
 }
@@ -32,8 +32,8 @@ export interface ResourceOwnerReference extends ResourceRef {
 export interface ResourceMetadata {
   /** Stable name within one namespace and Resource type. */
   readonly name: string;
-  /** Canonical Binding scope. Baton-owned Resources use a Baton-reserved namespace. */
-  readonly namespace: ResourceNamespace;
+  /** Concrete Resource scope. Baton-owned Resources use a Baton-reserved namespace. */
+  readonly namespace: AnyResourceNamespace;
   /** Baton-assigned identity for this concrete incarnation. */
   readonly uid: string;
   /** Desired-state revision. Only spec changes advance it. */
@@ -62,12 +62,19 @@ export interface Resource<
 
 /** Exact-match label selector. All entries must match the Resource. */
 export interface ResourceListOptions {
+  /** Exact namespace to query. Defaults to the user-global `v1` namespace. */
+  readonly namespace?: ResourceNamespace;
+  /** Include every descendant namespace below `namespace`. */
+  readonly includeDescendants?: boolean;
   readonly matchLabels?: Readonly<Record<string, string>>;
 }
 
+/**
+ * Host-owned Resource access isolated by PluginInstance.
+ *
+ * @spec One PluginInstance may own Resources in global, Project, and Session namespaces simultaneously; omitted mutation namespace defaults to `v1`.
+ */
 export interface ResourceClient {
-  /** Canonical namespace inherited by Resource operations. */
-  readonly namespace: PluginNamespace;
   /**
    * @spec A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined.
    * @rule After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource.
@@ -83,6 +90,8 @@ export interface ResourceClient {
     type: ResourceType,
     init: {
       name: string;
+      /** Concrete Resource namespace. Defaults to the user-global `v1`. */
+      namespace?: ResourceNamespace;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
       owner?: ResourceOwnerReference;
@@ -90,7 +99,11 @@ export interface ResourceClient {
     },
   ): Promise<Readonly<Resource<TSpec, TStatus>>>;
   /** Requests cascading deletion; final removal follows successful reconcile. */
-  delete(type: ResourceType, name: string): Promise<void>;
+  delete(
+    type: ResourceType,
+    name: string,
+    namespace?: ResourceNamespace,
+  ): Promise<void>;
   /**
    * Patches Plugin-owned metadata by key. A null value removes that key.
    *

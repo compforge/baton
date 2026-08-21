@@ -45,7 +45,6 @@ import type {
 import type { PluginInstance } from "./instance.ts";
 import type { ResourceClient } from "./resource-client.ts";
 import { validateResourceType } from "./resource.ts";
-import { parsePluginNamespaceTemplate } from "./namespace.ts";
 
 export type {
   BoardPresentation,
@@ -103,7 +102,8 @@ function uniqueRequests(
 ): readonly ReconcileRequest[] {
   const unique = new Map<string, ReconcileRequest>();
   for (const request of requests) {
-    if (!unique.has(request.name)) unique.set(request.name, request);
+    const key = JSON.stringify([request.namespace, request.name]);
+    if (!unique.has(key)) unique.set(key, request);
   }
   return Object.freeze([...unique.values()]);
 }
@@ -186,7 +186,6 @@ export function validatePluginPackage(plugin: PluginPackage): void {
   if (typeof plugin.activate !== "function") {
     throw new Error(`plugin Package ${plugin.pluginId}@${plugin.version} must provide activate()`);
   }
-  parsePluginNamespaceTemplate(plugin.namespace ?? "v1");
 }
 
 /**

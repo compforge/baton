@@ -11,9 +11,9 @@ import {
 import { basename, dirname, join } from "node:path";
 
 import type {
-  PluginNamespace,
   Resource,
   ResourceListOptions,
+  ResourceNamespace,
   ResourceOwnerReference,
   ResourceType,
 } from "@compforge/baton-plugin";
@@ -21,7 +21,10 @@ import type {
 import { newId } from "../event/ids.ts";
 import { withAsyncFileLock, withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
-import { parsePluginNamespace } from "./namespace.ts";
+import {
+  namespaceContains,
+  parseResourceNamespace,
+} from "./namespace.ts";
 
 export type PluginResource<
   TSpec = Record<string, unknown>,
@@ -31,16 +34,17 @@ export type PluginResource<
 export interface PluginResourceStoreOptions {
   session: Pick<SessionHandle, "id" | "dir">;
   pluginInstanceId: string;
-  namespace?: PluginNamespace;
 }
 
 interface MutationOptions {
   expectedResourceVersion?: string;
+  namespace?: ResourceNamespace;
 }
 
 interface CreateResource<TSpec, TStatus> {
   type: ResourceType;
   name?: string;
+  namespace?: ResourceNamespace;
   labels?: Readonly<Record<string, string>>;
   annotations?: Readonly<Record<string, string>>;
   owner?: ResourceOwnerReference;
@@ -51,6 +55,7 @@ interface CreateResource<TSpec, TStatus> {
 interface EnsureResource<TSpec> {
   type: ResourceType;
   name: string;
+  namespace?: ResourceNamespace;
   labels?: Readonly<Record<string, string>>;
   annotations?: Readonly<Record<string, string>>;
   owner?: ResourceOwnerReference;
@@ -293,7 +298,6 @@ export class PluginResourceStore {
   private readonly sessionDir: string;
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
-  readonly namespace: PluginNamespace;
 
   constructor(options: PluginResourceStoreOptions) {
     assertPathSegment("batonSessionId", options.session.id);
@@ -301,7 +305,6 @@ export class PluginResourceStore {
     this.sessionDir = options.session.dir;
     this.batonSessionId = options.session.id;
     this.pluginInstanceId = options.pluginInstanceId;
-    this.namespace = parsePluginNamespace(options.namespace ?? "v1");
   }
 
   create<TSpec, TStatus = Record<string, unknown>>(
@@ -309,14 +312,15 @@ export class PluginResourceStore {
   ): PluginResource<TSpec, TStatus> {
     const type = validateResourceType(input.type);
     const name = input.name ?? newId("pr");
+    const namespace = this.resourceNamespace(input.namespace ?? "v1");
     const labels = labelMap("metadata.labels", input.labels);
     const annotations = annotationMap(
       "metadata.annotations",
       input.annotations,
     );
     assertPathSegment("resource name", name);
-    const owner = this.ownerReference(input.owner, type, name);
-    const path = this.resourcePath(type, name);
+    const owner = this.ownerReference(input.owner, type, name, namespace);
+    const path = this.resourcePath(type, name, namespace);
     return withFileLock(path, () => {
       if (existsSync(path)) {
         throw new Error(`plugin resource already exists: ${type.kind}/${name}`);
@@ -325,6 +329,7 @@ export class PluginResourceStore {
       const stored = this.initialStoredResource<TSpec, TStatus>({
         type,
         name,
+        namespace,
         labels,
         annotations,
         owner,
@@ -345,6 +350,7 @@ export class PluginResourceStore {
   ): EnsureResourceResult<TSpec, TStatus> {
     const type = validateResourceType(input.type);
     const name = input.name;
+    const namespace = this.resourceNamespace(input.namespace ?? "v1");
     const labels = labelMap("metadata.labels", input.labels);
     const annotations = annotationMap(
       "metadata.annotations",
@@ -352,14 +358,15 @@ export class PluginResourceStore {
     );
     const spec = jsonObject("spec", input.spec);
     assertPathSegment("resource name", name);
-    const owner = this.ownerReference(input.owner, type, name);
-    const path = this.resourcePath(type, name);
+    const owner = this.ownerReference(input.owner, type, name, namespace);
+    const path = this.resourcePath(type, name, namespace);
     return withFileLock(path, () => {
       if (!existsSync(path)) {
         this.assertOwnerActive(owner);
         const stored = this.initialStoredResource<TSpec, TStatus>({
           type,
           name,
+          namespace,
           labels,
           annotations,
           owner,
@@ -369,7 +376,11 @@ export class PluginResourceStore {
         writeJsonAtomic(path, stored);
         return { resource: stored.object, created: true };
       }
-      const current = this.readCurrentStored<TSpec, TStatus>(type, name).object;
+      const current = this.readCurrentStored<TSpec, TStatus>(
+        type,
+        name,
+        namespace,
+      ).object;
       if (
         !isDeepStrictEqual(current.spec, spec) ||
         !containsStringMap(current.metadata.labels, labels) ||
@@ -387,18 +398,21 @@ export class PluginResourceStore {
   get<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace = "v1",
   ): PluginResource<TSpec, TStatus> {
-    return this.readStored<TSpec, TStatus>(type, name).object;
+    return this.readStored<TSpec, TStatus>(type, name, namespace).object;
   }
 
   find<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace = "v1",
   ): PluginResource<TSpec, TStatus> | undefined {
     validateResourceType(type);
     assertPathSegment("resource name", name);
-    if (!existsSync(this.resourcePath(type, name))) return;
-    return this.readCurrentStored<TSpec, TStatus>(type, name).object;
+    const canonical = this.resourceNamespace(namespace);
+    if (!existsSync(this.resourcePath(type, name, canonical))) return;
+    return this.readCurrentStored<TSpec, TStatus>(type, name, canonical).object;
   }
 
   list<TSpec = Record<string, unknown>, TStatus = Record<string, unknown>>(
@@ -406,24 +420,34 @@ export class PluginResourceStore {
     options: ResourceListOptions = {},
   ): PluginResource<TSpec, TStatus>[] {
     validateResourceType(type);
+    const namespace = this.resourceNamespace(options.namespace ?? "v1");
     const matchLabels = labelMap(
       "resource list matchLabels",
       options.matchLabels,
     );
-    const kindDir = this.kindDir(type);
-    if (!existsSync(kindDir)) return [];
-    return readdirSync(kindDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) =>
-        this.readStored<TSpec, TStatus>(
-          type,
-          basename(entry.name, ".json"),
-        ).object
-      )
+    const namespaces = options.includeDescendants
+      ? this.managedNamespaces().filter((candidate) =>
+          namespaceContains(namespace, candidate)
+        )
+      : [namespace];
+    return namespaces.flatMap((candidate) => {
+      const kindDir = this.kindDir(type, candidate);
+      if (!existsSync(kindDir)) return [];
+      return readdirSync(kindDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) =>
+          this.readStored<TSpec, TStatus>(
+            type,
+            basename(entry.name, ".json"),
+            candidate,
+          ).object
+        );
+    })
       .filter((resource) =>
         containsStringMap(resource.metadata.labels, matchLabels)
       )
       .sort((left, right) =>
+        left.metadata.namespace.localeCompare(right.metadata.namespace) ||
         left.metadata.name.localeCompare(right.metadata.name)
       );
   }
@@ -543,11 +567,12 @@ export class PluginResourceStore {
     type: ResourceType,
     name: string,
     now: Date = new Date(),
+    namespace: ResourceNamespace = "v1",
   ): readonly ResourceDeletionUpdate[] {
     if (Number.isNaN(now.getTime())) {
       throw new Error("deletion time must be a valid Date");
     }
-    const target = this.get<unknown, unknown>(type, name);
+    const target = this.get<unknown, unknown>(type, name, namespace);
     const updates: ResourceDeletionUpdate[] = [];
     const pending = [target];
     const visited = new Set<string>();
@@ -559,7 +584,7 @@ export class PluginResourceStore {
         const next = this.mutate<unknown, unknown>(
           resource,
           resource.metadata.name,
-          {},
+          { namespace: resource.metadata.namespace as ResourceNamespace },
           (current) => {
             if (current.object.metadata.deletionTimestamp !== undefined) {
               return current;
@@ -604,14 +629,15 @@ export class PluginResourceStore {
   finalizeDeletion(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace = "v1",
   ): PluginResource<unknown, unknown> {
-    const resource = this.get<unknown, unknown>(type, name);
+    const resource = this.get<unknown, unknown>(type, name, namespace);
     if (resource.metadata.deletionTimestamp === undefined) {
       throw new Error(
         `plugin resource deletion was not requested: ${type.kind}/${name}`,
       );
     }
-    this.remove(type, name);
+    this.remove(type, name, namespace);
     return resource;
   }
 
@@ -641,10 +667,14 @@ export class PluginResourceStore {
     nextReconcileAt: Date;
   }[] {
     validateResourceType(type);
-    return this.list<unknown, unknown>(type).flatMap((resource) => {
+    return this.list<unknown, unknown>(type, {
+      namespace: "v1",
+      includeDescendants: true,
+    }).flatMap((resource) => {
       const stored = this.readStored<unknown, unknown>(
         type,
         resource.metadata.name,
+        resource.metadata.namespace as ResourceNamespace,
       );
       if (stored.control.nextReconcileAt === undefined) return [];
       return [{
@@ -662,11 +692,12 @@ export class PluginResourceStore {
     type: ResourceType,
     name: string,
     reconcile: () => Promise<T>,
+    namespace: ResourceNamespace = "v1",
   ): Promise<T> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
     return withAsyncFileLock(
-      `${this.resourcePath(type, name)}.reconcile`,
+      `${this.resourcePath(type, name, namespace)}.reconcile`,
       reconcile,
     );
   }
@@ -681,9 +712,10 @@ export class PluginResourceStore {
   ): StoredPluginResource<TSpec, TStatus> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
-    const path = this.resourcePath(type, name);
+    const namespace = this.resourceNamespace(options.namespace ?? "v1");
+    const path = this.resourcePath(type, name, namespace);
     return withFileLock(path, () => {
-      const current = this.readStored<TSpec, TStatus>(type, name);
+      const current = this.readStored<TSpec, TStatus>(type, name, namespace);
       if (
         options.expectedResourceVersion !== undefined &&
         options.expectedResourceVersion !==
@@ -702,17 +734,20 @@ export class PluginResourceStore {
   private readStored<TSpec, TStatus>(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace = "v1",
   ): StoredPluginResource<TSpec, TStatus> {
     validateResourceType(type);
     assertPathSegment("resource name", name);
-    return this.readCurrentStored<TSpec, TStatus>(type, name);
+    return this.readCurrentStored<TSpec, TStatus>(type, name, namespace);
   }
 
   private readCurrentStored<TSpec, TStatus>(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace = "v1",
   ): StoredPluginResource<TSpec, TStatus> {
-    const path = this.resourcePath(type, name);
+    const canonical = this.resourceNamespace(namespace);
+    const path = this.resourcePath(type, name, canonical);
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
@@ -723,13 +758,20 @@ export class PluginResourceStore {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`could not read plugin resource ${path}: ${detail}`);
     }
-    return this.validateStored<TSpec, TStatus>(path, type, name, parsed);
+    return this.validateStored<TSpec, TStatus>(
+      path,
+      type,
+      name,
+      canonical,
+      parsed,
+    );
   }
 
   private validateStored<TSpec, TStatus>(
     path: string,
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace,
     value: unknown,
   ): StoredPluginResource<TSpec, TStatus> {
     try {
@@ -740,6 +782,7 @@ export class PluginResourceStore {
       const object = this.validateObject<TSpec, TStatus>(
         type,
         name,
+        namespace,
         stored.object,
       );
       const control = this.validateControl(stored.control);
@@ -753,6 +796,7 @@ export class PluginResourceStore {
   private validateObject<TSpec, TStatus>(
     type: ResourceType,
     name: string,
+    namespace: ResourceNamespace,
     value: unknown,
   ): PluginResource<TSpec, TStatus> {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -769,8 +813,8 @@ export class PluginResourceStore {
       throw new Error("metadata must be an object");
     }
     if (metadata.name !== name) throw new Error(`name must be ${name}`);
-    if (metadata.namespace !== this.namespace) {
-      throw new Error(`namespace must be ${this.namespace}`);
+    if (metadata.namespace !== namespace) {
+      throw new Error(`namespace must be ${namespace}`);
     }
     assertPathSegment("metadata.uid", metadata.uid);
     positiveInteger("metadata.generation", metadata.generation);
@@ -781,7 +825,7 @@ export class PluginResourceStore {
     );
     labelMap("metadata.labels", metadata.labels);
     annotationMap("metadata.annotations", metadata.annotations);
-    this.ownerReference(metadata.owner, type, name);
+    this.ownerReference(metadata.owner, type, name, namespace);
     if (metadata.deletionTimestamp !== undefined) {
       isoTimestamp(
         "metadata.deletionTimestamp",
@@ -808,6 +852,7 @@ export class PluginResourceStore {
     input: {
       type: ResourceType;
       name: string;
+      namespace: ResourceNamespace;
       labels?: Readonly<Record<string, string>>;
       annotations?: Readonly<Record<string, string>>;
       owner?: ResourceOwnerReference;
@@ -820,7 +865,7 @@ export class PluginResourceStore {
       kind: input.type.kind,
       metadata: {
         name: input.name,
-        namespace: this.namespace,
+        namespace: input.namespace,
         uid: newId("pr"),
         generation: 1,
         resourceVersion: "1",
@@ -841,15 +886,16 @@ export class PluginResourceStore {
     value: ResourceOwnerReference | undefined,
     dependentType: ResourceType,
     dependentName: string,
+    dependentNamespace: ResourceNamespace,
   ): ResourceOwnerReference | undefined {
     if (value === undefined) return;
     const owner = jsonObject("metadata.owner", value);
     validateResourceType(owner);
     assertPathSegment("metadata.owner.name", owner.name);
     assertPathSegment("metadata.owner.uid", owner.uid);
-    if (owner.namespace !== this.namespace) {
+    if (owner.namespace !== dependentNamespace) {
       throw new Error(
-        `metadata.owner.namespace must be ${this.namespace}`,
+        `metadata.owner.namespace must be ${dependentNamespace}`,
       );
     }
     if (
@@ -865,7 +911,11 @@ export class PluginResourceStore {
     owner: ResourceOwnerReference | undefined,
   ): void {
     if (!owner) return;
-    const resource = this.get(owner, owner.name);
+    const resource = this.get(
+      owner,
+      owner.name,
+      owner.namespace as ResourceNamespace,
+    );
     if (resource.metadata.uid !== owner.uid) {
       throw new Error(
         `plugin resource owner uid does not match: ${owner.kind}/${owner.name}`,
@@ -879,32 +929,38 @@ export class PluginResourceStore {
   }
 
   private listAll(): PluginResource<unknown, unknown>[] {
-    const root = this.resourcesDir();
-    if (!existsSync(root)) return [];
     const resources: PluginResource<unknown, unknown>[] = [];
-    for (const group of readdirSync(root, { withFileTypes: true })) {
-      if (!group.isDirectory()) continue;
-      const groupDir = join(root, group.name);
-      for (const version of readdirSync(groupDir, { withFileTypes: true })) {
-        if (!version.isDirectory()) continue;
-        const versionDir = join(groupDir, version.name);
-        for (const kind of readdirSync(versionDir, { withFileTypes: true })) {
-          if (!kind.isDirectory()) continue;
-          const type = {
-            apiVersion: `${group.name}/${version.name}`,
-            kind: kind.name,
-          };
-          resources.push(...this.list(type));
+    for (const namespace of this.managedNamespaces()) {
+      const root = this.resourcesDir(namespace);
+      if (!existsSync(root)) continue;
+      for (const group of readdirSync(root, { withFileTypes: true })) {
+        if (!group.isDirectory()) continue;
+        const groupDir = join(root, group.name);
+        for (const version of readdirSync(groupDir, { withFileTypes: true })) {
+          if (!version.isDirectory()) continue;
+          const versionDir = join(groupDir, version.name);
+          for (const kind of readdirSync(versionDir, { withFileTypes: true })) {
+            if (!kind.isDirectory()) continue;
+            const type = {
+              apiVersion: `${group.name}/${version.name}`,
+              kind: kind.name,
+            };
+            resources.push(...this.list(type, { namespace }));
+          }
         }
       }
     }
     return resources;
   }
 
-  private remove(type: ResourceType, name: string): void {
+  private remove(
+    type: ResourceType,
+    name: string,
+    namespace: ResourceNamespace,
+  ): void {
     validateResourceType(type);
     assertPathSegment("resource name", name);
-    const path = this.resourcePath(type, name);
+    const path = this.resourcePath(type, name, namespace);
     withFileLock(path, () => {
       if (!existsSync(path)) {
         throw new Error(`plugin resource not found: ${type.kind}/${name}`);
@@ -913,27 +969,59 @@ export class PluginResourceStore {
     });
   }
 
-  private resourcesDir(): string {
+  private namespacesDir(): string {
     return join(
       this.sessionDir,
       "plugins",
       this.pluginInstanceId,
       "namespaces",
-      encodeURIComponent(this.namespace),
+    );
+  }
+
+  private resourcesDir(namespace: ResourceNamespace): string {
+    return join(
+      this.namespacesDir(),
+      encodeURIComponent(namespace),
       "resources",
     );
   }
 
-  private kindDir(type: ResourceType): string {
+  private kindDir(type: ResourceType, namespace: ResourceNamespace): string {
     const [group, version] = type.apiVersion.split("/");
     if (!group || !version) {
       throw new Error(`invalid resource apiVersion: ${type.apiVersion}`);
     }
-    return join(this.resourcesDir(), group, version, type.kind);
+    return join(this.resourcesDir(namespace), group, version, type.kind);
   }
 
-  private resourcePath(type: ResourceType, name: string): string {
-    return join(this.kindDir(type), `${name}.json`);
+  private resourcePath(
+    type: ResourceType,
+    name: string,
+    namespace: ResourceNamespace,
+  ): string {
+    return join(
+      this.kindDir(type, this.resourceNamespace(namespace)),
+      `${name}.json`,
+    );
+  }
+
+  private resourceNamespace(namespace: ResourceNamespace): ResourceNamespace {
+    return parseResourceNamespace(namespace);
+  }
+
+  private managedNamespaces(): ResourceNamespace[] {
+    const root = this.namespacesDir();
+    if (!existsSync(root)) return ["v1"];
+    const namespaces = readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+      if (!entry.isDirectory()) return [];
+      try {
+        return [parseResourceNamespace(decodeURIComponent(entry.name))];
+      } catch {
+        return [];
+      }
+    });
+    if (!namespaces.includes("v1")) namespaces.push("v1");
+    return namespaces.sort();
   }
 
 }
