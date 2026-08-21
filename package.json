@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.226",
-    "@compforge/baton-plugin": "0.9.0",
+    "@compforge/baton-plugin": "0.8.1",
     "@compforge/dsh-agent-sdk": "0.0.1",
     "@lumis-sh/wasm-bash": "0.26.4",
     "@opentui/core": "^0.5.3",
