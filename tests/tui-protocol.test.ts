@@ -1965,7 +1965,7 @@ describe("BatonChatProtocol sessions picker", () => {
     }
   });
 
-  test("replaces the session-scoped Plugin Manager when switching sessions", async () => {
+  test("replaces the Channel-local compatibility Plugin Manager when switching sessions", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-plugin-session-"));
     try {
       const store = new SessionStore(root);

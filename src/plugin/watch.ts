@@ -8,6 +8,7 @@ import {
   resourceTypeKey,
   validateResourceType,
 } from "./resource.ts";
+import { parseResourceNamespace } from "./namespace.ts";
 
 export function validateWatches(
   watches: readonly Watch[] | undefined,
@@ -38,8 +39,15 @@ function validateRequests(
         "Controller Watch EventHandler returned a ReconcileRequest with an empty name",
       );
     }
-    if (!unique.has(request.name)) {
-      unique.set(request.name, Object.freeze({ name: request.name }));
+    const namespace = request.namespace === undefined
+      ? undefined
+      : parseResourceNamespace(request.namespace);
+    const key = JSON.stringify([namespace, request.name]);
+    if (!unique.has(key)) {
+      unique.set(key, Object.freeze({
+        name: request.name,
+        ...(namespace === undefined ? {} : { namespace }),
+      }));
     }
   }
   return Object.freeze([...unique.values()]);

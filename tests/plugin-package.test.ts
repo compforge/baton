@@ -60,12 +60,10 @@ function stores(root: string): {
 function resourceStore(
   root: string,
   pluginInstanceId: string,
-  namespace: "v1" | `v1/project/${string}` = "v1",
 ): PluginResourceStore {
   return new PluginResourceStore({
     session: testSession(root),
     pluginInstanceId,
-    namespace,
   });
 }
 
@@ -494,13 +492,10 @@ describe("Plugin Package lifecycle", () => {
       spec: { requirement: "ship it" },
       status: { phase: "pending" },
     });
-    const foreign = resourceStore(
-      root,
-      "another_instance",
-      "v1/project/another-project",
-    ).create({
+    const foreign = resourceStore(root, "another_instance").create({
       type: REQ_LOOP_RUN,
       name: "run_2",
+      namespace: "v1/project/another-project",
       spec: { requirement: "do not touch" },
       status: { phase: "pending" },
     });
@@ -613,22 +608,22 @@ describe("Plugin Package lifecycle", () => {
       ...ref,
       uid: "replacement_uid",
     })).toBeUndefined();
-    await expect(context!.resources.get({
+    expect(await context!.resources.get({
       ...ref,
       namespace: "v1/project/another-project",
-    })).rejects.toThrow("outside v1");
+    })).toBeUndefined();
     const updated = await context!.resources.patchStatus(resource, {
       phase: "running",
     });
     expect(updated.status.phase).toBe("running");
     await expect(
       context!.resources.patchStatus(foreign, { phase: "forbidden" }),
-    ).rejects.toThrow("outside v1");
+    ).rejects.toThrow("not found");
     await expect(
       context!.resources.patchMetadata(foreign, {
         annotations: { "example.com/forbidden": "true" },
       }),
-    ).rejects.toThrow("outside v1");
+    ).rejects.toThrow("not found");
     await expect(
       context!.resources.create(BATON_TURN_RESOURCE_TYPE, {
         name: "forged_turn",
@@ -1036,7 +1031,7 @@ describe("Plugin Package lifecycle", () => {
     await manager.close();
   });
 
-  test("creates, disables, and restores a session-scoped Instance through Manager", async () => {
+  test("creates, disables, and restores a Channel-local compatibility Instance", async () => {
     const root = testRoot();
     const { instances } = stores(root);
     let activations = 0;

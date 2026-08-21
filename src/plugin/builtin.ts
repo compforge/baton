@@ -6,7 +6,7 @@ import type {
 import type {
   ReconcileContext,
   ResourceRef,
-  PluginNamespace,
+  ResourceNamespace,
   Watch,
 } from "@compforge/baton-plugin";
 import type { SessionHandle } from "../store/store.ts";
@@ -216,7 +216,7 @@ export class BatonResourceIndex {
 export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   resources: BatonResourceIndex;
   pluginInstanceId: string;
-  namespace: PluginNamespace;
+  namespace: ResourceNamespace;
   resourceKind: K;
   sources?: readonly ControllerSource[];
   watches?: readonly Watch[];
@@ -322,6 +322,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         const executionScope = Object.freeze({
           batonSessionId: key.batonSessionId,
           pluginInstanceId: key.pluginInstanceId,
+          namespace: this.scope.namespace as ResourceNamespace,
           executionId: newId("pex"),
         });
         return this.executeReconcile(executionScope, localLease, async () => {

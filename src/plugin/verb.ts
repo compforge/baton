@@ -16,6 +16,7 @@ import {
   type PluginVerbs,
   type ReconcileContext,
 } from "@compforge/baton-plugin";
+import type { ResourceNamespace } from "@compforge/baton-plugin";
 
 import type { PromptBlock } from "../event/index.ts";
 import type { InteractionResult } from "../interaction/types.ts";
@@ -41,6 +42,8 @@ import type { ReconcileSnapshot } from "./reconcile-snapshot.ts";
 export interface ExecutionScope {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
+  /** Namespace of the Resource or session boundary that initiated the action. */
+  readonly namespace: ResourceNamespace;
   /** Core-issued identity for one live Plugin execution. */
   readonly executionId: string;
 }
@@ -335,7 +338,8 @@ export class Verb {
     if (
       !execution ||
       execution.scope.pluginInstanceId !== context.pluginInstanceId ||
-      execution.scope.batonSessionId !== context.batonSessionId
+      execution.scope.batonSessionId !== context.batonSessionId ||
+      execution.scope.namespace !== context.namespace
     ) {
       throw new Error(`Plugin execution is not active: ${context.executionId}`);
     }

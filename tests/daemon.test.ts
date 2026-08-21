@@ -16,7 +16,7 @@ import {
   detachBatonSession,
   startBatonDaemon,
 } from "../src/daemon/client.ts";
-import { BatonControlPlane } from "../src/daemon/control-plane.ts";
+import { BatonDaemon } from "../src/daemon/daemon.ts";
 import { listenBatonDaemon, type BatonDaemonServer } from "../src/daemon/server.ts";
 import { HumanInboxStore } from "../src/inbox/human.ts";
 import { MarketplaceRegistry } from "../src/plugin/marketplace/index.ts";
@@ -62,7 +62,6 @@ describe("Baton Daemon", () => {
         manifestVersion: 1,
         pluginId,
         version: "1.0.0",
-        namespace: "v1/project",
         entry: "./src/index.ts",
       })}\n`,
     );
@@ -71,7 +70,6 @@ describe("Baton Daemon", () => {
       `export default {
   pluginId: ${JSON.stringify(pluginId)},
   version: "1.0.0",
-  namespace: "v1/project",
   async activate(context) {
     context.controllers.register({
       resourceType: { apiVersion: "tests.baton.dev/v1", kind: "ProjectCheck" },
@@ -79,7 +77,11 @@ describe("Baton Daemon", () => {
         type: "resource",
         sourceId: "project-source",
         async start(source) {
-          source.emit({ name: "shared", spec: {} });
+          source.emit({
+            name: "shared",
+            namespace: ${JSON.stringify(`v1/project/${projectDirName(cwd)}`)},
+            spec: {},
+          });
         },
       }],
       async reconcile(_reconcile, resource) {
@@ -198,7 +200,7 @@ describe("Baton Daemon", () => {
 
   test("keeps decision and review access inside the action namespace", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-daemon-"));
-    const controlPlane = new BatonControlPlane({
+    const daemon = new BatonDaemon({
       rootDir: root,
       workerLauncher: {
         async launch() {
@@ -207,7 +209,7 @@ describe("Baton Daemon", () => {
       },
       packages: () => [],
     });
-    const action = controlPlane.inbox.create({
+    const action = daemon.inbox.create({
       namespace: "v1/project/project-a",
       pluginId: "compforge/reqloop",
       pluginInstanceId: "pb_reqloop",
@@ -221,18 +223,18 @@ describe("Baton Daemon", () => {
         },
       },
     });
-    await controlPlane.attach({
+    await daemon.attach({
       sessionId: "same-project",
       projectId: "project-a",
       cwd: "/project/a",
     });
-    await controlPlane.attach({
+    await daemon.attach({
       sessionId: "other-project",
       projectId: "project-b",
       cwd: "/project/b",
     });
-    controlPlane.claim(action.actionId, "same-project");
-    controlPlane.complete(
+    daemon.claim(action.actionId, "same-project");
+    daemon.complete(
       action.actionId,
       "same-project",
       { state: "success", value: "confirmed" },
@@ -240,11 +242,11 @@ describe("Baton Daemon", () => {
     );
 
     expect(() =>
-      controlPlane.review(action.actionId, "other-project", true)
+      daemon.review(action.actionId, "other-project", true)
     ).toThrow("cannot review action");
     expect(
-      controlPlane.review(action.actionId, "same-project", true),
+      daemon.review(action.actionId, "same-project", true),
     ).toMatchObject({ phase: "completed" });
-    await controlPlane.close();
+    await daemon.close();
   });
 });

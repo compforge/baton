@@ -1,7 +1,5 @@
 import type {
-  PluginNamespace,
-  PluginNamespaceContext,
-  PluginNamespaceTemplate,
+  ResourceNamespace,
 } from "@compforge/baton-plugin";
 
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -13,42 +11,10 @@ function stableSegment(name: string, value: string | undefined): string {
   return value;
 }
 
-export function parsePluginNamespaceTemplate(
-  value: unknown,
-): PluginNamespaceTemplate {
-  if (
-    value !== "v1" &&
-    value !== "v1/project" &&
-    value !== "v1/project/session"
-  ) {
-    throw new Error(
-      "plugin namespace must be v1, v1/project, or v1/project/session",
-    );
-  }
-  return value;
-}
-
-/**
- * Resolves a Package declaration before a Binding is created.
- *
- * @rule Persist only canonical namespaces; relative project/session templates
- * are authoring conveniences and must never become storage identity.
- */
-export function resolvePluginNamespace(
-  template: PluginNamespaceTemplate,
-  context: PluginNamespaceContext = {},
-): PluginNamespace {
-  if (template === "v1") return "v1";
-  const projectId = stableSegment("projectId", context.projectId);
-  if (template === "v1/project") return `v1/project/${projectId}`;
-  const sessionId = stableSegment("sessionId", context.sessionId);
-  return `v1/project/${projectId}/session/${sessionId}`;
-}
-
-export function parsePluginNamespace(value: unknown): PluginNamespace {
+export function parseResourceNamespace(value: unknown): ResourceNamespace {
   if (value === "v1") return value;
   if (typeof value !== "string") {
-    throw new Error("plugin namespace must be a string");
+    throw new Error("Resource namespace must be a string");
   }
   const parts = value.split("/");
   if (
@@ -57,7 +23,7 @@ export function parsePluginNamespace(value: unknown): PluginNamespace {
     parts[1] === "project"
   ) {
     stableSegment("projectId", parts[2]);
-    return value as PluginNamespace;
+    return value as ResourceNamespace;
   }
   if (
     parts.length === 5 &&
@@ -67,25 +33,36 @@ export function parsePluginNamespace(value: unknown): PluginNamespace {
   ) {
     stableSegment("projectId", parts[2]);
     stableSegment("sessionId", parts[4]);
-    return value as PluginNamespace;
+    return value as ResourceNamespace;
   }
   throw new Error(
-    "plugin namespace must be canonical v1, v1/project/<projectId>, or v1/project/<projectId>/session/<sessionId>",
+    "Resource namespace must be canonical v1, v1/project/<projectId>, or v1/project/<projectId>/session/<sessionId>",
   );
 }
 
-export function pluginNamespaceTemplate(
-  namespace: PluginNamespace,
-): PluginNamespaceTemplate {
-  if (namespace === "v1") return "v1";
-  return namespace.includes("/session/")
-    ? "v1/project/session"
-    : "v1/project";
+export function projectResourceNamespace(projectId: string): ResourceNamespace {
+  return `v1/project/${stableSegment("projectId", projectId)}`;
+}
+
+export function sessionResourceNamespace(
+  projectId: string,
+  sessionId: string,
+): ResourceNamespace {
+  const project = stableSegment("projectId", projectId);
+  const session = stableSegment("sessionId", sessionId);
+  return `v1/project/${project}/session/${session}`;
+}
+
+export function resourceNamespaceScope(
+  namespace: ResourceNamespace,
+): "global" | "project" | "session" {
+  if (namespace === "v1") return "global";
+  return namespace.includes("/session/") ? "session" : "project";
 }
 
 export function namespaceContains(
-  owner: PluginNamespace,
-  candidate: PluginNamespace,
+  owner: ResourceNamespace,
+  candidate: ResourceNamespace,
 ): boolean {
   return candidate === owner || candidate.startsWith(`${owner}/`);
 }

@@ -468,7 +468,6 @@ export class MarketplaceRegistry {
     return Object.freeze({
       pluginId: installed.manifest.pluginId,
       version: installed.manifest.version,
-      namespace: installed.manifest.namespace,
       entryUrl: pathToFileURL(entry).href,
     });
   }

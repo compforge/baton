@@ -7,12 +7,13 @@ import {
 } from "../inbox/human.ts";
 import {
   PluginHost,
-  type PluginHostSession,
-  type PluginHostProject,
   type PluginWorkerLauncher,
   type PluginWorkerStatus,
 } from "../plugin/host.ts";
-import { resolvePluginNamespace } from "../plugin/namespace.ts";
+import {
+  projectResourceNamespace,
+  sessionResourceNamespace,
+} from "../plugin/namespace.ts";
 import { DaemonPluginWorkerLauncher } from "./plugin-worker.ts";
 
 export interface AttachedBatonSession extends HumanInboxSession {
@@ -21,18 +22,27 @@ export interface AttachedBatonSession extends HumanInboxSession {
   readonly lastSeenAt: string;
 }
 
-export interface BatonControlPlaneStatus {
+export interface BatonSessionAttachment extends HumanInboxSession {
+  readonly cwd: string;
+}
+
+interface DaemonProject {
+  readonly projectId: string;
+  readonly cwd: string;
+}
+
+export interface DaemonSnapshot {
   readonly sessions: readonly AttachedBatonSession[];
   readonly workers: readonly PluginWorkerStatus[];
   readonly pendingHumanActions: number;
 }
 
 /** Baton Daemon-owned composition of Plugin Host, live Sessions, and Human Inbox. */
-export class BatonControlPlane {
+export class BatonDaemon {
   readonly inbox: HumanInboxStore;
   readonly pluginHost: PluginHost;
   private readonly sessions = new Map<string, AttachedBatonSession>();
-  private readonly projects = new Map<string, PluginHostProject>();
+  private readonly projects = new Map<string, DaemonProject>();
   private readonly now: () => Date;
   private readonly packages: () => readonly import("../plugin/host.ts").PluginHostPackage[];
   private readonly closeLauncher?: () => void;
@@ -66,12 +76,9 @@ export class BatonControlPlane {
     await this.syncWorkers();
   }
 
-  async attach(session: PluginHostSession): Promise<readonly DeliveredHumanAction[]> {
+  async attach(session: BatonSessionAttachment): Promise<readonly DeliveredHumanAction[]> {
     this.assertOpen();
-    resolvePluginNamespace("v1/project/session", {
-      projectId: session.projectId,
-      sessionId: session.sessionId,
-    });
+    sessionResourceNamespace(session.projectId, session.sessionId);
     const timestamp = this.timestamp();
     const project = this.projects.get(session.projectId);
     if (project && project.cwd !== session.cwd) {
@@ -141,7 +148,7 @@ export class BatonControlPlane {
     return this.inbox.review(actionId, sessionId, accepted);
   }
 
-  status(): BatonControlPlaneStatus {
+  snapshot(): DaemonSnapshot {
     return Object.freeze({
       sessions: Object.freeze(
         [...this.sessions.values()].sort((left, right) =>
@@ -172,30 +179,26 @@ export class BatonControlPlane {
   }
 
   private assertOpen(): void {
-    if (this.closed) throw new Error("Baton control plane is closed");
+    if (this.closed) throw new Error("Baton Daemon is closed");
   }
 
   private timestamp(): string {
     const now = this.now();
     if (Number.isNaN(now.getTime())) {
-      throw new Error("Baton control plane now() returned an invalid Date");
+      throw new Error("Baton Daemon now() returned an invalid Date");
     }
     return now.toISOString();
   }
 
   private async syncWorkers(): Promise<void> {
-    await this.pluginHost.reconcile(
-      this.packages(),
-      [...this.sessions.values()],
-      [...this.projects.values()],
-    );
+    await this.pluginHost.reconcile(this.packages());
   }
 }
 
-function discoverProjects(rootDir: string): readonly PluginHostProject[] {
+function discoverProjects(rootDir: string): readonly DaemonProject[] {
   const root = join(rootDir, "projects");
   if (!existsSync(root)) return [];
-  const projects: PluginHostProject[] = [];
+  const projects: DaemonProject[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     try {
@@ -203,7 +206,7 @@ function discoverProjects(rootDir: string): readonly PluginHostProject[] {
         readFileSync(join(root, entry.name, "project.json"), "utf8"),
       ) as { cwd?: unknown };
       if (typeof value.cwd !== "string" || !value.cwd.trim()) continue;
-      resolvePluginNamespace("v1/project", { projectId: entry.name });
+      projectResourceNamespace(entry.name);
       projects.push(Object.freeze({ projectId: entry.name, cwd: value.cwd }));
     } catch {
       // A corrupt Project entry must not keep the Daemon from serving healthy Projects.

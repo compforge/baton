@@ -6,9 +6,11 @@
 
 ## Daemon 与关闭 TUI 后的推进
 
-当前 Plugin Runner、Source 和 reconcile queue 跟随 Baton host 生命周期。若关闭 TUI 后仍要
-准时消费 webhook、cron 或长期任务，需要让 daemon 复用同一 Event/Resource/Attempt store 和
-恢复协议，而不是另造 notifier 或后台状态机。
+Plugin Host 已能在 Baton Daemon 中按启用的 PluginInstance 启动唯一 Worker，并让同一 Worker
+管理多个 Resource namespace。当前剩余缺口是 Session Gateway 尚未接管 Channel 内的 Command、
+Mention、Hook、Board 与 Harness 执行桥接；TUI 仍保留一份 Channel-local 兼容 Manager。
+关闭 TUI 后若要准时消费 webhook、cron 或长期任务，需要先完成这条桥接并移除兼容 Manager，
+让 daemon 中的 Resource/Controller/Source 成为唯一控制面，而不是再造 notifier 或后台状态机。
 
 **触发条件**：有明确产品场景要求 TUI 关闭后仍满足可量化的实时性或准时性，并且一次启动补扫
 不足以满足要求。
@@ -102,7 +104,7 @@ EventHandler` 落下 level-based reconcile 主链路；当前宿主约束见
   Resource；当 Plugin-owned 主 Resource 必须由 `Turn` 等 Baton-owned Resource 变化唤醒时，
   让派生索引也产生同一 EventHandler 输入。只有外部 signal 无需 materialize Resource、又不能
   由现有 Source 表达时，再增加 GenericEvent 或 channel Source。
-- **FieldIndexer / selector-aware List**：当前 Session-scoped `ResourceClient.list()` 保持简单。
+- **FieldIndexer / selector-aware List**：当前 PluginInstance-isolated `ResourceClient.list()` 保持简单。
   当 Watches mapper 或 reconcile 对同一引用字段反复全量扫描，并在真实 Resource 数量下形成
   可测瓶颈时，引入由 Baton 维护、随 Resource revision 更新的反向索引；索引仍是派生状态，
   不能成为关系真相源。

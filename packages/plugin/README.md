@@ -37,7 +37,6 @@ type Example = ExampleResource<{ title: string }, ExampleStatus>;
 const plugin: PluginPackage = {
   pluginId: "example/plugin",
   version: "0.1.0",
-  namespace: "v1/project",
   async activate(context: PluginContext) {
     context.logger.info("Example plugin activated", {
       component: "activation",
@@ -116,12 +115,25 @@ This package contains protocol types only. Baton host implementations such as
 Daemon, Plugin Host, Worker, Manager, Binding, Controller, Store, Marketplace,
 persistence, and Harness routing are intentionally excluded.
 
-`PluginPackage.namespace` declares Binding cardinality. Omit it or use `v1`
-for one user-global Binding, use `v1/project` for one Binding shared by all
-Sessions in a Project, and use `v1/project/session` for one Binding per Session.
-Baton resolves the template to a canonical namespace before activation;
-`context.instance.namespace` and `context.resources.namespace` expose that
-identity. Resource types do not declare scope.
+One enabled Plugin instance has one Binding and one Worker. A Plugin is the
+organization and ownership unit for Resource schemas, Controllers, Sources, and
+Connectors; it does not declare a scope or namespace. Each Resource carries its
+own canonical namespace, so one Plugin may manage global, Project, and Session
+Resources at the same time. Omitting `namespace` from `create()` or `emit()`
+uses the user-global `v1` namespace.
+
+```ts
+await context.resources.create(EXAMPLE_RESOURCE, {
+  name: "project-example",
+  namespace: "v1/project/project-a",
+  spec: { title: "Project example" },
+});
+
+const everyExample = await context.resources.list(EXAMPLE_RESOURCE, {
+  namespace: "v1",
+  includeDescendants: true,
+});
+```
 
 `present()` may return a finite numeric `priority`; higher values are shown
 first and omitted values default to `0`. Baton compares priority only within the
@@ -213,7 +225,7 @@ Both paths use the same keyed reconcile queue as Resource changes and
 those remain exclusively owned by `reconcile`.
 
 Resources may set one `metadata.owner` when they are created or emitted. The
-owner must be an existing Resource in the same Binding namespace and
+owner must be an existing Resource in the same concrete Resource namespace and
 must include its `uid`, so a replacement with the same name does not inherit
 dependents. Use this only for structural ownership, not discovery provenance or
 domain references.

@@ -20,7 +20,6 @@ const available: AvailablePluginPackage = {
     manifestVersion: 1,
     pluginId: "qiankun/requirement-loop",
     version: "0.2.0",
-    namespace: "v1",
     entry: "./src/index.ts",
     displayName: "Requirement Loop",
     description: "Requirement workflow",

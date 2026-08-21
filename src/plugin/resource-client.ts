@@ -4,6 +4,7 @@ import type {
   ResourceListOptions,
   ResourceOwnerReference,
   ResourceRef,
+  ResourceNamespace,
   ResourceType,
 } from "@compforge/baton-plugin";
 
@@ -46,7 +47,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Restricts Resource reads and writes to one canonical Binding namespace. */
+/** Restricts Resource reads and writes to Resources owned by one PluginInstance. */
 export function createResourceClient(
   store: PluginResourceStore,
   onChange?: (change: ResourceClientChange) => void,
@@ -79,9 +80,9 @@ export function createResourceClient(
   const assertOwned = (
     resource: Readonly<Resource<unknown, unknown>>,
   ): void => {
-    if (resource.metadata.namespace !== store.namespace) {
+    if (resource.metadata.namespace === "baton-system") {
       throw new Error(
-        `plugin ResourceClient cannot access ${resource.kind}/${resource.metadata.name} outside ${store.namespace}`,
+        `plugin ResourceClient cannot mutate Baton-owned ${resource.kind}/${resource.metadata.name}`,
       );
     }
   };
@@ -89,12 +90,16 @@ export function createResourceClient(
   async function get<TSpec, TStatus>(
     ref: ResourceRef,
   ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
-    if (ref.namespace !== store.namespace) {
+    if (ref.namespace === "baton-system") {
       throw new Error(
-        `plugin ResourceClient cannot access ${ref.kind}/${ref.name} outside ${store.namespace}`,
+        `plugin ResourceClient cannot access Baton-owned ${ref.kind}/${ref.name}`,
       );
     }
-    const current = store.find<TSpec, TStatus>(ref, ref.name);
+    const current = store.find<TSpec, TStatus>(
+      ref,
+      ref.name,
+      ref.namespace,
+    );
     if (
       !current ||
       (ref.uid !== undefined && current.metadata.uid !== ref.uid)
@@ -105,7 +110,6 @@ export function createResourceClient(
   }
 
   return Object.freeze({
-    namespace: store.namespace,
     get,
     async list<TSpec, TStatus>(
       type: ResourceType,
@@ -119,6 +123,7 @@ export function createResourceClient(
       type: ResourceType,
       init: {
         name: string;
+        namespace?: ResourceNamespace;
         labels?: Readonly<Record<string, string>>;
         annotations?: Readonly<Record<string, string>>;
         owner?: ResourceOwnerReference;
@@ -130,6 +135,9 @@ export function createResourceClient(
         store.create<TSpec, TStatus>({
           type,
           name: init.name,
+          ...(init.namespace === undefined
+            ? {}
+            : { namespace: init.namespace }),
           ...(init.labels === undefined ? {} : { labels: init.labels }),
           ...(init.annotations === undefined
             ? {}
@@ -141,10 +149,19 @@ export function createResourceClient(
       changed("created", created);
       return created;
     },
-    async delete(type: ResourceType, name: string) {
-      const resource = deepFreeze(store.get(type, name));
+    async delete(
+      type: ResourceType,
+      name: string,
+      namespace: ResourceNamespace = "v1",
+    ) {
+      const resource = deepFreeze(store.get(type, name, namespace));
       assertOwned(resource);
-      for (const update of store.requestDeletion(type, name)) {
+      for (const update of store.requestDeletion(
+        type,
+        name,
+        undefined,
+        namespace,
+      )) {
         try {
           onChange?.(Object.freeze({
             pluginInstanceId: store.pluginInstanceId,
@@ -172,6 +189,7 @@ export function createResourceClient(
           patch,
           {
             expectedResourceVersion: resource.metadata.resourceVersion,
+            namespace: resource.metadata.namespace as ResourceNamespace,
           },
         ),
       );
@@ -195,6 +213,7 @@ export function createResourceClient(
           patch,
           {
             expectedResourceVersion: resource.metadata.resourceVersion,
+            namespace: resource.metadata.namespace as ResourceNamespace,
           },
         ),
       );

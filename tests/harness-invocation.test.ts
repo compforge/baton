@@ -25,6 +25,7 @@ function invocation(
     scope: {
       batonSessionId,
       pluginInstanceId: "reqloop_default",
+      namespace: "v1",
       executionId,
     },
     invocation: {

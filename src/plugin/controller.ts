@@ -2,6 +2,7 @@ import type {
   Controller as PluginController,
   ControllerSource,
   CronSource,
+  AnyResourceNamespace,
   ResourceNamespace,
   ResourceRef,
   ResourceType,
@@ -24,6 +25,7 @@ import {
 } from "./reconcile-snapshot.ts";
 import { ControllerSources, validateSources } from "./source.ts";
 import { validateWatches, watchRequests } from "./watch.ts";
+import { namespaceContains } from "./namespace.ts";
 import {
   createReconcileContext,
   type ExecutionScope,
@@ -35,7 +37,7 @@ export type ReconcileResourceOwner = "plugin" | "baton";
 export interface ReconcileScope {
   readonly batonSessionId: string;
   readonly pluginInstanceId: string;
-  readonly namespace: ResourceNamespace;
+  readonly namespace: AnyResourceNamespace;
   readonly resourceApiVersion: string;
   readonly resourceKind: string;
   /** 旧 key 缺省为 plugin；baton 表示只读 Baton-owned Resource。 */
@@ -295,7 +297,7 @@ export class Controller<TSpec, TStatus> {
     this.scope = Object.freeze({
       batonSessionId: options.store.batonSessionId,
       pluginInstanceId: options.store.pluginInstanceId,
-      namespace: options.store.namespace,
+      namespace: "v1",
       resourceApiVersion: options.resourceType.apiVersion,
       resourceKind: options.resourceType.kind,
     });
@@ -310,6 +312,7 @@ export class Controller<TSpec, TStatus> {
         const executionScope = Object.freeze({
           batonSessionId: key.batonSessionId,
           pluginInstanceId: key.pluginInstanceId,
+          namespace: key.namespace as ResourceNamespace,
           executionId: newId("pex"),
         });
         return this.executeReconcile(executionScope, localLease, async () => {
@@ -334,10 +337,11 @@ export class Controller<TSpec, TStatus> {
       resourceType: this.resourceType,
       executeWithCapacity: this.executeWithCapacity,
       onResource: options.onSourceResource,
-      enqueue: (resourceId) => {
+      enqueue: (resource) => {
         void this.enqueue({
           ...this.scope,
-          resourceId,
+          namespace: resource.namespace,
+          resourceId: resource.name,
         }).catch(() => {
           // The Controller retry path has already persisted and reported the failure.
         });
@@ -372,7 +376,12 @@ export class Controller<TSpec, TStatus> {
   ): Promise<readonly ReconcileKey[]> {
     if (
       change.pluginInstanceId !== this.scope.pluginInstanceId ||
-      change.resource.metadata.namespace !== this.scope.namespace
+      this.scope.namespace === "baton-system" ||
+      change.resource.metadata.namespace === "baton-system" ||
+      !namespaceContains(
+        this.scope.namespace,
+        change.resource.metadata.namespace,
+      )
     ) {
       return [];
     }
@@ -384,6 +393,7 @@ export class Controller<TSpec, TStatus> {
     ) {
       const key = ownedKey({
         ...this.scope,
+        namespace: change.resource.metadata.namespace,
         resourceId: change.resource.metadata.name,
       });
       keys.set(reconcileKeyId(key), key);
@@ -399,6 +409,7 @@ export class Controller<TSpec, TStatus> {
     for (const request of requests) {
       const key = ownedKey({
         ...this.scope,
+        namespace: request.namespace ?? change.resource.metadata.namespace,
         resourceId: request.name,
       });
       keys.set(reconcileKeyId(key), key);
@@ -418,6 +429,7 @@ export class Controller<TSpec, TStatus> {
       Object.freeze({
         key: ownedKey({
           ...this.scope,
+          namespace: entry.resource.metadata.namespace,
           resourceId: entry.resource.metadata.name,
         }),
         nextReconcileAt: entry.nextReconcileAt,
@@ -430,12 +442,18 @@ export class Controller<TSpec, TStatus> {
     if (
       resource.apiVersion !== this.resourceType.apiVersion ||
       resource.kind !== this.resourceType.kind ||
-      resource.namespace !== this.scope.pluginInstanceId
+      resource.namespace === "baton-system" ||
+      this.scope.namespace === "baton-system" ||
+      !namespaceContains(this.scope.namespace, resource.namespace)
     ) {
       return false;
     }
     try {
-      return this.store.get(this.resourceType, resource.name).metadata.uid ===
+      return this.store.get(
+        this.resourceType,
+        resource.name,
+        resource.namespace,
+      ).metadata.uid ===
         resource.uid;
     } catch {
       return false;
@@ -443,9 +461,13 @@ export class Controller<TSpec, TStatus> {
   }
 
   resourceKeys(): ReconcileKey[] {
-    return this.store.list(this.resourceType).map((resource) =>
+    return this.store.list(this.resourceType, {
+      namespace: "v1",
+      includeDescendants: true,
+    }).map((resource) =>
       ownedKey({
         ...this.scope,
+        namespace: resource.metadata.namespace,
         resourceId: resource.metadata.name,
       }),
     );
@@ -462,6 +484,7 @@ export class Controller<TSpec, TStatus> {
       this.resourceType,
       reconcileKey.resourceId,
       next,
+      { namespace: reconcileKey.namespace as ResourceNamespace },
     );
   }
 
@@ -474,7 +497,11 @@ export class Controller<TSpec, TStatus> {
       key.resourceId,
       async () => {
         const resource = deepFreeze(
-          this.store.get<TSpec, TStatus>(this.resourceType, key.resourceId),
+          this.store.get<TSpec, TStatus>(
+            this.resourceType,
+            key.resourceId,
+            key.namespace as ResourceNamespace,
+          ),
         );
         const resourceRef = Object.freeze({
           apiVersion: resource.apiVersion,
@@ -504,6 +531,7 @@ export class Controller<TSpec, TStatus> {
         const latest = this.store.get<TSpec, TStatus>(
           this.resourceType,
           key.resourceId,
+          key.namespace as ResourceNamespace,
         );
         if (latest.metadata.generation !== resource.metadata.generation) {
           throw new Error(
@@ -514,6 +542,7 @@ export class Controller<TSpec, TStatus> {
           const deletedResource = this.store.finalizeDeletion(
             this.resourceType,
             key.resourceId,
+            key.namespace as ResourceNamespace,
           );
           // Invocation/result events may have marked this key dirty while the
           // terminating reconcile was running. The Resource no longer exists,
@@ -532,13 +561,17 @@ export class Controller<TSpec, TStatus> {
           this.resourceType,
           key.resourceId,
           nextReconcileAt,
-          { expectedResourceVersion: latest.metadata.resourceVersion },
+          {
+            expectedResourceVersion: latest.metadata.resourceVersion,
+            namespace: key.namespace as ResourceNamespace,
+          },
         );
 
         return {
           nextReconcileAt,
         };
       },
+      key.namespace as ResourceNamespace,
     );
   }
 
@@ -546,7 +579,9 @@ export class Controller<TSpec, TStatus> {
     if (
       key.batonSessionId !== this.scope.batonSessionId ||
       key.pluginInstanceId !== this.scope.pluginInstanceId ||
-      key.namespace !== this.scope.namespace ||
+      key.namespace === "baton-system" ||
+      this.scope.namespace === "baton-system" ||
+      !namespaceContains(this.scope.namespace, key.namespace) ||
       key.resourceApiVersion !== this.scope.resourceApiVersion ||
       key.resourceKind !== this.scope.resourceKind ||
       reconcileResourceOwner(key) !== reconcileResourceOwner(this.scope)

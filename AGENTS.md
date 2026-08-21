@@ -5,7 +5,7 @@
 baton 是一个 terminal-native 的 Loop Engineering 协作内核与控制面，也是跨 coding agent 的统一工作区。
 用户始终在自己拥有的 BatonSession 中工作：它保存跨 Harness 的持久逻辑历史，并拥有当前
 Session 的交互与 Harness 执行；用户级 Baton Daemon 拥有 Plugin 控制面，Project 按 cwd 组织和
-发现 Session，并通过 canonical namespace 共享同一 workspace 的 Plugin Resource。Claude Code、Codex 和 DeepSeek Harness 是当前内置 Harness，
+发现 Session；Plugin Resource 通过自身 canonical namespace 表达 global、Project 或 Session 归属。Claude Code、Codex 和 DeepSeek Harness 是当前内置 Harness，
 不是封闭支持列表。
 
 baton core 位于人、Harness 和 Baton Plugin 三类参与者之间：
@@ -66,8 +66,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 ## 关键约定
 
 1. **作用域决定 owner**：Project 组织同 cwd 的 Session；BatonSession 拥有正典历史与交互/Harness
-   执行；Plugin Binding 由 `plugin@marketplace + canonical namespace` 标识，Package 通过
-   `v1`、`v1/project`、`v1/project/session` 声明 Worker 基数；HarnessTarget 是配置、调度与状态坐标；
+   执行；PluginInstance 是启用配置与 Worker 生命周期单位，Plugin 只是 Resource schema、Controller
+   与 Connector 的组织单位；每份 Resource 通过 `v1`、`v1/project/<projectId>` 或
+   `v1/project/<projectId>/session/<sessionId>` 表达自身归属；HarnessTarget 是配置、调度与状态坐标；
    Lane 是 BatonSession 原生的串行任务线，可跨 HarnessTarget 接力；
    HarnessSession 是 `Lane × HarnessTarget` 下由 Harness 持有的持久执行会话；进程内 Handle 只负责调用路由，
    mutable Binding 只描述当前连接，二者都不能代替 HarnessSession identity。
@@ -94,8 +95,9 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
    则以 failure 收口而不重放调用栈。
    Plugin 只能依赖
    `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
-   Marketplace Plugin 按活动 Binding 进入独立 Worker；Plugin Host 按 canonical namespace 管理
-   Binding，持有对应 Resource/Controller、reconcile 调度与 Worker 生命周期。Human Inbox 和
+   Marketplace Plugin 的每个启用 Instance 通过一份活动 Binding 进入独立 Worker；Plugin Host 按
+   Instance 管理 Binding 和 Worker，并按 Resource namespace 持有 Resource/Controller 与 reconcile
+   调度。Human Inbox 和
    Session Gateway 是 Daemon 内的同级服务。
    `chat-tui` 是 Baton 与 Doctor 可共同使用的公共终端 UI 库；Baton 特有的 ViewInput / ViewOutput
    适配留在 `src/view/chat-tui`，不反向进入 chat-tui。

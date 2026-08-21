@@ -13,15 +13,12 @@ import { dirname, join } from "node:path";
 import { newId } from "../event/ids.ts";
 import { withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
-import type { PluginNamespace } from "@compforge/baton-plugin";
-import { parsePluginNamespace } from "./namespace.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
 export interface PluginInstance {
   readonly pluginInstanceId: string;
   readonly batonSessionId: string;
-  readonly namespace: PluginNamespace;
   readonly pluginId: string;
   readonly marketplace?: string;
   readonly packageVersion: string;
@@ -42,7 +39,6 @@ export interface CreatePluginInstance {
 
 export interface PluginInstanceRepository {
   readonly batonSessionId: string;
-  readonly namespace: PluginNamespace;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   create(input: CreatePluginInstance): PluginInstance;
   get(pluginInstanceId: string): PluginInstance;
@@ -55,7 +51,6 @@ export interface PluginInstanceRepository {
 
 export interface PluginInstanceStoreOptions {
   session: Pick<SessionHandle, "id" | "dir">;
-  namespace?: PluginNamespace;
   now?: () => Date;
 }
 
@@ -120,7 +115,6 @@ function writeJsonAtomic(path: string, value: unknown): void {
  */
 export class PluginInstanceStore implements PluginInstanceRepository {
   readonly batonSessionId: string;
-  readonly namespace: PluginNamespace;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly now: () => Date;
 
@@ -131,7 +125,6 @@ export class PluginInstanceStore implements PluginInstanceRepository {
       dir: options.session.dir,
     });
     this.batonSessionId = options.session.id;
-    this.namespace = parsePluginNamespace(options.namespace ?? "v1");
     this.now = options.now ?? (() => new Date());
   }
 
@@ -156,7 +149,6 @@ export class PluginInstanceStore implements PluginInstanceRepository {
       const instance: PluginInstance = {
         pluginInstanceId,
         batonSessionId: this.batonSessionId,
-        namespace: this.namespace,
         pluginId: input.pluginId,
         ...(input.marketplace === undefined
           ? {}
@@ -268,9 +260,6 @@ export class PluginInstanceStore implements PluginInstanceRepository {
       if (instance.batonSessionId !== this.batonSessionId) {
         throw new Error(`batonSessionId must be ${this.batonSessionId}`);
       }
-      if (instance.namespace !== this.namespace) {
-        throw new Error(`namespace must be ${this.namespace}`);
-      }
       nonEmptyString("pluginId", instance.pluginId);
       if (instance.marketplace !== undefined) {
         nonEmptyString("marketplace", instance.marketplace);
@@ -285,7 +274,6 @@ export class PluginInstanceStore implements PluginInstanceRepository {
       return deepFreeze({
         pluginInstanceId: instance.pluginInstanceId,
         batonSessionId: instance.batonSessionId,
-        namespace: instance.namespace,
         pluginId: instance.pluginId,
         ...(instance.marketplace === undefined
           ? {}

@@ -77,6 +77,73 @@ afterEach(() => {
 });
 
 describe("plugin Controller", () => {
+  test("reconciles primary and watched Resources in descendant namespaces", async () => {
+    const resources = store(testRoot());
+    const requirement = resources.create<Spec>({
+      type: REQ_LOOP_RUN,
+      name: "run_1",
+      namespace: "v1/project/project-a",
+      spec: { requirement: "ship it" },
+    });
+    const service = resources.create({
+      type: WORKSPACE,
+      name: "service_1",
+      namespace: "v1",
+      spec: {},
+    });
+    const reconciled: string[] = [];
+    const actionNamespaces: string[] = [];
+    const controller = new Controller<Spec, Status>({
+      store: resources,
+      resourceType: REQ_LOOP_RUN,
+      watches: [{
+        resourceType: WORKSPACE,
+        handler: {
+          async create() {
+            return [{
+              name: "run_1",
+              namespace: "v1/project/project-a",
+            }];
+          },
+          async update() {
+            return [];
+          },
+          async delete() {
+            return [];
+          },
+        },
+      }],
+      async reconcile(_context, resource) {
+        reconciled.push(resource.metadata.namespace);
+        await _context.verbs.confirm({
+          timeoutMs: 1_000,
+          title: "Confirm",
+          prompt: "Continue?",
+        });
+      },
+      async invokeVerb(scope) {
+        actionNamespaces.push(scope.namespace);
+        return { state: "success", value: "accepted" };
+      },
+    });
+
+    const primaryKeys = await controller.reconcileKeys({
+      kind: "created",
+      pluginInstanceId: "reqloop_default",
+      resource: requirement,
+    });
+    expect(primaryKeys[0]?.namespace).toBe("v1/project/project-a");
+    const watchedKeys = await controller.reconcileKeys({
+      kind: "created",
+      pluginInstanceId: "reqloop_default",
+      resource: service,
+    });
+    expect(watchedKeys[0]?.namespace).toBe("v1/project/project-a");
+    await controller.enqueue(watchedKeys[0]!);
+    expect(reconciled).toEqual(["v1/project/project-a"]);
+    expect(actionNamespaces).toEqual(["v1/project/project-a"]);
+  });
+
   test("validates its Sources when constructed", () => {
     expect(() =>
       new Controller<Spec, Status>({
