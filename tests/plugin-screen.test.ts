@@ -20,6 +20,7 @@ const available: AvailablePluginPackage = {
     manifestVersion: 1,
     pluginId: "qiankun/requirement-loop",
     version: "0.2.0",
+    namespace: "v1",
     entry: "./src/index.ts",
     displayName: "Requirement Loop",
     description: "Requirement workflow",
@@ -111,6 +112,7 @@ describe("Plugin manager projection", () => {
     const instance = {
       pluginInstanceId: "pi_reqloop",
       batonSessionId: "bs_test",
+      namespace: "v1" as const,
       pluginId: available.manifest.pluginId,
       marketplace: available.marketplace,
       packageVersion: available.manifest.version,

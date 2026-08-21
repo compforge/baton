@@ -99,6 +99,7 @@ export function reconcileKeyId(key: ReconcileKey): string {
   return JSON.stringify([
     key.batonSessionId,
     key.pluginInstanceId,
+    key.namespace,
     key.resourceApiVersion,
     key.resourceKind,
     key.resourceId,

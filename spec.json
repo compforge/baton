@@ -77,6 +77,16 @@
       }
     ]
   },
+  "src/plugin/namespace.ts::resolvePluginNamespace": {
+    "specs": [
+      {
+        "cases": [],
+        "rules": [
+          "Persist only canonical namespaces; relative project/session templates are authoring conveniences and must never become storage identity."
+        ]
+      }
+    ]
+  },
   "src/plugin/queue.ts::ReconcileCapacityLease": {
     "specs": [
       {

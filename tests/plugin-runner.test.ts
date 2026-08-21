@@ -129,6 +129,7 @@ describe("Plugin Runner process boundary", () => {
         return {
           pluginId,
           version,
+          namespace: "v1",
           entryUrl: pathToFileURL(entry).href,
         };
       },
@@ -181,6 +182,7 @@ describe("Plugin Runner process boundary", () => {
         return {
           pluginId,
           version,
+          namespace: "v1",
           entryUrl: pathToFileURL(entry).href,
         };
       },
@@ -241,6 +243,7 @@ describe("Plugin Runner process boundary", () => {
         return {
           pluginId,
           version,
+          namespace: "v1",
           entryUrl: pathToFileURL(entry).href,
         };
       },
@@ -327,6 +330,7 @@ describe("Plugin Runner process boundary", () => {
         return {
           pluginId,
           version,
+          namespace: "v1",
           entryUrl: pathToFileURL(entry).href,
         };
       },
@@ -442,6 +446,7 @@ describe("Plugin Runner process boundary", () => {
         return {
           pluginId,
           version,
+          namespace: "v1",
           entryUrl: pathToFileURL(entry).href,
         };
       },

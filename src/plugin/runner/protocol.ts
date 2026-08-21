@@ -1,4 +1,5 @@
 import type {
+  PluginNamespaceTemplate,
   PluginDataDirectories,
   PluginInstance,
   PluginSessionContext,
@@ -19,6 +20,7 @@ import type {
 export interface PluginPackageEntry {
   readonly pluginId: string;
   readonly version: string;
+  readonly namespace: PluginNamespaceTemplate;
   readonly entryUrl: string;
 }
 

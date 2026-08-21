@@ -11,7 +11,9 @@ import { PluginResourceStore } from "./resource.ts";
 
 export type ResourceClient = PublicResourceClient;
 
-export type ResourceClientChange =
+export type ResourceClientChange = {
+  readonly pluginInstanceId: string;
+} & (
   | {
       readonly kind: "created";
       readonly resource: Readonly<Resource<unknown, unknown>>;
@@ -34,7 +36,8 @@ export type ResourceClientChange =
   | {
       readonly kind: "deleted";
       readonly resource: Readonly<Resource<unknown, unknown>>;
-    };
+    }
+);
 
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -43,7 +46,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Restricts Resource reads and status writes to one PluginInstance namespace. */
+/** Restricts Resource reads and writes to one canonical Binding namespace. */
 export function createResourceClient(
   store: PluginResourceStore,
   onChange?: (change: ResourceClientChange) => void,
@@ -58,11 +61,16 @@ export function createResourceClient(
       onChange?.(
         kind === "status-updated" || kind === "metadata-updated"
           ? Object.freeze({
+              pluginInstanceId: store.pluginInstanceId,
               kind,
               oldResource: oldResource!,
               resource,
             })
-          : Object.freeze({ kind, resource }),
+          : Object.freeze({
+              pluginInstanceId: store.pluginInstanceId,
+              kind,
+              resource,
+            }),
       );
     } catch {
       // Resource mutation has committed; host reactions must not turn it into failure.
@@ -71,9 +79,9 @@ export function createResourceClient(
   const assertOwned = (
     resource: Readonly<Resource<unknown, unknown>>,
   ): void => {
-    if (resource.metadata.namespace !== store.pluginInstanceId) {
+    if (resource.metadata.namespace !== store.namespace) {
       throw new Error(
-        `plugin ResourceClient cannot access ${resource.kind}/${resource.metadata.name} outside ${store.pluginInstanceId}`,
+        `plugin ResourceClient cannot access ${resource.kind}/${resource.metadata.name} outside ${store.namespace}`,
       );
     }
   };
@@ -81,9 +89,9 @@ export function createResourceClient(
   async function get<TSpec, TStatus>(
     ref: ResourceRef,
   ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
-    if (ref.namespace !== store.pluginInstanceId) {
+    if (ref.namespace !== store.namespace) {
       throw new Error(
-        `plugin ResourceClient cannot access ${ref.kind}/${ref.name} outside ${store.pluginInstanceId}`,
+        `plugin ResourceClient cannot access ${ref.kind}/${ref.name} outside ${store.namespace}`,
       );
     }
     const current = store.find<TSpec, TStatus>(ref, ref.name);
@@ -97,6 +105,7 @@ export function createResourceClient(
   }
 
   return Object.freeze({
+    namespace: store.namespace,
     get,
     async list<TSpec, TStatus>(
       type: ResourceType,
@@ -138,6 +147,7 @@ export function createResourceClient(
       for (const update of store.requestDeletion(type, name)) {
         try {
           onChange?.(Object.freeze({
+            pluginInstanceId: store.pluginInstanceId,
             kind: "deletion-requested",
             oldResource: deepFreeze(update.oldResource),
             resource: deepFreeze(update.resource),

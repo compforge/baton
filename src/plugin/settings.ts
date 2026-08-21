@@ -15,6 +15,8 @@ import { parse, stringify } from "yaml";
 
 import { withFileLock } from "../store/file-lock.ts";
 import type { SessionHandle } from "../store/store.ts";
+import type { PluginNamespace } from "@compforge/baton-plugin";
+import { parsePluginNamespace } from "./namespace.ts";
 import { parsePluginKey, pluginKey } from "./identity.ts";
 import type {
   CreatePluginInstance,
@@ -130,7 +132,7 @@ function writeYamlAtomic(path: string, value: PluginSettingsFile): void {
   }
 }
 
-function runtimeInstanceId(key: string): string {
+function configuredInstanceId(key: string): string {
   return `pi_${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
 }
 
@@ -283,27 +285,30 @@ export class PluginSettingsStore {
 }
 
 /**
- * 根据全局 enablement 创建当前 BatonSession 的会话级 Instance。
- * Instance id 由 plugin@marketplace 稳定派生，Resource 与执行事实仍落在当前 session。
+ * 兼容 Channel 内 Plugin Manager 的 Instance adapter。Daemon Plugin Host 使用
+ * plugin@marketplace + canonical namespace 创建真正的 Binding。
  */
 export class GlobalPluginInstanceStore implements PluginInstanceRepository {
   readonly batonSessionId: string;
+  readonly namespace: PluginNamespace;
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly settings: PluginSettingsStore;
 
   constructor(options: {
     settings: PluginSettingsStore;
     session: Pick<SessionHandle, "id" | "dir">;
+    namespace?: PluginNamespace;
   }) {
     this.settings = options.settings;
     this.session = Object.freeze({ id: options.session.id, dir: options.session.dir });
     this.batonSessionId = options.session.id;
+    this.namespace = parsePluginNamespace(options.namespace ?? "v1");
   }
 
   create(input: CreatePluginInstance): PluginInstance {
     if (!input.marketplace) throw new Error("marketplace is required for a global plugin");
     const key = pluginKey(input.pluginId, input.marketplace);
-    const expectedId = runtimeInstanceId(key);
+    const expectedId = configuredInstanceId(key);
     if (input.pluginInstanceId && input.pluginInstanceId !== expectedId) {
       throw new Error(`pluginInstanceId must be ${expectedId}`);
     }
@@ -321,7 +326,7 @@ export class GlobalPluginInstanceStore implements PluginInstanceRepository {
 
   get(pluginInstanceId: string): PluginInstance {
     const setting = this.settings.list().find(
-      ({ key }) => runtimeInstanceId(key) === pluginInstanceId,
+      ({ key }) => configuredInstanceId(key) === pluginInstanceId,
     );
     if (!setting) throw new Error(`plugin instance not found: ${pluginInstanceId}`);
     return this.instance(setting);
@@ -362,8 +367,9 @@ export class GlobalPluginInstanceStore implements PluginInstanceRepository {
 
   private instance(setting: PluginSetting): PluginInstance {
     return deepFreeze({
-      pluginInstanceId: runtimeInstanceId(setting.key),
+      pluginInstanceId: configuredInstanceId(setting.key),
       batonSessionId: this.batonSessionId,
+      namespace: this.namespace,
       pluginId: setting.pluginId,
       marketplace: setting.marketplace,
       packageVersion: setting.packageVersion,

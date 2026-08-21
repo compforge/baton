@@ -7,7 +7,7 @@
 ## 1. 理念与概念
 
 外部对象与 Resource 是两份不同的事实。PR、需求或部署可以一直存在于外部系统，但只有在
-当前 BatonSession 的工作范围内被用户明确选中，或被 Source 的准入策略选中后，才需要成为
+当前 Binding 的工作范围内被用户明确选中，或被 Source 的准入策略选中后，才需要成为
 内部 Resource。Connector 只适配外部能力，不因为 `list()` 看到了对象就天然拥有创建 Resource
 的权力。
 
@@ -20,7 +20,8 @@ Resource 进入 Baton 后有三层彼此独立的状态：
 因此，“Source 本轮没有发现”“外部对象已经关闭”和“Board 不再展示”都不等于 Resource 已经
 删除。只有显式删除请求会进入 Baton 的 terminating 流程。
 
-BatonSession 是 Plugin 数据的物理容器，PluginInstance namespace 是 Resource 的隔离边界。
+canonical namespace 是 Resource 的归属与隔离边界；Baton Daemon 按 namespace 持久化 Resource，
+不会因为多个 Session 打开同一 Project 而复制数据。
 `metadata.owner` 只表示 namespace 内 Resource 之间的结构所有权，不表示 Source provenance、
 使用关系或一般领域关联。
 
@@ -52,7 +53,7 @@ Baton 拒绝该 emit；Source 本次提供的 label / annotation 键也必须仍
 这两条路径共享以下约束：
 
 - `uid` 由 Baton 为本次 incarnation 分配；删除后以同名重建会得到新的 `uid`；
-- namespace 固定为当前 PluginInstance，Plugin 不能跨 namespace 操作 Resource；
+- namespace 固定继承当前 Binding，Plugin 不能逃逸或跨 Project；
 - owner 如果存在，必须指向同 namespace 内一份已存在且未 terminating 的 Resource；
 - owner 必须携带 `uid`，避免同名 owner 重建后意外继承旧 dependents；
 - owner 在当前 incarnation 内不可变。
@@ -68,7 +69,7 @@ Connector 不属于 Baton 公共概念。Plugin 作者应让 Connector 返回外
 表达 spec revision 的 `generation`。
 
 - **label** 用于机器可读的分组与选择。`ResourceClient.list(type, { matchLabels })` 对所有键执行
-  精确 AND 匹配；key / value 使用 Kubernetes 风格的长度和字符限制。当前每个 session 的
+  精确 AND 匹配；key / value 使用 Kubernetes 风格的长度和字符限制。当前每个 namespace 的
   Resource 数量很少，宿主按该语义扫描实现，不承诺物理索引。
 - **annotation** 用于展示偏好、用户 retention deadline 等不参与检索的扩展信息。Baton 只要求
   key 非空、value 为 string，不把其内容解释为 selector，也不施加 label 的字符限制。
@@ -151,7 +152,7 @@ Owner Resource (uid=A)
 - Repository 暂时出现在 Workspace 的扫描结果中，离开后仍希望保留以便复用。
 
 这些关系应使用领域 status、ResourceRef 或未来的 Usage / lease 模型表达。顶层 Resource 可以
-没有 owner；它仍物理归属于当前 BatonSession 中的 PluginInstance namespace。
+没有 owner；它仍物理归属于当前 Binding 的 canonical namespace。
 
 ## 7. 与 controller-runtime 的当前差距
 

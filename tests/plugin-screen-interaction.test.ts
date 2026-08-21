@@ -186,6 +186,7 @@ describe("Plugin screen interaction", () => {
       manifestVersion: 1 as const,
       pluginId: "qiankun/requirement-loop",
       version: "0.2.0",
+      namespace: "v1" as const,
       entry: "./src/index.ts",
       displayName: "Requirement Loop",
     };

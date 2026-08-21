@@ -1,4 +1,8 @@
 import type { TurnSummary } from "./snapshot.ts";
+import type {
+  PluginNamespace,
+  ResourceNamespace,
+} from "./namespace.ts";
 
 /** Versioned Resource schema identity, equivalent to a Kubernetes GroupVersionKind. */
 export interface ResourceType {
@@ -15,7 +19,7 @@ export interface ResourceType {
  * name-based lookup that may resolve to a replacement Resource.
  */
 export interface ResourceRef extends ResourceType {
-  readonly namespace: string;
+  readonly namespace: ResourceNamespace;
   readonly name: string;
   readonly uid?: string;
 }
@@ -28,8 +32,8 @@ export interface ResourceOwnerReference extends ResourceRef {
 export interface ResourceMetadata {
   /** Stable name within one namespace and Resource type. */
   readonly name: string;
-  /** PluginInstance scope. Baton-owned Resources use a Baton-reserved namespace. */
-  readonly namespace: string;
+  /** Canonical Binding scope. Baton-owned Resources use a Baton-reserved namespace. */
+  readonly namespace: ResourceNamespace;
   /** Baton-assigned identity for this concrete incarnation. */
   readonly uid: string;
   /** Desired-state revision. Only spec changes advance it. */
@@ -62,6 +66,8 @@ export interface ResourceListOptions {
 }
 
 export interface ResourceClient {
+  /** Canonical namespace inherited by Resource operations. */
+  readonly namespace: PluginNamespace;
   /**
    * @spec A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined.
    * @rule After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource.

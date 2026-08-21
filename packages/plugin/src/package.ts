@@ -3,12 +3,18 @@ import type { ResourceClient } from "./resource.ts";
 import type { Command } from "./command.ts";
 import type { Hook, HookStage } from "./hook.ts";
 import type { Mention } from "./mention.ts";
+import type {
+  PluginNamespace,
+  PluginNamespaceTemplate,
+} from "./namespace.ts";
 
 export type PluginConfig = Record<string, unknown>;
 
 export interface PluginInstance {
   readonly pluginInstanceId: string;
   readonly batonSessionId: string;
+  /** Canonical namespace of this concrete Binding. */
+  readonly namespace: PluginNamespace;
   readonly pluginId: string;
   readonly marketplace?: string;
   readonly packageVersion: string;
@@ -40,7 +46,7 @@ export interface PluginDataDirectories {
   readonly project: string;
   /** Private to this Plugin in the current BatonSession. */
   readonly session: string;
-  /** Private to this runtime PluginInstance, which always belongs to a Session. */
+  /** Private to this concrete Plugin Binding. */
   readonly instance: string;
 }
 
@@ -117,5 +123,7 @@ export interface PluginContext {
 export interface PluginPackage {
   readonly pluginId: string;
   readonly version: string;
+  /** Binding cardinality. Omit to bind once at the user-global `v1` namespace. */
+  readonly namespace?: PluginNamespaceTemplate;
   activate(context: PluginContext): Promise<void>;
 }

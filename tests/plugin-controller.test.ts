@@ -57,6 +57,7 @@ function key(resourceId: string = "run_1"): ReconcileKey {
   return {
     batonSessionId: "bs_test",
     pluginInstanceId: "reqloop_default",
+    namespace: "v1",
     resourceApiVersion: REQ_LOOP_RUN.apiVersion,
     resourceKind: "Requirement",
     resourceId,
@@ -127,14 +128,17 @@ describe("plugin Controller", () => {
 
     expect(await controller.reconcileKeys({
       kind: "created",
+      pluginInstanceId: "reqloop_default",
       resource: requirement,
     })).toEqual([key("run_1")]);
     expect(await controller.reconcileKeys({
       kind: "created",
+      pluginInstanceId: "reqloop_default",
       resource: workspace,
     })).toEqual([key("run_1")]);
     expect(await controller.reconcileKeys({
       kind: "deleted",
+      pluginInstanceId: "reqloop_default",
       resource: requirement,
     })).toEqual([]);
   });
@@ -172,6 +176,7 @@ describe("plugin Controller", () => {
 
     expect(await controller.reconcileKeys({
       kind: "created",
+      pluginInstanceId: "reqloop_default",
       resource: requirement,
     })).toEqual([key("run_1")]);
     expect(errors.map(String)).toEqual(["Error: mapping failed"]);

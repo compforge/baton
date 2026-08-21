@@ -22,6 +22,13 @@ export type { Mention } from "./mention.ts";
 export { MAIN_LANE_ID } from "./lane.ts";
 
 export type {
+  PluginNamespace,
+  PluginNamespaceContext,
+  PluginNamespaceTemplate,
+  ResourceNamespace,
+} from "./namespace.ts";
+
+export type {
   ViewInput,
   ViewInputRecord,
   ViewOutput,
