@@ -14,6 +14,7 @@ import {
   batonDaemonStatus,
   callBatonDaemon,
   detachBatonSession,
+  startBatonDaemon,
 } from "../src/daemon/client.ts";
 import { BatonControlPlane } from "../src/daemon/control-plane.ts";
 import { listenBatonDaemon, type BatonDaemonServer } from "../src/daemon/server.ts";
@@ -132,6 +133,15 @@ describe("Baton Daemon", () => {
 
     expect(await batonDaemonStatus(root)).toEqual(daemon.status);
     await expect(listenBatonDaemon(root)).rejects.toThrow("already running");
+  });
+
+  test("reports a daemon process that exits during startup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-daemon-"));
+    writeFileSync(join(root, "plugin.yaml"), "version: invalid\nplugins: {}\n");
+
+    await expect(startBatonDaemon(root, { timeoutMs: 5_000 })).rejects.toThrow(
+      /Baton Daemon exited before becoming ready \(exit code [1-9][0-9]*\)/,
+    );
   });
 
   test("rejects unknown methods without terminating", async () => {

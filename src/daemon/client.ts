@@ -208,10 +208,22 @@ export async function startBatonDaemon(
   const paths = batonDaemonPaths(rootDir);
   const entry = fileURLToPath(new URL("./main.ts", import.meta.url));
   const nullFd = openSync("/dev/null", "a+");
+  let launchError: Error | undefined;
   try {
     const child = spawn(process.execPath, [entry, "--root", paths.rootDir], {
       detached: true,
       stdio: ["ignore", nullFd, nullFd],
+    });
+    child.once("error", (error) => {
+      launchError = new Error(`Baton Daemon could not start: ${error.message}`);
+    });
+    child.once("exit", (code, signal) => {
+      const outcome = code === null
+        ? `signal ${signal ?? "unknown"}`
+        : `exit code ${code}`;
+      launchError ??= new Error(
+        `Baton Daemon exited before becoming ready (${outcome})`,
+      );
     });
     child.unref();
   } finally {
@@ -227,8 +239,10 @@ export async function startBatonDaemon(
     } catch (error) {
       lastError = error;
     }
+    if (launchError) throw launchError;
     await delay(25);
   }
+  if (launchError) throw launchError;
   const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
   throw new Error(`Baton Daemon did not become ready${detail}`);
 }
