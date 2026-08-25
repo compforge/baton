@@ -1143,11 +1143,11 @@ describe("BatonChatProtocol State projection", () => {
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
       expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 6%");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 6.3%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
       await protocol.command("claude", "");
       expect(protocol.stateStore.getState("activity").items).toHaveLength(1);
-      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 40%");
+      expect(protocol.stateStore.getState("activity").items?.[0]?.label).toBe("default · idle · context 40.0%");
       expect(protocol.stateStore.getState("footer").text).not.toContain("context");
 
       await protocol.exit();
