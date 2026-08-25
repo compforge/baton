@@ -302,7 +302,7 @@ function contextWindowStatusText(
   ) {
     return undefined;
   }
-  const percent = Math.round((context.usedTokens / context.capacityTokens) * 100);
+  const percent = ((context.usedTokens / context.capacityTokens) * 100).toFixed(1);
   return `context ${percent}%`;
 }
 
