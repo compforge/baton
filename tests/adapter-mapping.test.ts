@@ -1228,6 +1228,47 @@ describe("context window → context_window_update", () => {
     });
   });
 
+  test("claude refreshes context usage at message_start once capacity is known", () => {
+    const { events, feed } = claudeHarness();
+    feed({
+      type: "result",
+      subtype: "success",
+      usage: {},
+      modelUsage: {
+        "claude-sonnet-4": {
+          inputTokens: 2_000,
+          outputTokens: 100,
+          cacheReadInputTokens: 8_000,
+          cacheCreationInputTokens: 0,
+          webSearchRequests: 0,
+          costUSD: 0.12,
+          contextWindow: 200_000,
+          maxOutputTokens: 32_000,
+        },
+      },
+    });
+    feed({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      event: {
+        type: "message_start",
+        message: {
+          model: "claude-sonnet-4",
+          usage: { input_tokens: 1_000, cache_read_input_tokens: 24_000, cache_creation_input_tokens: 0 },
+        },
+      },
+    });
+
+    const snapshots = events.filter((event) => event.kind === "context_window_update");
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[1]?.payload).toEqual({
+      modelSelection: "default",
+      effectiveModel: "claude-sonnet-4",
+      usedTokens: 25_000,
+      capacityTokens: 200_000,
+    });
+  });
+
   test("claude prefers structured /context usage over cumulative result usage", () => {
     const { events, feed } = claudeHarness();
     feed({

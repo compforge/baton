@@ -613,6 +613,8 @@ interface ClaudeRuntime extends ClaudeDurableMappingState {
   }>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
   lastContextSample?: ClaudeContextSample;
+  /** 最近一次已发布的 context window；后续 message_start 复用其容量，实时刷新当前占用。 */
+  lastContextWindow?: ClaudePublishedContextWindow;
   /** system/init 声明的终端专属 slash command；Baton 作为 SDK host 不展示这些命令。 */
   terminalSlashCommands?: Set<string>;
   /** 最近一次 command catalog；system/init 每 Turn 重发名称时用它保留已知描述。 */
@@ -926,6 +928,24 @@ interface ClaudeContextSample {
   cacheCreationInputTokens: number;
 }
 
+interface ClaudeContextWindow {
+  effectiveModel: string;
+  usedTokens: number;
+  capacityTokens: number;
+}
+
+interface ClaudePublishedContextWindow extends ClaudeContextWindow {
+  modelSelection: string;
+}
+
+function claudeContextSampleTokens(sample: ClaudeContextSample): number {
+  return sample.inputTokens + sample.cacheReadInputTokens + sample.cacheCreationInputTokens;
+}
+
+function claudeModelMatches(left: string, right: string): boolean {
+  return left === right || left.includes(right) || right.includes(left);
+}
+
 /**
  * result.modelUsage 是整个 streaming query 跨 turn 的累计值（含子 agent/辅助模型），
  * 直接当"当前 context 占用"会随轮数虚高、compact 后也不回落。当前占用改用主 agent
@@ -936,7 +956,7 @@ function claudeContextWindow(
   modelUsage: Record<string, ModelUsage>,
   selectedModel?: string,
   contextSample?: ClaudeContextSample,
-): { effectiveModel: string; usedTokens: number; capacityTokens: number } | undefined {
+): ClaudeContextWindow | undefined {
   const entries = Object.entries(modelUsage);
   if (entries.length === 0) return undefined;
   const used = (usage: ModelUsage): number =>
@@ -949,7 +969,7 @@ function claudeContextWindow(
   return {
     effectiveModel: contextSample?.model ?? selected[0],
     usedTokens: contextSample
-      ? contextSample.inputTokens + contextSample.cacheReadInputTokens + contextSample.cacheCreationInputTokens
+      ? claudeContextSampleTokens(contextSample)
       : used(selected[1]),
     capacityTokens: selected[1].contextWindow,
   };
@@ -957,7 +977,7 @@ function claudeContextWindow(
 
 function claudeStructuredContextWindow(
   usage: SDKContextUsage,
-): { effectiveModel: string; usedTokens: number; capacityTokens: number } | undefined {
+): ClaudeContextWindow | undefined {
   if (
     !Number.isFinite(usage.total_tokens) ||
     usage.total_tokens < 0 ||
@@ -971,6 +991,33 @@ function claudeStructuredContextWindow(
     usedTokens: usage.total_tokens,
     capacityTokens: usage.raw_max_tokens,
   };
+}
+
+function publishClaudeContextWindow(
+  rt: ClaudeRuntime,
+  emit: HarnessEventSink,
+  context: ClaudeContextWindow,
+  raw: unknown,
+): void {
+  const next: ClaudePublishedContextWindow = {
+    modelSelection: rt.model ?? "default",
+    ...context,
+  };
+  const previous = rt.lastContextWindow;
+  rt.lastContextWindow = next;
+  if (
+    previous?.modelSelection === next.modelSelection &&
+    previous.effectiveModel === next.effectiveModel &&
+    previous.usedTokens === next.usedTokens &&
+    previous.capacityTokens === next.capacityTokens
+  ) {
+    return;
+  }
+  emit({
+    kind: "context_window_update",
+    payload: next,
+    raw,
+  });
 }
 
 export interface ClaudeAdapterOptions {
@@ -1862,12 +1909,31 @@ export class ClaudeAdapter implements HarnessAdapter {
           // compact 后新 sample 自然回落。子 agent 已在上面被 parent_tool_use_id 过滤。
           const usage = event.message?.usage;
           if (usage) {
-            rt.lastContextSample = {
+            const sample: ClaudeContextSample = {
               ...(event.message?.model ? { model: event.message.model } : {}),
               inputTokens: usage.input_tokens ?? 0,
               cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
               cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
             };
+            rt.lastContextSample = sample;
+            const previous = rt.lastContextWindow;
+            // SDK 只在 result.modelUsage 给出 contextWindow。首轮拿到容量后，后续每次
+            // message_start 都能立即刷新占用，不必让长工具链一直显示上一轮的旧百分比。
+            if (
+              previous &&
+              (!sample.model || claudeModelMatches(previous.effectiveModel, sample.model))
+            ) {
+              publishClaudeContextWindow(
+                rt,
+                emit,
+                {
+                  effectiveModel: sample.model ?? previous.effectiveModel,
+                  usedTokens: claudeContextSampleTokens(sample),
+                  capacityTokens: previous.capacityTokens,
+                },
+                msg,
+              );
+            }
           }
         } else if (event.type === "content_block_delta" && event.delta) {
           const messageId = turn.streamMessageId ?? (turn.streamMessageId = newId("m"));
@@ -1891,11 +1957,7 @@ export class ClaudeAdapter implements HarnessAdapter {
         if (msg.context_usage) {
           const context = claudeStructuredContextWindow(msg.context_usage);
           if (context) {
-            emit({
-              kind: "context_window_update",
-              payload: { modelSelection: rt.model ?? "default", ...context },
-              raw: msg,
-            });
+            publishClaudeContextWindow(rt, emit, context, msg);
             turn.structuredContextReported = true;
           }
         }
@@ -1957,11 +2019,7 @@ export class ClaudeAdapter implements HarnessAdapter {
           ? undefined
           : claudeContextWindow(msg.modelUsage, rt.model, rt.lastContextSample);
         if (context) {
-          emit({
-            kind: "context_window_update",
-            payload: { modelSelection: rt.model ?? "default", ...context },
-            raw: msg,
-          });
+          publishClaudeContextWindow(rt, emit, context, msg);
         }
         // SDK 内部重试耗尽后以 success result + api_error_status 收口（v0.3.223 起，
         // 典型为 529 过载）；结构化为错误事件，避免被当普通 end_turn 静默吞掉。

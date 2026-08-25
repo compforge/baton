@@ -91,7 +91,7 @@ Controller 拥有，Claude `toolUseID` 只用于关联原生请求。
 - task started/progress/notification → task lifecycle；
 - task started/updated 的前后台状态与 subagent 深度 → Parallel 任务投影；
 - `/context` 的结构化 context usage → 严格配对的 context window 快照；
-- result modelUsage → usage、context window 与 cost snapshot；
+- message_start usage + result modelUsage → 实时 context window；result usage → usage 与 cost snapshot；
 - result、query error、stream close → Turn 终态。
 
 Agent SDK 的一条 streaming query 可以跨多个 Turn 长期存在，因此终态必须绑定具体
