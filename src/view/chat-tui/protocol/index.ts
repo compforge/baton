@@ -1348,6 +1348,8 @@ export class BatonChatProtocol implements ChatProtocol {
     });
     await this.channel.close();
     this.session = next.session;
+    // /thoughts 是 BatonSession 级临时覆盖；切换后从用户配置重新开始，不能串到新会话。
+    this.showThoughts = this.config.showThoughts;
     this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;

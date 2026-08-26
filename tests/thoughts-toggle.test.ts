@@ -59,4 +59,30 @@ describe("/thoughts runtime toggle", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("resets the runtime override when switching BatonSession", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-thoughts-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+
+      await protocol.command("thoughts", "");
+      expect(protocol.stateStore.getState("timeline").showThoughts).toBe(false);
+
+      await protocol.command("new", "");
+      expect(protocol.stateStore.getState("timeline").showThoughts).toBe(
+        DEFAULT_CONFIG.showThoughts,
+      );
+
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

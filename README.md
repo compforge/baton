@@ -121,7 +121,7 @@ showThoughts: true
 notifications: true
 ```
 
-`notifications` controls desktop notifications (OSC 9) when a turn finishes or an approval/question needs you. It is on by default and stays silent on terminals outside the known-support list (iTerm2, WezTerm, Kitty, Ghostty, Warp; tmux is handled via DCS passthrough). Use `notifications: { enabled: true, bell: true }` to fall back to the terminal bell elsewhere.
+`notifications` controls desktop notifications (OSC 9) when a turn finishes or an approval/question needs you. It is on by default and stays silent on terminals outside the known-support list (iTerm2, WezTerm, Kitty, Ghostty, Warp). Inside tmux 3.3+, DCS passthrough also requires `set -g allow-passthrough on` in `~/.tmux.conf`. Use `notifications: { enabled: true, bell: true }` to fall back to the terminal bell elsewhere.
 
 See [`config.yaml.example`](config.yaml.example) for all options. baton reuses each Harness's existing credentials and runtime configuration instead of copying provider secrets. Codex approvals continue to follow `~/.codex/config.toml` unless `targets.codex.approvalReviewer` delegates them; Claude Code can use `targets.claude.executable`; DeepSeek Harness uses the command configured in `targets.dsh.command`.
 
