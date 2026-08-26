@@ -313,7 +313,24 @@ export class Queue<TBinding extends QueueBinding> {
     const index = this.queue.findLastIndex(
       (input) => input.source.type === "user" && !input.harnessInvocationId,
     );
-    if (index < 0) return undefined;
+    return index < 0 ? undefined : this.recallAt(index);
+  }
+
+  /**
+   * 按 messageId 召回一条仍在排队的用户输入；与 recallLatestUser 同一语义
+   * （recalled 终态 + outcome 收口），只是定位方式从"最新一条"变为显式指定。
+   */
+  recallUserById(messageId: string): QueueSnapshot | undefined {
+    const index = this.queue.findIndex(
+      (input) =>
+        input.messageId === messageId &&
+        input.source.type === "user" &&
+        !input.harnessInvocationId,
+    );
+    return index < 0 ? undefined : this.recallAt(index);
+  }
+
+  private recallAt(index: number): QueueSnapshot | undefined {
     const input = this.queue[index];
     if (input) this.beforeTransition(input, "recalled");
     const [removed] = this.queue.splice(index, 1);

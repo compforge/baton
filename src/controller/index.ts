@@ -724,6 +724,19 @@ export class Controller {
     return turn;
   }
 
+  /** 主 Lane Queue 中仍在排队的输入快照，供队列管理浮层列举。 */
+  listQueued(): QueueSnapshot[] {
+    return [...this.queueForLane(MAIN_LANE_ID).snapshots];
+  }
+
+  /** 按 messageId 撤回一条排队输入；与 recallLatestQueued 同语义。 */
+  recallQueuedById(messageId: string): QueueSnapshot | undefined {
+    const turn = this.queueForLane(MAIN_LANE_ID).recallUserById(messageId);
+    if (!turn) return undefined;
+    this.changed();
+    return turn;
+  }
+
   async listModels(harnessTargetId: string): Promise<ModelOption[]> {
     const target = this.targetFor(harnessTargetId);
     const probed = await this.options.probeTarget?.(target, this.options.session.meta.cwd);

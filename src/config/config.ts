@@ -10,9 +10,9 @@ import { parse, stringify } from "yaml";
 import { DEFAULT_CLAUDE_TARGET_CONFIG } from "../harness/claude/config.ts";
 import { DEFAULT_CODEX_TARGET_CONFIG } from "../harness/codex/config.ts";
 import { DEFAULT_DSH_TARGET_CONFIG } from "../harness/dsh/config.ts";
-import type { BatonConfig, HarnessTargetConfig } from "./types.ts";
+import type { BatonConfig, HarnessTargetConfig, NotificationConfig } from "./types.ts";
 
-export type { BatonConfig, HarnessTargetConfig } from "./types.ts";
+export type { BatonConfig, HarnessTargetConfig, NotificationConfig } from "./types.ts";
 
 export const DEFAULT_CONFIG: BatonConfig = {
   defaultTarget: "codex",
@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: BatonConfig = {
   },
   mentionBudgetChars: 4096,
   showThoughts: true,
+  notifications: { enabled: true, bell: false },
   logLevel: "info",
 };
 
@@ -65,6 +66,19 @@ function loadTargets(value: unknown): Record<string, HarnessTargetConfig> {
     targets[targetId] = Object.freeze({ ...candidate, harness: candidate.harness.trim() });
   }
   return targets;
+}
+
+function loadNotifications(value: unknown): NotificationConfig {
+  if (typeof value === "boolean") return { enabled: value, bell: false };
+  const supplied = record(value);
+  if (!supplied) return DEFAULT_CONFIG.notifications;
+  const enabled = typeof supplied.enabled === "boolean"
+    ? supplied.enabled
+    : DEFAULT_CONFIG.notifications.enabled;
+  const bell = typeof supplied.bell === "boolean"
+    ? supplied.bell
+    : DEFAULT_CONFIG.notifications.bell;
+  return { enabled, bell };
 }
 
 export function targetConfigFor(config: BatonConfig, targetId: string): HarnessTargetConfig {
@@ -119,6 +133,7 @@ export function loadConfig(rootDir?: string): BatonConfig {
     targets,
     mentionBudgetChars,
     showThoughts,
+    notifications: loadNotifications(fromFile.notifications),
     logLevel,
     ...(textgenPrefer ? { textgenPrefer } : {}),
     ...(validTextgenModels ? { textgenModels: validTextgenModels } : {}),

@@ -31,6 +31,7 @@ import {
 import { MAIN_LANE_ID } from "../../../lane.ts";
 import type { SessionHandle } from "../../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
+import { ACTIVITY_TIPS } from "../tips.ts";
 import {
   buildTranscript,
   normalizePlanStatus,
@@ -635,7 +636,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
       interactions,
       placeholder: `Message ${harnessTargetId} (/ commands, @ mentions, Shift+Tab mode, ${
         hasRecallableQueuedInput
-          ? "↑ recall queued"
+          ? "↑ recall · /queue manage"
           : controller.isBusy
             ? "Enter sends or queues, Esc to interrupt"
             : "Ctrl+J newline"
@@ -643,6 +644,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     },
     activity: {
       items: runStatus,
+      tips: ACTIVITY_TIPS,
     },
     parallel: parallel.length > 0
       ? { items: parallel }
