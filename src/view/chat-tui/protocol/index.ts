@@ -10,6 +10,8 @@ import type {
   CommandSpec,
   InteractionResponse,
   PickerSearchView,
+  QueueIntent,
+  QueueIntentResult,
   TranscriptItem,
   TranscriptMessageItem,
 } from "chat-tui";
@@ -31,7 +33,6 @@ import {
 } from "../../../context/mention.ts";
 import { MentionRegistry } from "../../../context/registry.ts";
 import { logError } from "../../../logging.ts";
-import type { QueueSnapshot } from "../../../queue.ts";
 import {
   textOf,
   type ContentBlock,
@@ -97,20 +98,6 @@ export { runStatusLabel } from "./state.ts";
 
 const PICKER_SEARCH_DEBOUNCE_MS = 250;
 
-/** 队列管理浮层的单行预览：折叠空白后截断。 */
-function queueItemPreview(item: QueueSnapshot): string {
-  const text = userVisibleText(composerTextOf(item.blocks)).replaceAll(/\s+/g, " ").trim();
-  const chars = Array.from(text);
-  return chars.length > 72 ? `${chars.slice(0, 71).join("")}…` : text;
-}
-
-/** 与 QueueSurface 的来源 tag 保持同一口径。 */
-function queueItemTag(item: QueueSnapshot): string {
-  return item.source.type === "plugin"
-    ? `${item.source.pluginInstanceId} · request`
-    : `${item.harnessTargetId} · next turn`;
-}
-
 export interface BatonNavigation {
   openPlugins(): void;
 }
@@ -163,7 +150,7 @@ export class BatonChatProtocol implements ChatProtocol {
   /** 运行时 thoughts 开关（/thoughts 切换）；会话级，不写回 config.yaml。 */
   private showThoughts: boolean;
   private readonly notifier: TerminalNotifier | null;
-  private composerInsertListeners = new Set<(text: string) => void>();
+  private queueManagerOpen = false;
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
   private shutdownPromise?: Promise<void>;
@@ -632,7 +619,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
     register({
       name: "queue",
-      description: "Manage queued follow-ups (recall or delete any item)",
+      description: "Manage queued follow-ups by item",
       scope: "baton",
       runPolicy: "always",
       input: { kind: "none", trailingText: "reject" },
@@ -1007,17 +994,7 @@ export class BatonChatProtocol implements ChatProtocol {
     return { text: userVisibleText(composerTextOf(recalled.blocks)) };
   }
 
-  /** 召回任意排队项时，文本经此桥注入 composer（picker 关闭后焦点回归有一帧延迟）。 */
-  subscribeComposerInsert(listener: (text: string) => void): () => void {
-    this.composerInsertListeners.add(listener);
-    return () => this.composerInsertListeners.delete(listener);
-  }
-
-  private emitComposerInsert(text: string): void {
-    for (const listener of this.composerInsertListeners) listener(text);
-  }
-
-  /** /queue：两级 picker —— 先选排队项，再选召回/删除。召回删除都走 Controller typed path。 */
+  /** /queue opens chat-tui's dedicated pane; item actions return through typed intents. */
   private openQueueManager(): void {
     const items = this.controller.listQueued();
     if (items.length === 0) {
@@ -1025,55 +1002,71 @@ export class BatonChatProtocol implements ChatProtocol {
       this.changed();
       return;
     }
-    this.openPicker({
-      title: "Queued follow-ups",
-      options: items.map((item) => ({
-        name: queueItemPreview(item),
-        description: queueItemTag(item),
-        value: item.messageId,
-      })),
-      onSelect: (messageId) => {
-        this.openPicker({
-          title: `Queued: ${queueItemPreview(items.find((item) => item.messageId === messageId) ?? items[0]!)}`,
-          options: [
-            {
-              name: "Recall to composer",
-              description: "Remove from the queue and edit in the composer",
-              value: "recall",
-            },
-            {
-              name: "Delete",
-              description: "Remove from the queue without resending",
-              value: "delete",
-            },
-          ],
-          onSelect: (action) => this.manageQueuedItem(messageId, action),
-        });
-      },
-    });
+    this.queueManagerOpen = true;
+    this.changed();
   }
 
-  private manageQueuedItem(messageId: string, action: string): void {
-    const recalled = this.controller.recallQueuedById(messageId);
-    if (!recalled) {
+  async resolveQueue(intent: QueueIntent): Promise<QueueIntentResult> {
+    if (intent.kind === "close") {
+      this.queueManagerOpen = false;
+      this.changed();
+      return { kind: "accepted" };
+    }
+    if (intent.kind === "move") {
+      const moved = this.controller.moveQueuedById(intent.itemId, intent.direction);
+      return moved
+        ? { kind: "accepted" }
+        : { kind: "rejected", message: "That queued message can no longer be moved" };
+    }
+    if (intent.kind === "dispatch-now") {
+      const outcome = await this.controller.dispatchQueuedNow(intent.itemId);
+      if (!outcome) {
+        return {
+          kind: "rejected",
+          message: "That queued message can no longer be dispatched",
+        };
+      }
+      this.queueManagerOpen = false;
       this.toast = {
-        text: "That queued message is no longer recallable (only your own queued messages are)",
-        tone: "error",
+        text: outcome.effective === "steer"
+          ? "Dispatched queued message to the current turn"
+          : "Moved queued message to the front",
+        tone: "info",
       };
       this.changed();
-      return;
+      return { kind: "accepted" };
+    }
+    const withdrawn = intent.kind === "recall"
+      ? this.controller.recallQueuedById(intent.itemId)
+      : this.controller.discardQueuedById(intent.itemId);
+    if (!withdrawn) {
+      return {
+        kind: "rejected",
+        message: "That queued message is no longer manageable",
+      };
     }
     this.resetHistoryNav();
-    if (action === "delete") {
-      this.toast = { text: `Deleted queued message for ${recalled.harnessTargetId}`, tone: "info" };
+    if (intent.kind === "discard") {
+      this.toast = {
+        text: `Deleted queued message for ${withdrawn.harnessTargetId}`,
+        tone: "info",
+      };
+      if (this.controller.listQueued().length === 0) this.queueManagerOpen = false;
       this.changed();
-      return;
+      return { kind: "accepted" };
     }
-    this.harnessTargetId = recalled.harnessTargetId;
-    this.composerImagePaths = composerImagePathsOf(recalled.blocks);
-    this.toast = { text: `Recalled queued message for ${recalled.harnessTargetId}; edit and resend`, tone: "info" };
+    this.queueManagerOpen = false;
+    this.harnessTargetId = withdrawn.harnessTargetId;
+    this.composerImagePaths = composerImagePathsOf(withdrawn.blocks);
+    this.toast = {
+      text: `Recalled queued message for ${withdrawn.harnessTargetId}; edit and resend`,
+      tone: "info",
+    };
     this.changed();
-    this.emitComposerInsert(userVisibleText(composerTextOf(recalled.blocks)));
+    return {
+      kind: "recalled",
+      text: userVisibleText(composerTextOf(withdrawn.blocks)),
+    };
   }
 
   /**
@@ -1657,6 +1650,7 @@ export class BatonChatProtocol implements ChatProtocol {
       toast: this.toast,
       commandOutput: this.commandOutput,
       picker: this.picker,
+      queueManagerOpen: this.queueManagerOpen,
       board: this.boardView(),
     });
   }

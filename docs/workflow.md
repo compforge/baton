@@ -100,6 +100,12 @@ queued ── ↑ recall latest user Input ────────────�
 HarnessInput。`queued` 输入仍可 recall。出队成为 `admitted` 后，用户消息已经是 BatonSession 的正典事实，
 不能再伪装成“从未提交”；此后只能 cancel/interrupt。
 
+Queue 管理只作用于主 Lane 中仍为 `queued` 的普通用户 Input。按条召回和删除都先迁移为
+`recalled`；前者把原文交还 composer，后者只丢弃。相邻重排先记录完整的
+`_baton_queue_reordered` 顺序事实再修改内存索引，恢复时以最近一次顺序为准；用户 Input 不得跨越
+Plugin/HarnessInvocation Input。立即派发先把选中项提升到可管理前缀的队头，再复用普通提交的
+same-turn claim/admission；Adapter 拒绝时仍以同一 `messageId` 留在队头等待下一 Turn。
+
 `steering` 只表达调度阶段（Adapter 已接受、等待原生投递边界）；投递结果是与 status 正交的
 `deliveryOutcome`，由一等事件 `input_delivery_update` 携带：回执可以迟到于 Turn 收口
 （原生队列跨 Turn），迟到事实只补 outcome，不回迁 status。老 ledger 的 `accepted_steer` 状态与

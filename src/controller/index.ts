@@ -267,12 +267,15 @@ export class Controller {
       Extract<AnyEventEnvelope, { kind: "harness_input.updated" }>
     >();
     const enqueueSeq = new Map<string, number>();
+    const queueOrder = new Map<string, string[]>();
     for (const event of this.options.session.ledger.read()) {
       if (event.kind === "harness_input.updated") {
         if (event.payload.status === "queued" && !enqueueSeq.has(event.payload.messageId)) {
           enqueueSeq.set(event.payload.messageId, event.seq);
         }
         latest.set(event.payload.messageId, event);
+      } else if (event.kind === "_baton_queue_reordered") {
+        queueOrder.set(event.payload.laneId, [...event.payload.orderedMessageIds]);
       }
     }
     // steering 中的 Input 已被 Harness 接受但投递结果未知（crash 前无回执）；
@@ -282,11 +285,23 @@ export class Controller {
         const status = normalizeHarnessInputStatus(event.payload.status);
         return status === "queued" || status === "steering";
       })
-      .sort(
-        (left, right) =>
+      .sort((left, right) => {
+        if (left.payload.laneId !== right.payload.laneId) {
+          return left.payload.laneId.localeCompare(right.payload.laneId);
+        }
+        const order = queueOrder.get(left.payload.laneId);
+        const leftRank = order?.indexOf(left.payload.messageId) ?? -1;
+        const rightRank = order?.indexOf(right.payload.messageId) ?? -1;
+        if (leftRank >= 0 || rightRank >= 0) {
+          if (leftRank < 0) return 1;
+          if (rightRank < 0) return -1;
+          return leftRank - rightRank;
+        }
+        return (
           (enqueueSeq.get(left.payload.messageId) ?? left.seq) -
-          (enqueueSeq.get(right.payload.messageId) ?? right.seq),
-      );
+          (enqueueSeq.get(right.payload.messageId) ?? right.seq)
+        );
+      });
     for (const event of queued) {
       const input = event.payload;
       // Plugin executions have their own recovery/failure contract; only the
@@ -378,6 +393,14 @@ export class Controller {
         laneId,
         (input, status, update) =>
           this.recordHarnessInputTransition(input, status, update),
+        (orderedMessageIds) => {
+          this.options.session.appendEvent({
+            kind: "_baton_queue_reordered",
+            source: { type: "baton" },
+            laneId,
+            payload: { laneId, orderedMessageIds: [...orderedMessageIds] },
+          });
+        },
       );
       this.queues.set(laneId, queue);
     }
@@ -610,109 +633,121 @@ export class Controller {
     const input = submission.input;
     this.changed();
     options?.onEnqueued?.();
-    if (
-      !options?.sourceProposedPlanId &&
-      active?.input &&
-      active.input.target.id === harnessTargetId &&
-      active.binding.ref &&
-      queue.claimFirstForSteer(input)
-    ) {
-      this.changed();
-      let receipt: SendTurnReceipt;
-      const attemptId = newId("att");
-      try {
-        receipt = await this.harnessHooks.send(
-          active.binding,
-          active.binding.ref,
-          {
-            turnId: active.turnId,
-            messageId: input.messageId,
-            blocks: input.blocks,
-          },
-          attemptId,
-          "steer",
-        );
-      } catch (error) {
-        receipt = {
-          accepted: false,
-          effective: "rejected",
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-      if (receipt.effective === "steer") {
-        if (
-          active.status === "finalized" &&
-          active.stopReason === "cancelled" &&
-          active.binding.adapter.steering?.cancelOwnership === "unreachable" &&
-          this.options.session.loadState().harnessInputs.get(input.messageId)
-            ?.deliveryOutcome !== "applied"
-        ) {
-          // The admission receipt lost the race with Esc. This Adapter cannot
-          // carry native pending input across cancel, so the still-unapplied
-          // claimed Input returns to Baton's queue instead of being attached
-          // to an already retired Turn. Adapter 已接受并落过 steer 正文，
-          // 重放按回收 steer 语义落成可见 follow-up。
-          queue.requeueClaimed(input, { fromAcceptedSteer: true });
-          this.changed();
-          void this.drainMain();
-          return {
-            effective: "new_turn",
-            queued: true,
-            outcome: submission.outcome,
-          };
-        }
-        queue.acceptClaimedSteer(input, active.turnId);
-        if (active.binding.adapter.steering?.deliveryTracking !== "explicit") {
-          // ack-only：sendTurn 接受即应用，没有后续回执，Core 直接合成投递事实。
-          this.appendEvent(
-            active.binding,
-            {
-              kind: "input_delivery_update",
-              turnId: active.turnId,
-              payload: { messageId: input.messageId, state: "applied" },
-            },
-            { type: "baton" },
-          );
-        }
-        if (active.status === "active") {
-          // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
-          active.steers.push(input);
-        } else {
-          // Adapter receipt 可能晚于 Esc/终态。输入已经被 Harness 接受，不能重新入队；
-          // 直接继承它所绑定 Turn 的终态，避免把 Input 挂回已退休的台账记录。
-          const terminal = active.stopReason === "cancelled" ? "interrupted" : "finalized";
-          this.recordHarnessInputTransition(input, terminal);
-          input.status = terminal;
-          input.resolve?.("completed");
-        }
-        this.changed();
-        return { effective: "steer" };
-      }
-      if (receipt.effective === "new_turn") {
-        const error = new Error(
-          `adapter ${active.binding.adapter.harness} opened a new turn while Baton turn ${active.turnId} is active`,
-        );
-        queue.abandonClaimed(input);
-        this.changed();
-        throw error;
-      }
-      queue.requeueClaimed(input);
-      this.changed();
-      void this.drainMain();
-      return {
-        effective: "new_turn",
-        queued: true,
-        outcome: submission.outcome,
-        ...(receipt.effective === "rejected" && receipt.reason
-          ? { reason: receipt.reason }
-          : {}),
-      };
-    }
+    const steer = await this.trySteerQueued(queue, active, submission);
+    if (steer) return steer;
     void this.drainMain();
     return {
       effective: "new_turn",
       queued,
       outcome: submission.outcome,
+    };
+  }
+
+  /** Same-turn admission shared by fresh submissions and explicit dispatch-now. */
+  private async trySteerQueued(
+    queue: Queue<HarnessBinding>,
+    active: QueueRun<HarnessBinding> | undefined,
+    submission: QueueSubmission,
+  ): Promise<SendTurnOutcome | undefined> {
+    const input = submission.input;
+    if (
+      input.sourceProposedPlanId ||
+      !active?.input ||
+      active.input.target.id !== input.target.id ||
+      !active.binding.ref ||
+      !queue.claimFirstForSteer(input)
+    ) {
+      return undefined;
+    }
+    this.changed();
+    let receipt: SendTurnReceipt;
+    const attemptId = newId("att");
+    try {
+      receipt = await this.harnessHooks.send(
+        active.binding,
+        active.binding.ref,
+        {
+          turnId: active.turnId,
+          messageId: input.messageId,
+          blocks: input.blocks,
+        },
+        attemptId,
+        "steer",
+      );
+    } catch (error) {
+      receipt = {
+        accepted: false,
+        effective: "rejected",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (receipt.effective === "steer") {
+      if (
+        active.status === "finalized" &&
+        active.stopReason === "cancelled" &&
+        active.binding.adapter.steering?.cancelOwnership === "unreachable" &&
+        this.options.session.loadState().harnessInputs.get(input.messageId)
+          ?.deliveryOutcome !== "applied"
+      ) {
+        // The admission receipt lost the race with Esc. This Adapter cannot
+        // carry native pending input across cancel, so the still-unapplied
+        // claimed Input returns to Baton's queue instead of being attached
+        // to an already retired Turn. Adapter 已接受并落过 steer 正文，
+        // 重放按回收 steer 语义落成可见 follow-up。
+        queue.requeueClaimed(input, { fromAcceptedSteer: true });
+        this.changed();
+        void this.drainMain();
+        return {
+          effective: "new_turn",
+          queued: true,
+          outcome: submission.outcome,
+        };
+      }
+      queue.acceptClaimedSteer(input, active.turnId);
+      if (active.binding.adapter.steering?.deliveryTracking !== "explicit") {
+        // ack-only：sendTurn 接受即应用，没有后续回执，Core 直接合成投递事实。
+        this.appendEvent(
+          active.binding,
+          {
+            kind: "input_delivery_update",
+            turnId: active.turnId,
+            payload: { messageId: input.messageId, state: "applied" },
+          },
+          { type: "baton" },
+        );
+      }
+      if (active.status === "active") {
+        // 已接受的 same-turn send 挂到当前 turn，cancel 时统一迁移 interrupted。
+        active.steers.push(input);
+      } else {
+        // Adapter receipt 可能晚于 Esc/终态。输入已经被 Harness 接受，不能重新入队；
+        // 直接继承它所绑定 Turn 的终态，避免把 Input 挂回已退休的台账记录。
+        const terminal = active.stopReason === "cancelled" ? "interrupted" : "finalized";
+        this.recordHarnessInputTransition(input, terminal);
+        input.status = terminal;
+        input.resolve?.("completed");
+      }
+      this.changed();
+      return { effective: "steer" };
+    }
+    if (receipt.effective === "new_turn") {
+      const error = new Error(
+        `adapter ${active.binding.adapter.harness} opened a new turn while Baton turn ${active.turnId} is active`,
+      );
+      queue.abandonClaimed(input);
+      this.changed();
+      throw error;
+    }
+    queue.requeueClaimed(input);
+    this.changed();
+    void this.drainMain();
+    return {
+      effective: "new_turn",
+      queued: true,
+      outcome: submission.outcome,
+      ...(receipt.effective === "rejected" && receipt.reason
+        ? { reason: receipt.reason }
+        : {}),
     };
   }
 
@@ -735,6 +770,52 @@ export class Controller {
     if (!turn) return undefined;
     this.changed();
     return turn;
+  }
+
+  /** Delete is a withdraw without returning content to the composer. */
+  discardQueuedById(messageId: string): QueueSnapshot | undefined {
+    return this.recallQueuedById(messageId);
+  }
+
+  /** Reorder one user-owned item without crossing Plugin-owned queued work. */
+  moveQueuedById(
+    messageId: string,
+    direction: "up" | "down",
+  ): QueueSnapshot[] | undefined {
+    const snapshots = this.queueForLane(MAIN_LANE_ID).moveUserById(
+      messageId,
+      direction,
+    );
+    if (!snapshots) return undefined;
+    this.changed();
+    return snapshots;
+  }
+
+  /**
+   * Promote a selected user input, then reuse the normal same-turn admission
+   * path. If steer is unavailable, the same Input remains queue head.
+   */
+  async dispatchQueuedNow(
+    messageId: string,
+  ): Promise<SendTurnOutcome | undefined> {
+    this.assertOpen();
+    const queue = this.queueForLane(MAIN_LANE_ID);
+    const promoted = queue.promoteUserById(messageId);
+    if (!promoted || queue.head?.messageId !== messageId) return undefined;
+    this.changed();
+    const input = queue.head;
+    const steer = await this.trySteerQueued(queue, queue.activeRun, {
+      input,
+      outcome: input.outcome,
+    });
+    if (steer) return steer;
+    const queued = Boolean(queue.activeRun || this.drainingMain);
+    void this.drainMain();
+    return {
+      effective: "new_turn",
+      queued,
+      outcome: input.outcome,
+    };
   }
 
   async listModels(harnessTargetId: string): Promise<ModelOption[]> {

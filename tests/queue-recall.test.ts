@@ -19,6 +19,7 @@ import type {
   SendTurnReceipt,
 } from "../src/harness/adapter.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
+import type { QueueSnapshot } from "../src/queue.ts";
 import { BatonChatProtocol } from "../src/view/chat-tui/protocol/index.ts";
 import { resolveTestTarget } from "./harness-target.ts";
 
@@ -31,7 +32,8 @@ class HoldingAdapter implements HarnessAdapter {
   };
   sink?: HarnessEventSink;
   prompts: string[] = [];
-  private active?: PromptInput;
+  protected active?: PromptInput;
+  acceptSteer = false;
 
   constructor(readonly harness: string) {}
 
@@ -42,6 +44,10 @@ class HoldingAdapter implements HarnessAdapter {
 
   async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
     if (this.active) {
+      if (this.acceptSteer) {
+        this.prompts.push(textOf(input.blocks));
+        return { accepted: true, effective: "steer" };
+      }
       return { accepted: false, effective: "rejected" };
     }
     this.active = input;
@@ -172,6 +178,79 @@ describe("queue recall by id", () => {
     expect(queue.recallUserById(userItem.messageId)?.messageId).toBe(userItem.messageId);
     expect(queue.length).toBe(1);
   });
+
+  test("reorders adjacent user inputs and restores the durable order", async () => {
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("active"));
+    await until(() => adapter.prompts.length === 1);
+    void controller.submit("codex", text("second"));
+    void controller.submit("codex", text("third"));
+    await until(() => controller.listQueued().length === 2);
+
+    const thirdId = controller.listQueued()[1]!.messageId;
+    expect(controller.moveQueuedById(thirdId, "up")?.map((item) => textOf(item.blocks))).toEqual([
+      "third",
+      "second",
+    ]);
+    const reorder = session.ledger.read().findLast(
+      (event) => event.kind === "_baton_queue_reordered",
+    );
+    expect(reorder?.kind).toBe("_baton_queue_reordered");
+    if (reorder?.kind === "_baton_queue_reordered") {
+      expect(reorder.payload.orderedMessageIds[0]).toBe(thirdId);
+    }
+
+    await controller.close();
+    expect(await first).toBe("completed");
+    const restored = controllerWith(new HoldingAdapter("codex"));
+    expect(restored.listQueued().map((item) => textOf(item.blocks))).toEqual([
+      "third",
+      "second",
+    ]);
+    await restored.close();
+  });
+
+  test("dispatch-now promotes a selected item and reuses same-turn steer admission", async () => {
+    const adapter = new HoldingAdapter("codex");
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("active"));
+    await until(() => adapter.prompts.length === 1);
+    const second = controller.submit("codex", text("second"));
+    const third = controller.submit("codex", text("third"));
+    await until(() => controller.listQueued().length === 2);
+
+    adapter.acceptSteer = true;
+    const thirdId = controller.listQueued()[1]!.messageId;
+    expect(await controller.dispatchQueuedNow(thirdId)).toEqual({ effective: "steer" });
+    expect(controller.listQueued().map((item) => textOf(item.blocks))).toEqual(["second"]);
+    expect(controller.harnessInputs.find((input) => input.messageId === thirdId)?.status).toBe(
+      "steering",
+    );
+
+    adapter.finish("end_turn");
+    expect(await first).toBe("completed");
+    expect(await third).toBe("completed");
+    await until(() => adapter.prompts.at(-1) === "second");
+    adapter.finish("end_turn");
+    expect(await second).toBe("completed");
+  });
+
+  test("does not move user input across Plugin-owned queued work", async () => {
+    const { Queue } = await import("../src/queue.ts");
+    let seq = 0;
+    const queue = new Queue("main", () => ++seq, () => undefined);
+    const target = resolveTestTarget("codex")!;
+    queue.enqueue(target, text("plugin"), {
+      source: { type: "plugin", pluginInstanceId: "reqloop_default" },
+      harnessInvocationId: "hinv_1",
+    });
+    const user = queue.enqueue(target, text("user")).input;
+
+    expect(queue.moveUserById(user.messageId, "up")).toBeUndefined();
+    expect(queue.promoteUserById(user.messageId)).toBeUndefined();
+    expect(queue.snapshots.map((item) => textOf(item.blocks))).toEqual(["plugin", "user"]);
+  });
 });
 
 describe("/queue manager overlay", () => {
@@ -192,13 +271,16 @@ describe("/queue manager overlay", () => {
     const recalled: string[] = [];
     const internals = protocol as unknown as {
       controller: {
-        listQueued(): unknown[];
-        recallQueuedById(messageId: string): unknown;
+        listQueued(): QueueSnapshot[];
+        recallQueuedById(messageId: string): QueueSnapshot | undefined;
+        discardQueuedById(messageId: string): QueueSnapshot | undefined;
+        moveQueuedById(messageId: string, direction: "up" | "down"): QueueSnapshot[] | undefined;
+        dispatchQueuedNow(messageId: string): Promise<{ effective: "steer" } | undefined>;
       };
     };
-    const snapshots = queued.map((item) => ({
+    let snapshots: QueueSnapshot[] = queued.map((item, index) => ({
       messageId: item.messageId,
-      enqueueSeq: 1,
+      enqueueSeq: index + 1,
       turnId: `t_${item.messageId}`,
       harnessTargetId: "codex",
       laneId: "main",
@@ -211,11 +293,28 @@ describe("/queue manager overlay", () => {
     }));
     internals.controller.listQueued = () => snapshots;
     internals.controller.recallQueuedById = (messageId: string) => {
+      const index = snapshots.findIndex((item) => item.messageId === messageId);
+      const snapshot = snapshots[index];
+      if (!snapshot || snapshot.source.type !== "user" || snapshot.harnessInvocationId) {
+        return undefined;
+      }
       recalled.push(messageId);
-      const snapshot = snapshots.find((item) => item.messageId === messageId);
-      return snapshot && snapshot.source.type === "user" && !("harnessInvocationId" in snapshot)
-        ? snapshot
-        : undefined;
+      snapshots.splice(index, 1);
+      return snapshot;
+    };
+    internals.controller.discardQueuedById = internals.controller.recallQueuedById;
+    internals.controller.moveQueuedById = (messageId, direction) => {
+      const index = snapshots.findIndex((item) => item.messageId === messageId);
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || target < 0 || target >= snapshots.length) return undefined;
+      [snapshots[index], snapshots[target]] = [snapshots[target]!, snapshots[index]!];
+      return snapshots;
+    };
+    internals.controller.dispatchQueuedNow = async (messageId) => {
+      const index = snapshots.findIndex((item) => item.messageId === messageId);
+      if (index < 0) return undefined;
+      snapshots.splice(index, 1);
+      return { effective: "steer" };
     };
     return { protocol, recalled };
   }
@@ -228,38 +327,31 @@ describe("/queue manager overlay", () => {
         { messageId: "m_a", text: "first follow-up" },
         { messageId: "m_b", text: "second follow-up", plugin: "reqloop_default" },
       ]);
-      const inserted: string[] = [];
-      protocol.subscribeComposerInsert((text) => inserted.push(text));
-
       await protocol.command("queue", "");
-      const queuePicker = protocol.stateStore.getState("composer").picker!;
-      expect(queuePicker.title).toBe("Queued follow-ups");
-      expect(queuePicker.options).toEqual([
+      const queue = protocol.stateStore.getState("queue")!;
+      expect(queue.manager?.title).toBe("Queued follow-ups");
+      expect(queue.items).toEqual([
         {
-          name: "first follow-up",
-          description: "codex · next turn",
-          value: "m_a",
+          id: "m_a",
+          text: "first follow-up",
+          tag: "codex · next turn",
+          actions: ["recall", "discard", "dispatch-now"],
         },
         {
-          name: "second follow-up",
-          description: "reqloop_default · request",
-          value: "m_b",
+          id: "m_b",
+          text: "second follow-up",
+          tag: "reqloop_default · request",
+          actions: [],
         },
       ]);
 
-      protocol.resolvePicker(queuePicker.id, "m_a");
-      await Bun.sleep(0);
-      const actionPicker = protocol.stateStore.getState("composer").picker!;
-      expect(actionPicker.options.map((option) => option.value)).toEqual(["recall", "delete"]);
-
-      protocol.resolvePicker(actionPicker.id, "recall");
-      await Bun.sleep(0);
+      const result = await protocol.resolveQueue({ kind: "recall", itemId: "m_a" });
       expect(recalled).toEqual(["m_a"]);
-      expect(inserted).toEqual(["first follow-up"]);
+      expect(result).toEqual({ kind: "recalled", text: "first follow-up" });
       expect(protocol.stateStore.getState("footer").toast).toMatchObject({
         tone: "info",
       });
-      expect(protocol.stateStore.getState("composer").picker).toBeNull();
+      expect(protocol.stateStore.getState("queue")?.manager).toBeNull();
 
       await protocol.exit();
     } finally {
@@ -274,19 +366,10 @@ describe("/queue manager overlay", () => {
       const { protocol, recalled } = protocolWithQueue(store, opened, [
         { messageId: "m_a", text: "first follow-up" },
       ]);
-      const inserted: string[] = [];
-      protocol.subscribeComposerInsert((text) => inserted.push(text));
-
       await protocol.command("queue", "");
-      const queuePicker = protocol.stateStore.getState("composer").picker!;
-      protocol.resolvePicker(queuePicker.id, "m_a");
-      await Bun.sleep(0);
-      const actionPicker = protocol.stateStore.getState("composer").picker!;
-      protocol.resolvePicker(actionPicker.id, "delete");
-      await Bun.sleep(0);
+      await protocol.resolveQueue({ kind: "discard", itemId: "m_a" });
 
       expect(recalled).toEqual(["m_a"]);
-      expect(inserted).toEqual([]);
       expect(protocol.stateStore.getState("footer").toast?.text).toContain("Deleted queued message");
 
       await protocol.exit();
@@ -301,7 +384,7 @@ describe("/queue manager overlay", () => {
     try {
       const empty = protocolWithQueue(store, opened, []);
       await empty.protocol.command("queue", "");
-      expect(empty.protocol.stateStore.getState("composer").picker).toBeNull();
+      expect(empty.protocol.stateStore.getState("queue")?.manager).toBeNull();
       expect(empty.protocol.stateStore.getState("footer").toast?.text).toBe("Queue is empty");
       await empty.protocol.exit();
 
@@ -309,13 +392,8 @@ describe("/queue manager overlay", () => {
         { messageId: "m_b", text: "plugin request", plugin: "reqloop_default" },
       ]);
       await protocol.command("queue", "");
-      const queuePicker = protocol.stateStore.getState("composer").picker!;
-      protocol.resolvePicker(queuePicker.id, "m_b");
-      await Bun.sleep(0);
-      const actionPicker = protocol.stateStore.getState("composer").picker!;
-      protocol.resolvePicker(actionPicker.id, "recall");
-      await Bun.sleep(0);
-      expect(protocol.stateStore.getState("footer").toast?.tone).toBe("error");
+      const result = await protocol.resolveQueue({ kind: "recall", itemId: "m_b" });
+      expect(result.kind).toBe("rejected");
       await protocol.exit();
     } finally {
       rmSync(store.rootDir, { recursive: true, force: true });

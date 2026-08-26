@@ -22,7 +22,29 @@ const NON_PRESENTATION_EVENT_KINDS: ReadonlySet<EventKind> = new Set([
   "input.received",
   "input.settled",
   "harness_input.updated",
+  "_baton_queue_reordered",
 ]);
+
+function queueStateEqual(
+  left: ChatState["queue"],
+  right: ChatState["queue"],
+): boolean {
+  if (left?.manager?.title !== right?.manager?.title) return false;
+  const leftItems = left?.items ?? [];
+  const rightItems = right?.items ?? [];
+  if (leftItems.length !== rightItems.length) return false;
+  return leftItems.every((item, index) => {
+    const candidate = rightItems[index];
+    return (
+      candidate !== undefined &&
+      item.id === candidate.id &&
+      item.text === candidate.text &&
+      item.tag === candidate.tag &&
+      (item.actions?.join("\u0000") ?? "") ===
+        (candidate.actions?.join("\u0000") ?? "")
+    );
+  });
+}
 
 function publishChatState(
   store: WritableChatStore,
@@ -30,6 +52,7 @@ function publishChatState(
 ): void {
   const timeline = store.getState("timeline");
   const composer = store.getState("composer");
+  const queue = store.getState("queue");
   const activity = store.getState("activity");
   const parallel = store.getState("parallel");
   const footer = store.getState("footer");
@@ -41,12 +64,14 @@ function publishChatState(
       ? {}
       : { timeline: next.timeline }),
     ...(composer.busy === next.composer.busy &&
-    composer.queued === next.composer.queued &&
     composer.picker === next.composer.picker &&
     composer.interactions === next.composer.interactions &&
     composer.placeholder === next.composer.placeholder
       ? {}
       : { composer: next.composer }),
+    ...(queueStateEqual(queue, next.queue)
+      ? {}
+      : { queue: next.queue }),
     ...(activity.items === next.activity.items
       ? {}
       : { activity: next.activity }),
@@ -66,12 +91,15 @@ function viewOutputKind(
 ): ViewOutput["kind"] | undefined {
   const timeline = store.getState("timeline");
   const composer = store.getState("composer");
+  const queue = store.getState("queue");
   const activity = store.getState("activity");
   const parallel = store.getState("parallel");
   const footer = store.getState("footer");
   if (composer.interactions !== next.composer.interactions) return "interaction";
   if (composer.picker !== next.composer.picker) return "picker";
-  if (composer.queued !== next.composer.queued) return "queue";
+  if (
+    !queueStateEqual(queue, next.queue)
+  ) return "queue";
   if (store.getState("sidecar") !== next.sidecar) return "board";
   if (footer.toast !== next.footer.toast) return "toast";
   if (timeline.items !== next.timeline.items || timeline.plan !== next.timeline.plan) {

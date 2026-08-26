@@ -6,6 +6,7 @@ import type {
   InteractionView,
   ParallelItem,
   PickerSearchView,
+  QueueItemAction,
   RunStatusItem,
   TranscriptItem,
 } from "chat-tui";
@@ -62,6 +63,7 @@ export interface ChatStateProjectionInput {
   toast: ToastMessage | null;
   commandOutput: TranscriptItem | null;
   picker: PickerViewProjection | null;
+  queueManagerOpen?: boolean;
   board: BoardViewProjection;
 }
 
@@ -460,14 +462,20 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
-  // Composer Queue 单源化：queued 与 pending steer 都来自 harness_input 投影
-  // （投递事实的真理来源），不再拼 message 补丁与内存 Queue 两个口径。
-  const mainQueuedInputs = [...state.harnessInputs.values()].filter(
-    (input) => input.laneId === MAIN_LANE_ID && input.status === "queued",
-  );
+  // Queue order belongs to Controller's execution index; item lifecycle and
+  // pending native steers remain projected from durable HarnessInput facts.
+  const mainQueuedInputs = controller.listQueued();
   const hasRecallableQueuedInput = mainQueuedInputs.some(
     (turn) => turn.source.type === "user" && !turn.harnessInvocationId,
   );
+  const manageable = (index: number): boolean => {
+    const item = mainQueuedInputs[index];
+    return Boolean(
+      item &&
+        item.source.type === "user" &&
+        !item.harnessInvocationId,
+    );
+  };
   const interactions: InteractionView[] = [...state.interactions.values()]
     .filter((item) => !item.result)
     .map((item) => interactionView(item.interaction));
@@ -600,14 +608,26 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
         state.activeTurns.has(input.turnId) ? "current turn" : "native queue"
       }`,
     })),
-    ...mainQueuedInputs.map((turn) => ({
+    ...mainQueuedInputs.map((turn, index) => {
+      const actions: QueueItemAction[] = [];
+      if (manageable(index)) {
+        actions.push("recall", "discard");
+        if (manageable(index - 1)) actions.push("move-up");
+        if (manageable(index + 1)) actions.push("move-down");
+        if (mainQueuedInputs.slice(0, index).every((_item, earlier) => manageable(earlier))) {
+          actions.push("dispatch-now");
+        }
+      }
+      return {
       id: turn.messageId,
       text: userVisibleText(composerTextOf(turn.blocks)),
       tag:
         turn.source.type === "plugin"
           ? `${turn.source.pluginInstanceId} · request`
           : `${turn.harnessTargetId} · next turn`,
-    })),
+      actions,
+    };
+    }),
   ];
 
   return {
@@ -624,7 +644,6 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     },
     composer: {
       busy,
-      queued: queuedItems,
       picker: input.picker
         ? {
             id: input.picker.id,
@@ -641,6 +660,12 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
             ? "Enter sends or queues, Esc to interrupt"
             : "Ctrl+J newline"
       })`,
+    },
+    queue: {
+      items: queuedItems,
+      manager: input.queueManagerOpen
+        ? { title: "Queued follow-ups" }
+        : null,
     },
     activity: {
       items: runStatus,

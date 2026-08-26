@@ -457,10 +457,17 @@ export interface ViewInputSettled {
   detail?: string;
 }
 
+/** Full durable order for one Lane's still-queued HarnessInputs. */
+export interface QueueReordered {
+  laneId: string;
+  orderedMessageIds: string[];
+}
+
 export type EventPayloadMap = {
   "input.received": ViewInputReceived;
   "input.settled": ViewInputSettled;
   "harness_input.updated": HarnessInputUpdate;
+  _baton_queue_reordered: QueueReordered;
   input_delivery_update: InputDeliveryUpdate;
   state_update: StateUpdate;
   user_message: UserMessageUpsert;
