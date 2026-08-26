@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Controller } from "../src/controller/index.ts";
+import type { QueueSnapshot } from "../src/queue.ts";
 import { projectChatState } from "../src/view/chat-tui/protocol/state.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
@@ -19,8 +20,20 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 function project(controller: Controller) {
+  const state = session.loadState();
+  const candidate = controller as unknown as {
+    listQueued?: () => QueueSnapshot[];
+  };
+  candidate.listQueued ??= () =>
+    [...state.harnessInputs.values()]
+      .filter((input) => input.laneId === MAIN_LANE_ID && input.status === "queued")
+      .map((input, index) => ({
+        ...input,
+        enqueueSeq: index + 1,
+        harness: input.harness ?? input.harnessTargetId,
+      }));
   return projectChatState({
-    state: session.loadState(),
+    state,
     controller,
     session,
     config: { showThoughts: true },
@@ -94,7 +107,7 @@ describe("steer queue projection", () => {
       harnessQueueLength: 2,
     } as unknown as Controller;
 
-    expect(project(controller).composer.queued?.map((item) => item.id)).toEqual(["m_main"]);
+    expect(project(controller).queue?.items.map((item) => item.id)).toEqual(["m_main"]);
   });
 
   test("keeps a pending native steer in Queue until the correlated apply receipt", () => {
@@ -143,7 +156,7 @@ describe("steer queue projection", () => {
     } as unknown as Controller;
 
     const pending = project(controller);
-    expect(pending.composer.queued).toEqual([{
+    expect(pending.queue?.items).toEqual([{
       id: "m_steer",
       text: "prefer approach B",
       tag: "codex · current turn",
@@ -166,7 +179,7 @@ describe("steer queue projection", () => {
     });
 
     const nativeQueued = project(controller);
-    expect(nativeQueued.composer.queued).toEqual([{
+    expect(nativeQueued.queue?.items).toEqual([{
       id: "m_steer",
       text: "prefer approach B",
       tag: "codex · native queue",
@@ -188,7 +201,7 @@ describe("steer queue projection", () => {
     });
 
     const applied = project(controller);
-    expect(applied.composer.queued).toEqual([]);
+    expect(applied.queue?.items).toEqual([]);
     expect(
       applied.timeline.items.some(
         (item) => item.type === "message" && item.role === "user" && item.text === "prefer approach B",
@@ -233,7 +246,7 @@ describe("steer queue projection", () => {
     } as unknown as Controller;
 
     const projected = project(controller);
-    expect(projected.composer.queued).toEqual([]);
+    expect(projected.queue?.items).toEqual([]);
     expect(projected.footer.text).toContain("queue:0");
   });
 
@@ -282,7 +295,7 @@ describe("steer queue projection", () => {
     } as unknown as Controller;
 
     const failed = project(controller);
-    expect(failed.composer.queued).toEqual([]);
+    expect(failed.queue?.items).toEqual([]);
     expect(
       failed.timeline.items.some(
         (item) => item.type === "message" && item.role === "user" && item.text === "do not lose this",
@@ -349,7 +362,7 @@ describe("steer queue projection", () => {
     } as unknown as Controller;
 
     const pending = project(controller);
-    expect(pending.composer.queued).toEqual([{
+    expect(pending.queue?.items).toEqual([{
       id: "m_legacy",
       text: "legacy steer",
       tag: "codex · current turn",
@@ -370,7 +383,7 @@ describe("steer queue projection", () => {
       },
     });
     const applied = project(controller);
-    expect(applied.composer.queued).toEqual([]);
+    expect(applied.queue?.items).toEqual([]);
     expect(
       applied.timeline.items.some(
         (item) => item.type === "message" && item.role === "user" && item.text === "legacy steer",

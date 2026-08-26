@@ -170,6 +170,23 @@ describe("config", () => {
     expect(loadConfig(root)).toEqual(DEFAULT_CONFIG);
   });
 
+  test("notifications accept a boolean shorthand or an object", () => {
+    writeFileSync(configPath(root), "notifications: false\n");
+    expect(loadConfig(root).notifications).toEqual({ enabled: false, bell: false });
+
+    writeFileSync(configPath(root), "notifications: true\n");
+    expect(loadConfig(root).notifications).toEqual({ enabled: true, bell: false });
+
+    writeFileSync(configPath(root), "notifications:\n  enabled: true\n  bell: true\n");
+    expect(loadConfig(root).notifications).toEqual({ enabled: true, bell: true });
+
+    writeFileSync(configPath(root), "notifications:\n  bell: true\n");
+    expect(loadConfig(root).notifications).toEqual({ enabled: true, bell: true });
+
+    writeFileSync(configPath(root), "notifications: noisy\n");
+    expect(loadConfig(root).notifications).toEqual(DEFAULT_CONFIG.notifications);
+  });
+
   test("invalid Target ids are ignored", () => {
     writeFileSync(
       configPath(root),

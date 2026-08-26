@@ -603,6 +603,10 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     case "harness_input.updated":
       applyHarnessInputUpdate(state, ev);
       break;
+    case "_baton_queue_reordered":
+      // Queue order is execution state restored by Controller; the View reads
+      // the Controller's ordered snapshots rather than duplicating that index.
+      break;
     case "input_delivery_update":
       applyInputDeliveryUpdate(state, ev);
       break;

@@ -23,6 +23,7 @@ const controller = {
   activeHarnessTargetId: undefined,
   activeTurnId: undefined,
   queuedHarnessInputs: [],
+  listQueued: () => [],
   currentModel: () => null,
   currentEffort: () => null,
   currentMode: () => "default",

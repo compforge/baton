@@ -35,8 +35,18 @@ targets:
 # Maximum number of characters injected for session mentions and Harness handoffs.
 mentionBudgetChars: 4096
 
-# Show agent reasoning in the timeline.
+# Show agent reasoning in the timeline. Toggle at runtime with /thoughts.
 showThoughts: true
+
+# Desktop notifications (OSC 9) when a turn finishes or an approval/question is
+# pending. Only known-supporting terminals (iTerm2, WezTerm, Kitty, Ghostty,
+# Warp) receive them; others stay silent unless bell is explicitly enabled.
+# tmux 3.3+ also requires `set -g allow-passthrough on` in ~/.tmux.conf.
+# A bare boolean toggles the whole feature.
+notifications: true
+# notifications:
+#   enabled: true
+#   bell: false # ring the terminal bell when OSC 9 is unavailable
 
 # Optional text-generation routing for automatic session titles. Values and map
 # keys are HarnessTarget ids. By default Baton tries the Target that completed

@@ -72,7 +72,13 @@ Plugin 可以通过 `view.input` 和 `view.output` Hook 观察这两个边界。
 | Resource、Connector 与领域完成条件 | Plugin |
 
 Interaction 会由 UI 呈现和收集回答，但 requested/answered/cancelled 生命周期仍归
-`src/interaction/`。composer queue 只是 Core Queue 的视图，不是 UI 自己的待执行队列。Session lease、
+`src/interaction/`。composer queue 只是 Core Queue 的视图，不是 UI 自己的待执行队列；`/queue`
+打开 chat-tui 的通用 QueuePane，按条召回、删除、相邻重排或立即派发都经 Baton View Adapter
+翻译到 Controller/Queue typed path。召回与删除共用 `recalled` 终态，立即派发复用普通提交的
+same-turn admission，View 不直接调用 Harness。timeline 的 `showThoughts` 可由 `/thoughts` 在运行时切换（会话级，
+立即重投影），config.yaml 仍是持久默认值。桌面通知（OSC 9）是具体 View surface 的进程侧
+行为：只观察已确认的 live Event（turn 收口、blocking Interaction requested），不产生或修改
+任何 Core 事实；终端能力检测与开关属于用户配置。Session lease、
 Channel、Plugin runner 和 Harness Adapter 的创建与关闭属于 Baton host 的装配职责；具体 TUI 入口可以
 触发这些 application 操作，但不能把它们提升为 chat-tui 的公共概念。
 

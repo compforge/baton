@@ -27,6 +27,7 @@ export interface QueueItem extends HarnessInput {
   requeuedFromSteer?: boolean;
   resolve?: (outcome: QueueOutcome) => void;
   reject?: (error: unknown) => void;
+  outcome: Promise<QueueOutcome>;
 }
 
 interface QueueBinding {
@@ -62,6 +63,8 @@ type BeforeInputTransition = (
   update?: { turnId?: string; delivery?: HarnessInput["delivery"] },
 ) => number;
 
+type BeforeQueueReorder = (orderedMessageIds: readonly string[]) => void;
+
 /**
  * One Lane's in-memory execution index for Harness Inputs. Durable queue truth
  * lives in `harness_input.updated` Events; every mutation calls
@@ -75,6 +78,7 @@ export class Queue<TBinding extends QueueBinding> {
   constructor(
     readonly laneId: string,
     private readonly beforeTransition: BeforeInputTransition,
+    private readonly beforeReorder?: BeforeQueueReorder,
   ) {}
 
   get length(): number {
@@ -216,6 +220,7 @@ export class Queue<TBinding extends QueueBinding> {
       ...(options?.requeuedFromSteer ? { requeuedFromSteer: true } : {}),
       resolve,
       reject,
+      outcome,
     };
     if (options?.restore) {
       if (input.enqueueSeq < 1) {
@@ -313,7 +318,72 @@ export class Queue<TBinding extends QueueBinding> {
     const index = this.queue.findLastIndex(
       (input) => input.source.type === "user" && !input.harnessInvocationId,
     );
-    if (index < 0) return undefined;
+    return index < 0 ? undefined : this.recallAt(index);
+  }
+
+  /**
+   * 按 messageId 召回一条仍在排队的用户输入；与 recallLatestUser 同一语义
+   * （recalled 终态 + outcome 收口），只是定位方式从"最新一条"变为显式指定。
+   */
+  recallUserById(messageId: string): QueueSnapshot | undefined {
+    const index = this.queue.findIndex(
+      (input) =>
+        input.messageId === messageId &&
+        input.source.type === "user" &&
+        !input.harnessInvocationId,
+    );
+    return index < 0 ? undefined : this.recallAt(index);
+  }
+
+  /**
+   * Reorder only adjacent user-owned items; read-only Plugin work is never crossed.
+   *
+   * @spec Queue reorder is recorded before the in-memory order changes, and user actions cannot cross HarnessInvocation work.
+   * @see {@link ../docs/workflow.md}
+   */
+  moveUserById(
+    messageId: string,
+    direction: "up" | "down",
+  ): QueueSnapshot[] | undefined {
+    const index = this.queue.findIndex((input) => input.messageId === messageId);
+    const target = direction === "up" ? index - 1 : index + 1;
+    const input = this.queue[index];
+    const neighbor = this.queue[target];
+    if (!isUserManageable(input) || !isUserManageable(neighbor)) return undefined;
+    const ordered = [...this.queue];
+    [ordered[index], ordered[target]] = [ordered[target]!, ordered[index]!];
+    this.beforeReorder?.(ordered.map((item) => item.messageId));
+    this.queue.splice(0, this.queue.length, ...ordered);
+    return this.snapshots;
+  }
+
+  /**
+   * Promote a user item to the head for immediate admission. It cannot bypass
+   * Plugin-owned work because that work has a separate cancellation lifecycle.
+   *
+   * @spec Dispatch-now preserves Input identity and may only promote across user-manageable queued work.
+   * @see {@link ../docs/workflow.md}
+   */
+  promoteUserById(messageId: string): QueueSnapshot | undefined {
+    const index = this.queue.findIndex((input) => input.messageId === messageId);
+    const input = this.queue[index];
+    if (
+      !isUserManageable(input) ||
+      !this.queue.slice(0, index).every(isUserManageable)
+    ) {
+      return undefined;
+    }
+    if (index > 0) {
+      const ordered = [...this.queue];
+      ordered.splice(index, 1);
+      ordered.unshift(input);
+      this.beforeReorder?.(ordered.map((item) => item.messageId));
+      this.queue.splice(0, this.queue.length, ...ordered);
+    }
+    return queueSnapshot(input);
+  }
+
+  private recallAt(index: number): QueueSnapshot | undefined {
     const input = this.queue[index];
     if (input) this.beforeTransition(input, "recalled");
     const [removed] = this.queue.splice(index, 1);
@@ -336,6 +406,14 @@ export class Queue<TBinding extends QueueBinding> {
     removed.resolve?.("recalled");
     return queueSnapshot(removed);
   }
+}
+
+function isUserManageable(input: QueueItem | undefined): input is QueueItem {
+  return Boolean(
+    input &&
+      input.source.type === "user" &&
+      !input.harnessInvocationId,
+  );
 }
 
 function queueSnapshot(input: QueueItem): QueueSnapshot {

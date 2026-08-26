@@ -10,6 +10,8 @@ import type {
   CommandSpec,
   InteractionResponse,
   PickerSearchView,
+  QueueIntent,
+  QueueIntentResult,
   TranscriptItem,
   TranscriptMessageItem,
 } from "chat-tui";
@@ -68,6 +70,7 @@ import { laneTargetStateKey, type SessionState } from "../../../store/reduce.ts"
 import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../../../store/store.ts";
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
+import { TerminalNotifier } from "../notifications.ts";
 import { readClipboard, type ClipboardContent } from "../clipboard.ts";
 import {
   archiveClipboardImage,
@@ -144,6 +147,10 @@ export class BatonChatProtocol implements ChatProtocol {
   private historyStash: { text: string; imagePaths: string[] } | null = null; // 进入浏览前暂存的草稿，越过最新时恢复
   private lastHistoryText: string | null = null; // 上次召回的条目，判定用户是否改动过
   private composerImagePaths: string[] = [];
+  /** 运行时 thoughts 开关（/thoughts 切换）；会话级，不写回 config.yaml。 */
+  private showThoughts: boolean;
+  private readonly notifier: TerminalNotifier | null;
+  private queueManagerOpen = false;
   private readonly modelPreferences: Record<string, string>;
   private readonly effortPreferences: Record<string, string>;
   private shutdownPromise?: Promise<void>;
@@ -158,6 +165,14 @@ export class BatonChatProtocol implements ChatProtocol {
   ) {
     this.session = opened.session;
     this.syncTerminalTitle();
+    this.showThoughts = config.showThoughts;
+    // 桌面通知只对真实终端启用；测试与管道场景静默。
+    this.notifier = config.notifications.enabled && process.stdout.isTTY
+      ? new TerminalNotifier({
+          config: config.notifications,
+          sessionTitle: () => sessionDisplayTitle(this.session.meta),
+        })
+      : null;
     const defaultTarget = resolveHarnessTarget(config, config.defaultTarget);
     if (!defaultTarget) {
       throw new Error(`Default HarnessTarget is not registered: ${config.defaultTarget}`);
@@ -192,9 +207,10 @@ export class BatonChatProtocol implements ChatProtocol {
 
   /** Projection 已在 Session 内更新；这里仅按 Event 类型安排 Human surface 刷新。 */
   private subscribeChannel(channel: Channel): () => void {
-    return channel.subscribe((_projection, event) =>
-      this.viewPublisher.event(event.kind)
-    );
+    return channel.subscribe((_projection, event) => {
+      this.notifier?.handleEvent(event);
+      this.viewPublisher.event(event.kind);
+    });
   }
 
   // ===== 输出：baton → TUI =====
@@ -602,6 +618,31 @@ export class BatonChatProtocol implements ChatProtocol {
     });
 
     register({
+      name: "queue",
+      description: "Manage queued follow-ups by item",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => this.openQueueManager(),
+    });
+
+    register({
+      name: "thoughts",
+      description: "Toggle agent thought display (this session only)",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        this.showThoughts = !this.showThoughts;
+        this.toast = {
+          text: `Thoughts ${this.showThoughts ? "shown" : "hidden"} (this session only; set showThoughts in config.yaml to persist)`,
+          tone: "info",
+        };
+        this.changed();
+      },
+    });
+
+    register({
       name: "board",
       description: "Toggle the Board sidecar (or set 'open', 'hide', or 'auto')",
       scope: "baton",
@@ -953,6 +994,81 @@ export class BatonChatProtocol implements ChatProtocol {
     return { text: userVisibleText(composerTextOf(recalled.blocks)) };
   }
 
+  /** /queue opens chat-tui's dedicated pane; item actions return through typed intents. */
+  private openQueueManager(): void {
+    const items = this.controller.listQueued();
+    if (items.length === 0) {
+      this.toast = { text: "Queue is empty", tone: "info" };
+      this.changed();
+      return;
+    }
+    this.queueManagerOpen = true;
+    this.changed();
+  }
+
+  async resolveQueue(intent: QueueIntent): Promise<QueueIntentResult> {
+    if (intent.kind === "close") {
+      this.queueManagerOpen = false;
+      this.changed();
+      return { kind: "accepted" };
+    }
+    if (intent.kind === "move") {
+      const moved = this.controller.moveQueuedById(intent.itemId, intent.direction);
+      return moved
+        ? { kind: "accepted" }
+        : { kind: "rejected", message: "That queued message can no longer be moved" };
+    }
+    if (intent.kind === "dispatch-now") {
+      const outcome = await this.controller.dispatchQueuedNow(intent.itemId);
+      if (!outcome) {
+        return {
+          kind: "rejected",
+          message: "That queued message can no longer be dispatched",
+        };
+      }
+      this.queueManagerOpen = false;
+      this.toast = {
+        text: outcome.effective === "steer"
+          ? "Dispatched queued message to the current turn"
+          : "Moved queued message to the front",
+        tone: "info",
+      };
+      this.changed();
+      return { kind: "accepted" };
+    }
+    const withdrawn = intent.kind === "recall"
+      ? this.controller.recallQueuedById(intent.itemId)
+      : this.controller.discardQueuedById(intent.itemId);
+    if (!withdrawn) {
+      return {
+        kind: "rejected",
+        message: "That queued message is no longer manageable",
+      };
+    }
+    this.resetHistoryNav();
+    if (intent.kind === "discard") {
+      this.toast = {
+        text: `Deleted queued message for ${withdrawn.harnessTargetId}`,
+        tone: "info",
+      };
+      if (this.controller.listQueued().length === 0) this.queueManagerOpen = false;
+      this.changed();
+      return { kind: "accepted" };
+    }
+    this.queueManagerOpen = false;
+    this.harnessTargetId = withdrawn.harnessTargetId;
+    this.composerImagePaths = composerImagePathsOf(withdrawn.blocks);
+    this.toast = {
+      text: `Recalled queued message for ${withdrawn.harnessTargetId}; edit and resend`,
+      tone: "info",
+    };
+    this.changed();
+    return {
+      kind: "recalled",
+      text: userVisibleText(composerTextOf(withdrawn.blocks)),
+    };
+  }
+
   /**
    * ↑ 历史回溯（shell 式）。current 为输入框当前内容：首次进入浏览时暂存为草稿并跳到
    * 最新一条；连续浏览时若 current 已偏离上次召回的条目，说明用户改过 → 返回 null 让
@@ -1232,6 +1348,8 @@ export class BatonChatProtocol implements ChatProtocol {
     });
     await this.channel.close();
     this.session = next.session;
+    // /thoughts 是 BatonSession 级临时覆盖；切换后从用户配置重新开始，不能串到新会话。
+    this.showThoughts = this.config.showThoughts;
     this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;
@@ -1529,11 +1647,12 @@ export class BatonChatProtocol implements ChatProtocol {
       state: this.state,
       controller: this.controller,
       session: this.session,
-      config: this.config,
+      config: { showThoughts: this.showThoughts },
       harnessTargetId: this.harnessTargetId,
       toast: this.toast,
       commandOutput: this.commandOutput,
       picker: this.picker,
+      queueManagerOpen: this.queueManagerOpen,
       board: this.boardView(),
     });
   }

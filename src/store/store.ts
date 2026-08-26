@@ -1305,6 +1305,7 @@ const HISTORY_OPERATIONAL_KINDS = new Set<EventKind>([
   "_baton_delivery_attempt_update",
   "_baton_context_snapshot",
   "_baton_context_delivery_receipt",
+  "_baton_queue_reordered",
 ]);
 
 function canonicalHistoryValue(value: unknown, key?: string): unknown {
