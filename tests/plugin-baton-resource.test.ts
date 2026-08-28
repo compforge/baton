@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   BATON_TURN_RESOURCE_KIND,
   BatonResourceIndex,
-} from "../src/plugin/builtin.ts";
+} from "../src/plugin/baton-resource-controller.ts";
 import { PluginInstanceStore } from "../src/plugin/instance.ts";
 import { Manager } from "../src/plugin/manager.ts";
 import type { PluginPackage } from "../src/plugin/package.ts";
@@ -16,7 +16,7 @@ import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 const roots: string[] = [];
 
 function testSession(): SessionHandle {
-  const root = mkdtempSync(join(tmpdir(), "baton-plugin-builtin-"));
+  const root = mkdtempSync(join(tmpdir(), "baton-plugin-resource-"));
   roots.push(root);
   return new SessionStore(root).createSession({
     cwd: join(root, "project"),

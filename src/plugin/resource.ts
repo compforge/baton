@@ -420,6 +420,9 @@ export class PluginResourceStore {
     options: ResourceListOptions = {},
   ): PluginResource<TSpec, TStatus>[] {
     validateResourceType(type);
+    if (options.namespace === "baton-system") {
+      throw new Error("PluginResourceStore cannot list Baton-owned resources");
+    }
     const namespace = this.resourceNamespace(options.namespace ?? "v1");
     const matchLabels = labelMap(
       "resource list matchLabels",

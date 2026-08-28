@@ -2,6 +2,7 @@ import type {
   Resource,
   ResourceClient as PublicResourceClient,
   ResourceListOptions,
+  ResourceMergePatch,
   ResourceOwnerReference,
   ResourceRef,
   ResourceNamespace,
@@ -40,6 +41,21 @@ export type ResourceClientChange = {
     }
 );
 
+export interface BatonResourceAccess {
+  handles(type: ResourceType): boolean;
+  get<TSpec, TStatus>(
+    ref: ResourceRef,
+  ): Readonly<Resource<TSpec, TStatus>> | undefined;
+  list<TSpec, TStatus>(
+    type: ResourceType,
+    options?: ResourceListOptions,
+  ): readonly Readonly<Resource<TSpec, TStatus>>[];
+  patch<TSpec, TStatus>(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+    patch: ResourceMergePatch,
+  ): Readonly<Resource<TSpec, TStatus>>;
+}
+
 function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.freeze(value);
@@ -47,11 +63,12 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Restricts Resource reads and writes to Resources owned by one PluginInstance. */
+/** Routes Core projections and isolates Plugin-owned state by PluginInstance. */
 export function createResourceClient(
   store: PluginResourceStore,
   onChange?: (change: ResourceClientChange) => void,
   assertCanCreateType?: (type: ResourceType) => void,
+  batonResources?: BatonResourceAccess,
 ): ResourceClient {
   const changed = (
     kind: "created" | "status-updated" | "metadata-updated" | "deleted",
@@ -90,6 +107,9 @@ export function createResourceClient(
   async function get<TSpec, TStatus>(
     ref: ResourceRef,
   ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
+    if (batonResources?.handles(ref)) {
+      return batonResources.get<TSpec, TStatus>(ref);
+    }
     if (ref.namespace === "baton-system") {
       throw new Error(
         `plugin ResourceClient cannot access Baton-owned ${ref.kind}/${ref.name}`,
@@ -115,6 +135,9 @@ export function createResourceClient(
       type: ResourceType,
       options?: ResourceListOptions,
     ) {
+      if (batonResources?.handles(type)) {
+        return batonResources.list<TSpec, TStatus>(type, options);
+      }
       return store
         .list<TSpec, TStatus>(type, options)
         .map((resource) => deepFreeze(resource));
@@ -173,6 +196,17 @@ export function createResourceClient(
           // Deletion is durable; host reactions must not turn it into failure.
         }
       }
+    },
+    async patch<TSpec, TStatus>(
+      resource: Readonly<Resource<TSpec, TStatus>>,
+      patch: ResourceMergePatch,
+    ) {
+      if (batonResources?.handles(resource)) {
+        return batonResources.patch(resource, patch);
+      }
+      throw new Error(
+        `Resource ${resource.apiVersion}/${resource.kind} does not support generic patch`,
+      );
     },
     async patchMetadata<TSpec, TStatus>(
       resource: Readonly<Resource<TSpec, TStatus>>,

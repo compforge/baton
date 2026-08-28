@@ -69,6 +69,14 @@ export interface HarnessTargetMeta {
   mode?: string;
 }
 
+/** Session-level desired routing target. HarnessSession bindings remain Lane × Target owned. */
+export interface SessionTargetBindingMeta {
+  readonly targetId?: string;
+  readonly generation: number;
+  readonly resourceVersion: number;
+  readonly updatedAt: string;
+}
+
 /** 0.2.21 and earlier stored Target preferences and one native binding together. */
 export interface LegacyHarnessSessionMeta extends HarnessSessionMeta {
   harnessTargetId: string;
@@ -128,6 +136,8 @@ export interface SessionMeta {
   updatedAt?: string;
   /** harnessTargetId → shared Target preferences. */
   harnessTargets: Record<string, HarnessTargetMeta>;
+  /** Core-owned desired route exposed as SessionTargetBinding. */
+  targetBinding?: SessionTargetBindingMeta;
   /** Baton-native task lines. A Lane may traverse multiple HarnessTargets. */
   lanes: Record<string, LaneMeta>;
   /** @deprecated in-memory compatibility projection; omitted from new meta.json writes. */
@@ -137,6 +147,16 @@ export interface SessionMeta {
   adoptedFrom?: HarnessSessionAdoption;
   /** @deprecated 读取时迁移到 adoptedFrom；新写入不再产生。 */
   nativeSessionOrigin?: NativeSessionOrigin;
+}
+
+export function sessionTargetBindingMeta(
+  meta: Pick<SessionMeta, "createdAt" | "targetBinding">,
+): SessionTargetBindingMeta {
+  return meta.targetBinding ?? Object.freeze({
+    generation: 1,
+    resourceVersion: 1,
+    updatedAt: meta.createdAt,
+  });
 }
 
 /** 可读 basename + cwd 摘要；避免旧版纯字符替换把不同 cwd 放进同一项目目录。 */
@@ -684,6 +704,17 @@ export class SessionStore {
     return out;
   }
 
+  /** Read-only liveness observation for Session Resource projection. */
+  isSessionActive(meta: Pick<SessionMeta, "batonSessionId" | "cwd">): boolean {
+    const path = join(this.sessionDir(resolve(meta.cwd), meta.batonSessionId), "lock");
+    try {
+      const holder = Number(readFileSync(path, "utf8").trim());
+      return Number.isFinite(holder) && holder > 0 && pidAlive(holder);
+    } catch {
+      return false;
+    }
+  }
+
   /** adoptedFrom 是 owner 索引；当前 mutable binding 只为尚未 adoption 的 Baton 会话兜底。 */
   findByHarnessSession(source: AdoptedHarnessSession): SessionMeta | undefined {
     const { harnessTargetId, harness, identity } = source;
@@ -1092,6 +1123,34 @@ export class SessionHandle {
   updateMeta(patch: Partial<Omit<SessionMeta, "batonSessionId">>): void {
     this.meta = normalizeSessionMeta({ ...this.meta, ...patch });
     writeMetaAtomic(this.dir, this.meta);
+  }
+
+  setTargetBinding(
+    targetId: string | undefined,
+    expectedResourceVersion: string,
+    now = new Date(),
+  ): SessionTargetBindingMeta {
+    const current = sessionTargetBindingMeta(this.meta);
+    if (String(current.resourceVersion) !== expectedResourceVersion) {
+      throw new Error(
+        `SessionTargetBinding resource version conflict: expected ${expectedResourceVersion}, current ${current.resourceVersion}`,
+      );
+    }
+    if (current.targetId === targetId) return current;
+    if (targetId !== undefined && !targetId.trim()) {
+      throw new Error("SessionTargetBinding targetId must not be empty");
+    }
+    if (Number.isNaN(now.getTime())) {
+      throw new Error("SessionTargetBinding now must be a valid Date");
+    }
+    const next = Object.freeze({
+      ...(targetId === undefined ? {} : { targetId }),
+      generation: current.generation + 1,
+      resourceVersion: current.resourceVersion + 1,
+      updatedAt: now.toISOString(),
+    });
+    this.updateMeta({ targetBinding: next });
+    return next;
   }
 
   setPreviewIfEmpty(text: string): void {

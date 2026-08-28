@@ -17,6 +17,7 @@ import type {
   Resource,
   ResourceClient,
   ResourceListOptions,
+  ResourceMergePatch,
   ResourceOwnerReference,
   ResourceRef,
   ResourceNamespace,
@@ -146,6 +147,16 @@ const resources: ResourceClient = Object.freeze({
       type,
       name,
       ...(namespace === undefined ? {} : { namespace }),
+    });
+  },
+  async patch<TSpec, TStatus>(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+    patch: ResourceMergePatch,
+  ) {
+    return await callHost<Readonly<Resource<TSpec, TStatus>>>({
+      method: "resource.patch",
+      resource: resource as Readonly<Resource<unknown, unknown>>,
+      patch,
     });
   },
   async patchMetadata<TSpec, TStatus>(

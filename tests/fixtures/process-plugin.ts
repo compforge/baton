@@ -77,6 +77,41 @@ const plugin: PluginPackage = {
           component: "hook",
           attributes: { inputId: hook.subject.inputId },
         });
+        if (
+          hook.subject.input.kind === "prompt" &&
+          hook.subject.input.text === "route from hook"
+        ) {
+          const bindingType = {
+            apiVersion: "baton.dev/v1alpha1",
+            kind: "SessionTargetBinding",
+          } as const;
+          const targetType = {
+            apiVersion: "baton.dev/v1alpha1",
+            kind: "Target",
+          } as const;
+          const binding = (await context.resources.list(bindingType))[0];
+          const target = (await context.resources.list<
+            { harness: string },
+            { phase: string }
+          >(targetType)).find((candidate) =>
+            candidate.metadata.name === "codex_secondary"
+          );
+          if (!binding || !target) throw new Error("missing routing Resources");
+          await context.resources.patch(binding, {
+            type: "merge",
+            value: {
+              spec: {
+                targetRef: {
+                  ...targetType,
+                  namespace: target.metadata.namespace,
+                  name: target.metadata.name,
+                  uid: target.metadata.uid,
+                },
+              },
+            },
+          });
+          return;
+        }
         if (hook.subject.input.kind !== "prompt" || hook.subject.input.text !== "ask from hook") return;
         await hook.verbs.ask({
           timeoutMs: 1_000,

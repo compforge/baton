@@ -126,8 +126,11 @@ Resource change / startup / Source / Watch / cron / requeueAfter
 Plugin 对外部系统写入时仍应使用领域自己的幂等键。无法确认是否生效时，先重新观察外部状态再
 决定重试，不能因 Worker crash 无条件重复副作用；这个幂等键不进入 `ReconcileContext` verb identity。
 
-Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/v1alpha1, Kind=Turn`
-让 Plugin 用同一 level-based 模型观察 Baton 行为；Plugin 不能修改或重新声明 Baton-owned type。
+Baton-owned Resource 与 Plugin Resource 使用同一 `ResourceReader`。Core 在任何 Plugin 激活前注册
+`baton.dev/v1alpha1` 下的 `Turn`、`Session`、`Target` 与 `SessionTargetBinding`；重复 GVK 注册失败，
+没有可被 Plugin 覆盖的 `builtin` 标记或特殊命名。Provider 只暴露有限投影：`Turn`、`Session`、
+`Target` 可读，`SessionTargetBinding` 只允许当前 Session 通过通用 `patch` 修改目标引用。权威事实仍归
+Event Ledger、BatonSession 与 HarnessTarget 配置，不在 Resource 层复制第二份状态。
 
 ## 4. PluginContext、ReconcileContext 与 HookContext
 
@@ -143,7 +146,9 @@ Baton-owned Resource 是 Event Ledger 的只读派生视图。当前 `baton.dev/
 `controllers.register`、`hooks.register` 和 `lifecycle.onClose`。`ReconcileContext` 与
 `HookContext` 都只通过 `verbs` 请求 Core 动作；它们不能直接持有 Harness，也不提供通用消息总线。
 
-`ResourceClient.create()` 与 `Source.emit()` 可以为每份对象选择 canonical namespace；省略时使用全局
+`ResourceClient` 按 Kubernetes 风格拆成 `ResourceReader` 与 `ResourceWriter`；`get/list` 对 Core 与
+Plugin Resource 使用同一入口，具体 Resource 支持的写 verb 由所属 Provider 校验。
+`ResourceClient.create()` 与 `Source.emit()` 可以为每份 Plugin 对象选择 canonical namespace；省略时使用全局
 `v1`。`get()`、`list()`、Watch request 和删除继续携带对象 namespace，同名同 kind 的对象可在不同
 namespace 独立存在。Controller 注册一次即可 reconcile 该 PluginInstance 在所有 namespace 的同类
 Resource。
@@ -222,7 +227,7 @@ fail open。deferred stage 进入有界、best-effort 队列，不延长 View �
 `view.output` 只表示 View 更新已经发布，不代表人真实看见。
 
 Hook 回调返回 `void`，没有 replacement、allow/deny 或控制流返回值；需要副作用时只能调用
-`HookContext.verbs`，由 Core 继续执行权限、持久化和生命周期规则。`input.settled`、Adapter admission
+Resource API 或 `HookContext.verbs`，由 Core 继续执行权限、持久化和生命周期规则。`input.settled`、Adapter admission
 和 delivery outcome 是 Core 的 Event、Attempt 或 Snapshot 事实，不为这些内部阶段增加 Hook stage。
 
 `PluginVerbs.harness()` 接收的是 `HarnessInvocationInput`：它先请求 Core 创建并 gate 一次

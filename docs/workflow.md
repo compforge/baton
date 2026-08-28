@@ -14,7 +14,7 @@ Human ◀────────▶ View ◀────────▶ Plugin 
 
 Human ─▶ View ── ViewInput ─▶ Core ── HarnessInput ─▶ Harness
 Human ◀─ View ◀─ ViewOutput ─ Core ◀── HarnessEvent ─ Harness
-                  Hook ─▶ Plugin ── typed Verb ─▶ Core
+                  Hook ─▶ Plugin ── Resource API / typed Verb ─▶ Core
 ```
 
 三类参与者拥有不同事实与动作边界：Human 提交目标、编辑和决议，并消费 UI surface；Harness 拥有
@@ -25,7 +25,8 @@ ViewInput、HarnessInput、Queue、Turn、Interaction、HarnessInvocation、Even
 这里的第一行是协作关系，不表示 Plugin 是 View 与 Harness 的串行 transport relay；没有绑定 Plugin 时，
 View 与 Harness 的基础路径仍由 Core 工作。稳定 IO 直接命名为 `ViewInput / ViewOutput` 与
 `HarnessInput / HarnessEvent`。Core 提交 HarnessEvent 后才得到 Baton Event。Plugin 没有第五条私有 IO：
-它用 Hook 观察 `view.input`、`view.output`、`harness.input`、`harness.output`，用 Verb 重新进入 Core。
+它用 Hook 观察 `view.input`、`view.output`、`harness.input`、`harness.output`；有限修改 Core-owned
+Resource 时走 Resource API，其它动作通过 typed Verb 重新进入 Core。
 Hook-specific payload 只是边界事实的只读 view，不拥有对应 Input、Attempt 或 Event 的生命周期；
 稳定 IO 词汇仍只有 ViewInput、ViewOutput、HarnessInput 与 HarnessEvent。
 
@@ -58,7 +59,8 @@ Event Ledger 只记录 intake 的 WAL。Channel 让 BatonSession 先 record 并 
 `input.received(inputId, input)`，再以这条 durable record 通知
 inline `view.input`，随后按 Input variant 调用 Controller、Interaction gateway 或具体配置 owner；
 owner 接受后记录 `input.settled(outcome)`。settled 是 Core 生命周期事实，不是第二个 Hook stage。
-Hook 即使通过 Verb 发起动作，也一定能找到触发它的原始 Input。Hook 失败或超时 fail-open，不能阻塞用户继续输入。
+Hook 即使通过 Resource API 或 Verb 发起动作，也一定能找到触发它的原始 Input。Hook 失败或超时
+fail-open，不能阻塞用户继续输入。
 
 Channel dispatch receipt 只说明 Input 已完成同步校验并被对应 owner 接受，不等于 Turn 已完成。prompt 的
 Controller receipt 会继续暴露 Queue/Turn settlement；调用方可以选择等待，也可以只观察 Event/Projection。
@@ -227,7 +229,7 @@ HarnessSession 和 Turn 坐标，BatonSession 再补 `eventId`、scope、时间�
 Event Ledger 只记录已提交 Event，不记录未提交 HarnessEvent。BatonSession 补齐信任坐标后先 record，随即直接
 reduce Projection；Core 再把该 Event 的 `eventId/seq` 通知
 deferred `harness.output`。Hook 不位于事实写入前，也不串行阻塞 HarnessEventSink；
-它只能观察已接受的事实，并通过 typed Verb 请求后续动作。Hook 异常或超时
+它只能观察已接受的事实，并通过 Resource API 或 typed Verb 请求后续动作。Hook 异常或超时
 fail-open，不能让 Plugin 截断 Harness 输出。
 
 归一原则是“稳定语义 + raw 保真”：

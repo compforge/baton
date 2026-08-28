@@ -33,6 +33,7 @@ import type {
   SourceContext,
   SourceSignal,
   ResourceType,
+  ResourceMergePatch,
   ToastMessage,
   ToastSink,
   ToastTone,
@@ -81,6 +82,7 @@ export type {
   SourceContext,
   SourceSignal,
   ResourceType,
+  ResourceMergePatch,
   ToastMessage,
   ToastSink,
   ToastTone,
@@ -96,6 +98,25 @@ export const BATON_TURN_RESOURCE_TYPE = Object.freeze({
   apiVersion: "baton.dev/v1alpha1",
   kind: "Turn",
 } as const satisfies ResourceType);
+export const BATON_SESSION_RESOURCE_TYPE = Object.freeze({
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "Session",
+} as const satisfies ResourceType);
+export const BATON_TARGET_RESOURCE_TYPE = Object.freeze({
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "Target",
+} as const satisfies ResourceType);
+export const BATON_SESSION_TARGET_BINDING_RESOURCE_TYPE = Object.freeze({
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "SessionTargetBinding",
+} as const satisfies ResourceType);
+
+export const BATON_RESOURCE_TYPES = Object.freeze([
+  BATON_TURN_RESOURCE_TYPE,
+  BATON_SESSION_RESOURCE_TYPE,
+  BATON_TARGET_RESOURCE_TYPE,
+  BATON_SESSION_TARGET_BINDING_RESOURCE_TYPE,
+] as const);
 
 function uniqueRequests(
   requests: readonly ReconcileRequest[],

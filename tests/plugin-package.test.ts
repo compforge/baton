@@ -629,7 +629,7 @@ describe("Plugin Package lifecycle", () => {
         name: "forged_turn",
         spec: {},
       }),
-    ).rejects.toThrow("Resource type is reserved by Baton");
+    ).rejects.toThrow("Resource type is already registered by Baton");
     await manager.close();
   });
 

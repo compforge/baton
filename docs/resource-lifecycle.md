@@ -86,8 +86,9 @@ Resource 创建后由所属 Controller 进行 level-based reconcile。Source、W
 动作。
 
 `ResourceClient.get(ref)` 在省略 uid 时按名称读取当前对象，带 uid 时重新读取同一 incarnation。
-带 uid 的对象已删除或被同名重建时返回 `undefined`，避免 continuation 把旧决定写到
-replacement；Baton-owned namespace 不通过 Plugin 的可写 ResourceClient 暴露。
+带 uid 的对象已删除或被同名重建时返回 `undefined`，避免 continuation 把旧决定写到 replacement。
+Core-owned GVK 通过同一 Reader 暴露有限投影；写操作仍由各 Provider 按 Resource、字段和当前执行上下文
+逐项准入，不因能够读取 `baton-system` 就获得通用修改权。
 
 Source 只证明“这次观察到了候选”，不维护完整集合真相。一次 list 可能分页、超时、权限变化或
 只覆盖滑动窗口，所以 Source omission 不会触发删除。Plugin 若要自动回收，必须基于可恢复的
