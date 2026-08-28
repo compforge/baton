@@ -115,15 +115,20 @@ afterEach(() => {
 });
 
 /** 直接写入一个已收口、带 summary 的 turn（模拟另一 harness 的并发产出） */
-function completedTurn(handle: SessionHandle, harness: string, turnId: string, text: string): void {
+function completedTurn(
+  handle: SessionHandle,
+  target: { id: string; harness: string },
+  turnId: string,
+  text: string,
+): void {
+  const coordinate = { harness: target.harness, harnessTargetId: target.id, turnId };
   handle.appendEvent({
     source: { type: "baton" },
     kind: "agent_message",
-    harness,
-    turnId,
+    ...coordinate,
     payload: { messageId: `${turnId}-agent`, content: [{ type: "text", text }] },
   });
-  handle.appendEvent({ source: { type: "baton" }, kind: "state_update", harness, turnId, payload: { state: "idle", stopReason: "end_turn" } });
+  handle.appendEvent({ source: { type: "baton" }, kind: "state_update", ...coordinate, payload: { state: "idle", stopReason: "end_turn" } });
   handle.summarizeTurn(turnId);
 }
 
@@ -150,7 +155,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
     const first = controller.submit("codex", [{ type: "text", text: "one" }]);
     await Bun.sleep(1);
     // Queue-driven Turn 运行期间，另一 Harness 的进展落盘（并发 Harness-started Turn 的等价形态）。
-    completedTurn(session, "claude-code", "t_claude", "claude progress landed mid-turn");
+    completedTurn(session, { id: "claude", harness: "claude-code" }, "t_claude", "claude progress landed mid-turn");
     adapter.finish();
     await first;
 
@@ -218,7 +223,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
   });
 
   test("prepend-style adapter (no syncContext) advances the watermark after admission", async () => {
-    completedTurn(session, "claude-code", "t_claude", "earlier claude work");
+    completedTurn(session, { id: "claude", harness: "claude-code" }, "t_claude", "earlier claude work");
     const injectionTail = lastSummarySeq(session);
 
     const adapter = new ManualAdapter("codex");
@@ -257,7 +262,7 @@ describe("ContextEpoch advances only from delivery receipts (bug#5 regression)",
   });
 
   test("sync-capable adapter receives syncBlocks side-channel; watermark advances after admission", async () => {
-    completedTurn(session, "claude-code", "t_claude", "earlier claude work");
+    completedTurn(session, { id: "claude", harness: "claude-code" }, "t_claude", "earlier claude work");
 
     const adapter = new SyncBlocksManualAdapter("codex");
     const controller = new Controller({

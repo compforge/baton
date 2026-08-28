@@ -22,8 +22,7 @@ export interface ParsedMention {
 }
 
 interface TurnSummaryRecord {
-  harness: string;
-  harnessTargetId?: string;
+  harnessTargetId: string;
   laneId?: string;
   seq: number;
   summary: TurnSummary;
@@ -50,10 +49,10 @@ export function parseMentions(text: string): ParsedMention[] {
 function turnBlock(
   s: TurnSummary,
   index: number,
-  source?: Pick<TurnSummaryRecord, "harness">,
+  source?: Pick<TurnSummaryRecord, "harnessTargetId">,
 ): string {
-  const assistant = source ? `assistant[${source.harness}]` : "agent";
-  const tools = source ? `tools[${source.harness}]` : "tools";
+  const assistant = source ? `assistant[${source.harnessTargetId}]` : "agent";
+  const tools = source ? `tools[${source.harnessTargetId}]` : "tools";
   const lines: string[] = source
     ? []
     : [`## Turn ${index + 1}${s.stopReason ? ` (${s.stopReason})` : ""}`];
@@ -118,8 +117,7 @@ function turnSummaries(handle: SessionHandle): TurnSummaryRecord[] {
     .read()
     .filter((e) => e.kind === "_baton_turn_summary")
     .map((e) => ({
-      harness: e.harness ?? "baton",
-      harnessTargetId: e.harnessTargetId,
+      harnessTargetId: e.harnessTargetId!,
       laneId: e.laneId,
       seq: e.seq,
       summary: e.payload as TurnSummary,
@@ -160,8 +158,6 @@ export function buildTargetCatchUpContext(
         item.harnessTargetId === opts.target.id
       );
     }
-    // 0.2.21 and earlier had only one native session per Target and no Lane coordinate;
-    // migration assigns that history to the BatonSession main Lane.
     return !(
       item.harnessTargetId === opts.target.id &&
       (opts.laneId === undefined || MAIN_LANE_ID === opts.laneId)
