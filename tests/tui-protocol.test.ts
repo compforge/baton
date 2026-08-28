@@ -468,6 +468,40 @@ describe("BatonChatProtocol status command", () => {
     }
   });
 
+  test("shows the Target selected by the Session binding", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-status-bound-target-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.setTargetBinding("codex2", "1");
+      const config = {
+        ...DEFAULT_CONFIG,
+        targets: {
+          ...DEFAULT_CONFIG.targets,
+          codex2: { harness: "codex" },
+        },
+      };
+      const protocol = new BatonChatProtocol(
+        store,
+        config,
+        { session, resumed: false },
+        () => undefined,
+      );
+
+      await protocol.command("status", "");
+
+      expect(protocol.stateStore.getState("timeline").items.at(-1)).toMatchObject({
+        id: "_baton_status",
+        text: expect.stringContaining(
+          "Current: codex2 - model default - effort default - mode default",
+        ),
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("context lookup keys by HarnessTarget id, not the Harness wire key", async () => {
     // Harness 描述协议类型（"claude-code"），Target（"claude"）才是状态实例的查询键。
     // 两者故意取不同值，防止投影重新拿 Harness 代替 Target。
@@ -803,6 +837,9 @@ describe("BatonChatProtocol harness commands", () => {
       stubCompletedSend(protocol, (target) => submitted.push(target));
 
       await protocol.command("target", "dsh-test");
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({
+        author: "dsh-test",
+      });
       await protocol.submit("inspect this");
 
       expect(submitted).toEqual(["dsh-test"]);
@@ -1084,6 +1121,38 @@ describe("BatonChatProtocol State projection", () => {
       expect(runStatus?.[0]?.hint).toBeUndefined();
       expect(footer).toStartWith(`session: ${session.id}  `);
       expect(composer.placeholder).toContain("Ctrl+J newline");
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("idle agent status shows the Target selected by the Session binding", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-bound-target-status-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.setTargetBinding("codex2", "1");
+      const config = {
+        ...DEFAULT_CONFIG,
+        targets: {
+          ...DEFAULT_CONFIG.targets,
+          codex2: { harness: "codex" },
+        },
+      };
+
+      const protocol = new BatonChatProtocol(
+        store,
+        config,
+        { session, resumed: false },
+        () => undefined,
+      );
+
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({
+        id: "agent:codex2",
+        author: "codex2",
+        label: "default · idle",
+      });
       await protocol.exit();
     } finally {
       rmSync(root, { recursive: true, force: true });

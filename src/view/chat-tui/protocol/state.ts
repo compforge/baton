@@ -14,10 +14,7 @@ import type {
 import type { BatonConfig } from "../../../config/config.ts";
 import type { Controller } from "../../../controller/index.ts";
 import { textOf, type ContextWindowUpdate } from "../../../event/index.ts";
-import {
-  harnessDefinitionFor,
-  harnessShortName,
-} from "../../../harness/registry.ts";
+import { harnessShortName } from "../../../harness/registry.ts";
 import type {
   HookTrustInteraction,
   Interaction,
@@ -60,6 +57,8 @@ export interface ChatStateProjectionInput {
   session: SessionHandle;
   config: Pick<BatonConfig, "showThoughts">;
   harnessTargetId: string;
+  /** Effective Target after applying the current SessionTargetBinding. */
+  statusHarnessTargetId?: string;
   toast: ToastMessage | null;
   commandOutput: TranscriptItem | null;
   picker: PickerViewProjection | null;
@@ -452,6 +451,8 @@ export function projectBoardView(
  * @rule Order status segments by volatility: stable model and configuration precede active phase
  * or tool activity, while changing observations such as context usage stay at the end so frequent
  * updates disturb only the right side.
+ * @rule Attribute the primary run status to its HarnessTarget ID; the Harness family name cannot
+ * distinguish multiple accounts or runtime configurations backed by the same Harness.
  */
 export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const {
@@ -459,6 +460,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     controller,
     session,
     harnessTargetId,
+    statusHarnessTargetId = harnessTargetId,
     board,
   } = input;
   const activeTargetId = controller.activeHarnessTargetId;
@@ -485,11 +487,8 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   );
   const mainRun = mainRuns.at(-1);
   const activeTurnId = controller.activeTurnId;
-  const activeTurn = activeTurnId
-    ? state.activeTurns.get(activeTurnId)
-    : undefined;
   const statusTargetId =
-    activeTargetId ?? mainRun?.harnessTargetId ?? harnessTargetId;
+    activeTargetId ?? mainRun?.harnessTargetId ?? statusHarnessTargetId;
   const statusLaneId = MAIN_LANE_ID;
   const laneTargetState = state.perLaneTarget.get(
     laneTargetStateKey(statusLaneId, statusTargetId),
@@ -497,18 +496,12 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const targetState =
     laneTargetState ??
     state.perTarget.get(statusTargetId);
-  const statusHarness =
-    activeTurn?.harness ??
-    mainRun?.harness ??
-    targetState?.harness ??
-    harnessDefinitionFor(statusTargetId)?.sessionKey ??
-    statusTargetId;
   const statusModel =
-    statusTargetId === activeTargetId || statusTargetId === harnessTargetId
+    statusTargetId === activeTargetId || statusTargetId === statusHarnessTargetId
       ? (controller.currentModel(statusTargetId) ?? "default")
       : (laneTargetState?.contextWindow?.modelSelection ?? "default");
   const statusEffort =
-    statusTargetId === activeTargetId || statusTargetId === harnessTargetId
+    statusTargetId === activeTargetId || statusTargetId === statusHarnessTargetId
       ? controller.currentEffort(statusTargetId)
       : session.meta.harnessTargets[statusTargetId]?.effort;
   const statusMode = controller.currentMode(statusTargetId);
@@ -545,24 +538,20 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
   const runStatusItem: RunStatusItem = activeTargetId
     ? {
         id: `run:${activeTargetId}`,
-        author: harnessAuthor(statusHarness),
+        author: statusTargetId,
         label: `${harnessConfigStatus} · ${runStatusLabel(state, activeTurnId)}`,
         startedAt: controller.activeStartedAt,
       }
     : mainRun
       ? {
           id: `run:${mainRun.turnId}`,
-          author: harnessAuthor(statusHarness),
+          author: statusTargetId,
           label: `${harnessConfigStatus} · ${runStatusLabel(state, mainRun.turnId)}`,
           startedAt: mainRun.startedAt,
         }
       : {
-          id: `agent:${harnessTargetId}`,
-          author: harnessAuthor(
-            state.perTarget.get(harnessTargetId)?.harness ??
-              harnessDefinitionFor(harnessTargetId)?.sessionKey ??
-              harnessTargetId,
-          ),
+          id: `agent:${statusTargetId}`,
+          author: statusTargetId,
           label: `${harnessConfigStatus} · idle`,
         };
   const runStatus = [withStatusDetails(runStatusItem)];
