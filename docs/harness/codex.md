@@ -7,7 +7,8 @@
 ## 1. 接入方式
 
 Baton 启动 `codex app-server` 子进程，通过 stdin/stdout JSON-RPC 调用原生协议并接收通知与
-server request。进程继承本机环境和 Codex 登录态；Baton 不读取、复制或存储 Codex 凭证。
+server request。进程继承本机环境和 Codex 登录态；Target `env` 可用 `CODEX_HOME` 选择另一份
+Codex 配置与登录态，并一致应用于 live Session 和 textgen。Baton 不读取、复制或存储 Codex 凭证。
 
 启动顺序是：
 

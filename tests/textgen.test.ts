@@ -245,8 +245,10 @@ describe("codex textgen", () => {
 
   test("execFn 注入：读取 output 文件并 parse", async () => {
     const value = await generateCodexStructured(REQUEST, {
-      execFn: async (_argv, prompt, outputPath) => {
+      env: { CODEX_HOME: "/tmp/codex2" },
+      execFn: async (_argv, prompt, outputPath, env) => {
         expect(prompt).toBe("p");
+        expect(env).toEqual({ CODEX_HOME: "/tmp/codex2" });
         const { writeFileSync } = await import("node:fs");
         writeFileSync(outputPath, JSON.stringify({ title: "from codex" }));
       },
@@ -272,6 +274,7 @@ describe("claude textgen", () => {
   test("result success → 返回 structured_output", async () => {
     let request: unknown;
     const value = await generateClaudeStructured(REQUEST, {
+      env: { CLAUDE_CONFIG_DIR: "/tmp/claude2" },
       queryFactory: fakeQueryFactory([
         { type: "assistant", message: {} },
         { type: "result", subtype: "success", structured_output: { title: "from claude" }, errors: [] },
@@ -287,6 +290,7 @@ describe("claude textgen", () => {
         mcpServers: {},
         persistSession: false,
         settingSources: [],
+        env: { CLAUDE_CONFIG_DIR: "/tmp/claude2" },
       },
     });
   });

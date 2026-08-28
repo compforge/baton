@@ -18,9 +18,11 @@ const openInteraction: OpenInteraction = async (req) =>
 describe("Claude model capability", () => {
   test("probes the target before the first turn without creating an adapter session", async () => {
     let prompt: unknown;
+    let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
     let closes = 0;
     const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
       prompt = params.prompt;
+      queryOptions = params.options;
       return {
         initializationResult: async () => ({
           models: [
@@ -53,7 +55,11 @@ describe("Claude model capability", () => {
         close: () => closes++,
       } as unknown as ReturnType<NonNullable<ClaudeAdapterOptions["queryFactory"]>>;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const discovered = await probeClaudeTarget({ cwd: "/tmp", queryFactory });
+    const discovered = await probeClaudeTarget({
+      cwd: "/tmp",
+      env: { CLAUDE_CONFIG_DIR: "/tmp/claude2" },
+      queryFactory,
+    });
 
     expect(discovered.models?.map((model) => model.id)).toEqual([
       "default",
@@ -64,6 +70,7 @@ describe("Claude model capability", () => {
     expect(discovered.commands?.map((command) => command.name)).toEqual(["devloop:gcam"]);
     expect(closes).toBe(1);
     expect(typeof (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe("function");
+    expect(queryOptions?.env?.CLAUDE_CONFIG_DIR).toBe("/tmp/claude2");
 
     const adapter = new ClaudeAdapter({ openInteraction });
     const ref = await adapter.open({ cwd: "/tmp" }, () => {});
@@ -171,8 +178,15 @@ describe("Claude model capability", () => {
         close: () => {},
       }) as unknown as Query;
     }) as NonNullable<ClaudeAdapterOptions["queryFactory"]>;
-    const adapter = new ClaudeAdapter({ openInteraction, queryFactory });
-    const ref = await adapter.open({ cwd: "/tmp" }, () => {});
+    const adapter = new ClaudeAdapter({
+      openInteraction,
+      queryFactory,
+      env: { CLAUDE_CONFIG_DIR: "/tmp/target-home", SHARED: "target" },
+    });
+    const ref = await adapter.open(
+      { cwd: "/tmp", env: { OPEN_ONLY: "open", SHARED: "open" } },
+      () => {},
+    );
 
     await adapter.setConfig(ref, "mode", "plan");
     const snapshot = await adapter.setConfig(ref, "mode", "default");
@@ -185,6 +199,9 @@ describe("Claude model capability", () => {
     await Bun.sleep(0);
 
     expect(queryOptions?.permissionMode).toBeUndefined();
+    expect(queryOptions?.env?.CLAUDE_CONFIG_DIR).toBe("/tmp/target-home");
+    expect(queryOptions?.env?.OPEN_ONLY).toBe("open");
+    expect(queryOptions?.env?.SHARED).toBe("target");
   });
 
   test("restores Claude Code prompt and filesystem settings for normal turns", async () => {

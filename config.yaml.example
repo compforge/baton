@@ -16,10 +16,24 @@ targets:
     # config/profile/enterprise requirements.
     # approvalReviewer: auto_review # auto_review | user
 
+  # A second account is another Target of the same Harness. Use an absolute
+  # path: Baton does not perform shell expansion for values such as ~/.codex2.
+  # codex2:
+  #   harness: codex
+  #   command: [codex, app-server]
+  #   env:
+  #     CODEX_HOME: /Users/you/.codex2
+
   claude:
     harness: claude
     # Optional custom Claude Code executable, such as a company wrapper.
     executable: claude
+
+  # claude2:
+  #   harness: claude
+  #   executable: claude
+  #   env:
+  #     CLAUDE_CONFIG_DIR: /Users/you/.claude2
 
   dsh:
     harness: dsh

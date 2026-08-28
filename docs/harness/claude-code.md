@@ -7,7 +7,8 @@
 ## 1. 接入方式
 
 Baton 通过 Claude Agent SDK 的 streaming `query()` 接入 Claude Code。SDK 启动本机 Claude CLI，
-继承本机环境与登录态；Baton 不持有凭证。真实 Session 显式恢复 Claude Code 的 system prompt、
+继承本机环境与登录态；Target `env` 可用 `CLAUDE_CONFIG_DIR` 选择另一份配置与登录态，并一致
+应用于 live Session、probe 和 textgen。Baton 不持有凭证。真实 Session 显式恢复 Claude Code 的 system prompt、
 settings source、Plugin 与 MCP 配置，使其行为尽量接近直接运行 Claude Code。
 
 `open()` 只登记运行时，不立即创建 SDK query。首个 `sendTurn` 才建立长生命周期 streaming

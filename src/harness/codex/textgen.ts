@@ -15,8 +15,14 @@ const STDERR_MAX_CHARS = 16_384;
 export interface CodexTextgenOptions {
   /** app-server 启动命令；全局参数会保留，app-server 子命令会替换为 exec。 */
   command?: string[];
+  env?: Readonly<Record<string, string>>;
   /** 测试注入点：替代真实子进程，返回 exec 写进 --output-last-message 的内容。 */
-  execFn?: (argv: string[], prompt: string, outputPath: string) => Promise<void>;
+  execFn?: (
+    argv: string[],
+    prompt: string,
+    outputPath: string,
+    env?: Readonly<Record<string, string>>,
+  ) => Promise<void>;
 }
 
 /** exec argv 构造（纯函数，测试锚点）：schema/output 文件路径由调用方分配。 */
@@ -58,11 +64,11 @@ export async function generateCodexStructured(
     const argv = codexExecArgs(request, schemaPath, outputPath);
     await (
       options.execFn ??
-      ((a, p, o) => {
+      ((a, p, o, env) => {
         const [binary, ...args] = codexTextgenLaunch(options.command ?? ["codex", "app-server"], a);
-        return execCodex(binary as string, args, p, o, request);
+        return execCodex(binary as string, args, p, o, request, env);
       })
-    )(argv, request.prompt, outputPath);
+    )(argv, request.prompt, outputPath, options.env);
     return JSON.parse(readFileSync(outputPath, "utf8"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -75,11 +81,13 @@ function execCodex(
   prompt: string,
   _outputPath: string,
   request: TextgenRequest,
+  env?: Readonly<Record<string, string>>,
 ): Promise<void> {
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     const child = spawn(binary, argv, {
       cwd: request.cwd,
+      env: { ...process.env, ...env },
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";

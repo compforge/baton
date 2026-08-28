@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG,
   ensureConfigFile,
   loadConfig,
+  targetEnvironmentFor,
 } from "../src/config/config.ts";
 import { resolveClaudeTargetConfig } from "../src/harness/claude/config.ts";
 import { resolveCodexTargetConfig } from "../src/harness/codex/config.ts";
@@ -73,6 +74,28 @@ describe("config", () => {
       provider: "deepseek-official",
       model: "prod",
     });
+  });
+
+  test("HarnessTarget env is preserved and strictly validated at the runtime boundary", () => {
+    writeFileSync(configPath(root), [
+      "targets:",
+      "  codex2:",
+      "    harness: codex",
+      "    env:",
+      "      CODEX_HOME: /Users/me/.codex2",
+      "",
+    ].join("\n"));
+    const target = loadConfig(root).targets.codex2!;
+    expect(targetEnvironmentFor(target, "codex2")).toEqual({
+      CODEX_HOME: "/Users/me/.codex2",
+    });
+
+    expect(() => targetEnvironmentFor({ harness: "codex", env: { "BAD-NAME": "x" } }, "bad"))
+      .toThrow("invalid variable name");
+    expect(() => targetEnvironmentFor(
+      { harness: "codex", env: { CODEX_HOME: 2 } as unknown as Record<string, string> },
+      "bad",
+    )).toThrow("CODEX_HOME must be a string");
   });
 
   test("Harness-specific modules own defaults and validation", () => {

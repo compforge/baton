@@ -135,12 +135,23 @@ interface HarnessTarget {
 因此根 `BatonConfig` 不随 Harness 增加而堆积 provider 方言，Adapter 工厂也不会收到其它 Target
 或全局配置。Harness 名和 alias 只帮助用户选择该家的默认 Target，不能替代 Target identity。
 
+`env` 是所有 Target 共享的启动能力，用于选择 Harness 自己拥有的账号目录或其它进程级配置。
+它同时作用于 live Session、Target probe 和 textgen；同名项覆盖 Baton 进程环境以及单次 open 的
+动态环境，确保一个 Target 的账号身份不会随调用漂移。变量名和值在 Adapter/probe 创建边界严格
+校验，非法配置直接失败，不能静默回落到默认账号。路径不会经过 shell 展开，必须使用绝对路径；
+凭证文件仍由 Harness 管理，不应把 token 直接写入 Baton 配置。Target Resource 也不投影 `env`。
+
 ```yaml
 defaultTarget: codex
 targets:
   codex:
     harness: codex
     command: [codex, app-server]
+  codex2:
+    harness: codex
+    command: [codex, app-server]
+    env:
+      CODEX_HOME: /Users/you/.codex2
   dsh-prod:
     harness: dsh
     command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]

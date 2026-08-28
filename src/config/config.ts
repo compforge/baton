@@ -52,6 +52,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function loadTargets(value: unknown): Record<string, HarnessTargetConfig> {
   const configured = record(value) ?? {};
@@ -85,6 +86,28 @@ export function targetConfigFor(config: BatonConfig, targetId: string): HarnessT
   const target = config.targets[targetId];
   if (!target) throw new Error(`HarnessTarget not configured: ${targetId}`);
   return target;
+}
+
+/** Adapter/probe 创建边界的严格校验：账号选择不能因坏配置静默回落到 Baton 进程环境。 */
+export function targetEnvironmentFor(
+  config: HarnessTargetConfig,
+  targetId: string,
+): Readonly<Record<string, string>> | undefined {
+  if (config.env === undefined) return undefined;
+  const supplied = record(config.env);
+  if (!supplied) throw new Error(`HarnessTarget ${targetId} env must be a string map`);
+
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(supplied)) {
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw new Error(`HarnessTarget ${targetId} env has invalid variable name: ${name}`);
+    }
+    if (typeof value !== "string") {
+      throw new Error(`HarnessTarget ${targetId} env ${name} must be a string`);
+    }
+    environment[name] = value;
+  }
+  return Object.keys(environment).length > 0 ? Object.freeze(environment) : undefined;
 }
 
 export function loadConfig(rootDir?: string): BatonConfig {

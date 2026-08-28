@@ -47,7 +47,16 @@ export interface ClaudeSettings {
 export async function readClaudeSettings(
   cwd: string,
   log?: LogSink,
+  env?: Readonly<Record<string, string>>,
 ): Promise<ClaudeSettings> {
+  if (
+    env?.CLAUDE_CONFIG_DIR !== undefined &&
+    env.CLAUDE_CONFIG_DIR !== process.env.CLAUDE_CONFIG_DIR
+  ) {
+    // resolveSettings 没有 per-call env；此时读取会混入 Baton 自己的默认账号配置。
+    // 目标 Claude 子进程会按 CLAUDE_CONFIG_DIR 自行加载正确的 user settings。
+    return {};
+  }
   try {
     const resolved = await resolveSettings({ cwd });
     const { plugins, mcpServers, enabledPlugins, extraKnownMarketplaces } = resolved.effective;
