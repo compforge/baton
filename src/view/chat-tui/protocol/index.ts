@@ -1448,11 +1448,14 @@ export class BatonChatProtocol implements ChatProtocol {
   private sessionStatusItem(): TranscriptItem {
     const meta = this.session.meta;
     const activeTargetId = this.controller.activeHarnessTargetId;
-    const selectedModel = this.controller.currentModel(this.harnessTargetId) ?? "default";
-    const selectedEffort = this.controller.currentEffort(this.harnessTargetId) ?? "default";
-    const selectedMode = this.controller.currentMode(this.harnessTargetId);
+    const statusTargetId = this.plugins.resolveHarnessTargetId(
+      this.harnessTargetId,
+    );
+    const selectedModel = this.controller.currentModel(statusTargetId) ?? "default";
+    const selectedEffort = this.controller.currentEffort(statusTargetId) ?? "default";
+    const selectedMode = this.controller.currentMode(statusTargetId);
     const context = this.state.perLaneTarget.get(
-      laneTargetStateKey(MAIN_LANE_ID, this.harnessTargetId),
+      laneTargetStateKey(MAIN_LANE_ID, statusTargetId),
     )?.contextWindow;
     const contextText = contextWindowText(context, selectedModel);
     const targets = meta.harnessTargets
@@ -1463,7 +1466,7 @@ export class BatonChatProtocol implements ChatProtocol {
       `Name: ${sessionDisplayTitle(meta)}`,
       ...(meta.description ? [`Description: ${meta.description}`] : []),
       `Directory: ${meta.cwd}`,
-      `Current: ${this.harnessTargetId} - model ${selectedModel} - effort ${selectedEffort} - mode ${selectedMode}`,
+      `Current: ${statusTargetId} - model ${selectedModel} - effort ${selectedEffort} - mode ${selectedMode}`,
       `Context: ${contextText}`,
       `Targets: ${targets}`,
       `Turns: ${this.state.turnSummaries.length} - tokens in ${this.state.usage.inputTokens} / out ${this.state.usage.outputTokens}`,
@@ -1653,6 +1656,9 @@ export class BatonChatProtocol implements ChatProtocol {
       session: this.session,
       config: { showThoughts: this.showThoughts },
       harnessTargetId: this.harnessTargetId,
+      statusHarnessTargetId: this.plugins.resolveHarnessTargetId(
+        this.harnessTargetId,
+      ),
       toast: this.toast,
       commandOutput: this.commandOutput,
       picker: this.picker,
