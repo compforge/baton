@@ -13,6 +13,7 @@ const DEFAULT_TEXTGEN_MODEL = "haiku";
 
 export interface ClaudeTextgenOptions {
   executablePath?: string;
+  env?: Readonly<Record<string, string>>;
   /** 测试注入点；生产始终使用 Agent SDK 的 query。 */
   queryFactory?: typeof query;
 }
@@ -27,7 +28,7 @@ export async function generateClaudeStructured(
     options: {
       abortController,
       cwd: request.cwd,
-      env: { ...(process.env as Record<string, string>) },
+      env: { ...(process.env as Record<string, string>), ...options.env },
       allowedTools: [],
       tools: [],
       mcpServers: {},

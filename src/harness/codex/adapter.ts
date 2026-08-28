@@ -758,6 +758,8 @@ export interface CodexAdapterOptions {
   openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
+  /** HarnessTarget 固定环境；同名项覆盖每次 open 传入的动态环境。 */
+  env?: Readonly<Record<string, string>>;
   /** 缺省由 auto-review 审批；显式 user 时请求进入 Baton TUI。 */
   approvalReviewer?: "user" | "auto_review";
   /** 覆盖二进制，测试用 */
@@ -1021,6 +1023,7 @@ export class CodexAdapter implements HarnessAdapter {
   async generateStructured(request: TextgenRequest): Promise<unknown> {
     return generateCodexStructured(request, {
       command: codexLaunchCommand(this.options.command),
+      env: this.options.env,
     });
   }
 
@@ -1029,7 +1032,7 @@ export class CodexAdapter implements HarnessAdapter {
     const child = spawn(cmd as string, args, {
       cwd: opts.cwd,
       // 继承 HOME 等本机环境：凭证零持有，复用 ~/.codex 登录态（见 docs/harness/codex.md）
-      env: { ...process.env, ...opts.env },
+      env: { ...process.env, ...opts.env, ...this.options.env },
       stdio: ["pipe", "pipe", "pipe"],
       // A dedicated process group lets close() reap app-server descendants too
       // instead of only terminating the immediate child.

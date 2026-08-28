@@ -163,6 +163,7 @@ describe("DshAdapter", () => {
       provider: "deepseek-official",
       model: "prod",
       maxTokens: 32_768,
+      env: { DSH_TARGET: "2", DSH_TEST: "target" },
       clientFactory: (value) => {
         options.push(value);
         return client;
@@ -170,7 +171,7 @@ describe("DshAdapter", () => {
     });
 
     const ref = await adapter.open(
-      { cwd: "/repo", env: { DSH_TEST: "1" } },
+      { cwd: "/repo", env: { DSH_TEST: "open" } },
       (event) => events.push(event),
       (binding) => bindings.push(binding),
     );
@@ -181,7 +182,7 @@ describe("DshAdapter", () => {
         command: "dsh-jsonrpc-agent",
         args: ["/tmp/cordis.yml"],
         cwd: "/repo",
-        env: { DSH_TEST: "1" },
+        env: { DSH_TEST: "target", DSH_TARGET: "2" },
         requestTimeoutMs: 15_000,
         shutdownTimeoutMs: 1_000,
         disposeEofGraceMs: 6_000,

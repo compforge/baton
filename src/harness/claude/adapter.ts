@@ -826,7 +826,7 @@ export async function probeClaudeTarget(options: {
   queryFactory?: typeof query;
 }): Promise<HarnessTargetProbeResult> {
   const idleInput = idleClaudeInput();
-  const settings = await readClaudeSettings(options.cwd, options.log);
+  const settings = await readClaudeSettings(options.cwd, options.log, options.env);
   const queryHandle = (options.queryFactory ?? query)({
     prompt: idleInput.stream,
     options: {
@@ -1024,6 +1024,8 @@ export interface ClaudeAdapterOptions {
   openInteraction: OpenInteraction;
   log?: LogSink;
   nativeEvent?: NativeEventSink;
+  /** HarnessTarget 固定环境；同名项覆盖每次 open 传入的动态环境。 */
+  env?: Readonly<Record<string, string>>;
   /** claude 可执行文件路径；默认 BATON_CLAUDE_BIN 环境变量，再默认交给 SDK 自己找 */
   executablePath?: string;
   /** 测试注入点；生产始终使用 Agent SDK 的 query。 */
@@ -1054,6 +1056,7 @@ export class ClaudeAdapter implements HarnessAdapter {
   async generateStructured(request: TextgenRequest): Promise<unknown> {
     return generateClaudeStructured(request, {
       executablePath: this.options.executablePath,
+      env: this.options.env,
       ...(this.options.queryFactory ? { queryFactory: this.options.queryFactory } : {}),
     });
   }
@@ -1074,8 +1077,11 @@ export class ClaudeAdapter implements HarnessAdapter {
       ? undefined
       : requestedSessionId;
 
+    const env = opts.env || this.options.env
+      ? { ...opts.env, ...this.options.env }
+      : undefined;
     // 读取 .claude/settings.json 中的 plugins 和 mcpServers 配置
-    const settings = await readClaudeSettings(opts.cwd, this.options.log);
+    const settings = await readClaudeSettings(opts.cwd, this.options.log, env);
 
     // 注意：虽然 SDK 通过子进程启动 Claude CLI，CLI 会自动读取配置文件层级：
     //   1. ~/.claude/settings.json (user-level)
@@ -1091,7 +1097,7 @@ export class ClaudeAdapter implements HarnessAdapter {
 
     const runtime: ClaudeRuntime = {
       cwd: opts.cwd,
-      env: opts.env,
+      env,
       sink,
       bindingSink: binding,
       claudeSessionId: resumeSessionId,

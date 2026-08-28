@@ -110,6 +110,11 @@ targets:
   codex:
     harness: codex
     command: [codex, app-server]
+  codex2:
+    harness: codex
+    command: [codex, app-server]
+    env:
+      CODEX_HOME: /Users/you/.codex2
   claude:
     harness: claude
   dsh:
@@ -123,7 +128,7 @@ notifications: true
 
 `notifications` controls desktop notifications (OSC 9) when a turn finishes or an approval/question needs you. It is on by default and stays silent on terminals outside the known-support list (iTerm2, WezTerm, Kitty, Ghostty, Warp). Inside tmux 3.3+, DCS passthrough also requires `set -g allow-passthrough on` in `~/.tmux.conf`. Use `notifications: { enabled: true, bell: true }` to fall back to the terminal bell elsewhere.
 
-See [`config.yaml.example`](config.yaml.example) for all options. baton reuses each Harness's existing credentials and runtime configuration instead of copying provider secrets. Codex approvals continue to follow `~/.codex/config.toml` unless `targets.codex.approvalReviewer` delegates them; Claude Code can use `targets.claude.executable`; DeepSeek Harness uses the command configured in `targets.dsh.command`.
+See [`config.yaml.example`](config.yaml.example) for all options. Multiple Targets may use the same Harness; a Target-level `env` can select a provider-owned account directory such as `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. Use absolute paths and keep tokens out of this file. baton reuses each Harness's existing credentials and runtime configuration instead of copying provider secrets. Codex approvals continue to follow the selected Codex home unless the Target's `approvalReviewer` delegates them; Claude Code can use `targets.claude.executable`; DeepSeek Harness uses the command configured in `targets.dsh.command`.
 
 ## Your data stays local
 

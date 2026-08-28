@@ -108,6 +108,11 @@ targets:
   codex:
     harness: codex
     command: [codex, app-server]
+  codex2:
+    harness: codex
+    command: [codex, app-server]
+    env:
+      CODEX_HOME: /Users/you/.codex2
   claude:
     harness: claude
   dsh:
@@ -118,7 +123,7 @@ mentionBudgetChars: 4096
 showThoughts: true
 ```
 
-所有配置项见 [`config.yaml.example`](config.yaml.example)。baton 复用各 Harness 已有的凭证和运行时配置，不复制 provider secret。Codex 审批继续遵循 `~/.codex/config.toml`，除非通过 `targets.codex.approvalReviewer` 显式委托；Claude Code 可设置 `targets.claude.executable`；DeepSeek Harness 使用 `targets.dsh.command` 配置的命令。
+所有配置项见 [`config.yaml.example`](config.yaml.example)。同一 Harness 可以配置多个 Target；Target 级 `env` 可用 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR` 选择 provider 自己管理的账号目录。路径必须是绝对路径，不要把 token 写进该文件。baton 复用各 Harness 已有的凭证和运行时配置，不复制 provider secret。Codex 审批继续遵循所选 Codex home 的配置，除非该 Target 的 `approvalReviewer` 显式委托；Claude Code 可设置 `targets.claude.executable`；DeepSeek Harness 使用 `targets.dsh.command` 配置的命令。
 
 ## 数据留在本机
 

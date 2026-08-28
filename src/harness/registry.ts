@@ -11,7 +11,11 @@ import { resolveCodexTargetConfig } from "./codex/config.ts";
 import { codexSessionInspector } from "./codex/native-session.ts";
 import { DshAdapter } from "./dsh/adapter.ts";
 import { resolveDshTargetConfig } from "./dsh/config.ts";
-import type { BatonConfig, HarnessTargetConfig } from "../config/config.ts";
+import {
+  targetEnvironmentFor,
+  type BatonConfig,
+  type HarnessTargetConfig,
+} from "../config/config.ts";
 import { FileHookTrustStore } from "../config/hook.ts";
 import type { LogSink } from "../logging.ts";
 import { HARNESS_IDENTITIES, HARNESSES, parseHarness, type HarnessName } from "./ids.ts";
@@ -27,6 +31,8 @@ export interface HarnessAdapterOptions {
   log?: LogSink;
   nativeEvent?: NativeEventSink;
   targetConfig: HarnessTargetConfig;
+  /** 已校验的 Target 固定环境；覆盖每次 open 动态传入的同名变量。 */
+  env?: Readonly<Record<string, string>>;
   rootDir?: string;
 }
 
@@ -70,12 +76,13 @@ export const HARNESS_REGISTRY = [
     shortName: "codex",
     color: "#73daca", // 青
     sessionInspector: codexSessionInspector,
-    create: ({ target, openInteraction, log, nativeEvent, targetConfig, rootDir }) => {
+    create: ({ target, openInteraction, log, nativeEvent, targetConfig, env, rootDir }) => {
       const config = resolveCodexTargetConfig(targetConfig);
       return new CodexAdapter({
         openInteraction,
         log,
         nativeEvent,
+        env,
         command: config.command,
         approvalReviewer: config.approvalReviewer,
         hookTrustStore: new FileHookTrustStore(target.id, rootDir),
@@ -89,12 +96,13 @@ export const HARNESS_REGISTRY = [
     shortName: "claude",
     color: "#ff9e64", // 橙
     sessionInspector: claudeSessionInspector,
-    create: ({ openInteraction, log, nativeEvent, targetConfig }) => {
+    create: ({ openInteraction, log, nativeEvent, targetConfig, env }) => {
       const config = resolveClaudeTargetConfig(targetConfig);
       return new ClaudeAdapter({
         openInteraction,
         log,
         nativeEvent,
+        env,
         executablePath: config.executable,
       });
     },
@@ -114,11 +122,12 @@ export const HARNESS_REGISTRY = [
     sessionKey: "deepseek-harness",
     shortName: "dsh",
     color: "#4d6bfe", // DeepSeek 蓝
-    create: ({ log, nativeEvent, targetConfig }) => {
+    create: ({ log, nativeEvent, targetConfig, env }) => {
       const config = resolveDshTargetConfig(targetConfig);
       return new DshAdapter({
         log,
         nativeEvent,
+        env,
         command: config.command,
         provider: config.provider,
         model: config.model,
@@ -191,7 +200,12 @@ export function createHarnessAdapter(
       `HarnessTarget config mismatch for ${target.id}: target=${target.harness}, config=${options.targetConfig.harness}`,
     );
   }
-  return definition.create({ ...options, target });
+  const env = targetEnvironmentFor(options.targetConfig, target.id);
+  return definition.create({
+    ...options,
+    target,
+    ...(env ? { env } : {}),
+  });
 }
 
 /** Target 级发现的唯一入口；没有 probe 的 Harness 返回空快照，不为发现而创建 Adapter。 */
@@ -208,8 +222,12 @@ export async function probeHarnessTarget(
       `HarnessTarget config mismatch for ${target.id}: target=${target.harness}, config=${options.targetConfig.harness}`,
     );
   }
+  const targetEnv = targetEnvironmentFor(options.targetConfig, target.id);
+  const env = options.env || targetEnv
+    ? { ...options.env, ...targetEnv }
+    : undefined;
   return "probe" in definition && definition.probe
-    ? definition.probe({ ...options, target })
+    ? definition.probe({ ...options, target, ...(env ? { env } : {}) })
     : {};
 }
 

@@ -43,6 +43,34 @@ describe("harness registry", () => {
     expect(create({ id: "dsh-a", harness: "dsh" }).harness).toBe("deepseek-harness");
   });
 
+  test("rejects invalid Target env before constructing an adapter", () => {
+    expect(() => createHarnessAdapter(
+      { id: "codex2", harness: "codex" },
+      {
+        openInteraction,
+        targetConfig: {
+          harness: "codex",
+          env: { CODEX_HOME: 2 } as unknown as Record<string, string>,
+        },
+      },
+    )).toThrow("HarnessTarget codex2 env CODEX_HOME must be a string");
+  });
+
+  test("lowers validated Target env into the adapter", () => {
+    const adapter = createHarnessAdapter(
+      { id: "codex2", harness: "codex" },
+      {
+        openInteraction,
+        targetConfig: {
+          harness: "codex",
+          env: { CODEX_HOME: "/Users/me/.codex2" },
+        },
+      },
+    );
+    expect((adapter as unknown as { options: { env?: Record<string, string> } }).options.env)
+      .toEqual({ CODEX_HOME: "/Users/me/.codex2" });
+  });
+
   test("resolves configured HarnessTargets and maps Harness aliases to their default Target", () => {
     expect(configuredHarnessTargets(DEFAULT_CONFIG)).toEqual([
       { id: "codex", harness: "codex" },

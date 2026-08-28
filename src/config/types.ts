@@ -3,6 +3,8 @@ import type { LogLevel } from "../logging.ts";
 /** 一份 HarnessTarget 的用户配置；`harness` 选择解析它的 HarnessDefinition。 */
 export interface HarnessTargetConfig {
   readonly harness: string;
+  /** 该 Target 启动 Harness 时覆盖的环境变量；用于选择账号目录等进程级配置。 */
+  readonly env?: Readonly<Record<string, string>>;
   readonly [key: string]: unknown;
 }
 
