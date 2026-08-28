@@ -204,10 +204,52 @@ never extend the main IO path. `view.output` means Baton published a View update
 it does not prove that a person saw it.
 
 The Hook itself returns no replacement, allow/deny decision, or output value.
-Request effects through typed `hook.verbs`; Core then owns authorization,
+Patch explicitly writable Core Resource fields through `context.resources`, and
+request other effects through typed `hook.verbs`; Core then owns authorization,
 persistence, routing, and lifecycle. Core mechanics such as `input.settled` and
 Adapter admission remain Event, Attempt, or Snapshot facts instead of becoming
 additional Hook stages.
+
+Core registers its Resource GVKs before Plugin activation. Plugins read them
+through the same `ResourceReader` used for Plugin-owned Resources; a later
+registration of the same `apiVersion + kind` fails instead of replacing Core.
+For example, an inline `view.input` Hook may select one eligible Target for the
+current Session without introducing another Hook stage:
+
+```ts
+const BINDING = {
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "SessionTargetBinding",
+} as const;
+const TARGET = {
+  apiVersion: "baton.dev/v1alpha1",
+  kind: "Target",
+} as const;
+
+const [binding] = await context.resources.list(BINDING);
+const target = (await context.resources.list(TARGET)).find(
+  (candidate) => candidate.metadata.name === "codex2",
+);
+if (binding && target) {
+  await context.resources.patch(binding, {
+    type: "merge",
+    value: {
+      spec: {
+        targetRef: {
+          ...TARGET,
+          namespace: target.metadata.namespace,
+          name: target.metadata.name,
+          uid: target.metadata.uid,
+        },
+      },
+    },
+  });
+}
+```
+
+`Session`, `Target`, and `Turn` are read-only projections. The
+`SessionTargetBinding` provider accepts only `spec.targetRef` for the current
+Session, checks `resourceVersion`, and rejects targets outside its eligible set.
 
 Controller Sources have two narrow roles:
 

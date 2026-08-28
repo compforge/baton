@@ -10,12 +10,12 @@ import {
 
 export type { ReconcileFailure } from "./controller.ts";
 import {
-  BuiltinController,
-  type BuiltinResource,
-  type BuiltinControllerOptions,
-  type BuiltinResourceKind,
+  BatonResourceController,
+  type BatonResourceObservation,
+  type BatonResourceControllerOptions,
+  type BatonResourceKind,
   BatonResourceIndex,
-} from "./builtin.ts";
+} from "./baton-resource-controller.ts";
 import {
   type CreatePluginInstance,
   type PluginInstance,
@@ -35,6 +35,7 @@ import {
   type ResourceRef,
   type ResourceType,
   BATON_SYSTEM_NAMESPACE,
+  BATON_RESOURCE_TYPES,
   BATON_TURN_RESOURCE_TYPE,
   type PluginLogRecord,
   type ToastMessage,
@@ -97,6 +98,12 @@ import { namespaceContains } from "./namespace.ts";
 import type { ResourceNamespace } from "@compforge/baton-plugin";
 import { Verb, type VerbOptions } from "./verb.ts";
 import { HookRegistry, HookRuntime } from "./hook.ts";
+import {
+  BatonResourceProvider,
+  type BatonSessionObservation,
+} from "./baton-resource.ts";
+import { ResourceRegistry } from "./resource-registry.ts";
+import type { HarnessTarget } from "../harness/target.ts";
 
 const TOAST_TONES = new Set<ToastTone>([
   "info",
@@ -121,8 +128,8 @@ export interface ControllerDefinition<TSpec, TStatus>
   now?: () => Date;
 }
 
-type BuiltinControllerDefinition<K extends BuiltinResourceKind> = Pick<
-  BuiltinControllerOptions<K>,
+type BatonResourceControllerDefinition<K extends BatonResourceKind> = Pick<
+  BatonResourceControllerOptions<K>,
   "pluginInstanceId" | "namespace" | "resourceKind" | "sources" | "watches" | "reconcile" | "maxConcurrency" | "now"
 >;
 
@@ -145,13 +152,19 @@ export interface ManagerOptions {
     SessionHandle,
     | "id"
     | "dir"
+    | "meta"
     | "ledger"
     | "appendEvent"
     | "subscribe"
     | "log"
     | "ensureMainLane"
     | "requireLane"
+    | "setTargetBinding"
   >;
+  /** Configured HarnessTargets exposed as Baton Target Resources. */
+  harnessTargets?: readonly HarnessTarget[];
+  /** Known BatonSessions exposed as limited Session/SessionTargetBinding projections. */
+  sessions?: () => readonly BatonSessionObservation[];
   /** 当前进程可激活的可信、不可变 Package 版本。 */
   packages?: PackageLoaderOptions["packages"];
   /** reconcile 调用前读取并冻结的当前 BatonSession 视图。 */
@@ -252,17 +265,8 @@ function pluginName(pluginId: string): string {
  * Plugin 域统一入口：注册和路由 Controller，并限制所有 Plugin 的进程总并发。
  */
 export class Manager {
-  /** Baton claims its Resource kinds before any Plugin Binding can register. */
-  private readonly resourceTypeOwners = new Map<string, {
-    readonly owner: "baton" | string;
-    controllers: number;
-    claimedByResource: boolean;
-  }>([
-    [
-      resourceTypeKey(BATON_TURN_RESOURCE_TYPE),
-      { owner: "baton", controllers: 0, claimedByResource: true },
-    ],
-  ]);
+  /** Core installs its GVKs before any Plugin Binding can register. */
+  private readonly resourceRegistry = new ResourceRegistry(BATON_RESOURCE_TYPES);
   private readonly controllers = new Map<string, ManagedController>();
   private readonly board: BoardProjection;
   private readonly commandRegistry: PluginCommandRegistry;
@@ -278,6 +282,7 @@ export class Manager {
   private readonly activations = new Map<string, Promise<void>>();
   private readonly capacity: ReconcileCapacity;
   private readonly batonResources?: BatonResourceIndex;
+  private readonly batonResourceProvider?: BatonResourceProvider;
   private readonly unsubscribeBatonResources?: () => void;
   private readonly onToast: ManagerOptions["onToast"];
   private readonly onCommandsChanged: ManagerOptions["onCommandsChanged"];
@@ -345,7 +350,14 @@ export class Manager {
       session: options.session,
       capacity: this.capacity,
       snapshot: this.snapshot,
-      selectedHarnessTargetId: options.selectedHarnessTargetId,
+      selectedHarnessTargetId: options.selectedHarnessTargetId
+        ? () => {
+            const selected = options.selectedHarnessTargetId?.();
+            return selected === undefined
+              ? undefined
+              : this.batonResourceProvider?.resolveTarget(selected) ?? selected;
+          }
+        : undefined,
       harnessInvocationGate: options.harnessInvocationGate,
       enqueueHarnessInvocation: options.enqueueHarnessInvocation,
       cancelHarnessInvocation: options.cancelHarnessInvocation,
@@ -396,9 +408,16 @@ export class Manager {
       this.batonResources = new BatonResourceIndex({
         session: options.session,
       });
+      this.batonResourceProvider = new BatonResourceProvider({
+        session: options.session,
+        turns: this.batonResources,
+        ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
+        targets: () => options.harnessTargets ?? [],
+        now: this.now,
+      });
       this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
         this.board.invalidate();
-        this.enqueueBuiltinResource(resource);
+        this.enqueueBatonResource(resource);
       });
     }
   }
@@ -453,14 +472,14 @@ export class Manager {
     return this.installController(controller, suspended);
   }
 
-  private registerBuiltinController<K extends BuiltinResourceKind>(
-    definition: BuiltinControllerDefinition<K>,
+  private registerBatonResourceController<K extends BatonResourceKind>(
+    definition: BatonResourceControllerDefinition<K>,
   ): ControllerRegistration {
-    return this.registerBuiltinControllerInternal(definition, false);
+    return this.registerBatonResourceControllerInternal(definition, false);
   }
 
-  private registerBuiltinControllerInternal<K extends BuiltinResourceKind>(
-    definition: BuiltinControllerDefinition<K>,
+  private registerBatonResourceControllerInternal<K extends BatonResourceKind>(
+    definition: BatonResourceControllerDefinition<K>,
     suspended: boolean,
   ): ControllerRegistration {
     if (this.closed) throw new Error("plugin Manager is closed");
@@ -469,7 +488,7 @@ export class Manager {
         "plugin Manager requires a SessionHandle to watch Baton-owned Resources",
       );
     }
-    const controller: BuiltinController<K> = new BuiltinController({
+    const controller: BatonResourceController<K> = new BatonResourceController({
       ...definition,
       resources: this.batonResources,
       snapshot: (key, resource) => this.snapshotFor(key, resource),
@@ -578,7 +597,8 @@ export class Manager {
       }),
       (change) => this.handlePluginResourceChange(change),
       (resourceType) =>
-        this.claimResourceTypeForCreate(instance.pluginId, resourceType),
+        this.resourceRegistry.registerMaterialized(instance.pluginId, resourceType),
+      this.batonResourceProvider,
     );
     const dataDirs = preparePluginDataDirectories(
       {
@@ -772,6 +792,11 @@ export class Manager {
     return this.hookRegistry.has(stage);
   }
 
+  /** Resolve the current Core-owned SessionTargetBinding after inline Hooks settle. */
+  resolveHarnessTargetId(requestedTargetId: string): string {
+    return this.batonResourceProvider?.resolveTarget(requestedTargetId) ?? requestedTargetId;
+  }
+
   /**
    * Instance 先以 disabled 落盘，再显式启用；激活失败时仍保留一份可诊断、可重试的配置。
    */
@@ -956,10 +981,10 @@ export class Manager {
     return this.verb.cancelHarnessInvocation(identifier);
   }
 
-  getBatonResource<K extends BuiltinResourceKind>(
+  getBatonResource<K extends BatonResourceKind>(
     kind: K,
     resourceId: string,
-  ): BuiltinResource<K> {
+  ): BatonResourceObservation<K> {
     if (!this.batonResources) {
       throw new Error("Baton-owned resources are not available");
     }
@@ -1030,7 +1055,7 @@ export class Manager {
         pluginController,
       );
     }
-    const releaseKind = this.claimResourceType(
+    const releaseKind = this.resourceRegistry.registerController(
       instance.pluginId,
       pluginController.resourceType,
     );
@@ -1121,7 +1146,7 @@ export class Manager {
     const cronSources = sources.filter(
       (source): source is CronSource => source.type === "cron",
     );
-    const registration = this.registerBuiltinControllerInternal(
+    const registration = this.registerBatonResourceControllerInternal(
       {
         pluginInstanceId,
         namespace,
@@ -1179,7 +1204,7 @@ export class Manager {
 
   private exposeBatonResource<TSpec, TStatus>(
     _pluginInstanceId: string,
-    resource: BuiltinResource<typeof BATON_TURN_RESOURCE_TYPE.kind>,
+    resource: BatonResourceObservation<typeof BATON_TURN_RESOURCE_TYPE.kind>,
   ): Readonly<Resource<TSpec, TStatus>> {
     return Object.freeze({
       apiVersion: BATON_TURN_RESOURCE_TYPE.apiVersion,
@@ -1194,64 +1219,6 @@ export class Manager {
       }),
       spec: Object.freeze({}) as TSpec,
       status: resource.data as TStatus,
-    });
-  }
-
-  private claimResourceType(pluginId: string, type: ResourceType): () => void {
-    const key = resourceTypeKey(type);
-    const current = this.resourceTypeOwners.get(key);
-    if (current?.owner === "baton") {
-      throw new Error(`Resource type is reserved by Baton: ${key}`);
-    }
-    if (current && current.owner !== pluginId) {
-      throw new Error(
-        `Resource type ${key} is already registered by ${current.owner}`,
-      );
-    }
-    if (current) {
-      current.controllers += 1;
-    } else {
-      this.resourceTypeOwners.set(key, {
-        owner: pluginId,
-        controllers: 1,
-        claimedByResource: false,
-      });
-    }
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const registered = this.resourceTypeOwners.get(key);
-      if (!registered || registered.owner !== pluginId) return;
-      registered.controllers -= 1;
-      if (registered.controllers === 0 && !registered.claimedByResource) {
-        this.resourceTypeOwners.delete(key);
-      }
-    };
-  }
-
-  private claimResourceTypeForCreate(
-    pluginId: string,
-    type: ResourceType,
-  ): void {
-    const key = resourceTypeKey(type);
-    const current = this.resourceTypeOwners.get(key);
-    if (current?.owner === "baton") {
-      throw new Error(`Resource type is reserved by Baton: ${key}`);
-    }
-    if (current && current.owner !== pluginId) {
-      throw new Error(
-        `Resource type ${key} is already registered by ${current.owner}`,
-      );
-    }
-    if (current) {
-      current.claimedByResource = true;
-      return;
-    }
-    this.resourceTypeOwners.set(key, {
-      owner: pluginId,
-      controllers: 0,
-      claimedByResource: true,
     });
   }
 
@@ -1589,7 +1556,7 @@ export class Manager {
     }
   }
 
-  private enqueueBuiltinResource(resource: BuiltinResource): void {
+  private enqueueBatonResource(resource: BatonResourceObservation): void {
     if (!this.started || this.closed) return;
     for (const controller of this.controllers.values()) {
       if (this.suspendedControllers.has(reconcileScopeId(controller.scope))) continue;

@@ -420,6 +420,11 @@ export class PluginRunnerClient {
           request.namespace,
         );
         return undefined;
+      case "resource.patch":
+        return await this.callbacks.resources.patch(
+          request.resource,
+          request.patch,
+        );
       case "resource.patchMetadata":
         return await this.callbacks.resources.patchMetadata(
           request.resource,

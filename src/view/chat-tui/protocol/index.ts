@@ -50,7 +50,7 @@ import { HARNESS_IDENTITIES, HARNESSES } from "../../../harness/ids.ts";
 import { configuredTextgenTargets } from "../../../session/title.ts";
 import type { InteractionResult } from "../../../interaction/types.ts";
 import type { Manager } from "../../../plugin/manager.ts";
-import { BATON_TURN_RESOURCE_KIND } from "../../../plugin/builtin.ts";
+import { BATON_TURN_RESOURCE_KIND } from "../../../plugin/baton-resource-controller.ts";
 import type {
   PluginCommandInput,
   PluginCommandResult,
@@ -1228,6 +1228,10 @@ export class BatonChatProtocol implements ChatProtocol {
             : `${definition?.label ?? target.harness} (${target.id})`,
         };
       }),
+      sessions: () => this.store.listSessions().map((meta) => ({
+        meta,
+        active: this.store.isSessionActive(meta),
+      })),
       selectedHarnessTargetId: () => this.harnessTargetId,
       loadPackageEntry: (pluginId, version, options) => {
         if (!options?.marketplace) {

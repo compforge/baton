@@ -53,6 +53,7 @@ export type ChannelPluginOptions = Omit<
   | "snapshot"
   | "enqueueHarnessInvocation"
   | "cancelHarnessInvocation"
+  | "harnessTargets"
 > & {
   /** Targets exposed in the frozen Plugin snapshot. */
   readonly harnessTargets?: readonly (HarnessTarget & {
@@ -165,7 +166,8 @@ export class Channel implements ChannelHookGateway {
 
   /**
    * Accept one prompt, prepare its Harness blocks after WAL intake, then let
-   * Controller own Queue admission and Turn execution.
+   * Controller own Queue admission and Turn execution. Target resolution runs
+   * after inline view.input Hooks so an awaited Resource patch affects this input.
    */
   submitPrompt(
     input: Extract<ViewInput, { kind: "prompt" }>,
@@ -174,7 +176,8 @@ export class Channel implements ChannelHookGateway {
   ): Promise<DispatchReceipt<SendTurnOutcome>> {
     return this.dispatch(input, async (record) =>
       await this.controller.sendTurn(
-        input.harnessTargetId,
+        this.pluginManager?.resolveHarnessTargetId(input.harnessTargetId) ??
+          input.harnessTargetId,
         await prepare(record),
         { ...options, parentEventId: record.eventId },
       ));
@@ -323,6 +326,7 @@ export class Channel implements ChannelHookGateway {
     return new Manager({
       ...manager,
       session: this.options.session,
+      harnessTargets,
       snapshot: () =>
         createReconcileSnapshot({
           batonSessionId: this.options.session.id,

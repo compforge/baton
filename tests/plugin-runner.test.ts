@@ -227,6 +227,48 @@ describe("Plugin Runner process boundary", () => {
     await manager.close();
   });
 
+  test("routes Core Resource reads and patch across the process boundary", async () => {
+    const { instances, session, entry } = stores();
+    instances.create({
+      pluginInstanceId: "process_default",
+      pluginId: "tests/process-plugin",
+      marketplace: "fixtures",
+      packageVersion: "1.0.0",
+    });
+    const manager = new Manager({
+      instances,
+      session,
+      harnessTargets: [
+        { id: "codex", harness: "codex" },
+        { id: "codex_secondary", harness: "codex" },
+      ],
+      pluginSupervisor: new PluginSupervisor({ requestTimeoutMs: 250 }),
+      async loadPackageEntry(pluginId, version) {
+        return {
+          pluginId,
+          version,
+          namespace: "v1",
+          entryUrl: pathToFileURL(entry).href,
+        };
+      },
+    });
+    await manager.start();
+
+    await manager.inlineHook("view.input", {
+      inputId: "in_runner_resource",
+      eventId: "ev_runner_resource",
+      seq: 1,
+      input: {
+        kind: "prompt",
+        text: "route from hook",
+        harnessTargetId: "codex",
+      },
+    });
+
+    expect(manager.resolveHarnessTargetId("codex")).toBe("codex_secondary");
+    await manager.close();
+  });
+
   test("routes deferred ViewOutput Hook verbs without blocking publication", async () => {
     const { instances, session, entry } = stores();
     instances.create({

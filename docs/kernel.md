@@ -17,7 +17,7 @@ Baton Core 位于三类参与者之间：
 |---|---|---|
 | **Human** | 目标、输入、编辑和最终决议 | 通过 View 提交 ViewInput、回答 Interaction、消费 ViewOutput |
 | **Harness** | 推理、工具调用和原生执行会话 | 接收 HarnessInput，产生 HarnessEvent、Interaction request 和 receipt |
-| **Plugin** | 领域 loop、Connector 和完成条件 | 通过 Hook 或 reconcile 被唤醒，通过 Verb 请求 Core 行动 |
+| **Plugin** | 领域 loop、Connector 和完成条件 | 通过 Hook 或 reconcile 被唤醒，通过 Resource API / Verb 请求 Core 行动 |
 
 Core 是三方的协调者，不代替任何一方完成其工作。用户级 `Baton Daemon` 是长期存活的控制面进程；
 它拥有 Plugin Host、Human Inbox 与 Session Gateway。Plugin Host 按启用的 PluginInstance 管理
@@ -29,7 +29,8 @@ Harness ports，也是 typed ViewInput 的统一 facade 和 ViewOutput 的发布
 
 Channel 只借用网络框架中 active endpoint、request inbound、response outbound 和 close settlement 的
 方向感；它是 Baton 的固定 typed path，不复制可任意挂载 handler 的通用 pipeline。Plugin 扩展点仍是
-Hook 通知与 Verb 请求；Verb 每次都重新进入完整的 Core-owned path，不从当前 Hook 位置继续传播。
+Hook 通知与 Resource API / Verb 请求；写操作每次都重新进入完整的 Core-owned path，不从当前 Hook
+位置继续传播。
 
 View 位于内核之外。`chat-tui` 是 Baton 与 Doctor 可共同使用的公共终端交互库；Baton 的
 `src/view/chat-tui` Adapter 把其 intent 变成 ViewInput，并把 Core Projection 变成 ChatState；成功
@@ -57,7 +58,7 @@ Review 等领域语义。完整边界见 [View](./view.md)。
 | **Event Ledger** | BatonSession 的 append-only WAL 和历史记录；它保存正典 Event 供审计与回放，不负责调度、reduce 或实时分发 |
 | **Interaction** | Harness 或 Plugin 等待 Human 或 policy 给出 typed decision 的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期 |
 | **Resource / reconcile** | Plugin 表达长期期望状态并主动推进领域 loop 的机制；领域事实与完成条件归 Plugin 和外部系统所有 |
-| **Hook / Verb** | Hook 把 Core 边界事实通知 Plugin；Verb 让 Plugin 请求 Core 执行 typed action。Hook 不返回控制决策，Verb 不绕过 Core |
+| **Hook / Resource API / Verb** | Hook 通知 Core 边界事实；Resource API 修改开放的期望字段；Verb 请求 typed action。Hook 不返回控制决策，写操作不绕过 Core |
 
 HarnessTarget、HarnessSession、Binding、Handle 和 Capability 属于 Harness 执行边界；HarnessInvocation、
 Delivery Attempt 与具体 Input 状态机属于工作流；Board、Context 与 Plugin execution 属于 Plugin 控制面。
@@ -227,11 +228,12 @@ Hook；Delivery Attempt 先持久化 `prepared`，再调用 Adapter。这是 wri
 Lane 与 Turn 只定义 identity、边界和归属。Queue 负责调度，Controller 负责协调，Harness 负责执行，
 Plugin 负责领域判断；不能把 Input、Queue 状态、取消定时器或执行逻辑重新挂回 Lane/Turn。
 
-### 5.3 Hook 通知，Verb 请求动作
+### 5.3 Hook 通知，Resource API / Verb 请求动作
 
 Hook 不是第四类参与者，也不是准入或替换拦截器。它只把 `view.input`、`view.output`、
-`harness.input`、`harness.output` 四个稳定 IO 边界通知 Plugin，没有 replacement 或 allow/deny 返回值。Plugin 的所有副作用都通过
-typed Verb 回到 Core；Core 再执行 WAL、权限和生命周期规则。
+`harness.input`、`harness.output` 四个稳定 IO 边界通知 Plugin，没有 replacement 或 allow/deny 返回值。
+Plugin 对 Core-owned Resource 的有限期望修改走通用 Resource API，其它行动通过 typed Verb 请求 Core；
+两者都由 Core 执行 WAL、权限和生命周期规则。
 
 ### 5.4 终态封闭，未知悲观
 

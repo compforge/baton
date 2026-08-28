@@ -62,23 +62,14 @@ export interface Resource<
 
 /** Exact-match label selector. All entries must match the Resource. */
 export interface ResourceListOptions {
-  /** Exact namespace to query. Defaults to the user-global `v1` namespace. */
-  readonly namespace?: ResourceNamespace;
+  /** Exact namespace to query. Plugin-owned Resources default to user-global `v1`. */
+  readonly namespace?: AnyResourceNamespace;
   /** Include every descendant namespace below `namespace`. */
   readonly includeDescendants?: boolean;
   readonly matchLabels?: Readonly<Record<string, string>>;
 }
 
-/**
- * Host-owned Resource access isolated by PluginInstance.
- *
- * @spec One PluginInstance may own Resources in global, Project, and Session namespaces simultaneously; omitted mutation namespace defaults to `v1`.
- */
-export interface ResourceClient {
-  /**
-   * @spec A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined.
-   * @rule After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource.
-   */
+export interface ResourceReader {
   get<TSpec, TStatus>(
     ref: ResourceRef,
   ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined>;
@@ -86,6 +77,15 @@ export interface ResourceClient {
     type: ResourceType,
     options?: ResourceListOptions,
   ): Promise<readonly Readonly<Resource<TSpec, TStatus>>[]>;
+}
+
+/** Kubernetes-style merge patch payload; each Resource provider validates supported paths. */
+export interface ResourceMergePatch {
+  readonly type: "merge";
+  readonly value: Readonly<Record<string, unknown>>;
+}
+
+export interface ResourceWriter {
   create<TSpec, TStatus>(
     type: ResourceType,
     init: {
@@ -104,6 +104,11 @@ export interface ResourceClient {
     name: string,
     namespace?: ResourceNamespace,
   ): Promise<void>;
+  /** Applies one optimistic patch against the supplied Resource incarnation/version. */
+  patch<TSpec, TStatus>(
+    resource: Readonly<Resource<TSpec, TStatus>>,
+    patch: ResourceMergePatch,
+  ): Promise<Readonly<Resource<TSpec, TStatus>>>;
   /**
    * Patches Plugin-owned metadata by key. A null value removes that key.
    *
@@ -123,8 +128,52 @@ export interface ResourceClient {
   ): Promise<Readonly<Resource<TSpec, TStatus>>>;
 }
 
+/**
+ * Host-owned Resource access. Core projections are provider-backed, while
+ * Plugin-owned Resources remain isolated by PluginInstance.
+ *
+ * @spec One PluginInstance may own Resources in global, Project, and Session namespaces simultaneously; omitted mutation namespace defaults to `v1`.
+ */
+export interface ResourceClient extends ResourceReader, ResourceWriter {
+  /**
+   * @spec A ResourceRef lookup returns the latest Resource only within the referenced namespace and, when uid is present, only for that exact incarnation; deletion or replacement returns undefined.
+   * @rule After awaiting a Core verb, use a uid-pinned ref before applying the result so a stale continuation cannot write to a replacement Resource.
+   */
+  get<TSpec, TStatus>(
+    ref: ResourceRef,
+  ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined>;
+}
+
 export type BatonTurnResourceApiVersion = "baton.dev/v1alpha1";
 export type BatonTurnResourceKind = "Turn";
+
+export type BatonSessionResourceKind = "Session";
+export type BatonTargetResourceKind = "Target";
+export type BatonSessionTargetBindingResourceKind = "SessionTargetBinding";
+
+export interface BatonSessionResourceStatus {
+  readonly phase: "Active" | "Inactive";
+}
+
+export interface BatonTargetResourceSpec {
+  readonly harness: string;
+}
+
+export interface BatonTargetResourceStatus {
+  readonly phase: "Ready" | "Unavailable";
+}
+
+export interface BatonSessionTargetBindingResourceSpec {
+  readonly sessionRef: ResourceRef;
+  readonly eligibleTargetRefs: readonly ResourceRef[];
+  readonly targetRef?: ResourceRef;
+}
+
+export interface BatonSessionTargetBindingResourceStatus {
+  readonly observedGeneration: number;
+  readonly effectiveTargetRef?: ResourceRef;
+  readonly phase: "Pending" | "Bound" | "Failed";
+}
 
 export type BatonTurnResourceData = TurnSummary & {
   readonly harness?: string;
@@ -140,4 +189,28 @@ export type BatonTurnResource = Resource<
 > & {
   readonly apiVersion: BatonTurnResourceApiVersion;
   readonly kind: BatonTurnResourceKind;
+};
+
+export type BatonSessionResource = Resource<
+  Record<string, never>,
+  BatonSessionResourceStatus
+> & {
+  readonly apiVersion: BatonTurnResourceApiVersion;
+  readonly kind: BatonSessionResourceKind;
+};
+
+export type BatonTargetResource = Resource<
+  BatonTargetResourceSpec,
+  BatonTargetResourceStatus
+> & {
+  readonly apiVersion: BatonTurnResourceApiVersion;
+  readonly kind: BatonTargetResourceKind;
+};
+
+export type BatonSessionTargetBindingResource = Resource<
+  BatonSessionTargetBindingResourceSpec,
+  BatonSessionTargetBindingResourceStatus
+> & {
+  readonly apiVersion: BatonTurnResourceApiVersion;
+  readonly kind: BatonSessionTargetBindingResourceKind;
 };

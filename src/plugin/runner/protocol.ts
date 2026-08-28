@@ -5,6 +5,7 @@ import type {
   HookStage,
   Resource,
   ResourceListOptions,
+  ResourceMergePatch,
   ResourceOwnerReference,
   ResourceRef,
   ResourceNamespace,
@@ -149,6 +150,11 @@ export type HostRequest =
       readonly type: ResourceType;
       readonly name: string;
       readonly namespace?: ResourceNamespace;
+    }
+  | {
+      readonly method: "resource.patch";
+      readonly resource: Readonly<Resource<unknown, unknown>>;
+      readonly patch: ResourceMergePatch;
     }
   | {
       readonly method: "resource.patchMetadata";

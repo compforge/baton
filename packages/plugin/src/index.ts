@@ -125,9 +125,23 @@ export type {
   BatonTurnResourceKind,
   Resource,
   ResourceClient,
+  ResourceReader,
+  ResourceWriter,
+  ResourceMergePatch,
   ResourceListOptions,
   ResourceMetadata,
   ResourceOwnerReference,
+  BatonSessionResource,
+  BatonSessionResourceKind,
+  BatonSessionResourceStatus,
+  BatonTargetResource,
+  BatonTargetResourceKind,
+  BatonTargetResourceSpec,
+  BatonTargetResourceStatus,
+  BatonSessionTargetBindingResource,
+  BatonSessionTargetBindingResourceKind,
+  BatonSessionTargetBindingResourceSpec,
+  BatonSessionTargetBindingResourceStatus,
 } from "./resource.ts";
 
 export type {

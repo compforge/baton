@@ -60,13 +60,13 @@ export type BatonTurnResourceData = DeepReadonly<TurnSummary> & {
   readonly harnessSessionId?: string;
 };
 
-export interface BuiltinResourceDataMap {
+export interface BatonResourceDataMap {
   [BATON_TURN_RESOURCE_KIND]: BatonTurnResourceData;
 }
 
-export type BuiltinResourceKind = keyof BuiltinResourceDataMap;
+export type BatonResourceKind = keyof BatonResourceDataMap;
 
-export interface BuiltinResourceMetadata {
+export interface BatonResourceObservationMetadata {
   readonly batonSessionId: string;
   readonly resourceId: string;
   /** 产生当前 Resource 的 ledger seq；Baton-owned Resource 自身不另设持久真相。 */
@@ -75,23 +75,23 @@ export interface BuiltinResourceMetadata {
   readonly observedAt: string;
 }
 
-export interface BuiltinResource<K extends BuiltinResourceKind = BuiltinResourceKind> {
+export interface BatonResourceObservation<K extends BatonResourceKind = BatonResourceKind> {
   readonly kind: K;
-  readonly metadata: BuiltinResourceMetadata;
-  readonly data: BuiltinResourceDataMap[K];
+  readonly metadata: BatonResourceObservationMetadata;
+  readonly data: BatonResourceDataMap[K];
 }
 
-export type AnyBuiltinResource = {
-  [K in BuiltinResourceKind]: BuiltinResource<K>;
-}[BuiltinResourceKind];
+export type AnyBatonResourceObservation = {
+  [K in BatonResourceKind]: BatonResourceObservation<K>;
+}[BatonResourceKind];
 
-type BuiltinSession = Pick<
+type BatonResourceSession = Pick<
   SessionHandle,
   "id" | "dir" | "ledger" | "subscribe"
 >;
 
 export interface BatonResourceIndexOptions {
-  session: BuiltinSession;
+  session: BatonResourceSession;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -103,7 +103,7 @@ function deepFreeze<T>(value: T): T {
 
 function turnResource(
   event: EventEnvelope<"_baton_turn_summary">,
-): BuiltinResource<typeof BATON_TURN_RESOURCE_KIND> {
+): BatonResourceObservation<typeof BATON_TURN_RESOURCE_KIND> {
   return deepFreeze({
     kind: BATON_TURN_RESOURCE_KIND,
     metadata: {
@@ -129,7 +129,7 @@ function turnResource(
   });
 }
 
-function builtinResourceRef(resource: BuiltinResource): ResourceRef {
+function batonResourceRef(resource: BatonResourceObservation): ResourceRef {
   return Object.freeze({
     ...BATON_TURN_RESOURCE_TYPE,
     namespace: BATON_SYSTEM_NAMESPACE,
@@ -146,9 +146,9 @@ export class BatonResourceIndex {
   readonly session: Readonly<Pick<SessionHandle, "id" | "dir">>;
   private readonly turns = new Map<
     string,
-    BuiltinResource<typeof BATON_TURN_RESOURCE_KIND>
+    BatonResourceObservation<typeof BATON_TURN_RESOURCE_KIND>
   >();
-  private readonly listeners = new Set<(resource: AnyBuiltinResource) => void>();
+  private readonly listeners = new Set<(resource: AnyBatonResourceObservation) => void>();
   private readonly unsubscribeSession: () => void;
   private closed = false;
 
@@ -164,26 +164,26 @@ export class BatonResourceIndex {
     });
   }
 
-  get<K extends BuiltinResourceKind>(
+  get<K extends BatonResourceKind>(
     kind: K,
     resourceId: string,
-  ): BuiltinResource<K> {
+  ): BatonResourceObservation<K> {
     this.assertKind(kind);
     const resource = this.turns.get(resourceId);
     if (!resource) {
-      throw new Error(`builtin resource not found: ${kind}/${resourceId}`);
+      throw new Error(`Baton resource not found: ${kind}/${resourceId}`);
     }
-    return resource as BuiltinResource<K>;
+    return resource as BatonResourceObservation<K>;
   }
 
-  list<K extends BuiltinResourceKind>(kind: K): BuiltinResource<K>[] {
+  list<K extends BatonResourceKind>(kind: K): BatonResourceObservation<K>[] {
     this.assertKind(kind);
     return [...this.turns.values()]
       .sort((left, right) => left.metadata.revision - right.metadata.revision)
-      .map((resource) => resource as BuiltinResource<K>);
+      .map((resource) => resource as BatonResourceObservation<K>);
   }
 
-  subscribe(listener: (resource: AnyBuiltinResource) => void): () => void {
+  subscribe(listener: (resource: AnyBatonResourceObservation) => void): () => void {
     if (this.closed) throw new Error("Baton resource index is closed");
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -206,14 +206,14 @@ export class BatonResourceIndex {
     for (const listener of this.listeners) listener(resource);
   }
 
-  private assertKind(kind: string): asserts kind is BuiltinResourceKind {
+  private assertKind(kind: string): asserts kind is BatonResourceKind {
     if (kind !== BATON_TURN_RESOURCE_KIND) {
-      throw new Error(`unsupported builtin resource kind: ${kind}`);
+      throw new Error(`unsupported Baton resource kind: ${kind}`);
     }
   }
 }
 
-export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
+export interface BatonResourceControllerOptions<K extends BatonResourceKind> {
   resources: BatonResourceIndex;
   pluginInstanceId: string;
   namespace: ResourceNamespace;
@@ -222,7 +222,7 @@ export interface BuiltinControllerOptions<K extends BuiltinResourceKind> {
   watches?: readonly Watch[];
   reconcile(
     context: ReconcileContext,
-    resource: Readonly<BuiltinResource<K>>,
+    resource: Readonly<BatonResourceObservation<K>>,
   ): Promise<ReconcileResult | void>;
   maxConcurrency?: number;
   now?: () => Date;
@@ -255,25 +255,25 @@ function validatedResult(result: ReconcileResult | void): ReconcileResult {
  * 一个 Plugin 对一种 Baton-owned Resource 的只读 Controller。
  * 重放和 live event 最终都只入同一 keyed queue，Controller 每次重新读取最新 Resource。
  */
-export class BuiltinController<K extends BuiltinResourceKind> {
+export class BatonResourceController<K extends BatonResourceKind> {
   readonly scope: ReconcileScope;
   readonly sources: readonly ControllerSource[];
   readonly watches: readonly Watch[];
   private readonly resources: BatonResourceIndex;
   private readonly resourceKind: K;
-  private readonly reconcileResource: BuiltinControllerOptions<K>["reconcile"];
+  private readonly reconcileResource: BatonResourceControllerOptions<K>["reconcile"];
   private readonly now: () => Date;
-  private readonly snapshot: NonNullable<BuiltinControllerOptions<K>["snapshot"]>;
+  private readonly snapshot: NonNullable<BatonResourceControllerOptions<K>["snapshot"]>;
   private readonly invokeVerb: InvokeVerb;
   private readonly executeReconcile: NonNullable<
-    BuiltinControllerOptions<K>["executeReconcile"]
+    BatonResourceControllerOptions<K>["executeReconcile"]
   >;
-  private readonly onWatchError?: BuiltinControllerOptions<K>["onWatchError"];
+  private readonly onWatchError?: BatonResourceControllerOptions<K>["onWatchError"];
   private readonly queue: ReconcileQueue;
   private readonly retry?: ReconcileRetry;
   private closed = false;
 
-  constructor(options: BuiltinControllerOptions<K>) {
+  constructor(options: BatonResourceControllerOptions<K>) {
     if (!options.pluginInstanceId.trim()) {
       throw new Error("pluginInstanceId must not be empty");
     }
@@ -295,7 +295,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       options.snapshot ??
       (() => emptyReconcileSnapshot(options.resources.batonSessionId));
     this.invokeVerb = options.invokeVerb ?? (async () => {
-      throw new Error("plugin BuiltinController has no reconcile capability host");
+      throw new Error("Baton Resource Controller has no reconcile capability host");
     });
     this.scope = Object.freeze({
       batonSessionId: options.resources.batonSessionId,
@@ -328,7 +328,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
         return this.executeReconcile(executionScope, localLease, async () => {
           if (this.closed) throw new Error("plugin Controller is closed");
           const resource = this.resources.get(this.resourceKind, key.resourceId);
-          const resourceRef = builtinResourceRef(resource);
+          const resourceRef = batonResourceRef(resource);
           const snapshot = deepFreeze(this.snapshot(key, resourceRef));
           if (snapshot.session.batonSessionId !== this.scope.batonSessionId) {
             throw new Error(
@@ -434,7 +434,7 @@ export class BuiltinController<K extends BuiltinResourceKind> {
       return false;
     }
     try {
-      return builtinResourceRef(
+      return batonResourceRef(
         this.resources.get(this.resourceKind, resource.name),
       ).uid === resource.uid;
     } catch {
