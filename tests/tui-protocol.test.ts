@@ -820,6 +820,47 @@ describe("BatonChatProtocol streaming State", () => {
 });
 
 describe("BatonChatProtocol harness commands", () => {
+  test("restores the selected Target after reopening a Session", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-target-resume-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const config = {
+        ...DEFAULT_CONFIG,
+        targets: {
+          ...DEFAULT_CONFIG.targets,
+          codex2: { harness: "codex" },
+        },
+      };
+      const first = new BatonChatProtocol(
+        store,
+        config,
+        { session, resumed: false },
+        () => undefined,
+      );
+      await first.command("target", "codex2");
+      await first.exit();
+
+      const resumed = new BatonChatProtocol(
+        store,
+        config,
+        { session: store.openSession(session.id), resumed: true },
+        () => undefined,
+      );
+      const submitted: string[] = [];
+      stubCompletedSend(resumed, (target) => submitted.push(target));
+
+      expect(resumed.stateStore.getState("activity").items?.[0]).toMatchObject({
+        author: "codex2",
+      });
+      await resumed.submit("continue");
+      expect(submitted).toEqual(["codex2"]);
+      await resumed.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("selects an additional configured Target by id", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-target-command-"));
     try {

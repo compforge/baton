@@ -79,8 +79,8 @@ describe("buildTargetCatchUpContext", () => {
     });
     expect(result?.text).toContain("codex history");
     expect(result?.text).toContain("other history");
-    expect(result?.text).toContain("assistant[codex]: codex history");
-    expect(result?.text).toContain("tools[codex]: Read [completed]");
+    expect(result?.text).toContain("assistant[codex-a]: codex history");
+    expect(result?.text).toContain("tools[codex-a]: Read [completed]");
     expect(result?.text).toContain("assistant[example]: other history");
     expect(result?.throughSeq).toBe(h.ledger.read().at(-1)?.seq);
   });
@@ -97,6 +97,7 @@ describe("buildTargetCatchUpContext", () => {
       includeTargetTurns: false,
     });
     expect(result?.text).toContain("sibling target context");
+    expect(result?.text).toContain("assistant[codex-b]: sibling target context");
     expect(result?.text).toContain("other harness context");
     expect(result?.text).not.toContain("already native");
     expect(result?.text).not.toContain("also native");
@@ -122,7 +123,7 @@ describe("buildTargetCatchUpContext", () => {
     expect(result?.text).toContain("side lane result");
     expect(result?.text).toContain("previous harness handoff");
     expect(result?.text).toContain(
-      "user: q3\nassistant[claude-code]: previous harness handoff",
+      "user: q3\nassistant[claude]: previous harness handoff",
     );
     expect(result?.text).toContain(
       "user: q4\nassistant[codex]: side lane result",

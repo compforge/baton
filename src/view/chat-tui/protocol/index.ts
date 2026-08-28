@@ -98,6 +98,42 @@ export { runStatusLabel } from "./state.ts";
 
 const PICKER_SEARCH_DEBOUNCE_MS = 250;
 
+function initialHarnessTargetId(
+  session: SessionHandle,
+  config: BatonConfig,
+): string {
+  const events = session.ledger.read();
+  const succeededInputs = new Set(
+    events.flatMap((event) =>
+      event.kind === "input.settled" && event.payload.outcome === "succeeded"
+        ? [event.payload.inputId]
+        : []
+    ),
+  );
+  const latestSelection = events.findLast((event) => {
+    if (event.kind !== "input.received") return false;
+    const input = event.payload.input;
+    return succeededInputs.has(event.payload.inputId) &&
+      input.kind === "configuration" &&
+      input.setting === "harness";
+  });
+  const selectedTargetId = latestSelection?.kind === "input.received" &&
+      latestSelection.payload.input.kind === "configuration"
+    ? latestSelection.payload.input.value
+    : undefined;
+  const target = selectedTargetId
+    ? resolveHarnessTarget(config, selectedTargetId)
+    : resolveHarnessTarget(config, config.defaultTarget);
+  if (!target) {
+    throw new Error(
+      selectedTargetId
+        ? `Selected HarnessTarget is not registered: ${selectedTargetId}`
+        : `Default HarnessTarget is not registered: ${config.defaultTarget}`,
+    );
+  }
+  return target.id;
+}
+
 export interface BatonNavigation {
   openPlugins(): void;
 }
@@ -173,11 +209,7 @@ export class BatonChatProtocol implements ChatProtocol {
           sessionTitle: () => sessionDisplayTitle(this.session.meta),
         })
       : null;
-    const defaultTarget = resolveHarnessTarget(config, config.defaultTarget);
-    if (!defaultTarget) {
-      throw new Error(`Default HarnessTarget is not registered: ${config.defaultTarget}`);
-    }
-    this.harnessTargetId = defaultTarget.id;
+    this.harnessTargetId = initialHarnessTargetId(this.session, config);
     this.modelPreferences = loadModelPreferences(store.rootDir);
     this.effortPreferences = loadEffortPreferences(store.rootDir);
     this.commandRegistry = this.createCommandRegistry();
@@ -1354,6 +1386,7 @@ export class BatonChatProtocol implements ChatProtocol {
     this.session = next.session;
     // /thoughts 是 BatonSession 级临时覆盖；切换后从用户配置重新开始，不能串到新会话。
     this.showThoughts = this.config.showThoughts;
+    this.harnessTargetId = initialHarnessTargetId(this.session, this.config);
     this.composerImagePaths = [];
     this.syncTerminalTitle();
     this.commandOutput = null;

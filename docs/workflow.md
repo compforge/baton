@@ -166,28 +166,28 @@ HarnessSession 的 `ContextEpoch`；只有 Snapshot 没有 Receipt 时，下次�
 `Lane × HarnessTarget` binding 已经亲历的 Turn；同 Lane 的其它 Target 是上一棒，同 Target 的其它
 Lane 是并行进展，两者都必须以已完成 TurnSummary 注入。
 
-例如主 Lane 先由 `harness1` 分析，再切换到 `harness2` 继续，`harness2` 收到的
+例如主 Lane 先由 Target `target1` 分析，再切换到 Target `target2` 继续，`target2` 收到的
 catch-up 会保留原始 user/assistant 轮次，并在 assistant 上标注产出它的
-Harness：
+HarnessTarget：
 
 ```text
 # Latest progress from other agents in this session (auto-synced by baton)
 
 user: 分析这个问题
-assistant[harness1]: 问题来自配置未生效，建议检查加载顺序。
-tools[harness1]: Read [completed]
+assistant[target1]: 问题来自配置未生效，建议检查加载顺序。
+tools[target1]: Read [completed]
 
 user: 继续验证这个判断
-assistant[harness2]: 已确认后加载的配置覆盖了前值。
+assistant[target2]: 已确认后加载的配置覆盖了前值。
 ```
 
 拼接时按以下顺序生成一个 catch-up 块：
 
 1. 从目标 ContextEpoch 的已确认水位之后选取已完成的 TurnSummary。fresh 原生
    Session 选取全部历史；resume 时排除目标 `Lane × HarnessTarget` 已亲历的 Turn。
-2. 每个 Turn 依次拼接 `user:`、`assistant[<harness>]:`、可选的
-   `tools[<harness>]:`，以及非正常结束时的 `status:`；不注入 Turn 编号等 ledger 坐标。
-   Harness 标签只表示内容来源，不伪装成目标 Harness 原生历史。
+2. 每个 Turn 依次拼接 `user:`、`assistant[<targetId>]:`、可选的
+   `tools[<targetId>]:`，以及非正常结束时的 `status:`；不注入 Turn 编号等 ledger 坐标。
+   Target 标签只表示内容来源，不伪装成目标 Harness 原生历史。
 3. 各 Turn 按原 ledger 顺序用空行连接。超出预算时优先保留最近 Turn，并用
    `(N earlier turns omitted for length)` 标明省略。
 4. 将整块内容通过目标 Adapter 支持的 Context transport 随下一次 `sendTurn` 交付；
