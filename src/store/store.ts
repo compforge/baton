@@ -980,6 +980,15 @@ export class SessionHandle {
    * Ledger 只是 Recorder，不承担实时分发。
    */
   appendEvent<K extends EventKind>(event: NewEvent<K>): EventEnvelope<K> {
+    // Harness-originated facts already carry the exact Target identity in their
+    // source. Preserve it as the execution coordinate when a direct/legacy
+    // producer omitted the top-level field; never infer a Target from a Harness
+    // family name. An explicit coordinate remains authoritative.
+    const harnessTargetId =
+      event.harnessTargetId ??
+      (event.source.type === "harness"
+        ? event.source.harnessTargetId
+        : undefined);
     const envelope: EventEnvelope<K> = {
       v: ENVELOPE_VERSION,
       eventId: newId("ev"),
@@ -987,6 +996,7 @@ export class SessionHandle {
       seq: this.nextEventSeq,
       scope: { type: "session", batonSessionId: this.id },
       ...event,
+      ...(harnessTargetId === undefined ? {} : { harnessTargetId }),
     };
     this.ledger.record(envelope);
     this.nextEventSeq += 1;
