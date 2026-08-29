@@ -1890,8 +1890,8 @@ describe("tool call grouping", () => {
       const session = store.createSession({ cwd: "/repo" });
       const appendTool = (
         toolCallId: string,
-        kind: "read" | "search" | "execute",
-        status: "completed" | "failed" = "completed",
+        kind: "read" | "search" | "execute" | "edit",
+        status: "completed" | "failed" | "declined" = "completed",
         effect?: "read",
       ) => session.appendEvent({
         source: { type: "harness" as const, harnessTargetId: "codex" },
@@ -1915,7 +1915,9 @@ describe("tool call grouping", () => {
       });
       appendTool("one", "read");
       appendTool("two", "read");
+      appendTool("change", "edit");
       appendTool("bad", "read", "failed");
+      appendTool("denied", "execute", "declined");
       appendTool("three", "read");
       appendTool("query", "search");
       appendTool("status", "execute");
@@ -1938,8 +1940,20 @@ describe("tool call grouping", () => {
         },
         {
           type: "group",
+          id: "group:change",
+          collapsedByDefault: true,
+          summary: { title: "Edit · change.ts · 1 line" },
+          members: [{ id: "change" }],
+        },
+        {
+          type: "group",
           id: "group:bad",
           members: [{ id: "bad", status: "failed" }],
+        },
+        {
+          type: "group",
+          id: "group:denied",
+          members: [{ id: "denied", status: "declined" }],
         },
         {
           type: "group",
@@ -1958,6 +1972,8 @@ describe("tool call grouping", () => {
         {
           type: "group",
           id: "group:status",
+          collapsedByDefault: true,
+          summary: { title: "Ran · status · 1 line" },
           members: [{ id: "status", title: "Ran · status · 1 line" }],
         },
         {
