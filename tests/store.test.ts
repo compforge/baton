@@ -332,6 +332,33 @@ describe("event append / read", () => {
     expect(reopened.ledger.read()).toHaveLength(3);
   });
 
+  test("harness source supplies only a missing Target execution coordinate", () => {
+    const h = store.createSession({ cwd: "/tmp/proj" });
+    const event = h.appendEvent({
+      source: { type: "harness", harnessTargetId: "claude-secondary" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "claude-code",
+      turnId: "turn_harness_started",
+    });
+
+    expect(event.harnessTargetId).toBe("claude-secondary");
+    expect(
+      h.projection.activeTurns.get("turn_harness_started")?.harnessTargetId,
+    ).toBe("claude-secondary");
+    expect(h.ledger.read()[0]?.harnessTargetId).toBe("claude-secondary");
+
+    const explicit = h.appendEvent({
+      source: { type: "harness", harnessTargetId: "claude-secondary" },
+      kind: "state_update",
+      payload: { state: "running" },
+      harness: "claude-code",
+      harnessTargetId: "claude-primary",
+      turnId: "turn_explicit_target",
+    });
+    expect(explicit.harnessTargetId).toBe("claude-primary");
+  });
+
   test("session logs are paired with session.jsonl without entering its event stream", async () => {
     const h = store.createSession({ cwd: "/tmp/proj" });
 
