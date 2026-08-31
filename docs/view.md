@@ -54,9 +54,10 @@ View 不从 Ledger 另建状态机，不把“已渲染”解释为“用户已�
 Transcript 先把每条事实投影为原子 block，再只按 Baton 已知语义合并相邻且兼容的 block。think 与
 只读工具各有独立 merge key，不彼此合并；副作用未知、写操作、失败和其它可见事实都会结束当前组。
 每条 block 事实从第一条起就进入稳定的 `TranscriptGroupItem`；可合并的 think/read 后续只追加 members
-并更新摘要，write、失败及其它事实使用不增加展示行的透明单成员 group。chat-tui 只负责默认收起和
-Ctrl+O 展开，不反向猜测 Harness effect 或 reasoning 边界。Activity 只显示通用 thinking 状态，不承载
-reasoning 标题或正文。
+并更新摘要；成功或进行中的 write/command 等工具保留带路径、命令和统计的一行摘要，完整 diff/output
+留在 members；失败与拒绝使用不增加展示层级的透明单成员 group，让诊断默认可见。chat-tui 只负责默认
+收起和 Ctrl+O 展开，不反向猜测 Harness effect 或 reasoning 边界。Activity 只显示通用 thinking 状态，
+不承载 reasoning 标题或正文。
 
 Plugin 可以通过 `view.input` 和 `view.output` Hook 观察这两个边界。前者在持久记录之后、Core lowering
 之前 inline 通知；后者在 publication 之后 deferred 通知。Hook 不能替换 ViewInput 或修改 ViewOutput。

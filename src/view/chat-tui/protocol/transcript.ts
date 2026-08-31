@@ -334,6 +334,15 @@ function standaloneTranscriptGroup(block: TranscriptBlockItem): TranscriptGroupI
 }
 
 /**
+ * Successful tool facts keep their high-signal title visible while the full
+ * command, output, and diff stay one Ctrl+O away. Failures use the transparent
+ * group above so their diagnostics remain visible without another action.
+ */
+function summarizedToolGroup(block: TranscriptBlockItem): TranscriptGroupItem {
+  return transcriptGroup([block], block.title);
+}
+
+/**
  * 每个可分组调用从第一条起就由稳定 TranscriptGroupItem 承载；N≥2 时只追加 member block
  * 并更新 group 摘要，不改变顶层节点类型。完整成员保留在 members，默认只占摘要一行，
  * Ctrl+O 后仍能查看每次调用的命令、输出与状态。
@@ -447,7 +456,12 @@ export function buildTranscript(
         continue;
       }
       flushBlocks();
-      appendStandaloneBlock(toolTranscriptItem(tc));
+      const block = toolTranscriptItem(tc);
+      if (block.status === "failed" || block.status === "declined") {
+        appendStandaloneBlock(block);
+      } else {
+        items.push(summarizedToolGroup(block));
+      }
       continue;
     }
     if (entry.type === "notice") {
