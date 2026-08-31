@@ -16,6 +16,7 @@ import type {
   TranscriptMessageItem,
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
+import { decodePasteBytes, type ClipboardRepresentation } from "@opentui/core";
 
 import { CommandRegistry, type CommandDefinition } from "../../../commands/registry.ts";
 import {
@@ -71,7 +72,6 @@ import { sessionDisplayTitle, type SessionHandle, type SessionStore } from "../.
 import { sessionPickerOptions, type SessionPickerMode } from "../session-picker.tsx";
 import { setTerminalTabTitle } from "../terminal-title.ts";
 import { TerminalNotifier } from "../notifications.ts";
-import { readClipboard, type ClipboardContent } from "../clipboard.ts";
 import {
   archiveClipboardImage,
   composerImagePathsOf,
@@ -196,7 +196,7 @@ export class BatonChatProtocol implements ChatProtocol {
     private readonly store: SessionStore,
     private readonly config: BatonConfig,
     opened: { session: SessionHandle; resumed: boolean; recovered?: boolean },
-    private readonly quit: (sessionId?: string) => void,
+    private readonly quit: (sessionId?: string) => void | Promise<void>,
     private readonly navigation?: BatonNavigation,
   ) {
     this.session = opened.session;
@@ -269,22 +269,23 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   async prepareClipboardPaste(
-    provided?: ClipboardContent,
+    representation: ClipboardRepresentation,
     composerText?: string,
   ): Promise<string | null> {
     if (composerText !== undefined && !/\[Image #\d+\]/.test(composerText)) {
       this.composerImagePaths = [];
     }
-    const content = provided ?? await readClipboard();
-    if (!content) return null;
-    if (content.type === "text") return content.text;
+    if (representation.mimeType === "text/plain") {
+      return decodePasteBytes(representation.bytes);
+    }
+    if (representation.mimeType !== "image/png") return null;
     if (!this.controller.promptCapabilities(this.harnessTargetId).image?.supported) {
       this.toast = { text: `${this.harnessTargetId} does not support image input`, tone: "error" };
       this.changed();
       return null;
     }
     try {
-      const archived = await archiveClipboardImage(this.store.rootDir, content.data);
+      const archived = await archiveClipboardImage(this.store.rootDir, representation.bytes);
       this.composerImagePaths.push(archived.path);
       return `${composerImageToken(this.composerImagePaths.length)} `;
     } catch (error) {
@@ -848,7 +849,7 @@ export class BatonChatProtocol implements ChatProtocol {
     try {
       await this.shutdown();
     } finally {
-      this.quit(this.session.id);
+      await this.quit(this.session.id);
     }
   }
 
