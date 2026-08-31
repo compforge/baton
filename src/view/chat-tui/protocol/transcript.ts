@@ -44,18 +44,27 @@ export interface ThoughtDisplayBlock {
   content?: string;
 }
 
-/** 将 reasoning summary 投影成独立时间线块，并隐藏 Codex 的空正文占位符。 */
+/**
+ * 将 reasoning summary 投影成时间线块。Codex 用 `<!-- -->` 表示只有状态标题、没有
+ * 可展示摘要；这类 part 不进入 transcript。带正文时沿用 Codex 的处理，只展示正文而
+ * 不重复已经在 activity 中出现过的标题。
+ */
 export function thoughtDisplayBlocks(text: string): ThoughtDisplayBlock[] {
   return text
-    .replace(/\r?\n\r?\n<!--\s*$/, "")
-    .split(/\r?\n\r?\n<!-- -->\s*(?:\r?\n)?/g)
+    .split(/\r?\n(?=\*\*[^*\n]+\*\*(?:\r?\n|$))/g)
     .flatMap((part) => {
       const content = part.trim();
       if (!content) return [];
       const summary = content.match(/^\*\*([^*\n]+)\*\*(?:\r?\n\r?\n([\s\S]*))?$/);
       if (summary) {
         const body = summary[2]?.trim();
-        return [{ title: summary[1]!.trim(), ...(body ? { content: body } : {}) }];
+        if (body?.startsWith("<!--")) return [];
+        if (body) {
+          const [title, ...details] = body.split(/\r?\n/);
+          const detail = details.join("\n").trim();
+          return [{ title: title!.trim(), ...(detail ? { content: detail } : {}) }];
+        }
+        return [{ title: summary[1]!.trim() }];
       }
       const [title, ...body] = content.split(/\r?\n/);
       const detail = body.join("\n").trim();
@@ -409,6 +418,10 @@ function approvalReviewTranscriptItem(review: ApprovalReviewUpdate): TranscriptB
 /**
  * SessionState → chat-tui 时间线。harness 内容在这里收敛为通用展示形状；
  * pinnedPlanId 对应正在由 pin 区承载的计划，避免同屏出现两份。
+ *
+ * @rule 展示压缩只能发生在 SessionState → Transcript 的 View 投影中。不得为了 UI 少显示
+ * 几行而改写、合并或丢弃 Ledger/Session 事实；完整原始记录必须保留给 resume、审计和重投影。
+ * @see {@link component://docs/view.md}
  */
 export function buildTranscript(
   state: SessionState,
@@ -519,6 +532,9 @@ export function buildTranscript(
           !isTurnRunning(state, msg.turnId)
             ? "completed"
             : "in_progress";
+        // Streaming reasoning is represented by the transient Activity/Working row. Commit only
+        // the finalized summary to transcript so partial planning titles do not interrupt history.
+        if (status === "in_progress") continue;
         for (const [index, block] of thoughtDisplayBlocks(textOf(msg.content)).entries()) {
           appendCompactBlock({
             mergeKey: thoughtGroupKey(msg),

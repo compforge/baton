@@ -234,7 +234,7 @@ function interactionView(
 }
 
 /**
- * Run status 文案合成：显式阶段 / retry / 进行中工具依次覆盖默认 thinking。
+ * Run status 文案合成：显式阶段 / retry / 进行中工具依次覆盖默认 Working。
  * phase 按 turn 取，避免并发 turn 的短寿命状态相互污染。
  */
 export function runStatusLabel(
@@ -276,7 +276,7 @@ export function runStatusLabel(
       `${tool.title?.split(":", 1)[0]?.trim() || "using tool"}…`
     );
   }
-  return "thinking…";
+  return "Working";
 }
 
 export function contextWindowText(

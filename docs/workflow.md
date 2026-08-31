@@ -1,8 +1,10 @@
 # Baton 工作流
 
-本文是 Baton 三方协作工作流的唯一入口：View Input、Harness 原生 verb 与 Plugin reconcile
-verb 如何在 Core 汇合，HarnessInput/HarnessInvocation 如何到达 Harness，HarnessEvent 如何成为可恢复 Event，
-以及 steer、Interaction、cancel、失败和恢复如何复用同一条主路径。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
+本文是 Baton 三方协作流程的唯一入口：View Input、Harness 原生 verb 与 Plugin reconcile verb
+如何在 Core 汇合，HarnessInput/HarnessInvocation 如何到达 Harness，HarnessEvent 如何成为可恢复
+Event，以及 steer、Interaction、cancel、失败和恢复如何复用同一条主路径。本文只定义事实流、状态
+迁移与 owner，不定义 TUI 区域、当前态/历史态选择或 Transcript 压缩；展示策略统一见
+[View](./view.md)。核心对象和不变量见 [Kernel](./kernel.md)，Adapter 契约见
 [Harness](./harness.md)。
 
 ## 1. 参与者、IO 与 Core-owned objects
@@ -30,9 +32,9 @@ Resource 时走 Resource API，其它动作通过 typed Verb 重新进入 Core�
 Hook-specific payload 只是边界事实的只读 view，不拥有对应 Input、Attempt 或 Event 的生命周期；
 稳定 IO 词汇仍只有 ViewInput、ViewOutput、HarnessInput 与 HarnessEvent。
 
-Queue 是 Core-owned 调度状态，不属于 Human；composer queue 只是它在 Human surface 上的 Projection。
-同理 chat-tui 拥有通用焦点、键盘路由和渲染，Baton View Adapter 拥有两侧映射；二者都不拥有 Input、
-Queue、Interaction 或 Harness 执行事实。完整分层见 [View](./view.md)。
+Queue 是 Core-owned 调度状态，不属于 Human；具体 View 只消费它的 Projection。chat-tui 与 Baton View
+Adapter 都不拥有 Input、Queue、Interaction 或 Harness 执行事实。完整分层和区域映射见
+[View](./view.md)。
 
 Harness 和 Plugin 都先表达自己边界内的 verb，再由了解两侧的 Adapter/host lowering 成 Core 对象。
 Core 不接收任意 message：Interaction 承载 typed decision gate，决议者可以是人，也可以是宿主 policy；
@@ -256,8 +258,8 @@ Event ── reduce ──→ Projection snapshot ──→ publish ViewOutput �
 
 `record` 在当前实现中作为 WAL commit 点先于 reduce，但不承担事件总线职责。live 和重开
 Session 使用相同 reducer。自愈也必须合成新的事实 Event 再走这条路径，不能直接
-修改页面状态。chat-tui 只消费 transcript、activity、Interaction、status 等 view，不解析
-Harness DTO。
+修改页面状态。具体 View 只消费 Projection，不解析 Harness DTO；Projection 如何映射到 Transcript、
+Activity、Parallel 等区域由 [View](./view.md) 定义。
 
 Core 向人发布 transcript、queue、Interaction、status、toast、Board 或 picker 时，统一走
 `Channel.publishViewOutput()`，并在 publication 后以轻量 `ViewOutput` deferred 通知 `view.output`。它只说明
@@ -265,9 +267,8 @@ View 已接收最新 projection，不证明终端已经绘制或用户已经看�
 按 surface 刷新策略合并；Plugin Hook 不位于 state commit 之前，因此不会成为 UI 绘制的同步门闩。
 
 多 Lane 仍 append 到同一 `session.jsonl`。全局 `seq` 只是 ledger 观察到的写入顺序，
-不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；运行中的 side Lane、
-Harness 原生 subagent 与异步 task 统一进入 Footer 下方可选的 Parallel 现在时区域，终结后再由
-默认主时间线投影为可回看的任务卡片。
+不用来推断跨 Lane 因果。新 Lane 的原始 transcript 保留在 Lane 事实中；side Lane 的开始、进展和
+终结仍走相同 Event/Projection 路径，运行态与历史态如何呈现见 [View](./view.md)。
 
 ### 3.3 Turn 收口
 
@@ -305,9 +306,9 @@ Queue item 需要释放。Turn 本身不携带发起方向或角色分类。
 4. Adapter 拒绝、原生 race 或无法安全定向时，同一 Input 回到队头，当前 Turn 结束后作为新 Turn
    执行。
 
-未决 steer 已是持久化的用户事实，但在时态上仍属于将来：TUI 将其放在
-Composer Queue，收到 `applied` 回执后再投影到 Transcript；`failed` 则离开 Queue
-但不冒充成 Transcript 历史。原生队列可能跨过当时尝试注入的 Turn，因此 Turn 收口不能把
+未决 steer 已是持久化的用户事实，但在时态上仍属于将来；只有收到 `applied` 回执才成为已执行历史，
+`failed` 不能冒充成已执行内容。对应区域映射见 [View](./view.md)。原生队列可能跨过当时尝试注入的
+Turn，因此 Turn 收口不能把
 未决 steer 自动当成 applied，也不强迁它的 status：它留在 Queue（`steering` 且无 outcome），
 直到 Harness 报告应用或失败。queued follow-up 与未决 steer 共用 Queue surface，但前者等待
 Controller 开启新 Turn，后者等待 Harness 原生投递边界，两者不能互相冒充。
