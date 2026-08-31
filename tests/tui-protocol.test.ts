@@ -2761,6 +2761,27 @@ describe("BatonChatProtocol steer submit", () => {
 });
 
 describe("BatonChatProtocol clipboard image", () => {
+  test("decodes OpenTUI text representations without owning clipboard IO", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-clipboard-text-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
+
+      await expect(protocol.prepareClipboardPaste({
+        mimeType: "text/plain",
+        bytes: new TextEncoder().encode("hello from clipboard"),
+      })).resolves.toBe("hello from clipboard");
+      await expect(protocol.prepareClipboardPaste({
+        mimeType: "application/octet-stream",
+        bytes: Uint8Array.from([1, 2, 3]),
+      })).resolves.toBeNull();
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("archives the image and submits an image prompt block to the active Harness", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-clipboard-image-"));
     try {
@@ -2785,9 +2806,8 @@ describe("BatonChatProtocol clipboard image", () => {
       };
 
       const token = await protocol.prepareClipboardPaste({
-        type: "image",
         mimeType: "image/png",
-        data: Uint8Array.from([137, 80, 78, 71]),
+        bytes: Uint8Array.from([137, 80, 78, 71]),
       });
       expect(token).toBe("[Image #1] ");
       await protocol.submit(`inspect ${token}`);

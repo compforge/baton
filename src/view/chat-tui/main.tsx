@@ -9,7 +9,13 @@
 // 用法：baton [--root <batonRoot>] [--cwd <dir>] [-c|--continue] [-s|--session <id>]
 //       [--pick-session resume|fork]（bin.ts 内部 flag：先展示前置会话选择屏，选中才打开）
 
-import { createCliRenderer, RGBA } from "@opentui/core";
+import {
+  createCliRenderer,
+  createClipboard,
+  createHostClipboard,
+  createRendererClipboardAdapter,
+  RGBA,
+} from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { createRef } from "react";
 
@@ -73,6 +79,10 @@ const openedAtStartup: OpenBatonSessionResult | undefined = pickIntent
 // autoFocus=false：禁止鼠标点击把焦点从输入框抢走——点击 scrollbox 夺焦不触发 React
 // 重渲染，focused prop 拉不回来，这是"操作久了输入框失焦"的主因。
 const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 30, autoFocus: false });
+const clipboard = createClipboard({
+  host: createHostClipboard(),
+  terminal: createRendererClipboardAdapter(renderer),
+});
 const terminalPalette = await renderer.getPalette({ timeout: 250, size: 16 }).catch(() => null);
 const detectedMode =
   themeModeForBackground(terminalPalette?.defaultBackground) ??
@@ -85,6 +95,11 @@ renderer.setBackgroundColor(RGBA.defaultBackground(terminalPalette?.defaultBackg
 const root = createRoot(renderer);
 let activeProtocol: BatonChatProtocol | undefined;
 let removeTerminationHandlers: () => void = () => {};
+let clipboardDisposePromise: Promise<void> | undefined;
+const disposeClipboard = (): Promise<void> => {
+  clipboardDisposePromise ??= clipboard.dispose();
+  return clipboardDisposePromise;
+};
 const exitProcess = (exitCode: number, sessionId?: string) => {
   removeTerminationHandlers();
   // OpenTUI owns raw mode and mouse tracking; restore both before process.exit,
@@ -99,13 +114,20 @@ const exitProcess = (exitCode: number, sessionId?: string) => {
   }
   process.exit(exitCode);
 };
-const quit = (sessionId?: string) => exitProcess(0, sessionId);
+const quit = async (sessionId?: string): Promise<void> => {
+  try {
+    await disposeClipboard();
+  } finally {
+    exitProcess(0, sessionId);
+  }
+};
 
 removeTerminationHandlers = installTerminationHandlers({
   process,
   timeoutMs: 10_000,
   shutdown: async () => {
     await activeProtocol?.shutdown();
+    await disposeClipboard();
   },
   exit: (code) => exitProcess(code),
   onError: (error) => {
@@ -123,7 +145,14 @@ function startChat(opened: OpenBatonSessionResult): void {
     openPlugins: () => tui.current?.openPlugins(),
   });
   activeProtocol = protocol;
-  root.render(<BatonTui ref={tui} protocol={protocol} theme={batonTheme} />);
+  root.render(
+    <BatonTui
+      ref={tui}
+      protocol={protocol}
+      theme={batonTheme}
+      clipboard={clipboard}
+    />,
+  );
 }
 
 function startFresh(): void {

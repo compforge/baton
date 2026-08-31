@@ -1,4 +1,8 @@
-import { decodePasteBytes } from "@opentui/core";
+import {
+  decodePasteBytes,
+  type ClipboardRepresentation,
+  type ClipboardService,
+} from "@opentui/core";
 import { usePaste, useRenderer } from "@opentui/react";
 
 import {
@@ -7,15 +11,30 @@ import {
 } from "chat-tui";
 
 import type { BatonChatProtocol } from "./protocol/index.ts";
-import type { ClipboardContent } from "./clipboard.ts";
 
-export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): null {
+/**
+ * @rule OpenTUI ClipboardService is the sole OS/terminal clipboard implementation. Baton may
+ * interpret its representations as composer text or prompt attachments, but must not add
+ * platform commands, clipboard limits, or fallback policy of its own.
+ * @see {@link component://docs/view.md}
+ */
+export function ClipboardPasteInput(props: {
+  protocol: BatonChatProtocol;
+  clipboard: ClipboardService;
+}): null {
   const renderer = useRenderer();
 
-  const insertClipboardContent = async (provided?: ClipboardContent): Promise<boolean> => {
+  const insertClipboardContent = async (
+    provided?: ClipboardRepresentation,
+  ): Promise<boolean> => {
     const editor = renderer.currentFocusedEditor;
     if (!editor || !props.protocol.composerAcceptsPaste()) return false;
-    const content = await props.protocol.prepareClipboardPaste(provided, editor.plainText);
+    const representation = provided ?? await props.clipboard
+      .read({ preferredTypes: ["image/png", "text/plain"] })
+      .then((result) => result.status === "read" ? result.representation : null)
+      .catch(() => null);
+    if (!representation) return false;
+    const content = await props.protocol.prepareClipboardPaste(representation, editor.plainText);
     if (content === null) return false;
     editor.insertText(content);
     return true;
@@ -39,9 +58,8 @@ export function ClipboardPasteInput(props: { protocol: BatonChatProtocol }): nul
     if (event.metadata?.mimeType === "image/png") {
       event.preventDefault();
       void insertClipboardContent({
-        type: "image",
         mimeType: "image/png",
-        data: event.bytes,
+        bytes: event.bytes,
       });
       return;
     }

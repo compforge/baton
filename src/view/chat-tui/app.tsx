@@ -1,3 +1,4 @@
+import type { ClipboardService } from "@opentui/core";
 import { ChatShell, type Theme } from "chat-tui";
 import {
   forwardRef,
@@ -18,6 +19,7 @@ export interface BatonTuiHandle {
 interface BatonTuiProps {
   protocol: BatonChatProtocol;
   theme: Theme;
+  clipboard: ClipboardService;
 }
 
 /**
@@ -57,12 +59,13 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
 
     return (
       <>
-        <ClipboardPasteInput protocol={props.protocol} />
+        <ClipboardPasteInput protocol={props.protocol} clipboard={props.clipboard} />
         <ChatShell
           protocol={props.protocol}
           commands={props.protocol.commands}
           mentions={props.protocol.mentionCandidates}
           theme={props.theme}
+          clipboard={props.clipboard}
         />
       </>
     );

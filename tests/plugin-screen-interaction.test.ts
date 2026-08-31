@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   InputRenderable,
   TextareaRenderable,
+  type ClipboardService,
 } from "@opentui/core";
 import {
   createTestRenderer,
@@ -27,6 +28,19 @@ import {
 import type { BatonChatProtocol } from "../src/view/chat-tui/protocol/index.ts";
 
 let mounted: { root: Root; setup: TestRendererSetup } | null = null;
+
+const clipboard: ClipboardService = {
+  read: async () => ({ status: "unsupported" }),
+  writeText: async () => ({
+    host: { status: "not-attempted" },
+    terminal: { status: "attempted", capability: "supported" },
+  }),
+  clear: async () => ({
+    host: { status: "not-attempted" },
+    terminal: { status: "attempted", capability: "supported" },
+  }),
+  dispose: async () => {},
+};
 
 afterEach(() => {
   mounted?.root.unmount();
@@ -115,6 +129,7 @@ describe("Plugin screen interaction", () => {
       createElement(BatonTui, {
         protocol: chat,
         theme: defaultTheme,
+        clipboard,
       }),
     );
     await settle(setup);
@@ -148,6 +163,7 @@ describe("Plugin screen interaction", () => {
         ref: tui,
         protocol: protocol(),
         theme: defaultTheme,
+        clipboard,
       }),
     );
     await settle(setup);
@@ -211,6 +227,7 @@ describe("Plugin screen interaction", () => {
           }],
         }),
         theme: defaultTheme,
+        clipboard,
       }),
     );
     await settle(setup);
