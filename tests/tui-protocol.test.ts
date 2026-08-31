@@ -1651,20 +1651,19 @@ describe("BatonChatProtocol transcript projection", () => {
 });
 
 describe("thoughtDisplayBlocks", () => {
-  test("turns Codex title-only summaries into separate blocks", () => {
-    expect(thoughtDisplayBlocks("**Inspecting files**\n\n<!-- -->\n**Planning changes**\n\n<!-- -->")).toEqual([
-      { title: "Inspecting files" },
-      { title: "Planning changes" },
-    ]);
+  test("hides Codex status-only summary parts", () => {
+    expect(
+      thoughtDisplayBlocks("**Inspecting files**\n\n<!-- -->\n**Planning changes**\n\n<!-- -->"),
+    ).toEqual([]);
   });
 
   test("hides an incomplete streaming placeholder", () => {
-    expect(thoughtDisplayBlocks("**Inspecting files**\n\n<!--")).toEqual([{ title: "Inspecting files" }]);
+    expect(thoughtDisplayBlocks("**Inspecting files**\n\n<!--")).toEqual([]);
   });
 
   test("keeps an ordinary thought body", () => {
     expect(thoughtDisplayBlocks("**Comparing options**\n\nThe second approach is smaller.")).toEqual([
-      { title: "Comparing options", content: "The second approach is smaller." },
+      { title: "The second approach is smaller." },
     ]);
   });
 });
@@ -1775,6 +1774,7 @@ describe("tool call grouping", () => {
   test("groups only successful exploratory tools with the same projection coordinates", () => {
     const read = tool("tc_read", "read");
     expect(toolGroupKey(read)).toBe(toolGroupKey({ ...read, toolCallId: "tc_read_2" }));
+    expect(toolGroupKey(read)).not.toBe(toolGroupKey(tool("tc_search", "search")));
     expect(toolGroupKey({ ...read, turnId: "t2" })).not.toBe(toolGroupKey(read));
     expect(toolGroupKey({ ...read, harnessTargetId: "codex-2" })).not.toBe(toolGroupKey(read));
     expect(toolGroupKey({ ...read, status: "failed" })).toBeUndefined();
@@ -1990,7 +1990,7 @@ describe("tool call grouping", () => {
     }
   });
 
-  test("keeps thought and read in separate adjacent block groups", async () => {
+  test("keeps substantive thought and read in separate adjacent block groups", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-compact-blocks-"));
     try {
       const store = new SessionStore(root);
@@ -2023,11 +2023,11 @@ describe("tool call grouping", () => {
         },
       });
 
-      appendThought("thought-1", "Inspecting files");
-      appendThought("thought-2", "Planning reads");
+      appendThought("thought-1", "Found the relevant files");
+      appendThought("thought-2", "The adapter owns this behavior");
       appendRead("read-1");
       appendRead("read-2");
-      appendThought("thought-3", "Planning write");
+      appendThought("thought-3", "The implementation is ready");
 
       const protocol = new BatonChatProtocol(
         store,
@@ -2040,8 +2040,11 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:thought-1:0",
           collapsedByDefault: true,
-          summary: { kind: "thought", title: "Thought ×2 · Planning reads" },
-          members: [{ title: "Inspecting files" }, { title: "Planning reads" }],
+          summary: { kind: "thought", title: "Thought ×2 · The adapter owns this behavior" },
+          members: [
+            { title: "Found the relevant files" },
+            { title: "The adapter owns this behavior" },
+          ],
         },
         {
           type: "group",
@@ -2054,8 +2057,8 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:thought-3:0",
           collapsedByDefault: true,
-          summary: { kind: "thought", title: "Planning write" },
-          members: [{ id: "thought-3:0", title: "Planning write" }],
+          summary: { kind: "thought", title: "The implementation is ready" },
+          members: [{ id: "thought-3:0", title: "The implementation is ready" }],
         },
       ]);
       await protocol.exit();
@@ -2131,18 +2134,18 @@ describe("runStatusLabel", () => {
     activeTurns: new Map([[turnId, { turnId, state: "running" as const, phase }]]),
   });
 
-  test("defaults to thinking", () => {
-    expect(runStatusLabel(base)).toBe("thinking…");
+  test("defaults to Codex-style Working", () => {
+    expect(runStatusLabel(base)).toBe("Working");
   });
 
-  test("phase overrides thinking; title wins over generic phase text", () => {
+  test("phase overrides Working; title wins over generic phase text", () => {
     expect(runStatusLabel(withPhase("t1", { phase: "compacting", title: "Compacting context…" }), "t1")).toBe(
       "Compacting context…",
     );
     expect(runStatusLabel(withPhase("t1", { phase: "warming" }), "t1")).toBe("warming…");
   });
 
-  test("shows the current tool activity instead of generic thinking", () => {
+  test("shows the current tool activity instead of generic Working", () => {
     const toolCalls = new Map([
       [
         "tc1",
@@ -2158,14 +2161,14 @@ describe("runStatusLabel", () => {
       ],
     ]);
     expect(runStatusLabel({ ...base, toolCalls }, "t1")).toBe("reading…");
-    expect(runStatusLabel({ ...base, toolCalls }, "t2")).toBe("thinking…");
+    expect(runStatusLabel({ ...base, toolCalls }, "t2")).toBe("Working");
     toolCalls.get("tc1")!.status = "completed";
-    expect(runStatusLabel({ ...base, toolCalls }, "t1")).toBe("thinking…");
+    expect(runStatusLabel({ ...base, toolCalls }, "t1")).toBe("Working");
   });
 
   test("phase is per-turn: another turn's phase does not leak", () => {
     const state = withPhase("t1", { phase: "compacting" });
-    expect(runStatusLabel(state, "t2")).toBe("thinking…");
+    expect(runStatusLabel(state, "t2")).toBe("Working");
     // turnId 缺省时退化为任一带 phase 的 turn
     expect(runStatusLabel(state)).toBe("compacting…");
   });
@@ -2174,7 +2177,7 @@ describe("runStatusLabel", () => {
     const err = { message: "boom", willRetry: true, seq: 5 };
     expect(runStatusLabel({ ...base, lastError: err })).toBe("retrying…");
     // 其后有任何事件（lastSeq 前进）即视为已恢复
-    expect(runStatusLabel({ ...base, lastError: err, lastSeq: 6 })).toBe("thinking…");
+    expect(runStatusLabel({ ...base, lastError: err, lastSeq: 6 })).toBe("Working");
   });
 });
 
