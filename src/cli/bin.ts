@@ -6,6 +6,7 @@
 //   baton resume     继续 BatonSession（无参 = cwd 最近一个，同 -c）
 //   baton fork       fork BatonSession 并进入新会话
 //   baton sessions   列出当前项目的 baton 会话
+//   baton clean      清理超过 30 天未活动的 BatonSession
 //   baton plugins    管理 Marketplace 与 Plugin Package
 //   baton daemon     管理用户级 Baton Daemon
 //   baton version    显示版本
@@ -53,6 +54,10 @@ Usage:
   baton sessions [--tree] [--cwd <dir>]
                         list current-project sessions (--tree shows fork
                         lineage; reference with @<id> in the input)
+  baton clean [--cwd <dir>] [--root <dir>]
+                        permanently remove BatonSessions whose last activity
+                        was more than 30 days ago; scans every project unless
+                        --cwd scopes cleanup to one project
   baton logs [bs_xxx] [--level <level>] [--component <prefix>]
              [--plugin <plugin-id>] [--tail <count>] [--json] [--cwd <dir>]
                         inspect the latest or selected Session's structured
@@ -82,6 +87,7 @@ Config:
 `;
 
 const cmd = process.argv[2];
+const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 switch (cmd) {
   case "version":
@@ -107,6 +113,14 @@ if (cmd === undefined || cmd === "tui" || cmd.startsWith("-")) {
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
   return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function strictArgValue(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  if (i < 0) return undefined;
+  const value = process.argv[i + 1];
+  if (!value || value.startsWith("-")) fail(`${flag} requires a value`);
+  return value;
 }
 
 /** 子命令后的首个位置参数（跳过 flag 及其值），如 `baton fork bs_xxx --cwd /x` 的 bs_xxx */
@@ -299,6 +313,32 @@ async function run(command: string): Promise<void> {
           `${treeRowPrefix(depth)}@${meta.batonSessionId}  [${harnesses}]  ${sessionDisplayTitle(meta)}  (${meta.createdAt})`,
         );
       }
+      break;
+    }
+    case "clean": {
+      const store = new SessionStore(strictArgValue("--root"));
+      const cwd = strictArgValue("--cwd");
+      const before = new Date(Date.now() - SESSION_RETENTION_MS);
+      const result = store.cleanSessions({
+        before,
+        ...(cwd === undefined ? {} : { cwd }),
+      });
+      for (const meta of result.removed) {
+        console.log(`removed @${meta.batonSessionId}  ${meta.cwd}`);
+      }
+      for (const meta of result.skippedActive) {
+        console.log(`skipped active @${meta.batonSessionId}  ${meta.cwd}`);
+      }
+      for (const failure of result.failures) {
+        console.error(`failed @${failure.batonSessionId}  ${failure.cwd}: ${failure.error}`);
+      }
+      const scope = cwd === undefined ? "across all projects" : `in ${cwd}`;
+      console.log(
+        `cleaned ${result.removed.length} session${result.removed.length === 1 ? "" : "s"} ` +
+          `last active before ${before.toISOString()} ${scope}; ` +
+          `skipped ${result.skippedActive.length} active`,
+      );
+      if (result.failures.length > 0) process.exitCode = 1;
       break;
     }
     case "logs":

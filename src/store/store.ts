@@ -149,6 +149,23 @@ export interface SessionMeta {
   nativeSessionOrigin?: NativeSessionOrigin;
 }
 
+export interface SessionCleanupFailure {
+  batonSessionId: string;
+  cwd: string;
+  error: string;
+}
+
+export interface SessionCleanupResult {
+  removed: SessionMeta[];
+  skippedActive: SessionMeta[];
+  failures: SessionCleanupFailure[];
+}
+
+interface StoredSession {
+  dir: string;
+  meta: SessionMeta;
+}
+
 export function sessionTargetBindingMeta(
   meta: Pick<SessionMeta, "createdAt" | "targetBinding">,
 ): SessionTargetBindingMeta {
@@ -674,13 +691,17 @@ export class SessionStore {
   }
 
   listSessions(opts: { cwd?: string } = {}): SessionMeta[] {
+    return this.listStoredSessions(opts).map(({ meta }) => meta);
+  }
+
+  private listStoredSessions(opts: { cwd?: string } = {}): StoredSession[] {
     this.migrateLegacySessions();
     const cwd = opts.cwd === undefined ? undefined : resolve(opts.cwd);
     const projectDirs =
       cwd !== undefined
         ? [this.projectDir(cwd)]
         : this.listProjectDirs();
-    const out: SessionMeta[] = [];
+    const out: StoredSession[] = [];
     for (const projectDir of projectDirs) {
       const sessionsDir = join(projectDir, "sessions");
       if (!existsSync(sessionsDir)) continue;
@@ -694,25 +715,105 @@ export class SessionStore {
             normalizeSessionMeta(JSON.parse(readFileSync(metaPath, "utf8")) as SessionMeta),
           );
           if (cwd !== undefined && meta.cwd !== cwd) continue;
-          out.push(meta);
+          out.push({ dir: sessionDir, meta });
         } catch {
           // 损坏的 meta 不阻塞列表
         }
       }
     }
-    out.sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
+    out.sort((a, b) =>
+      (b.meta.updatedAt ?? b.meta.createdAt).localeCompare(
+        a.meta.updatedAt ?? a.meta.createdAt,
+      )
+    );
     return out;
+  }
+
+  /**
+   * Permanently remove sessions whose last persisted activity is older than `before`.
+   *
+   * Cleanup takes the same per-session lock as open/resume before deleting the session
+   * directory. A live session is skipped, and metadata is read again after locking so a
+   * session that became active during discovery cannot be removed from a stale snapshot.
+   */
+  cleanSessions(opts: { before: Date; cwd?: string }): SessionCleanupResult {
+    if (Number.isNaN(opts.before.getTime())) {
+      throw new Error("session cleanup cutoff must be a valid Date");
+    }
+    const cutoff = opts.before.getTime();
+    const result: SessionCleanupResult = {
+      removed: [],
+      skippedActive: [],
+      failures: [],
+    };
+    const candidates = this.listStoredSessions(opts.cwd === undefined ? {} : { cwd: opts.cwd });
+
+    for (const { dir, meta: candidate } of candidates) {
+      const observedActivity = Date.parse(candidate.updatedAt ?? candidate.createdAt);
+      if (!Number.isFinite(observedActivity) || observedActivity >= cutoff) continue;
+
+      if (basename(dir) !== candidate.batonSessionId) {
+        result.failures.push({
+          batonSessionId: candidate.batonSessionId,
+          cwd: candidate.cwd,
+          error: "session directory and metadata identity do not match",
+        });
+        continue;
+      }
+      const lockPath = join(dir, "lock");
+      if (sessionLockIsActive(lockPath)) {
+        result.skippedActive.push(candidate);
+        continue;
+      }
+
+      let ownsLock = false;
+      try {
+        ownsLock = acquireSessionLock(lockPath, candidate.batonSessionId);
+        if (!ownsLock) {
+          result.skippedActive.push(candidate);
+          continue;
+        }
+
+        const persisted = JSON.parse(
+          readFileSync(join(dir, "meta.json"), "utf8"),
+        ) as SessionMeta;
+        if (
+          persisted.batonSessionId !== candidate.batonSessionId ||
+          resolve(persisted.cwd) !== resolve(candidate.cwd)
+        ) {
+          throw new Error("session metadata identity changed during cleanup");
+        }
+        const latestActivity = Date.parse(persisted.updatedAt ?? persisted.createdAt);
+        if (!Number.isFinite(latestActivity)) {
+          throw new Error("session metadata has no valid activity timestamp");
+        }
+        if (latestActivity >= cutoff) continue;
+
+        rmSync(dir, { recursive: true });
+        ownsLock = false;
+        result.removed.push(normalizeSessionMeta(persisted));
+      } catch (error) {
+        if (error instanceof SessionInUseError) {
+          result.skippedActive.push(candidate);
+        } else {
+          result.failures.push({
+            batonSessionId: candidate.batonSessionId,
+            cwd: candidate.cwd,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } finally {
+        if (ownsLock) releaseSessionLock(lockPath);
+      }
+    }
+
+    return result;
   }
 
   /** Read-only liveness observation for Session Resource projection. */
   isSessionActive(meta: Pick<SessionMeta, "batonSessionId" | "cwd">): boolean {
     const path = join(this.sessionDir(resolve(meta.cwd), meta.batonSessionId), "lock");
-    try {
-      const holder = Number(readFileSync(path, "utf8").trim());
-      return Number.isFinite(holder) && holder > 0 && pidAlive(holder);
-    } catch {
-      return false;
-    }
+    return sessionLockIsActive(path);
   }
 
   /** adoptedFrom 是 owner 索引；当前 mutable binding 只为尚未 adoption 的 Baton 会话兜底。 */
@@ -1087,43 +1188,12 @@ export class SessionHandle {
    * 调用方应负责释放；false 表示同进程已持有，不能替原 owner 释放。
    */
   acquireLock(): boolean {
-    const path = this.lockPath();
-    // 每轮要么 O_EXCL 原子创建成功，要么排除一个失效持有者再试；
-    // 不用 existsSync 预检查——检查与创建之间的窗口就是 TOCTOU。
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const fd = openSync(path, "wx");
-        writeSync(fd, String(process.pid));
-        closeSync(fd);
-        return true;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      }
-      let holder: number;
-      try {
-        holder = Number(readFileSync(path, "utf8").trim());
-      } catch {
-        continue; // 持有者恰在此刻释放了锁，直接重试创建
-      }
-      if (holder === process.pid) return false; // 同进程重入
-      if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
-        throw new Error(`baton session ${this.id} is in use by another baton process (pid ${holder})`);
-      }
-      rmSync(path, { force: true }); // 持有者已死（或锁内容损坏）：清除 stale 锁重试
-    }
-    throw new Error(`failed to acquire session lock for ${this.id} after retries`);
+    return acquireSessionLock(this.lockPath(), this.id);
   }
 
   /** 只释放自己持有的锁；释放失败不阻塞退出（stale 锁由下次 acquire 的存活判定接管）。 */
   releaseLock(): void {
-    try {
-      const path = this.lockPath();
-      if (existsSync(path) && readFileSync(path, "utf8").trim() === String(process.pid)) {
-        rmSync(path);
-      }
-    } catch {
-      // 见 docstring：宁可留 stale 锁也不在退出路径抛错
-    }
+    releaseSessionLock(this.lockPath());
   }
 
   loadState(): SessionState {
@@ -1502,6 +1572,62 @@ function materializedHistoryTurns(
       }];
     }),
   }));
+}
+
+class SessionInUseError extends Error {
+  override readonly name = "SessionInUseError";
+}
+
+function sessionLockIsActive(path: string): boolean {
+  try {
+    const holder = Number(readFileSync(path, "utf8").trim());
+    return Number.isFinite(holder) && holder > 0 && pidAlive(holder);
+  } catch {
+    return false;
+  }
+}
+
+function acquireSessionLock(path: string, sessionId: string): boolean {
+  // Each attempt either atomically creates the lock or rules out one stale holder.
+  // Avoid existsSync before open: the gap between those operations is a TOCTOU race.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const fd = openSync(path, "wx");
+      try {
+        writeSync(fd, String(process.pid));
+      } finally {
+        closeSync(fd);
+      }
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    let holder: number;
+    try {
+      holder = Number(readFileSync(path, "utf8").trim());
+    } catch {
+      continue; // The holder released between open and read; retry the atomic create.
+    }
+    if (holder === process.pid) return false;
+    if (Number.isFinite(holder) && holder > 0 && pidAlive(holder)) {
+      throw new SessionInUseError(
+        `baton session ${sessionId} is in use by another baton process (pid ${holder})`,
+      );
+    }
+    rmSync(path, { force: true });
+  }
+  throw new Error(`failed to acquire session lock for ${sessionId} after retries`);
+}
+
+function releaseSessionLock(path: string): void {
+  try {
+    if (existsSync(path) && readFileSync(path, "utf8").trim() === String(process.pid)) {
+      rmSync(path);
+    }
+  } catch {
+    // A stale lock is safer than throwing during shutdown; the next acquire detects it.
+  }
 }
 
 /** kill(pid, 0) 探活：EPERM 表示进程存在但无权限发信号，同样算活。 */
