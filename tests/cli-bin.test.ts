@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +42,34 @@ describe("baton sessions", () => {
       expect(result.exitCode).toBe(0);
       expect(output).toContain(current.id);
       expect(output).not.toContain(other.id);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("baton clean", () => {
+  test("removes sessions inactive for over 30 days", () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-cli-clean-"));
+    try {
+      const store = new SessionStore(root);
+      const expired = store.createSession({ cwd: "/repo" });
+      expired.updateMeta({ updatedAt: "2000-01-01T00:00:00.000Z" });
+      const current = store.createSession({ cwd: "/repo" });
+
+      const invalid = runCli(["clean", "--root", root, "--cwd"]);
+      expect(invalid.exitCode).toBe(1);
+      expect(invalid.stderr.toString()).toContain("--cwd requires a value");
+      expect(existsSync(expired.dir)).toBe(true);
+
+      const result = runCli(["clean", "--root", root]);
+      const output = result.stdout.toString();
+
+      expect(result.exitCode).toBe(0);
+      expect(output).toContain(`removed @${expired.id}`);
+      expect(output).toContain("cleaned 1 session");
+      expect(existsSync(expired.dir)).toBe(false);
+      expect(existsSync(current.dir)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -77,6 +77,7 @@ baton -s bs_01...                  # 按 ID 打开 BatonSession
 baton resume [bs_xxx|native-id]    # resume Baton 或原生 Harness 会话
 baton fork [bs_xxx|native-id]      # fork 为新的 BatonSession
 baton sessions                     # 列出可引用的会话
+baton clean                        # 删除超过 30 天未活动的会话
 ```
 
 baton 可以只读识别 Codex 和 Claude Code 的 Session ID，不会修改它们的文件。它把原生持久历史导入用户拥有的 BatonSession：`resume` 继续源会话，`fork` 则创建一条新的工作分支。后续可以在 prompt 中引用任一会话：
@@ -84,6 +85,8 @@ baton 可以只读识别 Codex 和 Claude Code 的 Session ID，不会修改它�
 ```text
 @bs_01... 根据前面 Claude 的分析实现这个功能
 ```
+
+`baton clean` 默认扫描所有项目，跳过活跃会话，并永久删除每个过期 BatonSession 目录（包括日志和 Plugin 数据）。传入 `--cwd <dir>` 可以只清理一个项目。
 
 ## 添加长期工作流
 

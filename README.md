@@ -79,6 +79,7 @@ baton -s bs_01...                  # Open a BatonSession by ID
 baton resume [bs_xxx|native-id]    # Resume a Baton or native Harness session
 baton fork [bs_xxx|native-id]      # Fork into a new BatonSession
 baton sessions                     # List referenceable sessions
+baton clean                        # Remove sessions inactive for over 30 days
 ```
 
 baton can detect Codex and Claude Code session IDs without modifying their files. It imports their durable history into a user-owned BatonSession; `resume` continues the source, while `fork` starts a new branch of work. Reference any listed session in a later prompt:
@@ -86,6 +87,8 @@ baton can detect Codex and Claude Code session IDs without modifying their files
 ```text
 @bs_01... Implement this feature based on Claude's earlier analysis
 ```
+
+`baton clean` scans all projects by default, skips active sessions, and permanently removes each expired BatonSession directory including its logs and Plugin-owned data. Pass `--cwd <dir>` to limit cleanup to one project.
 
 ## Add long-running workflows
 

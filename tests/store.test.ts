@@ -132,6 +132,43 @@ describe("session lifecycle", () => {
     expect(all).toContain(other.id);
   });
 
+  test("cleanup removes stale sessions in scope and skips active sessions", () => {
+    const old = store.createSession({ cwd: "/tmp/proj" });
+    old.updateMeta({ updatedAt: "2026-06-01T00:00:00.000Z" });
+    const createdAtOnly = store.createSession({ cwd: "/tmp/proj" });
+    createdAtOnly.updateMeta({
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: undefined,
+    });
+    const recent = store.createSession({ cwd: "/tmp/proj" });
+    recent.updateMeta({ updatedAt: "2026-08-15T00:00:00.000Z" });
+    const active = store.createSession({ cwd: "/tmp/proj" });
+    active.updateMeta({ updatedAt: "2026-06-03T00:00:00.000Z" });
+    const otherProject = store.createSession({ cwd: "/tmp/other" });
+    otherProject.updateMeta({ updatedAt: "2026-06-04T00:00:00.000Z" });
+    expect(active.acquireLock()).toBe(true);
+
+    try {
+      const result = store.cleanSessions({
+        before: new Date("2026-08-01T00:00:00.000Z"),
+        cwd: "/tmp/proj",
+      });
+
+      expect(result.removed.map((meta) => meta.batonSessionId).sort()).toEqual(
+        [old.id, createdAtOnly.id].sort(),
+      );
+      expect(result.skippedActive.map((meta) => meta.batonSessionId)).toEqual([active.id]);
+      expect(result.failures).toEqual([]);
+      expect(existsSync(old.dir)).toBe(false);
+      expect(existsSync(createdAtOnly.dir)).toBe(false);
+      expect(existsSync(recent.dir)).toBe(true);
+      expect(existsSync(active.dir)).toBe(true);
+      expect(existsSync(otherProject.dir)).toBe(true);
+    } finally {
+      active.releaseLock();
+    }
+  });
+
   test("project keys remain distinct when their readable names collide", () => {
     const a = store.createSession({ cwd: "/tmp/proj" });
     const b = store.createSession({ cwd: "/tmp-proj" });
