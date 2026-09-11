@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import bashWasmUrl from "@lumis-sh/wasm-bash";
 import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 
-export type ReadOnlyCommandRule = (args: readonly string[]) => boolean;
+export type ReadOnlyCommandRule = ((args: readonly string[]) => boolean) & {
+  /** The rule stays valid when passive shell expansion changes its argument list. */
+  readonly acceptsPassiveExpansion?: boolean;
+};
 export type ReadOnlyCommandRules = ReadonlyMap<string, ReadOnlyCommandRule>;
 
 interface Analysis {
@@ -50,9 +53,10 @@ function staticWord(node: SyntaxNode, environment: StaticEnvironment): string | 
     case "raw_string":
       return node.text.length >= 2 ? node.text.slice(1, -1) : undefined;
     case "string_content":
-      // In double quotes Bash preserves backslashes before ordinary regex
-      // characters (for example `\|`) but interprets these special escapes.
-      return /\\[$`"\\\n]/.test(node.text) ? undefined : node.text;
+      // Bash preserves backslashes before ordinary regex characters (`\|`)
+      // and deterministically decodes the five special double-quote escapes.
+      return node.text.replace(/\\([$`"\\\n])/g, (_match, escaped: string) =>
+        escaped === "\n" ? "" : escaped);
     case "simple_expansion":
       return /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(node.text)
         ? staticExpansion(node, environment)
@@ -74,6 +78,15 @@ function staticWord(node: SyntaxNode, environment: StaticEnvironment): string | 
     default:
       return undefined;
   }
+}
+
+/** Globs and brace expansion only enumerate arguments; they do not execute another command. */
+function isPassiveExpansion(node: SyntaxNode, environment: StaticEnvironment): boolean {
+  if (!/[*?[\]{}]/.test(node.text) || node.text.includes("\\")) return false;
+  if (node.type === "word") return true;
+  if (node.type !== "concatenation") return false;
+  return namedChildren(node).every((child) =>
+    staticWord(child, environment) !== undefined || isPassiveExpansion(child, environment));
 }
 
 function hasUnquotedEscape(command: string): boolean {
@@ -107,16 +120,24 @@ function analyzeCommand(
   const executablePath = nameNode ? staticWord(nameNode, environment) : undefined;
   const executable = executablePath?.split("/").pop();
   if (!executable) return { readOnly: false, commandCount: 0 };
+  const rule = rules.get(executable);
+  if (!rule) return { readOnly: false, commandCount: 1 };
 
   const args: string[] = [];
   for (const argument of fieldChildren(node, "argument")) {
     const value = staticWord(argument, environment);
-    if (value === undefined) return { readOnly: false, commandCount: 0 };
-    args.push(value);
+    if (value !== undefined) {
+      args.push(value);
+      continue;
+    }
+    if (!rule.acceptsPassiveExpansion || !isPassiveExpansion(argument, environment)) {
+      return { readOnly: false, commandCount: 1 };
+    }
+    args.push(argument.text);
   }
 
   return {
-    readOnly: rules.get(executable)?.(args) === true,
+    readOnly: rule(args),
     commandCount: 1,
   };
 }
