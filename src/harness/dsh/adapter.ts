@@ -1,18 +1,16 @@
 // DeepSeek Harness Agent SDK adapter：DSH 原生 session/event 协议只在本目录出现，
-// controller / store / TUI 继续只消费 Baton Event。当前上游 stdio 协议没有 steer、
-// interaction 或细粒度 cancel；取消通过关闭 runtime 收口，后续 turn 用同一 session id 重连。
+// controller / store / TUI 继续只消费 Baton Event。追加走 SDK 原生 inbox；
+// 取消仍通过关闭 runtime 收口，后续 turn 用同一 session id 重连。
 
 import {
   DeepSeekHarness,
   type DeepSeekHarnessOptions,
   type HarnessNotification,
-  type RunOptions,
-  type RunResult,
-  type SdkPromptContentBlock,
 } from "@deepseek-ai/dsh-sdk-client";
 
 import type { DshTargetConfig } from "./config.ts";
 import { dshPromptInput } from "./prompt.ts";
+import { DshActivity, type DshTransport } from "./activity.ts";
 
 import { newId } from "../../event/ids.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
@@ -49,10 +47,10 @@ const DSH_DISPOSE_GRACE_MS = 3_000;
 
 export interface DshSessionLike {
   readonly id: string;
-  run(input: SdkPromptContentBlock[], options?: Pick<RunOptions, "onNotification">): Promise<RunResult>;
 }
 
 export interface DshClientLike {
+  readonly client: DshTransport;
   start(): Promise<void>;
   session(sessionId?: string): DshSessionLike;
   close(): Promise<void>;
@@ -94,6 +92,8 @@ interface DshRuntime {
   client?: DshClientLike;
   session?: DshSessionLike;
   activeTurn?: DshTurnState;
+  activity?: DshActivity;
+  closing?: Promise<void>;
   requestContext?: DshRequestContext;
   closed: boolean;
 }
@@ -245,6 +245,8 @@ export class DshAdapter implements HarnessAdapter {
   readonly harness = "deepseek-harness";
   readonly capabilities: AdapterCapabilities = { prompt: { image: { supported: true } } };
 
+  readonly steering = { deliveryTracking: "explicit", cancelOwnership: "survives" } as const;
+
   private readonly sessions = new Map<string, DshRuntime>();
 
   constructor(private readonly options: DshAdapterOptions = {}) {}
@@ -294,16 +296,20 @@ export class DshAdapter implements HarnessAdapter {
     if (unsupported.length) {
       throw new Error(`dsh adapter does not support prompt block type(s): ${unsupported.join(", ")}`);
     }
-    if (runtime.activeTurn && !runtime.activeTurn.finalized) {
-      return {
-        accepted: false,
-        effective: "rejected",
-        reason: "DeepSeek Harness stdio runtime does not support same-turn steering",
-      };
-    }
-
+    // Core may release a cancelled turn after its grace period. A different turn
+    // must wait for teardown rather than losing its queued input to a busy rejection.
+    if (runtime.closing && runtime.activeTurn?.turnId !== input.turnId) await runtime.closing;
+    const active = runtime.activeTurn;
     const blocks = await dshPromptInput(input.blocks);
+    if (active) {
+      if (runtime.activeTurn !== active || active.finalized || active.cancelRequested || runtime.closing || active.turnId !== input.turnId) {
+        return { accepted: false, effective: "rejected", reason: "DSH turn is ending or does not match" };
+      }
+      runtime.activity!.submit(input.messageId, blocks, true);
+      return { accepted: true, effective: "steer" };
+    }
     const session = await this.ensureSession(runtime);
+    if (runtime.closed) throw new Error("DSH session was closed during admission");
     const turn: DshTurnState = {
       turnId: input.turnId,
       finalized: false,
@@ -316,7 +322,19 @@ export class DshAdapter implements HarnessAdapter {
       usageSteps: new Set(),
     };
     runtime.activeTurn = turn;
-    void this.consumeTurn(runtime, turn, session, blocks);
+    const activity = new DshActivity(runtime.client!.client, session.id,
+      (notification) => { if (!turn.finalized) this.handleNotification(runtime, turn, notification); },
+      (messageId, state, detail, raw) => {
+        this.emit(runtime, turn, { kind: "input_delivery_update", payload: { messageId, state, ...(detail ? { detail } : {}) } }, raw);
+        if (state === "uncertain") this.emit(runtime, turn, { kind: "_baton_notice", payload: {
+          level: "warning", title: "DSH input delivery is uncertain",
+          detail: `${messageId}: ${detail}. Confirm its result before sending it again.`,
+        } });
+      },
+    );
+    runtime.activity = activity;
+    activity.submit(input.messageId, blocks, false);
+    void this.consumeTurn(runtime, turn, activity);
     return { accepted: true, effective: "new_turn" };
   }
 
@@ -325,8 +343,7 @@ export class DshAdapter implements HarnessAdapter {
     const turn = runtime.activeTurn;
     if (!turn || turn.finalized) return;
     turn.cancelRequested = true;
-    await this.disposeClient(runtime);
-    this.finishTurn(runtime, turn, "cancelled");
+    await this.stopTurn(runtime, turn);
   }
 
   async close(ref: HarnessSessionHandle): Promise<void> {
@@ -336,8 +353,8 @@ export class DshAdapter implements HarnessAdapter {
     runtime.closed = true;
     const turn = runtime.activeTurn;
     if (turn) turn.cancelRequested = true;
-    await this.disposeClient(runtime);
-    if (turn) this.finishTurn(runtime, turn, "cancelled");
+    if (turn) await this.stopTurn(runtime, turn);
+    else await this.disposeClient(runtime);
   }
 
   private mustSession(ref: HarnessSessionHandle): DshRuntime {
@@ -369,6 +386,8 @@ export class DshAdapter implements HarnessAdapter {
   }
 
   private async ensureSession(runtime: DshRuntime): Promise<DshSessionLike> {
+    if (runtime.closing) await runtime.closing;
+    if (runtime.closed) throw new Error("DSH session is closed");
     if (runtime.session) return runtime.session;
     const factory = this.options.clientFactory ?? ((options) => new DeepSeekHarness(options));
     const client = factory(this.clientOptions(runtime));
@@ -381,72 +400,58 @@ export class DshAdapter implements HarnessAdapter {
       this.publishBinding(runtime);
       return session;
     } catch (error) {
-      runtime.client = undefined;
-      runtime.session = undefined;
-      await client.close().catch(() => undefined);
+      try { await this.disposeClient(runtime); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "DSH startup and cleanup failed"); }
       throw error;
     }
   }
 
-  private async disposeClient(runtime: DshRuntime): Promise<void> {
+  private disposeClient(runtime: DshRuntime): Promise<void> {
+    if (runtime.closing) return runtime.closing;
     const client = runtime.client;
-    runtime.client = undefined;
-    runtime.session = undefined;
-    if (!client) return;
+    if (!client) return Promise.resolve();
+    // Keep the client and the failed close promise until exit is proved. New admission
+    // waits here even if Core's cancel grace period has already released its queue.
+    runtime.closing = Promise.resolve().then(() => client.close()).then(() => {
+      runtime.client = undefined;
+      runtime.session = undefined;
+      runtime.closing = undefined;
+    }, (error: unknown) => {
+      this.options.log?.({ level: "error", source: "harness", component: "dsh.runtime.close",
+        harness: this.harness, turnId: runtime.activeTurn?.turnId,
+        message: "DSH runtime cleanup failed; replacement runtime is blocked",
+        error: { message: errorMessage(error) } });
+      throw error;
+    });
+    return runtime.closing;
+  }
+
+  private async stopTurn(runtime: DshRuntime, turn: DshTurnState): Promise<void> {
     try {
-      await client.close();
+      await this.disposeClient(runtime);
+      runtime.activity?.abandon("runtime closed before a consumption receipt was observed");
+      this.finishTurn(runtime, turn, "cancelled");
     } catch (error) {
-      this.options.log?.({
-        level: "warn",
-        source: "harness",
-        component: "dsh.runtime.close",
-        harness: this.harness,
-        turnId: runtime.activeTurn?.turnId,
-        message: "DeepSeek Harness runtime did not close cleanly",
-        error: { message: errorMessage(error) },
-      });
+      runtime.activity?.abandon("runtime cleanup failed; consumption is unknown");
+      this.emitTurnError(runtime, turn, { message: errorMessage(error) });
+      this.finishTurn(runtime, turn, "error");
+      throw error;
     }
   }
 
-  private async consumeTurn(
-    runtime: DshRuntime,
-    turn: DshTurnState,
-    session: DshSessionLike,
-    blocks: SdkPromptContentBlock[],
-  ): Promise<void> {
+  private async consumeTurn(runtime: DshRuntime, turn: DshTurnState, activity: DshActivity): Promise<void> {
     try {
-      const result = await session.run(blocks, {
-        onNotification: (notification) => {
-          if (!turn.finalized) this.handleNotification(runtime, turn, notification);
-        },
-      });
-      if (!turn.sawAgentOutput && result.finalResponse.trim()) {
-        turn.sawAgentOutput = true;
-        this.emit(
-          runtime,
-          turn,
-          {
-            kind: "agent_message",
-            payload: {
-              messageId: mappedId(turn.assistantMessageIds, "result", "m"),
-              content: [{ type: "text", text: result.finalResponse }],
-            },
-          },
-          result,
-        );
-      }
+      await activity.done;
+      // cancel/close owns the terminal boundary while teardown is in flight.
+      if (turn.cancelRequested || runtime.closed) return;
       if (turn.failure) this.emitTurnError(runtime, turn, turn.failure);
-      this.finishTurn(
-        runtime,
-        turn,
-        turn.cancelRequested ? "cancelled" : (turn.stopReason ?? "end_turn"),
-      );
+      this.finishTurn(runtime, turn, turn.stopReason ?? "end_turn");
     } catch (error) {
-      if (turn.cancelRequested || runtime.closed) {
-        this.finishTurn(runtime, turn, "cancelled");
-        return;
-      }
+      if (turn.cancelRequested || runtime.closed) return;
       this.emitTurnError(runtime, turn, { message: errorMessage(error) });
+      try { await this.disposeClient(runtime); }
+      catch { /* The retained close promise quarantines this runtime. */ }
+      activity.abandon("transport failed before consumption could be confirmed");
       this.finishTurn(runtime, turn, "error");
     }
   }

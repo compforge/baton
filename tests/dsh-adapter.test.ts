@@ -2,7 +2,7 @@ import type {
   DeepSeekHarnessOptions as DshClientOptions,
   HarnessNotification as DshEvent,
   RunResult as DshRunResult,
-  RunOptions,
+  NotificationSubscription,
   SdkPromptContentBlock,
 } from "@deepseek-ai/dsh-sdk-client";
 import { describe, expect, test } from "bun:test";
@@ -100,13 +100,33 @@ class FakeSession implements DshSessionLike {
     private readonly turns: DshTurnLike[],
   ) {}
 
-  async run(input: DshInput, options?: Pick<RunOptions, "onNotification">): Promise<DshRunResult> {
+  next(input: DshInput): DshTurnLike {
     this.inputs.push(input);
     const turn = this.turns.shift();
     if (!turn) throw new Error("no fake DSH turn queued");
-    for await (const event of turn) options?.onNotification?.(event);
-    return turn.result;
+    return turn;
   }
+
+}
+
+class FakeSubscription implements NotificationSubscription {
+  private queue: DshEvent[] = [];
+  private waiter?: { resolve: (event: DshEvent) => void; reject: (error: Error) => void };
+  private error?: Error;
+  push(event: DshEvent): void {
+    if (this.waiter) { const waiter = this.waiter; this.waiter = undefined; waiter.resolve(event); }
+    else this.queue.push(event);
+  }
+  fail(error: Error): void { this.error = error; this.waiter?.reject(error); this.waiter = undefined; }
+  next(): Promise<DshEvent> {
+    const event = this.queue.shift();
+    if (event) return Promise.resolve(event);
+    if (this.error) return Promise.reject(this.error);
+    return new Promise((resolve, reject) => { this.waiter = { resolve, reject }; });
+  }
+  tryNext(): DshEvent | undefined { return this.queue.shift(); }
+  close(): void { this.fail(new Error("subscription closed")); }
+  async *[Symbol.asyncIterator](): AsyncIterator<DshEvent> { while (true) yield await this.next(); }
 }
 
 class FakeClient implements DshClientLike {
@@ -114,6 +134,30 @@ class FakeClient implements DshClientLike {
   closes = 0;
   requestedSessionIds: Array<string | undefined> = [];
   createdSessions: FakeSession[] = [];
+  subscription?: FakeSubscription;
+  private serial = 0;
+  readonly client = {
+    subscribeSessionTree: (_id: string): NotificationSubscription => this.subscription = new FakeSubscription(),
+    prompt: async (sessionId: string, input: DshInput): Promise<string> => {
+      const nativeId = `native-${++this.serial}`;
+      const turn = this.createdSessions.at(-1)!.next(input);
+      const subscription = this.subscription!;
+      void (async () => {
+        subscription.push(sessionEvent(sessionId, "agent/inbox/spliced", { inserted: [{ id: nativeId }] }));
+        let sawMessage = false;
+        for await (const event of turn) {
+          if ((event.params.event as { type?: string })?.type === "assistant/message") sawMessage = true;
+          subscription.push(event);
+        }
+        const result = await turn.result;
+        if (result.finalResponse && !sawMessage) subscription.push(sessionEvent(sessionId, "assistant/message", {
+          message: { content: [{ type: "text", text: result.finalResponse }] },
+        }));
+        subscription.push({ method: "session.status", params: { sessionId, status: "idle" } });
+      })().catch((error) => subscription.fail(error));
+      return nativeId;
+    },
+  };
 
   constructor(
     private readonly nativeSessionId: string,
@@ -135,6 +179,7 @@ class FakeClient implements DshClientLike {
   async close(): Promise<void> {
     this.closes += 1;
     this.onClose?.();
+    this.subscription?.close();
   }
 }
 
@@ -365,7 +410,7 @@ describe("DshAdapter", () => {
         payload: { state: "idle", stopReason: "end_turn" },
       }),
     ]);
-    expect(native).toHaveLength(notifications.length);
+    expect(native).toHaveLength(notifications.length + 2);
     await adapter.close(ref);
   });
 
@@ -516,7 +561,7 @@ describe("DshAdapter", () => {
     await adapter.close(ref);
   });
 
-  test("rejects unsupported prompts and busy steering before accepting responsibility", async () => {
+  test("rejects unsupported prompts and mismatched turn steering before accepting responsibility", async () => {
     const turn = new ControlledTurn();
     const sessionId = "dsh-native-3";
     const client = new FakeClient(sessionId, [turn]);
@@ -539,7 +584,7 @@ describe("DshAdapter", () => {
       blocks: [{ type: "text", text: "first" }],
     });
     expect(await adapter.sendTurn(ref, {
-      turnId: "t_busy",
+      turnId: "t_wrong",
       messageId: "m_steer",
       blocks: [{ type: "text", text: "steer" }],
     })).toMatchObject({ accepted: false, effective: "rejected" });

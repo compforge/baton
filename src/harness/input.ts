@@ -15,7 +15,7 @@ export type HarnessInputSource =
  * steer / Esc 里的时序特判。
  *
  * steer 的调度阶段是 `steering`（Adapter 已接受、等待 Harness 原生投递边界）；
- * 投递结果（applied/failed）记录在 `HarnessInput.deliveryOutcome`，与调度状态正交——
+ * 投递结果（applied/failed/uncertain）记录在 `HarnessInput.deliveryOutcome`，与调度状态正交——
  * 回执可能迟到于 Turn 收口，迟到事实只补 outcome，不回迁 status。
  */
 export type HarnessInputStatus =
@@ -54,10 +54,10 @@ export interface HarnessInput {
   delivery: "prompt" | "steer";
   /**
    * steer 的投递结果：applied = 已写入模型上下文，failed = Harness 明确丢弃；
-   * undefined = 仍在等待原生投递边界。与 status 正交：Turn 收口不改变它，
+   * uncertain = 无法确认消费结果，恢复时不得自动重投；undefined = 仍在等待原生投递边界。与 status 正交：Turn 收口不改变它，
    * Harness 回执迟到时只补它不迁 status。
    */
-  deliveryOutcome?: "applied" | "failed";
+  deliveryOutcome?: "applied" | "failed" | "uncertain";
   /** 本 turn 是用户对某个已完成计划提案的明确执行请求。 */
   sourceProposedPlanId?: string;
 }
@@ -86,7 +86,7 @@ export interface HarnessInputSnapshot {
   harness: string;
   status: HarnessInputStatus;
   delivery: "prompt" | "steer";
-  deliveryOutcome?: "applied" | "failed";
+  deliveryOutcome?: "applied" | "failed" | "uncertain";
   source: HarnessInputSource;
   harnessInvocationId?: string;
   sourceProposedPlanId?: string;

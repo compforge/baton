@@ -147,7 +147,7 @@ export class Queue<TBinding extends QueueBinding> {
     run: QueueRun<TBinding>,
     stopReason: StopReason | undefined,
     /** 投影中的 steer 投递结果查询；Turn 收口只终结已投递的 steer。 */
-    deliveryOutcomeOf?: (messageId: string) => "applied" | "failed" | undefined,
+    deliveryOutcomeOf?: (messageId: string) => "applied" | "failed" | "uncertain" | undefined,
   ): void {
     if (run.status === "finalized") return;
     run.status = "finalized";
@@ -165,7 +165,7 @@ export class Queue<TBinding extends QueueBinding> {
         steer.status = terminal;
       }
       // outcome 为 undefined:原生队列跨 Turn,不标终态——投影继续持有 steering 状态,
-      // Harness 回执到达后再迁移;failed:回执时已落终态,不覆盖。
+      // Harness 回执到达后再迁移；failed 已落终态；uncertain 只保留诊断，不自动重投。
       steer.resolve?.("completed");
     }
     if (this.currentRun?.turnId === run.turnId) this.currentRun = undefined;

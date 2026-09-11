@@ -93,7 +93,7 @@ export interface PromptReceipt {
  * - `new_turn`：没有活跃 turn，已接受开启新 turn 的责任；
  * - `steer`：已接受向 `input.turnId` 对应的当前 turn 投递；若 Harness 内部
  *   还有原生队列，Adapter 按 `steering.deliveryTracking` 约定用
- *   `input_delivery_update` 报告 applied/failed（ack-only 则接受即应用）；
+ *   `input_delivery_update` 报告 applied/failed/uncertain（ack-only 则接受即应用）；
  * - `rejected`：未接受输入，Controller 可安全降级为 queued follow-up。
  *
  * `rejected` 路径不得发事件。throw 同样只允许发生在接受责任之前。
@@ -167,9 +167,9 @@ export interface HarnessAdapter {
   /**
    * Steer 能力声明；缺省 = 不支持 same-turn steer（sendTurn 应回 rejected）。
    * - `deliveryTracking`：explicit = 接受后必须经 `input_delivery_update` 报告
-   *   applied/failed；`ack-only` = 接受即应用，由 Core 合成 applied，无后续回执。
+   *   applied/failed/uncertain；`ack-only` = 接受即应用，由 Core 合成 applied，无后续回执。
    * - `cancelOwnership`：cancel/interrupt 后原生队列里未应用的 steer 是否仍可达。
-   *   survives = Harness 继续拥有并报告回执；unreachable = 不可达，Controller 会在
+   *   survives = Adapter 保留投递责任并报告结果（不能确认时为 uncertain）；unreachable = 不可达，Controller 会在
    *   发 cancel 前把它们收回 Baton Queue。
    */
   readonly steering?: {
