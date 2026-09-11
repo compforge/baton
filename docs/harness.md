@@ -286,6 +286,10 @@ Capability 表达是否支持，不表达 Harness 名称。Controller 只做 fea
 不能写 provider 分支。若只有一家 Harness 需要某种行为，先留在其 Adapter；至少两家共同印证且
 owner、生命周期和恢复语义一致时，才考虑提升公共 Capability。
 
+Model selection 的读取与修改是两个层级：`ModelReadable` 只报告当前 selection，供状态与 context
+投影使用；`ModelConfigurable` 在其上增加目录与修改能力，对应 `/model`。静态选择模型的 Harness
+可以只实现前者，不能因此向用户暴露并不存在的配置入口。
+
 ## 6. 外部 HarnessSession 纳管
 
 Adapter 负责 live 执行，`HarnessSessionInspector` 负责只读观察已经存在的原生 Session。Inspector

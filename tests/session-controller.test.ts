@@ -129,6 +129,37 @@ class TargetedFakeAdapter extends FakeAdapter {
 
 }
 
+class ReadOnlyModelAdapter implements HarnessAdapter {
+  readonly harness = "deepseek-harness";
+  readonly capabilities: AdapterCapabilities = { prompt: {} };
+  private sink?: HarnessEventSink;
+
+  constructor(private readonly model: string) {}
+
+  async open(_opts: OpenOptions, sink: HarnessEventSink): Promise<HarnessSessionHandle> {
+    this.sink = sink;
+    return { harness: this.harness, handleId: "dsh-read-only-model", resumed: false };
+  }
+
+  currentModel(_ref: HarnessSessionHandle): string {
+    return this.model;
+  }
+
+  async sendTurn(_ref: HarnessSessionHandle, input: PromptInput): Promise<SendTurnReceipt> {
+    void Promise.resolve().then(() => {
+      this.sink?.({
+        kind: "state_update",
+        turnId: input.turnId,
+        payload: { state: "idle", stopReason: "end_turn" },
+      });
+    });
+    return { accepted: true, effective: "new_turn" };
+  }
+
+  async cancel(_ref: HarnessSessionHandle): Promise<void> {}
+  async close(_ref: HarnessSessionHandle): Promise<void> {}
+}
+
 class DelayedNativeIdAdapter extends FakeAdapter {
   nativeId?: string;
   turnId?: string;
@@ -516,6 +547,28 @@ describe("Controller", () => {
     await controller.setModel("codex-a", null);
     expect(session.meta.harnessSessions["codex-a"]?.model).toBeUndefined();
     expect(session.meta.harnessSessions["codex-a"]?.launchSnapshot).toEqual(launchSnapshot);
+  });
+
+  test("reports and persists a model from an adapter that cannot change it", async () => {
+    const adapter = new ReadOnlyModelAdapter("deepseek-flash");
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: (targetId) => targetId === "dsh" ? { id: "dsh", harness: "dsh" } : undefined,
+      createAdapter: () => adapter,
+    });
+
+    await controller.submit("dsh", [{ type: "text", text: "hello" }]);
+
+    expect(controller.currentModel("dsh")).toBe("deepseek-flash");
+    expect(session.meta.harnessTargets.dsh?.model).toBe("deepseek-flash");
+    expect(session.meta.harnessSessions.dsh?.launchSnapshot).toMatchObject({
+      harnessTargetId: "dsh",
+      harness: "dsh",
+      harnessSessionKey: "deepseek-harness",
+      model: "deepseek-flash",
+    });
+    await expect(controller.listModels("dsh")).rejects.toThrow("does not support /model");
   });
 
   test("rejects unknown or mismatched Target identities before creating an Adapter", () => {
