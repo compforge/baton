@@ -448,14 +448,14 @@ export class BatonChatProtocol implements ChatProtocol {
             }),
             onSelect: async (value) => {
               const target = resolveHarnessTarget(this.config, value);
-              if (target) await this.configureHarness(target.id);
+              if (target) await this.configureHarness(target.id, "exact");
             },
           });
           return;
         }
         const target = resolveHarnessTarget(this.config, argument);
         if (!target) throw new Error(`Unknown HarnessTarget: ${argument}`);
-        await this.configureHarness(target.id);
+        await this.configureHarness(target.id, "exact");
       },
     });
 
@@ -1424,8 +1424,14 @@ export class BatonChatProtocol implements ChatProtocol {
     }), action);
   }
 
-  private async configureHarness(target: string): Promise<void> {
+  private async configureHarness(
+    target: string,
+    selection: "family" | "exact" = "family",
+  ): Promise<void> {
     await this.runHumanConfiguration("harness", target, target, async () => {
+      if (selection === "exact") {
+        this.plugins.selectExactHarnessTargetId(target);
+      }
       this.harnessTargetId = target;
       this.toast = null;
       this.commandOutput = null;

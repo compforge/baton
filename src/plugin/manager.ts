@@ -797,6 +797,11 @@ export class Manager {
     return this.batonResourceProvider?.resolveTarget(requestedTargetId) ?? requestedTargetId;
   }
 
+  /** Preserve `/target <id>` as an exact Human choice over Plugin routing. */
+  selectExactHarnessTargetId(targetId: string): void {
+    this.batonResourceProvider?.selectExactTarget(targetId);
+  }
+
   /**
    * Instance 先以 disabled 落盘，再显式启用；激活失败时仍保留一份可诊断、可重试的配置。
    */
