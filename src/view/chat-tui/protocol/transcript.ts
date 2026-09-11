@@ -275,18 +275,27 @@ export function toolTranscriptItem(
   };
 }
 
-// 只读调用(effect = read)允许聚合成组行:写类(edit/delete/move/副作用 execute)永不进组,
-// diff 与命令详情按 chat-tui 既定决策不裁剪。effect 由 adapter 按 harness 工具语义上报
-// (见 harness/tool-effect.ts);未上报时按 kind 兜底,老 harness 行为与之前一致。
+// 只读探索与已完成命令可以聚合成组行；写类 edit/delete/move 与未结束命令不进组。
+// diff 与命令详情保留在 members，默认摘要只压缩 View 投影。
 
 /**
- * 可分组工具的分组键:同 kind + 同 turn + 同 harness target 的连续调用才并组;
+ * 可分组工具的分组键：同类动作 + 同 turn + 同 harness target 才能并组。
  * undefined = 该调用不参与分组。failed/declined 不进组——错误详情必须单独成块显眼展示。
  */
 export function toolGroupKey(tc: ToolCallState): string | undefined {
   if (!tc.kind) return undefined;
   const status = normalizeToolStatus(tc.status);
   if (status === "failed" || status === "declined") return undefined;
+  if (tc.kind === "execute") {
+    if (status !== "completed") return undefined;
+    return JSON.stringify([
+      "execute",
+      tc.turnId ?? "",
+      tc.harnessTargetId ?? "",
+      tc.laneId ?? "",
+      tc.harness ?? "",
+    ]);
+  }
   const effect = tc.effect ?? kindEffect(tc.kind);
   if (effect !== "read") return undefined;
   return JSON.stringify([
@@ -363,13 +372,16 @@ export function toolGroupTranscriptItem(
   const last = tcs[tcs.length - 1]!;
   const label = TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind;
   const detail = toolKeyArg(last, last.title ?? last.toolCallId);
+  const title = first.kind === "execute" && tcs.length > 1
+    ? `Ran ${countLabel(tcs.length, "command")}`
+    : `${label} ×${tcs.length}${detail ? ` · ${detail}` : ""}`;
   return transcriptGroup(
     tcs.map(toolTranscriptItem),
-    `${label} ×${tcs.length}${detail ? ` · ${detail}` : ""}`,
+    title,
   );
 }
 
-type CompactBlockFamily = "read" | "thought";
+type CompactBlockFamily = "read" | "execute" | "thought";
 
 interface CompactBlockCandidate {
   mergeKey: string;
@@ -386,7 +398,9 @@ function compactBlockGroup(candidates: CompactBlockCandidate[]): TranscriptGroup
     ? first.block.title
     : first.family === "thought"
       ? `Thought ×${candidates.length} · ${compactText(last.block.title, 48)}`
-      : `${first.label} ×${candidates.length}${last.detail ? ` · ${last.detail}` : ""}`;
+      : first.family === "execute"
+        ? `Ran ${countLabel(candidates.length, "command")}`
+        : `${first.label} ×${candidates.length}${last.detail ? ` · ${last.detail}` : ""}`;
   return transcriptGroup(candidates.map((candidate) => candidate.block), title);
 }
 
@@ -434,21 +448,41 @@ export function buildTranscript(
   const appendStandaloneBlock = (block: TranscriptBlockItem) => {
     items.push(standaloneTranscriptGroup(block));
   };
-  let pendingBlocks: CompactBlockCandidate[] = [];
-  const flushBlocks = () => {
-    if (pendingBlocks.length > 0) {
-      items.push(compactBlockGroup(pendingBlocks));
-    }
-    pendingBlocks = [];
+  let pendingThoughts: CompactBlockCandidate[] = [];
+  let activeToolGroup: {
+    mergeKey: string;
+    index: number;
+    candidates: CompactBlockCandidate[];
+  } | undefined;
+  const flushThoughts = () => {
+    if (pendingThoughts.length > 0) items.push(compactBlockGroup(pendingThoughts));
+    pendingThoughts = [];
   };
-  const appendCompactBlock = (candidate: CompactBlockCandidate) => {
+  const closeToolGroup = () => {
+    activeToolGroup = undefined;
+  };
+  const appendThought = (candidate: CompactBlockCandidate) => {
     if (
-      pendingBlocks.length > 0 &&
-      pendingBlocks[0]!.mergeKey !== candidate.mergeKey
+      pendingThoughts.length > 0 &&
+      pendingThoughts[0]!.mergeKey !== candidate.mergeKey
     ) {
-      flushBlocks();
+      flushThoughts();
     }
-    pendingBlocks.push(candidate);
+    pendingThoughts.push(candidate);
+  };
+  const appendTool = (candidate: CompactBlockCandidate) => {
+    flushThoughts();
+    if (activeToolGroup?.mergeKey === candidate.mergeKey) {
+      activeToolGroup.candidates.push(candidate);
+      items[activeToolGroup.index] = compactBlockGroup(activeToolGroup.candidates);
+      return;
+    }
+    activeToolGroup = {
+      mergeKey: candidate.mergeKey,
+      index: items.length,
+      candidates: [candidate],
+    };
+    items.push(compactBlockGroup(activeToolGroup.candidates));
   };
   const hidden = (laneId: string | undefined) =>
     laneId !== undefined && options.isSideLane?.(laneId) === true;
@@ -459,16 +493,17 @@ export function buildTranscript(
       if (!tc || hidden(tc.laneId)) continue;
       const groupKey = toolGroupKey(tc);
       if (groupKey !== undefined) {
-        appendCompactBlock({
+        appendTool({
           mergeKey: groupKey,
-          family: "read",
+          family: tc.kind === "execute" ? "execute" : "read",
           label: TOOL_KIND_LABELS[tc.kind ?? ""] ?? tc.kind ?? "Read",
           detail: toolKeyArg(tc, tc.title ?? tc.toolCallId),
           block: toolTranscriptItem(tc),
         });
         continue;
       }
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const block = toolTranscriptItem(tc);
       if (block.status === "failed" || block.status === "declined") {
         appendStandaloneBlock(block);
@@ -478,7 +513,7 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "notice") {
-      flushBlocks();
+      flushThoughts();
       const notice = noticesById.get(entry.id);
       if (!notice) continue;
       if (hidden(notice.laneId)) continue;
@@ -492,7 +527,8 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "error") {
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const error = state.errors.get(entry.id);
       if (!error) continue;
       if (hidden(error.laneId)) continue;
@@ -536,7 +572,7 @@ export function buildTranscript(
         // the finalized summary to transcript so partial planning titles do not interrupt history.
         if (status === "in_progress") continue;
         for (const [index, block] of thoughtDisplayBlocks(textOf(msg.content)).entries()) {
-          appendCompactBlock({
+          appendThought({
             mergeKey: thoughtGroupKey(msg),
             family: "thought",
             label: "Thought",
@@ -553,7 +589,8 @@ export function buildTranscript(
         }
         continue;
       }
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const author =
         msg.role === "user"
           ? msg.source?.type === "plugin"
@@ -581,7 +618,8 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "harness_invocation") {
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const request = state.harnessInvocations.get(entry.id);
       if (!request) continue;
       if (
@@ -626,7 +664,8 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "approval_review") {
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const review = state.approvalReviews.get(entry.id);
       if (review) {
         appendStandaloneBlock(approvalReviewTranscriptItem(review));
@@ -634,7 +673,8 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "proposed_plan") {
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const proposal = state.proposedPlans.get(entry.id);
       if (!proposal) continue;
       if (hidden(proposal.laneId)) continue;
@@ -652,7 +692,8 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "task") {
-      flushBlocks();
+      flushThoughts();
+      closeToolGroup();
       const task = state.tasks.get(entry.id);
       if (!task) continue;
       if (hidden(task.laneId)) continue;
@@ -675,7 +716,8 @@ export function buildTranscript(
       });
       continue;
     }
-    flushBlocks();
+    flushThoughts();
+    closeToolGroup();
     if (entry.type !== "plan") continue;
     const plan = state.plans.get(entry.id);
     if (!plan || plan.planId === pinnedPlanId) continue;
@@ -702,6 +744,6 @@ export function buildTranscript(
       content: { type: "plan", entries },
     });
   }
-  flushBlocks();
+  flushThoughts();
   return items;
 }

@@ -54,7 +54,7 @@ Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实�
 | streaming | `session.event` 中的 assistant chunk/message、tool、usage、todo |
 | context window | `request/context` 的有效路由 + `assistant/message.usage` 的当次输入占用快照 |
 | subagent lifecycle | `subagent.started` / `subagent.finished` → `task_update` |
-| same-turn steer | 原生 `session/prompt` 入队，`agent/inbox/spliced` 确认消费 |
+| same-turn steer | 原生 `session/prompt` 入队，inbox pure-deletion 与 `user/message` 确认进入模型 step |
 | session resume | SDK session ID + Baton v1 resume state |
 
 当前不声明 audio/resource prompt、compact、Session config、Interaction、
@@ -70,8 +70,8 @@ provider 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力�
 不复制 stdio、JSON-RPC 或进程清理实现。
 
 存在匹配的活跃 Turn 时，追加和 Queue 的 dispatch-now 走同一 `session/prompt`，返回
-`accepted/steer`。RPC response 只证明入队；`agent/inbox/spliced.inserted` 才产生
-`input_delivery_update(applied)`。接受 same-turn steer 时 Adapter 同步补一条 `delivery:"steer"`
+`accepted/steer`。RPC response 和 `agent/inbox/spliced.inserted` 只证明 DSH 已持久入队；后续 pure-deletion
+splice 按 inbox 顺序确认被 step claim，对应的 `user/message` 才产生 `input_delivery_update(applied)`。接受 same-turn steer 时 Adapter 同步补一条 `delivery:"steer"`
 的 `user_message`：正文在未 applied 前留在 Queue，`applied` 后由 Transcript 承接，Core 只为出队
 开新 Turn 的输入补 `user_message`。通知可能早于 response，关联前暂存回执；根消息与所有追加输入
 都已消费且收到 agent idle 后才收口一个 Baton Turn。不同 Turn 或清理期间的追加会被拒绝并保留在

@@ -581,7 +581,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     if (
       input.laneId !== MAIN_LANE_ID ||
       input.delivery !== "steer" ||
-      input.status !== "steering" ||
+      (input.status !== "dispatching" && input.status !== "steering") ||
       input.deliveryOutcome !== undefined
     ) {
       return false;
@@ -593,9 +593,9 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     ...pendingSteers.map((input) => ({
       id: input.messageId,
       text: userVisibleText(composerTextOf(input.blocks)),
-      tag: `${input.harnessTargetId} · ${
-        state.activeTurns.has(input.turnId) ? "current turn" : "native queue"
-      }`,
+      tag: `${input.harnessTargetId} · ${input.status === "dispatching"
+        ? "sending"
+        : state.activeTurns.has(input.turnId) ? "current turn" : "native queue"}`,
     })),
     ...mainQueuedInputs.map((turn, index) => {
       const actions: QueueItemAction[] = [];

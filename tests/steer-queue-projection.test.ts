@@ -52,7 +52,7 @@ function appendQueuedInput(input: {
   blocks: { type: "text"; text: string }[];
   source?: { type: "user" } | { type: "plugin"; pluginInstanceId: string };
   harnessInvocationId?: string;
-  status?: "queued" | "steering";
+  status?: "queued" | "dispatching" | "steering";
   delivery?: "prompt" | "steer";
 }) {
   const source = input.source ?? { type: "user" as const };
@@ -208,6 +208,35 @@ describe("steer queue projection", () => {
       ),
     ).toBe(true);
     expect(applied.footer.text).toContain("queue:0");
+  });
+
+  test("keeps a same-turn input visible while Adapter admission is in flight", () => {
+    appendQueuedInput({
+      messageId: "m_dispatching",
+      turnId: "t_reserved",
+      laneId: MAIN_LANE_ID,
+      blocks: [{ type: "text", text: "wait for the receipt" }],
+      status: "dispatching",
+      delivery: "steer",
+    });
+    const controller = {
+      activeHarnessTargetId: "codex",
+      activeTurnId: "t_active",
+      activeStartedAt: Date.now(),
+      currentModel: () => null,
+      currentEffort: () => null,
+      currentMode: () => "default",
+      approvalRoute: () => null,
+      preservesPendingSteers: () => true,
+      isBusy: true,
+      harnessQueueLength: 0,
+    } as unknown as Controller;
+
+    expect(project(controller).queue?.items).toEqual([{
+      id: "m_dispatching",
+      text: "wait for the receipt",
+      tag: "codex · sending",
+    }]);
   });
 
   test("hides an orphaned pending steer when its Adapter cannot preserve a native queue", () => {

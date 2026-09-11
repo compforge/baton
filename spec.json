@@ -82,6 +82,17 @@
       }
     ]
   },
+  "src/harness/dsh/activity.ts::DshActivity": {
+    "specs": [
+      {
+        "cases": [],
+        "links": [
+          "../../../docs/harness/deepseek-harness.md"
+        ],
+        "spec": "Durable inbox insertion keeps a steer pending; only a claimed entry that reaches user/message is applied. A claimed entry missing at idle is failed instead of hanging."
+      }
+    ]
+  },
   "src/interaction/reconcile.ts::ReconcileInteractionStore": {
     "specs": [
       {

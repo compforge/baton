@@ -1781,16 +1781,15 @@ describe("tool call grouping", () => {
     expect(toolGroupKey(tool("tc_edit", "edit"))).toBeUndefined();
   });
 
-  test("adapter-reported effect takes precedence over the kind fallback", () => {
-    // 未上报 effect:按 kind 兜底(read/search/fetch 可组,execute 不组)——老 harness 行为不变
-    expect(toolGroupKey(tool("tc_exec", "execute"))).toBeUndefined();
-    // 上报后以 effect 为准:只读 execute 可组,标 write 的 read 不组
-    const execRead = { ...tool("tc_exec_ro", "execute"), effect: "read" };
-    expect(toolGroupKey(execRead)).toBe(toolGroupKey({ ...tool("tc_exec_ro2", "execute"), effect: "read" }));
+  test("groups completed commands and still honors explicit effects for exploration", () => {
+    expect(toolGroupKey(tool("tc_exec", "execute"))).toBe(
+      toolGroupKey(tool("tc_exec_2", "execute")),
+    );
+    expect(toolGroupKey(tool("tc_exec_running", "execute", "in_progress"))).toBeUndefined();
     expect(toolGroupKey({ ...tool("tc_read_w", "read"), effect: "write" })).toBeUndefined();
   });
 
-  test("renders a read-only execute group with command text per line", () => {
+  test("renders a completed command group with command text per line", () => {
     const exec = (
       toolCallId: string,
       command: string,
@@ -1802,7 +1801,7 @@ describe("tool call grouping", () => {
     });
     expect(toolGroupTranscriptItem([
       exec("tc_one", "head -80 src/lane.ts"),
-      exec("tc_two", "grep -rn task src/ | head -20", "in_progress"),
+      exec("tc_two", "grep -rn task src/ | head -20"),
     ])).toEqual({
       type: "group",
       id: "group:tc_one",
@@ -1812,8 +1811,8 @@ describe("tool call grouping", () => {
         id: "group:tc_one:summary",
         kind: "tool",
         author: "codex",
-        title: "Ran ×2 · grep -rn task src/ | head -20",
-        status: "in_progress",
+        title: "Ran 2 commands",
+        status: "completed",
       },
       members: [
         {
@@ -1833,8 +1832,8 @@ describe("tool call grouping", () => {
           id: "tc_two",
           kind: "tool",
           author: "codex",
-          title: "Running · grep -rn task src/ | head -20 · 1 line",
-          status: "in_progress",
+          title: "Ran · grep -rn task src/ | head -20 · 1 line",
+          status: "completed",
           content: [
             { type: "command", command: "grep -rn task src/ | head -20" },
             { type: "output", lines: ["tc_two output"] },
@@ -1973,15 +1972,8 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:status",
           collapsedByDefault: true,
-          summary: { title: "Ran · status · 1 line" },
-          members: [{ id: "status", title: "Ran · status · 1 line" }],
-        },
-        {
-          type: "group",
-          id: "group:probe1",
-          collapsedByDefault: true,
-          summary: { title: "Ran ×2 · probe2" },
-          members: [{ id: "probe1" }, { id: "probe2" }],
+          summary: { title: "Ran 3 commands" },
+          members: [{ id: "status" }, { id: "probe1" }, { id: "probe2" }],
         },
       ]);
       await protocol.exit();
@@ -1990,7 +1982,7 @@ describe("tool call grouping", () => {
     }
   });
 
-  test("keeps substantive thought and read in separate adjacent block groups", async () => {
+  test("keeps a tool group stable across interleaved thought and notice facts", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-compact-blocks-"));
     try {
       const store = new SessionStore(root);
@@ -2026,8 +2018,16 @@ describe("tool call grouping", () => {
       appendThought("thought-1", "Found the relevant files");
       appendThought("thought-2", "The adapter owns this behavior");
       appendRead("read-1");
-      appendRead("read-2");
       appendThought("thought-3", "The implementation is ready");
+      session.appendEvent({
+        source: { type: "baton" as const },
+        kind: "_baton_notice" as const,
+        harness: "codex",
+        harnessTargetId: "codex",
+        turnId: "t1",
+        payload: { level: "info" as const, title: "Context refreshed" },
+      });
+      appendRead("read-2");
 
       const protocol = new BatonChatProtocol(
         store,
@@ -2059,6 +2059,10 @@ describe("tool call grouping", () => {
           collapsedByDefault: true,
           summary: { kind: "thought", title: "The implementation is ready" },
           members: [{ id: "thought-3:0", title: "The implementation is ready" }],
+        },
+        {
+          type: "group",
+          members: [{ kind: "notice", title: "Context refreshed" }],
         },
       ]);
       await protocol.exit();

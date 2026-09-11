@@ -7,7 +7,9 @@ import { DeepSeekHarness } from "@deepseek-ai/dsh-sdk-client";
 import { DshAdapter } from "../src/harness/dsh/adapter.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import { Controller } from "../src/controller/index.ts";
+import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore } from "../src/store/store.ts";
+import { projectChatState } from "../src/view/chat-tui/protocol/state.ts";
 
 const dshBin = fileURLToPath(new URL("./fixtures/dsh-queue-runtime.mjs", import.meta.url));
 const blocks = (text: string) => [{ type: "text" as const, text }];
@@ -49,6 +51,62 @@ test("DSH steer emits the delivery-marked user message so applied steers reach t
       { messageId: "m2", state: "applied" },
     ]);
   } finally { await adapter.close(ref); }
+});
+
+test("DSH busy input stays in the Baton Queue until DSH admits it to a model step", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-dsh-visible-queue-"));
+  const session = new SessionStore(root).createSession({ cwd: root });
+  const target = { id: "dsh", harness: "deepseek-harness" };
+  let ready = false;
+  const controller = new Controller({
+    session,
+    mentionBudgetChars: 4096,
+    resolveTarget: (id) => id === "dsh" ? target : undefined,
+    createAdapter: () => new DshAdapter({
+      dshBin,
+      nativeEvent: (event) => {
+        if (event.name === "session.status") ready = true;
+      },
+    }),
+  });
+  const first = controller.submit("dsh", blocks("hold"));
+  try {
+    await until(() => ready);
+    expect(await controller.sendTurn("dsh", blocks("queued-steer"))).toEqual({
+      effective: "steer",
+    });
+    const state = session.loadState();
+    const pending = [...state.harnessInputs.values()].find(
+      (candidate) => candidate.delivery === "steer",
+    );
+    expect(pending).toBeDefined();
+    if (!pending) throw new Error("pending DSH steer was not projected");
+    expect(pending).toMatchObject({
+      laneId: MAIN_LANE_ID,
+      status: "steering",
+    });
+    expect(pending.deliveryOutcome).toBeUndefined();
+    const view = projectChatState({
+      state,
+      controller,
+      session,
+      config: { showThoughts: true },
+      harnessTargetId: "dsh",
+      toast: null,
+      commandOutput: null,
+      picker: null,
+      board: { items: [], mode: "auto", sidecar: undefined },
+    });
+    expect(view.queue?.items).toEqual([{
+      id: pending.messageId,
+      text: "queued-steer",
+      tag: "dsh · current turn",
+    }]);
+  } finally {
+    await controller.close();
+    await first;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("DSH cancellation waits for runtime exit and leaves unapplied native input uncertain", async () => {
@@ -132,6 +190,27 @@ test("DSH explicit prompt rejection settles only that steer and keeps the curren
     await until(() => events.some((e) => e.kind === "state_update"));
     expect(events.filter((e) => e.kind === "input_delivery_update").at(-1)?.payload).toEqual({ messageId: "m3", state: "applied" });
   } finally { await adapter.close(ref); }
+});
+
+test("DSH claim without model admission fails the steer and still closes the activity", async () => {
+  const events: AnyEventDraft[] = [];
+  const adapter = new DshAdapter({ dshBin });
+  const ref = await adapter.open({ cwd: tmpdir() }, (event) => events.push(event));
+  try {
+    await adapter.sendTurn(ref, input("t", "m1", "hold"));
+    await adapter.sendTurn(ref, input("t", "m2", "claim-without-apply"));
+    await until(() => events.some((event) => event.kind === "state_update"));
+    expect(events.find((event) => event.kind === "input_delivery_update")?.payload).toMatchObject({
+      messageId: "m2",
+      state: "failed",
+    });
+    expect(events.find((event) => event.kind === "state_update")?.payload).toEqual({
+      state: "idle",
+      stopReason: "refusal",
+    });
+  } finally {
+    await adapter.close(ref);
+  }
 });
 
 test("DSH failed cleanup blocks replacement clients instead of reporting a successful cancellation", async () => {

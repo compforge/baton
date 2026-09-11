@@ -113,6 +113,18 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/** DSH persists tool arguments as JSON text; normalize them at the wire boundary. */
+function toolInput(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return record(parsed) ?? value;
+  } catch {
+    // Streaming argument fragments are intentionally retained until valid JSON arrives.
+    return value;
+  }
+}
+
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -587,7 +599,7 @@ export class DshAdapter implements HarnessAdapter {
             toolCallId,
             ...(name ? { title: name, kind: toolKind(name) } : {}),
             status: "in_progress",
-            rawInput,
+            rawInput: toolInput(rawInput),
           },
         }, raw);
       } else if (chunkType === "usage") {
@@ -651,7 +663,7 @@ export class DshAdapter implements HarnessAdapter {
           title: name,
           kind: toolKind(name),
           status: "in_progress",
-          rawInput: data.arguments,
+          rawInput: toolInput(data.arguments),
         },
       }, raw);
       return;
