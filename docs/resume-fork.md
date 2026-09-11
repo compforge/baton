@@ -49,7 +49,7 @@ BatonSession 跟随原生会话的 cwd（无法取得时才回退命令 cwd）�
 配套引入两个打开期机制：
 
 - **会话锁**：session 目录下的 pid 文件，标记"哪个活进程正持有该会话"。
-- **crash recovery**：打开会话时归一化上个进程留下的中断残留。
+- **crash recovery**：打开会话时归一化上个进程留下的中断 Turn、Interaction、投递与后台 task 残留。
 
 ## 流程
 
@@ -102,6 +102,9 @@ recovery 的核心价值不是修 UI 状态（TUI 的 busy 来自 controller，�
 前提是持锁："最后事件是 running"只有在没有活进程持有会话时才能断定为崩溃残留，否则合成终态会污染另一个进程正在执行的活会话。锁只服务这个判定，不承担并发追加的完整保护（headless REPL 目前不加锁，属已知豁免）。抢锁用 `O_EXCL` 原子创建（不做"先检查再写入"，那是 TOCTOU）；锁不做进程内引用计数——约定同一进程内一个 session 至多一个活 handle，进程内并发归上层（TUI 单前台会话；将来多 Session Controller 由 session slot 唯一性保证）。
 
 recovery 同时覆盖 fork：源会话若正在运行（或曾崩溃），复制会带进半截 turn；child 首次打开时经同一条归一化路径补上终态与 summary，`forkSession()` 自身不必关心。
+后台 task 同样依赖所属 BatonSession 的 live Adapter 维持生命周期；resume 或清空原生 binding 的 fork
+打开后，仍为 `in_progress` 的 task 会在当前会话归一为 `stopped`。源会话中仍真实运行的 task 不受
+影响；child 不会永久占据 Parallel，也不会冒充执行成功或失败。
 
 ### fork 的上下文保真度 = turn-summary 保真度
 

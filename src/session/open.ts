@@ -89,7 +89,8 @@ function resolveSession(
  * 收口顺序与 controller.finalize 一致（终态 → notice → summary），三类残留：
  * 悬挂的原生 steer 队列 → failed；悬挂 Harness/Baton 审批 → cancelled；
  * Plugin Interaction 也以 recovery 收口，使对应 verb
- * 明确成为 failure，而不是尝试重放进程内 continuation。每个未收口的 Turn（并发崩溃时
+ * 明确成为 failure，而不是尝试重放进程内 continuation。失去 Adapter 进程的后台 task
+ * → stopped；每个未收口的 Turn（并发崩溃时
  * 可能不止一个）→ 各补 idle(cancelled) + 中断 notice；缺 summary 的 turn
  * （含 fork 从运行中源会话复制来的半截 turn）→ 补 summary。
  */
@@ -119,8 +120,12 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   }
 
   const interruptedTurns = [...state.activeTurns.keys()];
+  const interruptedTasks = [...state.tasks.values()].filter(
+    (task) => task.status === "in_progress",
+  );
   if (
     interruptedTurns.length === 0 &&
+    interruptedTasks.length === 0 &&
     unsummarized.length === 0 &&
     pendingSteers.length === 0 &&
     ![...state.interactions.values()].some((interaction) => !interaction.result)
@@ -180,6 +185,24 @@ function recoverInterruptedState(session: SessionHandle): boolean {
         ...(interaction.interaction.requester.type === "plugin"
           ? { detail: "Plugin execution was interrupted by Core restart" }
           : {}),
+      },
+    });
+  }
+  // task_update 描述 Harness 已启动的执行实体。打开期当前 BatonSession 没有
+  // Adapter 能继续持有这些 task；尤其 fork 会清空全部 HarnessSession binding，
+  // 即使源会话的 task 仍在运行，child 也不可能收到它的可信终态。若原样保留
+  // in_progress，它们会永久占据当前会话的 Parallel。
+  for (const task of interruptedTasks) {
+    session.appendEvent({
+      kind: "task_update",
+      source: { type: "baton" },
+      harness: task.harness ?? "baton",
+      ...(task.harnessTargetId ? { harnessTargetId: task.harnessTargetId } : {}),
+      ...(task.laneId ? { laneId: task.laneId } : {}),
+      ...(task.turnId ? { turnId: task.turnId } : {}),
+      payload: {
+        taskId: task.taskId,
+        status: "stopped",
       },
     });
   }

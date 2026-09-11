@@ -64,6 +64,72 @@ describe("openBatonSession", () => {
 });
 
 describe("crash recovery on open", () => {
+  test("stops copied background tasks that lost their Adapter process after fork", () => {
+    const source = store.createSession({ cwd: "/repo" });
+    const coordinate = {
+      harness: "deepseek-harness",
+      harnessTargetId: "dsh",
+      laneId: "main",
+      turnId: "t1",
+    } as const;
+    source.appendEvent({
+      source: { type: "harness", harnessTargetId: "dsh" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "dsh-running",
+        status: "in_progress",
+        title: "DeepSeek Harness subagent",
+        taskType: "dsh-subagent",
+        skipTranscript: true,
+      },
+    });
+    source.appendEvent({
+      source: { type: "harness", harnessTargetId: "dsh" },
+      kind: "task_update",
+      ...coordinate,
+      payload: {
+        taskId: "dsh-completed",
+        status: "completed",
+        title: "DeepSeek Harness subagent",
+        taskType: "dsh-subagent",
+        skipTranscript: true,
+      },
+    });
+    source.appendEvent({
+      source: { type: "harness", harnessTargetId: "dsh" },
+      kind: "state_update",
+      ...coordinate,
+      payload: { state: "idle", stopReason: "end_turn" },
+    });
+    source.summarizeTurnEvent("t1");
+
+    const child = store.forkSession(source.id);
+    const result = openBatonSession(store, { cwd: "/repo", sessionId: child.id });
+
+    expect(result.recovered).toBe(true);
+    expect(result.session.loadState().tasks.get("dsh-running")?.status).toBe("stopped");
+    expect(result.session.loadState().tasks.get("dsh-completed")?.status).toBe("completed");
+    expect(source.loadState().tasks.get("dsh-running")?.status).toBe("in_progress");
+    expect(
+      result.session.ledger.read().findLast(
+        (event) => event.kind === "task_update" && event.payload.taskId === "dsh-running",
+      ),
+    ).toMatchObject({
+      source: { type: "baton" },
+      harness: "deepseek-harness",
+      harnessTargetId: "dsh",
+      laneId: "main",
+      turnId: "t1",
+      payload: { taskId: "dsh-running", status: "stopped" },
+    });
+
+    const count = result.session.ledger.read().length;
+    const second = openBatonSession(store, { cwd: "/repo", sessionId: child.id });
+    expect(second.recovered).toBe(false);
+    expect(second.session.ledger.read()).toHaveLength(count);
+  });
+
   test("fails a native steer queue that lost its Adapter process", () => {
     const h = store.createSession({ cwd: "/repo" });
     h.appendEvent({
