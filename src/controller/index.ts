@@ -283,7 +283,9 @@ export class Controller {
     const queued = [...latest.values()]
       .filter((event) => {
         const status = normalizeHarnessInputStatus(event.payload.status);
-        return status === "queued" || status === "steering";
+        const outcome = this.options.session.loadState().harnessInputs.get(event.payload.messageId)?.deliveryOutcome;
+        // Confirmed or ambiguous native delivery must never become an automatic duplicate on resume.
+        return status === "queued" || (status === "steering" && outcome !== "applied" && outcome !== "uncertain");
       })
       .sort((left, right) => {
         if (left.payload.laneId !== right.payload.laneId) {

@@ -300,7 +300,8 @@ Queue item 需要释放。Turn 本身不携带发起方向或角色分类。
 2. Adapter 原生接受后，输入进入 `steering`，并以 `delivery:"steer"` 绑定当前 Turn。
    若接受只代表进入 Harness 原生队列，投递结果留待回执（`deliveryOutcome` 未填写）；
 3. Harness 确认该用户输入已写入模型上下文后，Adapter 发 `input_delivery_update(applied)`；
-   若 Harness 明确取消或丢弃该输入，则发 `failed` 并产生可见诊断。不能区分这些边界的
+   若 Harness 明确取消或丢弃该输入，则发 `failed` 并产生可见诊断；断线等情况下无法确认消费结果，
+   则发 `uncertain` 并告警，恢复时不得自动重投。不能区分这些边界的
    Harness 声明 `steering.deliveryTracking: "ack-only"`，以原生接受作为 applied 边界，
    由 Core 在 accept 时合成回执；
 4. Adapter 拒绝、原生 race 或无法安全定向时，同一 Input 回到队头，当前 Turn 结束后作为新 Turn
@@ -313,13 +314,13 @@ Turn，因此 Turn 收口不能把
 直到 Harness 报告应用或失败。queued follow-up 与未决 steer 共用 Queue surface，但前者等待
 Controller 开启新 Turn，后者等待 Harness 原生投递边界，两者不能互相冒充。
 
-未决 / `failed` 的 steer 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
+未决 / `failed` / `uncertain` 的 steer 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
 `started` 时开启新的 Turn，由该 Turn 承接实际 `applied` 的用户正文，避免尚未执行或
 已经丢弃的指令提前污染下一棒上下文。
 
 Esc 只打断主 Lane 当前 active Queue run 所关联的 Turn，不影响支线 Lane。已经 `applied` 的 steer
 与该 Turn 共命运；未决 steer 由 Adapter 的 `steering.cancelOwnership` 声明 cancel 后的所有权：
-原生队列能继续（`survives`）时仍由 Harness lifecycle 报告 applied/failed；interrupt 会让它不可达
+Adapter 保留责任（`survives`）时仍由 Harness lifecycle 报告 applied/failed/uncertain；interrupt 会让它不可达
 （`unreachable`）时，Controller 在发 cancel 前先落 `input_delivery_update(failed)` 收口这次
 steer 尝试，再用同一个 `messageId` 和原先保留的 Turn identity 把它收回 Baton Queue。它随后以
 `follow_up` 开启新 Turn，不会因 Esc 丢失，也不会与 Harness 原生队列双重执行。仍在 queue 的
@@ -390,6 +391,7 @@ BatonSession 从 Event Ledger 重放 Projection、Attempt、Interaction 和 Cont
 从 Session meta 恢复；若其原生 HarnessSession identity 仍可恢复，Adapter 使用它加速继续；
 否则在同一 Lane 里新建原生 Session，并通过
 Context delivery 补齐 BatonSession 历史。切换 Harness 也是同一机制，不需要复制粘贴上下文。
+已有 applied 或 uncertain 回执的 steer 不自动重放。
 原生 steer 队列属于 Adapter 进程而非 HarnessSession 历史；recovery 看到遗留的 `pending`
 时将其收口为 `failed` 并告警，不猜测已应用，也不自动重投。
 

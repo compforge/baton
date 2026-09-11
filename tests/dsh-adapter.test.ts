@@ -1,23 +1,32 @@
 import type {
-  DshClientOptions,
-  DshEvent,
-  DshInput,
-  DshRunResult,
-} from "@compforge/dsh-agent-sdk";
+  DeepSeekHarnessOptions as DshClientOptions,
+  HarnessNotification as DshEvent,
+  RunResult as DshRunResult,
+  NotificationSubscription,
+  SdkPromptContentBlock,
+} from "@deepseek-ai/dsh-sdk-client";
 import { describe, expect, test } from "bun:test";
 
 import type { AnyEventDraft } from "../src/event/index.ts";
 import {
   DshAdapter,
-  dshPromptInput,
   type DshClientLike,
   type DshSessionLike,
-  type DshTurnLike,
 } from "../src/harness/dsh/adapter.ts";
 import {
   type HarnessResumeState,
   sessionIdResumeState,
 } from "../src/harness/resume.ts";
+
+import { dshPromptInput } from "../src/harness/dsh/prompt.ts";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+type DshInput = SdkPromptContentBlock[];
+interface DshTurnLike extends AsyncIterable<DshEvent> {
+  readonly result: Promise<DshRunResult>;
+}
 
 function result(sessionId: string, finalResponse = ""): DshRunResult {
   return {
@@ -91,12 +100,33 @@ class FakeSession implements DshSessionLike {
     private readonly turns: DshTurnLike[],
   ) {}
 
-  send(input: DshInput): DshTurnLike {
+  next(input: DshInput): DshTurnLike {
     this.inputs.push(input);
     const turn = this.turns.shift();
     if (!turn) throw new Error("no fake DSH turn queued");
     return turn;
   }
+
+}
+
+class FakeSubscription implements NotificationSubscription {
+  private queue: DshEvent[] = [];
+  private waiter?: { resolve: (event: DshEvent) => void; reject: (error: Error) => void };
+  private error?: Error;
+  push(event: DshEvent): void {
+    if (this.waiter) { const waiter = this.waiter; this.waiter = undefined; waiter.resolve(event); }
+    else this.queue.push(event);
+  }
+  fail(error: Error): void { this.error = error; this.waiter?.reject(error); this.waiter = undefined; }
+  next(): Promise<DshEvent> {
+    const event = this.queue.shift();
+    if (event) return Promise.resolve(event);
+    if (this.error) return Promise.reject(this.error);
+    return new Promise((resolve, reject) => { this.waiter = { resolve, reject }; });
+  }
+  tryNext(): DshEvent | undefined { return this.queue.shift(); }
+  close(): void { this.fail(new Error("subscription closed")); }
+  async *[Symbol.asyncIterator](): AsyncIterator<DshEvent> { while (true) yield await this.next(); }
 }
 
 class FakeClient implements DshClientLike {
@@ -104,6 +134,30 @@ class FakeClient implements DshClientLike {
   closes = 0;
   requestedSessionIds: Array<string | undefined> = [];
   createdSessions: FakeSession[] = [];
+  subscription?: FakeSubscription;
+  private serial = 0;
+  readonly client = {
+    subscribeSessionTree: (_id: string): NotificationSubscription => this.subscription = new FakeSubscription(),
+    prompt: async (sessionId: string, input: DshInput): Promise<string> => {
+      const nativeId = `native-${++this.serial}`;
+      const turn = this.createdSessions.at(-1)!.next(input);
+      const subscription = this.subscription!;
+      void (async () => {
+        subscription.push(sessionEvent(sessionId, "agent/inbox/spliced", { inserted: [{ id: nativeId }] }));
+        let sawMessage = false;
+        for await (const event of turn) {
+          if ((event.params.event as { type?: string })?.type === "assistant/message") sawMessage = true;
+          subscription.push(event);
+        }
+        const result = await turn.result;
+        if (result.finalResponse && !sawMessage) subscription.push(sessionEvent(sessionId, "assistant/message", {
+          message: { content: [{ type: "text", text: result.finalResponse }] },
+        }));
+        subscription.push({ method: "session.status", params: { sessionId, status: "idle" } });
+      })().catch((error) => subscription.fail(error));
+      return nativeId;
+    },
+  };
 
   constructor(
     private readonly nativeSessionId: string,
@@ -125,6 +179,7 @@ class FakeClient implements DshClientLike {
   async close(): Promise<void> {
     this.closes += 1;
     this.onClose?.();
+    this.subscription?.close();
   }
 }
 
@@ -137,20 +192,16 @@ async function waitForIdle(events: AnyEventDraft[], turnId: string): Promise<voi
 }
 
 describe("DshAdapter", () => {
-  test("guides the user while preserving the missing-command diagnostic", async () => {
-    const adapter = new DshAdapter();
-    try {
-      await adapter.open({ cwd: "/repo" }, () => undefined);
-      throw new Error("expected DSH setup to fail");
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      const setup = error as Error;
-      expect(setup.message).toContain("DeepSeek Harness needs a one-time setup");
-      expect(setup.message).toContain("Open ~/.baton/config.yaml");
-      expect(setup.message).toContain("run /dsh again");
-      expect(setup.cause).toBeInstanceOf(Error);
-      expect((setup.cause as Error).message).toContain("Target command is missing");
-    }
+  test("uses the SDK-owned runtime without a custom launch command", async () => {
+    const client = new FakeClient("default-runtime", []);
+    let options: DshClientOptions | undefined;
+    const adapter = new DshAdapter({ clientFactory: (value) => { options = value; return client; } });
+    const ref = await adapter.open({ cwd: "/repo" }, () => undefined);
+    expect(options?.dshBin).toBeUndefined();
+    expect(options?.profile).toBeUndefined();
+    expect(options?.initializeTimeoutMs).toBe(15_000);
+    expect(options?.processCwd).toBe("/repo");
+    await adapter.close(ref);
   });
 
   test("opens a native session, publishes its binding, and lowers text prompts", async () => {
@@ -159,7 +210,8 @@ describe("DshAdapter", () => {
     const bindings: unknown[] = [];
     const events: AnyEventDraft[] = [];
     const adapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       provider: "deepseek-official",
       model: "prod",
       maxTokens: 32_768,
@@ -178,16 +230,15 @@ describe("DshAdapter", () => {
     expect(ref).toMatchObject({ harness: "deepseek-harness", resumed: false });
     expect(client.starts).toBe(1);
     expect(options[0]).toMatchObject({
-      runtime: {
-        command: "dsh-jsonrpc-agent",
-        args: ["/tmp/cordis.yml"],
-        cwd: "/repo",
-        env: { DSH_TEST: "target", DSH_TARGET: "2" },
-        requestTimeoutMs: 15_000,
-        shutdownTimeoutMs: 1_000,
-        disposeEofGraceMs: 6_000,
-        disposeGraceMs: 3_000,
-      },
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
+      processCwd: "/repo",
+      env: { DSH_TEST: "target", DSH_TARGET: "2" },
+      initializeTimeoutMs: 15_000,
+      requestTimeoutMs: 15_000,
+      shutdownTimeoutMs: 1_000,
+      disposeEofGraceMs: 6_000,
+      disposeGraceMs: 3_000,
       cwd: "/repo",
       provider: "deepseek-official",
       model: "prod",
@@ -292,7 +343,8 @@ describe("DshAdapter", () => {
     const events: AnyEventDraft[] = [];
     const native: unknown[] = [];
     const adapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       clientFactory: () => client,
       nativeEvent: (event) => native.push(event),
     });
@@ -358,7 +410,7 @@ describe("DshAdapter", () => {
         payload: { state: "idle", stopReason: "end_turn" },
       }),
     ]);
-    expect(native).toHaveLength(notifications.length);
+    expect(native).toHaveLength(notifications.length + 2);
     await adapter.close(ref);
   });
 
@@ -383,7 +435,8 @@ describe("DshAdapter", () => {
     const bindings: Array<{ resumeState?: HarnessResumeState }> = [];
     const firstEvents: AnyEventDraft[] = [];
     const firstAdapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       model: "prod",
       clientFactory: () => firstClient,
     });
@@ -422,7 +475,8 @@ describe("DshAdapter", () => {
     ], result(sessionId, "second"))]);
     const events: AnyEventDraft[] = [];
     const secondAdapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       model: "prod",
       clientFactory: () => secondClient,
     });
@@ -477,7 +531,8 @@ describe("DshAdapter", () => {
     ], result(sessionId, "done"))]);
     const events: AnyEventDraft[] = [];
     const adapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       model: "auto",
       clientFactory: () => client,
     });
@@ -506,13 +561,14 @@ describe("DshAdapter", () => {
     await adapter.close(ref);
   });
 
-  test("rejects unsupported prompts and busy steering before accepting responsibility", async () => {
+  test("rejects unsupported prompts and mismatched turn steering before accepting responsibility", async () => {
     const turn = new ControlledTurn();
     const sessionId = "dsh-native-3";
     const client = new FakeClient(sessionId, [turn]);
     const events: AnyEventDraft[] = [];
     const adapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       clientFactory: () => client,
     });
     const ref = await adapter.open({ cwd: "/repo" }, (event) => events.push(event));
@@ -520,15 +576,15 @@ describe("DshAdapter", () => {
     await expect(adapter.sendTurn(ref, {
       turnId: "t_image",
       messageId: "m_image",
-      blocks: [{ type: "image", mimeType: "image/png", data: "AA==" }],
-    })).rejects.toThrow("image");
+      blocks: [{ type: "audio", mimeType: "audio/wav", data: "AA==" }],
+    })).rejects.toThrow("audio");
     await adapter.sendTurn(ref, {
       turnId: "t_busy",
       messageId: "m_busy",
       blocks: [{ type: "text", text: "first" }],
     });
     expect(await adapter.sendTurn(ref, {
-      turnId: "t_busy",
+      turnId: "t_wrong",
       messageId: "m_steer",
       blocks: [{ type: "text", text: "steer" }],
     })).toMatchObject({ accepted: false, effective: "rejected" });
@@ -545,7 +601,8 @@ describe("DshAdapter", () => {
     const clients = [first, second];
     const events: AnyEventDraft[] = [];
     const adapter = new DshAdapter({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      dshBin: "/tmp/dsh/lib/bin.js",
+      patches: ["/tmp/cordis.patch.yml"],
       clientFactory: () => clients.shift()!,
     });
     const ref = await adapter.open(
@@ -581,13 +638,38 @@ describe("DshAdapter", () => {
 });
 
 describe("dshPromptInput", () => {
-  test("keeps text block boundaries", () => {
-    expect(dshPromptInput([
+  test("keeps text block boundaries", async () => {
+    expect(await dshPromptInput([
       { type: "text", text: "one" },
       { type: "text", text: "two" },
     ])).toEqual([
       { type: "text", text: "one" },
       { type: "text", text: "two" },
     ]);
+  });
+});
+
+
+describe("DSH image prompts", () => {
+  test("loads archived clipboard images and preserves mixed block order", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "baton-dsh-image-"));
+    try {
+      const path = join(dir, "clipboard.png");
+      await writeFile(path, Buffer.from("image-bytes"));
+      expect(await dshPromptInput([
+        { type: "text", text: "Describe this" },
+        { type: "image", path, mimeType: "image/png" },
+        { type: "image", data: "aW1hZ2U=", mimeType: "image/jpeg" },
+      ])).toEqual([
+        { type: "text", text: "Describe this" },
+        { type: "image", data: Buffer.from("image-bytes").toString("base64"), mimeType: "image/png" },
+        { type: "image", data: "aW1hZ2U=", mimeType: "image/jpeg" },
+      ]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("rejects unsupported MIME types and missing content before submission", async () => {
+    await expect(dshPromptInput([{ type: "image", data: "abc", mimeType: "image/svg+xml" }])).rejects.toThrow("mime type");
+    await expect(dshPromptInput([{ type: "image", mimeType: "image/png" }])).rejects.toThrow("path or base64");
   });
 });

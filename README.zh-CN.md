@@ -30,7 +30,7 @@ BatonSession 属于用户，而不属于任何 Harness。原生会话可以加�
 
 ## 安装
 
-使用 npm 安装 baton。此外需要至少准备一个受支持的 runtime：已登录的 [Codex CLI](https://github.com/openai/codex)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)，或为 DSH Agent SDK 配置好的 DeepSeek Harness JSON-RPC runtime。
+使用 npm 安装 baton。此外需要至少准备一个受支持的 runtime：已登录的 [Codex CLI](https://github.com/openai/codex)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)，或在 DeepSeek Harness 中配置好 provider 凭证。官方 DSH SDK 已包含匹配的 runtime。
 
 ```bash
 npm install -g @compforge/baton
@@ -120,13 +120,12 @@ targets:
     harness: claude
   dsh:
     harness: dsh
-    # command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
-    model: prod
+    model: deepseek-flash
 mentionBudgetChars: 4096
 showThoughts: true
 ```
 
-所有配置项见 [`config.yaml.example`](config.yaml.example)。同一 Harness 可以配置多个 Target；Target 级 `env` 可用 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR` 选择 provider 自己管理的账号目录。路径必须是绝对路径，不要把 token 写进该文件。baton 复用各 Harness 已有的凭证和运行时配置，不复制 provider secret。Codex 审批继续遵循所选 Codex home 的配置，除非该 Target 的 `approvalReviewer` 显式委托；Claude Code 可设置 `targets.claude.executable`；DeepSeek Harness 使用 `targets.dsh.command` 配置的命令。
+所有配置项见 [`config.yaml.example`](config.yaml.example)。同一 Harness 可以配置多个 Target；Target 级 `env` 可用 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR` 选择 provider 自己管理的账号目录。路径必须是绝对路径，不要把 token 写进该文件。baton 复用各 Harness 已有的凭证和运行时配置，不复制 provider secret。Codex 审批继续遵循所选 Codex home 的配置，除非该 Target 的 `approvalReviewer` 显式委托；Claude Code 可设置 `targets.claude.executable`；DeepSeek Harness 通过官方 SDK 启动；可选的 `dshHome`、`patches`、`dshBin` 见 [DSH 接入说明](docs/harness/deepseek-harness.md)。
 
 ## 数据留在本机
 

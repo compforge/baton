@@ -56,7 +56,7 @@ export interface MessageState {
   /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
   delivery?: SubmitDelivery;
   /** 仅 steer：pending 仍在 Harness 队列，applied 已进入模型上下文，failed 已确认未应用。 */
-  deliveryState?: "pending" | "applied" | "failed";
+  deliveryState?: "pending" | "applied" | "failed" | "uncertain";
 }
 
 export interface ToolCallState {
@@ -201,7 +201,7 @@ export interface HarnessInputState {
   harness?: string;
   status: HarnessInputStatus;
   delivery: "prompt" | "steer";
-  deliveryOutcome?: "applied" | "failed";
+  deliveryOutcome?: "applied" | "failed" | "uncertain";
   blocks: PromptBlock[];
   source: HarnessInputSource;
   harnessInvocationId?: string;

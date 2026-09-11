@@ -118,18 +118,18 @@ export interface UserMessageUpsert extends MessageUpsert {
    * 新事件流用 `input_delivery_update` 一等事件表达（HarnessInput.deliveryOutcome），
    * Adapter 不再写这个字段；reduce 仍会消费它还原老会话。
    */
-  deliveryState?: "pending" | "applied" | "failed";
+  deliveryState?: "pending" | "applied" | "failed" | "uncertain";
 }
 
 /**
  * Harness 对 steer 输入的投递回执（Adapter → Core）：applied = 已写入模型上下文，
- * failed = Harness 明确丢弃。投递事实是 Input 的一等状态，不再寄生 user_message；
+ * failed = Harness 明确丢弃；uncertain = 连接丢失等导致无法确认，禁止自动重投。投递事实是 Input 的一等状态，不再寄生 user_message；
  * 回执可能迟到于 Turn 收口（原生队列跨 Turn），只迁移 deliveryOutcome。
  * deliveryTracking = "ack-only" 的 Harness 没有后续回执，接受即由 Core 合成 applied。
  */
 export interface InputDeliveryUpdate {
   messageId: string;
-  state: "applied" | "failed";
+  state: "applied" | "failed" | "uncertain";
   detail?: string;
 }
 
