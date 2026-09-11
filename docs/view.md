@@ -98,19 +98,35 @@ input、关键结论、执行过的 command 和改动过的文件。原始事件
 
 ### 4.1 投影规则
 
-Transcript 先把每条事实投影为原子 block，再只按 Baton 已知语义合并兼容 block。每条事实
-从第一条起就进入稳定的 `TranscriptGroupItem`；同一执行坐标下的 `read` effect 共享一个探索组，
-不再按 read/search/fetch/execute 的展示 kind 拆分。可合并的工具动作按首个 member 定位，中间穿插的
-reasoning 摘要或 notice 不会把组拆开；写操作、正文和错误会结束当前组。chat-tui 只负责
-默认收起和 `Ctrl+O` 展开，不反向猜测 Harness effect 或 reasoning 边界。
+View 投影遵循一条主链路：**语义事实 → `ViewPolicy` 决策 → Transcript 展示结构 → chat-tui 渲染**。
+Baton 先从 `SessionState` 取得 tool、message、thought、notice 等语义事实，再计算策略并投影为
+`TranscriptItem`（message / block / group）。策略只存在于 View，不写入 Event 或 Session：`family`
+选择摘要和兼容分组，`grade` 表达默认信息价值，`detail` 决定摘要、预览或全文，`breaksGroup` 保留
+关键动作前后的顺序边界。
+
+```ts
+type ViewGrade = "background" | "normal" | "important";
+
+interface ViewPolicy {
+  family: "change" | "explore" | "command" | "interaction" | "other";
+  grade: ViewGrade;
+  detail: "summary" | "preview" | "full";
+  breaksGroup: boolean;
+}
+```
+
+只有 `background + summary` 的兼容动作参加过程分组。每条可分组事实从第一条起进入稳定的
+`TranscriptGroupItem`；同一执行坐标下的探索共享 `Explored` 组，普通成功命令共享 `Ran` 组。中间穿插
+的 reasoning 摘要或 notice 不会拆开探索组；改动、正文和错误会结束当前组。chat-tui 只渲染 Baton
+已经投影好的 group、summary 和 content，并负责默认收起、内容预算及 `Ctrl+O` 展开。
 
 | 内容 | 默认展示 | 完整信息 |
 |---|---|---|
 | 用户与 agent 正文 | 保留正文；agent 正文可以流式更新同一条消息 | Session / Ledger 与展开后的 block |
 | Reasoning / thought | 流式阶段只在 Activity 显示 `Working`；完成后才把非空有效摘要写入 Transcript；`<!-- -->` 等空占位隐藏 | Session / Ledger 保留 Harness 上报的完整 reasoning；`/thoughts` 控制历史摘要是否可见 |
-| 只读探索 | read/search/fetch 和已识别为只读的 command 合并成 `Explored N actions` | group members 保留逐项动作、路径、command 和 output |
-| 其它成功命令 | 同一执行片段的多条已完成命令压成 `Ran N commands`；单条保留命令本体 | group members 保留逐条 command 和 output |
-| 写文件、编辑与 diff | 保留一行文件路径、操作和统计；写操作会打断只读探索组 | members 中保留完整 diff / output |
+| 只读探索 | `explore / background / summary`；read/search/fetch 和已证明只读的 command 合并成 `Explored N actions` | group members 保留逐项动作、路径、command 和 output |
+| 其它成功命令 | 无法判断 effect 时仍按 `command / background / summary` 稳定降级；同一执行片段压成 `Ran N commands` | group members 保留逐条 command 和 output |
+| 写文件、编辑与 diff | `change / important / summary`；保留一行文件路径、操作和统计，并打断过程组 | members 中保留完整 diff / output |
 | 失败与拒绝 | 不藏在成功组里，默认直接可见并保留诊断 | 原始 tool/result 事实 |
 | Plan | 活跃时放 Plan Pin，避免和历史重复；结束后按结果保留一次 | 原始 `plan_update` / `plan_remove` 事实 |
 | queued / steer | 未执行、正在 Adapter 投递或未 applied 时只在 Queue；applied 后才进入 Transcript | Input、Attempt 与 delivery receipt |
@@ -121,16 +137,20 @@ reasoning 摘要或 notice 不会把组拆开；写操作、正文和错误会�
 或下一步时才进入 Transcript。供应商差异必须在 Harness Adapter 的稳定语义与 `raw` 中收住，不能在
 chat-tui 写 provider 分支。
 
+`ToolEffect` 与 `ViewPolicy` 正交：`read` 表示已证明只读，`write` 表示已确认有副作用，缺省表示
+unknown。安全消费者可以把 unknown 保守地按 write 处理；View 不能把这种保守处理解释为已经发生了
+重要改动。shell recognizer 只提高常见命令的探索摘要质量，不承担完备分类责任。
+
 ### 4.2 参考实现策略
 
-以下是 2026-08-31 对本工作区最新代码的观察，用于解释取舍，不是 Baton 的运行时依赖或兼容契约。
+以下是 2026-09-11 对官方远端最新代码的观察，用于解释取舍，不是 Baton 的运行时依赖或兼容契约。
 上游行为变化时应重新核对对应 commit。
 
 | 参考实现 | 当时版本 | Reasoning | 工具与长历史 |
 |---|---|---|---|
-| Codex | `a9519cbc` | delta 不进入主历史，只从首个加粗标题更新当前 status，缺省为 `Working`；final 才生成 reasoning summary，并过滤 `<!-- -->` 空占位 | 连续成功探索可折为 `Ran N commands` / `Explored`；主历史仅保留有限预览，`Ctrl+T` 打开完整 transcript |
-| Kimi Code | `96192773` | live thinking 在 transcript 显示末尾 2 行；final 默认保留开头 2 行，可用 `Ctrl+O` 展开 | 普通结果默认 3 行、shell 10 行；长会话保留最近 15 turns，单 turn 的旧 steps/assistant 消息折成 summary |
-| OpenCode | `dc4449df` | terminal TUI 的 minimal 模式是一行 `Thinking/Thought`，可点击展开；空或加密占位不显示。Desktop/Web 默认关闭 reasoning summaries | terminal tool output 有行数/字符上限并可展开；Desktop/Web 的 shell/edit 默认收起 |
+| Codex | `654b0a77` | delta 不进入主历史，只从首个加粗标题更新当前 status，缺省为 `Working`；final 才生成 reasoning summary，并过滤 `<!-- -->` 空占位 | 仅明确的 Read/ListFiles/Search 进入 `Explored`；Unknown 普通显示为 `Ran`。主历史保留有限预览，`Ctrl+T` 打开完整 transcript |
+| Kimi Code | `b1807253` | live thinking 显示末尾 2 行；final 默认保留开头 2 行，可用 `Ctrl+O` 展开 | 同 step 的多个 Read 分组；普通结果默认 3 行、shell 10 行；未知/MCP 工具走通用缩略 renderer |
+| OpenCode | `95daf906` | terminal TUI 的 minimal 模式是一行 `Thinking/Thought`，可点击展开；空或加密占位不显示 | 按 tool kind 使用专用 renderer，不推断 shell effect；shell 最多 10 行，generic tool output 默认隐藏 |
 
 Codex 的“主历史”和 `Ctrl+T` 完整 transcript 是两个 surface；Baton 当前把主可回看区域命名为
 Transcript，因此这里对齐的是 Codex 主历史的信息密度，而不是照搬它的命名。Kimi 把少量 live thinking
@@ -143,7 +163,8 @@ Baton 当前选择 Codex 风格作为基线：流式 reasoning 只贡献 Activit
 ### 4.3 可验证性
 
 展示策略至少覆盖以下回归：流式 thought 不增长 Transcript、final 摘要只出现一次、空占位不可见、
-跨 kind 的只读 effect 与成功命令稳定成组、reasoning/notice 穿插不拆组、写操作与失败结束分组、展开仍能看到完整 members，以及 live/replay 得到相同
+跨 kind 的只读 effect 与成功命令稳定成组、unknown 命令稳定降级、reasoning/notice 穿插不拆组、
+明确改动与失败获得 important 等级并结束分组、展开仍能看到完整 members，以及 live/replay 得到相同
 Transcript。测试应围绕 Projection 输入输出，不通过篡改上游事实制造期望 UI。
 
 ## 5. 接入另一种 View

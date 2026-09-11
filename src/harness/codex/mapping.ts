@@ -150,12 +150,13 @@ export function toolKindOf(itemType: string): string {
 /**
  * item → effect 声明。Codex 已把 shell 命令解析为 commandActions；只有每个
  * action 都能证明为读取时，commandExecution 才上报 read。原生 unknown 仅由
- * Codex 专属的窄命令 recognizer 兜底，其它不能证明为读取的命令仍上报 write。
+ * Codex 专属的窄命令 recognizer 兜底；其余命令保留 unknown，不把安全侧的
+ * 保守处理写成已经确认的副作用事实。
  */
 export function toolEffectOf(item: Record<string, unknown>): ToolEffect | undefined {
   switch (item.type) {
     case "commandExecution":
-      return codexCommandActionsAreReadOnly(item.commandActions) ? "read" : "write";
+      return codexCommandActionsAreReadOnly(item.commandActions) ? "read" : undefined;
     case "fileChange":
       return "write";
     case "webSearch":

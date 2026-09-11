@@ -15,6 +15,7 @@ import {
   todoWritePlan,
 } from "../src/harness/claude/adapter.ts";
 import { CodexAdapter } from "../src/harness/codex/adapter.ts";
+import { toolEffect as dshToolEffect } from "../src/harness/dsh/mapping.ts";
 import type { LogEntry } from "../src/logging.ts";
 import type { AnyEventDraft } from "../src/event/index.ts";
 import type { InteractionDraft } from "../src/interaction/types.ts";
@@ -1384,6 +1385,13 @@ describe("claude: api_error_status result", () => {
 });
 
 describe("tool effect mapping", () => {
+  test("dsh: unknown shell effects stay unknown", () => {
+    expect(dshToolEffect("bash", { command: "git status" })).toBe("read");
+    expect(dshToolEffect("bash", { command: "cargo test" })).toBeUndefined();
+    expect(dshToolEffect("bash", { command: "rm victim.txt" })).toBeUndefined();
+    expect(dshToolEffect("write", { file_path: "/a.ts" })).toBe("write");
+  });
+
   test("claude: tool name + input → effect", () => {
     expect(claudeToolEffect("Read", { file_path: "/a.ts" })).toBe("read");
     expect(claudeToolEffect("Grep", { pattern: "x" })).toBe("read");
@@ -1438,8 +1446,8 @@ describe("tool effect mapping", () => {
       .filter((e) => e.kind === "tool_call_update")
       .map((e) => e.payload as { toolCallId: string; effect?: string });
     expect(payloads.find((p) => p.toolCallId === "cmd1")?.effect).toBe("read");
-    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBe("write");
-    expect(payloads.find((p) => p.toolCallId === "cmd3")?.effect).toBe("write");
+    expect(payloads.find((p) => p.toolCallId === "cmd2")?.effect).toBeUndefined();
+    expect(payloads.find((p) => p.toolCallId === "cmd3")?.effect).toBeUndefined();
   });
 
   test("codex: read-only Git queries recover a native unknown action", () => {
