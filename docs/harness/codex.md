@@ -128,7 +128,11 @@ BatonSession。Inspector 结束后关闭临时 app-server，不修改原生 thre
 
 ## 8. 代码与测试锚点
 
-- `src/harness/codex/adapter.ts` — live Adapter、Interaction、Capability 和 mapping
+- `src/harness/codex/adapter.ts` — live Session、配置、Turn 与 JSON-RPC 编排
+- `src/harness/codex/runtime.ts` — thread runtime 状态、Adapter options 与模型目录
+- `src/harness/codex/events.ts` — app-server notification、server request 与 Baton Event 映射
+- `src/harness/codex/mapping.ts` — 审批候选、工具生命周期与 diff 的纯映射
+- `src/harness/codex/thread.ts`、`launch.ts`、`process.ts` — thread 打开、启动参数与进程回收
 - `src/harness/codex/command-effect.ts` — Codex 原生 action 聚合与 unknown fallback 入口
 - `src/harness/command-effect/` — 可注册的只读命令规则、shell 组合判定与命令族参数语义
 - `src/harness/codex/jsonrpc.ts` — JSON-RPC transport
