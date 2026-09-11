@@ -2,35 +2,36 @@
 
 本文只描述 DeepSeek Harness（DSH）相对 [Harness 公共契约](../harness.md) 的协议差异、恢复
 策略和当前能力边界。端到端 Input/Event 时序以 [工作流](../workflow.md) 为准，wire shape 以
-`@compforge/dsh-agent-sdk`、Adapter 和契约测试为事实来源。
+`@deepseek-ai/dsh-sdk-client`、Adapter 和契约测试为事实来源。
 
 ## 1. 接入与配置
 
-Baton 通过 `@compforge/dsh-agent-sdk` 启动 DSH JSON-RPC runtime 子进程。runtime 必须包含
-`@deepseek-ai/dsh-sdk-jsonrpc-server`，启动 argv 由用户在 `~/.baton/config.yaml` 显式提供：
+Baton 直接使用官方 `@deepseek-ai/dsh-sdk-client` 0.1.5-rc.2 的 `DeepSeekHarness`，由 SDK
+解析并启动同版本 `@deepseek-ai/dsh` 的 `sdk` profile，无需另装自维护 Agent SDK 或配置启动命令。
+在 DSH 中完成 provider 凭证配置后，可直接选择 `/dsh`：
 
 ```yaml
 targets:
   dsh:
     harness: dsh
-    command:
-      - dsh-jsonrpc-agent
-      - /absolute/path/to/cordis.yml
-    # provider 可选；Baton 默认使用 prod
-    provider: deepseek-official
-    model: prod
+    model: deepseek-flash
+    # provider: deepseek-official
+    # reasoningEffort: max
+    # maxTokens: 49152
+    # dshHome: /absolute/path/to/dsh-home
+    # patches: [/absolute/path/to/automation.cordis.patch.yml]
 ```
 
-未配置 DSH Target 的 `command` 不影响 Codex 或 Claude Code；只有选择该 Target 时 open 才会给出可操作的
-配置错误。子进程继承 Baton 环境与当前 workspace cwd；Baton 不读取或保存 provider 凭证，也不
-覆盖 SDK runtime/provider 的输出 token 上限。
+默认 provider 由官方 SDK 选择。`reasoningEffort`、`maxTokens` 直接交给 SDK；未设置时保留
+模型原生默认值。图片需要所选 provider/model 支持视觉输入。子进程继承 Baton 环境与 workspace
+cwd，Target 的 `env` 可覆盖环境；Baton 不读取或保存 provider 凭证。
 
-启动顺序为：
+自定义 runtime 可设置 `dshBin`（DSH 的 JavaScript CLI 模块绝对路径）、`profile` 与 `patches`。
+旧 `command` 配置会明确报迁移错误：删除它以使用 SDK 自带 runtime，或将自定义启动配置迁入
+上述原生选项。旧默认 `model: prod` 也需要改为 `model: deepseek-flash`，或实际配置的模型 ID。
+SDK 拥有进程启动、初始化、请求超时和退出清理，Baton 不再维护另一层启动协议。
 
-```text
-create DshClient → initialize runtime → select/create native session
-                 → publish HarnessSessionBinding
-```
+启动顺序为 `DeepSeekHarness.start()` → `session(id?)` → 发布 HarnessSessionBinding。
 
 ## 2. Session 与恢复
 
@@ -49,19 +50,21 @@ Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实�
 
 | Capability | DSH 映射 |
 |---|---|
-| text prompt | `session/prompt.contentBlocks` |
+| text / image prompt | `session/prompt.contentBlocks` |
 | streaming | `session.event` 中的 assistant chunk/message、tool、usage、todo |
 | context window | `request/context` 的有效路由 + `assistant/message.usage` 的当次输入占用快照 |
 | subagent lifecycle | `subagent.started` / `subagent.finished` → `task_update` |
 | session resume | SDK session ID + Baton v1 resume state |
 
-当前不声明 image/audio/resource prompt、compact、same-turn steer、Session config、Interaction、
+当前不声明 audio/resource prompt、compact、same-turn steer、Session config、Interaction、
 reconcile、approval routing 或 textgen。unsupported prompt block 在 admission 前明确报错；model、
 provider 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力。
 
 ## 4. Input、取消与终态
 
-空闲时 `sendTurn` 调用 SDK `session.send()` 并返回 `accepted/new_turn`。Controller 已经持久化
+空闲时 `sendTurn` 将文本与图片转换为 SDK content blocks，启动 `session.run()` 并返回
+`accepted/new_turn`。SDK 负责等待 durable inbox receipt 到 agent idle，Adapter 通过
+`onNotification` 消费通知。图片的本地归档文件转为内联 base64，格式校验与持久附件由 DSH 承担。Controller 已经持久化
 原始 `user_message` 和 Baton running 开界；Adapter 只报告 DSH 产出与终态。
 
 DSH stdio 协议当前没有 steer。存在活跃 Turn 时，后续输入返回 `rejected`，由 Controller 排成
@@ -94,6 +97,7 @@ SDK 会同时转发已发现子 agent 的 `session.event`。Adapter 不把子 ag
 ## 6. 代码与测试锚点
 
 - `src/harness/dsh/adapter.ts` — SDK lifecycle、session resume、事件 mapping 与 coarse cancel
+- `src/harness/dsh/config.ts`、`prompt.ts` — 原生启动选项与文本/图片输入
 - `src/harness/registry.ts` — `dsh` / `deepseek` identity 和 Adapter factory
 - `tests/dsh-adapter.test.ts` — binding、mapping、admission、终态与 cancel/reconnect
 - `tests/harnesses.test.ts`、`tests/config.test.ts` — registry 与用户配置契约

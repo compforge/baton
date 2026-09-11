@@ -154,8 +154,8 @@ targets:
       CODEX_HOME: /Users/you/.codex2
   dsh-prod:
     harness: dsh
-    command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
-    model: prod
+    model: deepseek-flash
+    # patches: [/absolute/path/to/cordis.patch.yml]
 ```
 
 Target probe 只发现 model、effort、command 等静态目录，不创建 HarnessSession，也不借

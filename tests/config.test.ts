@@ -60,7 +60,7 @@ describe("config", () => {
       "targets:",
       "  dsh-prod:",
       "    harness: dsh",
-      "    command: [dsh-jsonrpc-agent, /tmp/cordis.yml]",
+      "    patches: [/tmp/cordis.patch.yml]",
       "    provider: deepseek-official",
       "    model: prod",
       "textgenPrefer: dsh-prod",
@@ -70,7 +70,7 @@ describe("config", () => {
     expect(config.defaultTarget).toBe("dsh-prod");
     expect(config.textgenPrefer).toBe("dsh-prod");
     expect(resolveDshTargetConfig(config.targets["dsh-prod"]!)).toEqual({
-      command: ["dsh-jsonrpc-agent", "/tmp/cordis.yml"],
+      patches: ["/tmp/cordis.patch.yml"],
       provider: "deepseek-official",
       model: "prod",
     });
@@ -109,7 +109,6 @@ describe("config", () => {
         "    approvalReviewer: nope",
         "  dsh:",
         "    harness: dsh",
-        "    command: []",
         "    provider: ''",
         "    model: ''",
         "",
@@ -120,7 +119,7 @@ describe("config", () => {
       command: ["codex", "app-server"],
     });
     expect(resolveDshTargetConfig(config.targets.dsh!)).toEqual({
-      model: "prod",
+      model: "deepseek-flash",
     });
   });
 
@@ -216,5 +215,20 @@ describe("config", () => {
       "defaultTarget: bad:target\ntargets:\n  bad:target:\n    harness: dsh\n",
     );
     expect(loadConfig(root)).toEqual(DEFAULT_CONFIG);
+  });
+});
+
+describe("DSH native SDK configuration", () => {
+  test("passes profile, home, effort and output limits to the SDK", () => {
+    expect(resolveDshTargetConfig({
+      harness: "dsh", dshBin: "/opt/dsh/lib/bin.js", profile: "sdk", dshHome: "/tmp/dsh-home",
+      patches: ["/tmp/custom.patch.yml"], reasoningEffort: "max", maxTokens: 8192,
+    })).toEqual({
+      model: "deepseek-flash", dshBin: "/opt/dsh/lib/bin.js", profile: "sdk", dshHome: "/tmp/dsh-home",
+      patches: ["/tmp/custom.patch.yml"], reasoningEffort: "max", maxTokens: 8192,
+    });
+  });
+  test("rejects obsolete command configuration with a migration instruction", () => {
+    expect(() => resolveDshTargetConfig({ harness: "dsh", command: ["old-runtime"] })).toThrow("Remove it");
   });
 });

@@ -55,8 +55,8 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 `docs/harness.md` 与对应 `docs/harness/<provider>.md`；改 Plugin host / API 前读
 `docs/plugin.md`。
 
-项目使用 Bun；宿主与公共 Plugin 契约同仓分包。验证命令为 `bun run check`
-（typecheck + test）。仓库内试用使用 `bun install && bun link`，普通用户通过 npm 安装，
+项目使用 Bun 1.4.2+（DSH runtime 需要对应 Node API）；宿主与公共 Plugin 契约同仓分包。验证命令为 `bun run check`
+（typecheck + test + specgen）。本地全局 Bun 较旧时使用 `node_modules/.bin/bun run check`。仓库内试用使用 `bun install && bun link`，普通用户通过 npm 安装，
 不暴露 Bun 前置条件。
 
 根目录 `VERSION` 是 Baton 产品版本的唯一事实源；每次逻辑改动至少递增一次 patch，同一轮只递增

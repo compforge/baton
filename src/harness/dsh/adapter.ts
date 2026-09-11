@@ -3,13 +3,16 @@
 // interaction 或细粒度 cancel；取消通过关闭 runtime 收口，后续 turn 用同一 session id 重连。
 
 import {
-  DshClient,
-  type ContentBlock as DshContentBlock,
-  type DshClientOptions,
-  type DshEvent,
-  type DshInput,
-  type DshRunResult,
-} from "@compforge/dsh-agent-sdk";
+  DeepSeekHarness,
+  type DeepSeekHarnessOptions,
+  type HarnessNotification,
+  type RunOptions,
+  type RunResult,
+  type SdkPromptContentBlock,
+} from "@deepseek-ai/dsh-sdk-client";
+
+import type { DshTargetConfig } from "./config.ts";
+import { dshPromptInput } from "./prompt.ts";
 
 import { newId } from "../../event/ids.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
@@ -44,37 +47,9 @@ const DSH_SHUTDOWN_TIMEOUT_MS = 1_000;
 const DSH_DISPOSE_EOF_GRACE_MS = 6_000;
 const DSH_DISPOSE_GRACE_MS = 3_000;
 
-function dshSetupError(): Error {
-  const technical = new Error(
-    "DeepSeek Harness Target command is missing; expected command to contain the JSON-RPC runtime executable and Cordis config path",
-  );
-  // Controller displays the outer message in the timeline and preserves this
-  // technical cause in session.log for troubleshooting.
-  return new Error([
-    "DeepSeek Harness needs a one-time setup before it can run.",
-    "",
-    "1. Install the runtime:",
-    "   python -m pip install deepseek-harness-sdk",
-    "2. Print the installed runtime and Cordis config paths:",
-    "   python -c \"from deepseek_harness_runtime import bundled_runtime_path, bundled_default_config_path; print(bundled_runtime_path()); print(bundled_default_config_path())\"",
-    "3. Open ~/.baton/config.yaml and copy those two paths into:",
-    "   targets:",
-    "     dsh:",
-    "       harness: dsh",
-    "       command: [/runtime/path/from-step-2, /cordis/config/path/from-step-2]",
-    "4. Set DEEPSEEK_API_KEY, restart Baton, then run /dsh again.",
-    "",
-    "Guide: https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/python-sdk.md",
-  ].join("\n"), { cause: technical });
-}
-
-export interface DshTurnLike extends AsyncIterable<DshEvent> {
-  readonly result: Promise<DshRunResult>;
-}
-
 export interface DshSessionLike {
   readonly id: string;
-  send(input: DshInput): DshTurnLike;
+  run(input: SdkPromptContentBlock[], options?: Pick<RunOptions, "onNotification">): Promise<RunResult>;
 }
 
 export interface DshClientLike {
@@ -83,19 +58,14 @@ export interface DshClientLike {
   close(): Promise<void>;
 }
 
-export type DshClientFactory = (options: DshClientOptions) => DshClientLike;
+export type DshClientFactory = (options: DeepSeekHarnessOptions) => DshClientLike;
 
-export interface DshAdapterOptions {
-  /** 完整启动 argv，例如 ["dsh-jsonrpc-agent", "/path/to/cordis.yml"]。 */
-  command?: string[];
-  provider?: string;
-  model?: string;
-  maxTokens?: number;
+export interface DshAdapterOptions extends DshTargetConfig {
   log?: LogSink;
   nativeEvent?: NativeEventSink;
   /** HarnessTarget 固定环境；同名项覆盖每次 open 传入的动态环境。 */
   env?: Readonly<Record<string, string>>;
-  /** 测试注入点；生产始终创建 @compforge/dsh-agent-sdk DshClient。 */
+  /** 测试注入点；生产直接使用官方 DeepSeekHarness。 */
   clientFactory?: DshClientFactory;
 }
 
@@ -271,19 +241,9 @@ function toolKind(name: string): ToolKind {
   return "other";
 }
 
-/** Baton PromptBlock admission and DSH content lowering, exported for contract tests. */
-export function dshPromptInput(blocks: PromptInput["blocks"]): DshContentBlock[] {
-  return blocks.map((block) => {
-    if (block.type !== "text") {
-      throw new Error(`dsh prompt block was not admitted: ${block.type}`);
-    }
-    return { type: "text", text: block.text };
-  });
-}
-
 export class DshAdapter implements HarnessAdapter {
   readonly harness = "deepseek-harness";
-  readonly capabilities: AdapterCapabilities = { prompt: {} };
+  readonly capabilities: AdapterCapabilities = { prompt: { image: { supported: true } } };
 
   private readonly sessions = new Map<string, DshRuntime>();
 
@@ -342,6 +302,7 @@ export class DshAdapter implements HarnessAdapter {
       };
     }
 
+    const blocks = await dshPromptInput(input.blocks);
     const session = await this.ensureSession(runtime);
     const turn: DshTurnState = {
       turnId: input.turnId,
@@ -354,9 +315,8 @@ export class DshAdapter implements HarnessAdapter {
       toolArguments: new Map(),
       usageSteps: new Set(),
     };
-    const nativeTurn = session.send(dshPromptInput(input.blocks));
     runtime.activeTurn = turn;
-    void this.consumeTurn(runtime, turn, nativeTurn);
+    void this.consumeTurn(runtime, turn, session, blocks);
     return { accepted: true, effective: "new_turn" };
   }
 
@@ -386,34 +346,31 @@ export class DshAdapter implements HarnessAdapter {
     return runtime;
   }
 
-  private clientOptions(runtime: DshRuntime): DshClientOptions {
-    const [command, ...args] = this.options.command ?? [];
-    if (!command?.trim()) {
-      throw dshSetupError();
-    }
+  private clientOptions(runtime: DshRuntime): DeepSeekHarnessOptions {
     return {
-      runtime: {
-        command,
-        ...(args.length ? { args } : {}),
-        cwd: runtime.cwd,
-        env: { ...process.env, ...runtime.env },
-        // session activity itself remains unbounded; this timeout only bounds
-        // initialize and other finite JSON-RPC request/receipt exchanges.
-        requestTimeoutMs: DSH_REQUEST_TIMEOUT_MS,
-        shutdownTimeoutMs: DSH_SHUTDOWN_TIMEOUT_MS,
-        disposeEofGraceMs: DSH_DISPOSE_EOF_GRACE_MS,
-        disposeGraceMs: DSH_DISPOSE_GRACE_MS,
-      },
+      dshBin: this.options.dshBin,
+      profile: this.options.profile,
+      patches: this.options.patches,
+      dshHome: this.options.dshHome,
+      processCwd: runtime.cwd,
+      env: { ...process.env, ...runtime.env },
+      // Bound handshakes and enqueue receipts, not the duration of an agent run.
+      initializeTimeoutMs: DSH_REQUEST_TIMEOUT_MS,
+      requestTimeoutMs: DSH_REQUEST_TIMEOUT_MS,
+      shutdownTimeoutMs: DSH_SHUTDOWN_TIMEOUT_MS,
+      disposeEofGraceMs: DSH_DISPOSE_EOF_GRACE_MS,
+      disposeGraceMs: DSH_DISPOSE_GRACE_MS,
       cwd: runtime.cwd,
-      ...(this.options.provider ? { provider: this.options.provider } : {}),
-      ...(this.options.model ? { model: this.options.model } : {}),
-      ...(this.options.maxTokens === undefined ? {} : { maxTokens: this.options.maxTokens }),
+      provider: this.options.provider,
+      model: this.options.model,
+      reasoningEffort: this.options.reasoningEffort as DeepSeekHarnessOptions["reasoningEffort"],
+      maxTokens: this.options.maxTokens,
     };
   }
 
   private async ensureSession(runtime: DshRuntime): Promise<DshSessionLike> {
     if (runtime.session) return runtime.session;
-    const factory = this.options.clientFactory ?? ((options) => new DshClient(options));
+    const factory = this.options.clientFactory ?? ((options) => new DeepSeekHarness(options));
     const client = factory(this.clientOptions(runtime));
     runtime.client = client;
     try {
@@ -454,14 +411,15 @@ export class DshAdapter implements HarnessAdapter {
   private async consumeTurn(
     runtime: DshRuntime,
     turn: DshTurnState,
-    nativeTurn: DshTurnLike,
+    session: DshSessionLike,
+    blocks: SdkPromptContentBlock[],
   ): Promise<void> {
     try {
-      for await (const notification of nativeTurn) {
-        if (turn.finalized) continue;
-        this.handleNotification(runtime, turn, notification);
-      }
-      const result = await nativeTurn.result;
+      const result = await session.run(blocks, {
+        onNotification: (notification) => {
+          if (!turn.finalized) this.handleNotification(runtime, turn, notification);
+        },
+      });
       if (!turn.sawAgentOutput && result.finalResponse.trim()) {
         turn.sawAgentOutput = true;
         this.emit(
@@ -493,7 +451,7 @@ export class DshAdapter implements HarnessAdapter {
     }
   }
 
-  private handleNotification(runtime: DshRuntime, turn: DshTurnState, notification: DshEvent): void {
+  private handleNotification(runtime: DshRuntime, turn: DshTurnState, notification: HarnessNotification): void {
     this.options.nativeEvent?.({
       direction: "in",
       name: notification.method,
@@ -562,7 +520,7 @@ export class DshAdapter implements HarnessAdapter {
     turn: DshTurnState,
     eventType: string,
     data: Record<string, unknown>,
-    raw: DshEvent,
+    raw: HarnessNotification,
   ): void {
     const stepKey = nativeStepKey(data);
     if (eventType === "request/context") {

@@ -128,9 +128,7 @@ export const HARNESS_REGISTRY = [
         log,
         nativeEvent,
         env,
-        command: config.command,
-        provider: config.provider,
-        model: config.model,
+        ...config,
       });
     },
   },

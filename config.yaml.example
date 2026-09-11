@@ -37,14 +37,16 @@ targets:
 
   dsh:
     harness: dsh
-    # Optional DeepSeek Harness Agent SDK runtime. The runtime must load
-    # @deepseek-ai/dsh-sdk-jsonrpc-server. Include the absolute Cordis config
-    # path in the complete argv.
-    # command:
-    #   - dsh-jsonrpc-agent
-    #   - /absolute/path/to/cordis.yml
+    # The official SDK starts its same-version DSH runtime with the sdk profile.
+    # Configure provider credentials in DSH, outside Baton.
+    model: deepseek-flash
     # provider: deepseek-official
-    model: prod
+    # reasoningEffort: max
+    # maxTokens: 49152
+    # dshHome: /absolute/path/to/dsh-home
+    # patches: [/absolute/path/to/automation.cordis.patch.yml]
+    # dshBin: /absolute/path/to/dsh/lib/bin.js
+    # profile: sdk
 
 # Maximum number of characters injected for session mentions and Harness handoffs.
 mentionBudgetChars: 4096

@@ -30,7 +30,7 @@ Most multi-agent workflows turn the human into a context courier: copy an answer
 
 ## Install
 
-Install baton with npm. You also need at least one supported runtime: an authenticated [Codex CLI](https://github.com/openai/codex), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), or a DeepSeek Harness JSON-RPC runtime configured for the DSH Agent SDK.
+Install baton with npm. You also need at least one supported runtime: an authenticated [Codex CLI](https://github.com/openai/codex), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), or provider credentials configured in DeepSeek Harness. The official DSH SDK includes its matching runtime.
 
 ```bash
 npm install -g @compforge/baton
@@ -122,8 +122,7 @@ targets:
     harness: claude
   dsh:
     harness: dsh
-    # command: [dsh-jsonrpc-agent, /absolute/path/to/cordis.yml]
-    model: prod
+    model: deepseek-flash
 mentionBudgetChars: 4096
 showThoughts: true
 notifications: true
@@ -131,7 +130,7 @@ notifications: true
 
 `notifications` controls desktop notifications (OSC 9) when a turn finishes or an approval/question needs you. It is on by default and stays silent on terminals outside the known-support list (iTerm2, WezTerm, Kitty, Ghostty, Warp). Inside tmux 3.3+, DCS passthrough also requires `set -g allow-passthrough on` in `~/.tmux.conf`. Use `notifications: { enabled: true, bell: true }` to fall back to the terminal bell elsewhere.
 
-See [`config.yaml.example`](config.yaml.example) for all options. Multiple Targets may use the same Harness; a Target-level `env` can select a provider-owned account directory such as `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. Use absolute paths and keep tokens out of this file. baton reuses each Harness's existing credentials and runtime configuration instead of copying provider secrets. Codex approvals continue to follow the selected Codex home unless the Target's `approvalReviewer` delegates them; Claude Code can use `targets.claude.executable`; DeepSeek Harness uses the command configured in `targets.dsh.command`.
+See [`config.yaml.example`](config.yaml.example) for all options. Multiple Targets may use the same Harness; a Target-level `env` can select a provider-owned account directory such as `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. Use absolute paths and keep tokens out of this file. baton reuses each Harness's existing credentials and runtime configuration instead of copying provider secrets. Codex approvals continue to follow the selected Codex home unless the Target's `approvalReviewer` delegates them; Claude Code can use `targets.claude.executable`; DeepSeek Harness starts through its official SDK; optional `dshHome`, `patches`, and `dshBin` settings are described in [the DSH adapter guide](docs/harness/deepseek-harness.md).
 
 ## Your data stays local
 
