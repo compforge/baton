@@ -71,7 +71,9 @@ provider 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力�
 
 存在匹配的活跃 Turn 时，追加和 Queue 的 dispatch-now 走同一 `session/prompt`，返回
 `accepted/steer`。RPC response 只证明入队；`agent/inbox/spliced.inserted` 才产生
-`input_delivery_update(applied)`。通知可能早于 response，关联前暂存回执；根消息与所有追加输入
+`input_delivery_update(applied)`。接受 same-turn steer 时 Adapter 同步补一条 `delivery:"steer"`
+的 `user_message`：正文在未 applied 前留在 Queue，`applied` 后由 Transcript 承接，Core 只为出队
+开新 Turn 的输入补 `user_message`。通知可能早于 response，关联前暂存回执；根消息与所有追加输入
 都已消费且收到 agent idle 后才收口一个 Baton Turn。不同 Turn 或清理期间的追加会被拒绝并保留在
 Baton Queue。原生明确拒绝只将对应追加标为 `failed`，不结束仍运行的主输入。
 

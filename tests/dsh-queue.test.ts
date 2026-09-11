@@ -31,6 +31,26 @@ test("DSH native steer correlates receipts before RPC acknowledgements and waits
   } finally { await adapter.close(ref); }
 });
 
+test("DSH steer emits the delivery-marked user message so applied steers reach the transcript", async () => {
+  const events: AnyEventDraft[] = [];
+  const adapter = new DshAdapter({ dshBin });
+  const ref = await adapter.open({ cwd: tmpdir() }, (event) => events.push(event));
+  try {
+    await adapter.sendTurn(ref, input("t", "m1", "hold"));
+    await adapter.sendTurn(ref, input("t", "m2", "steer-body"));
+    await until(() => events.some((event) => event.kind === "state_update"));
+    // Core only writes user_message when it dequeues a new Turn; same-turn steers
+    // must carry it from the Adapter, otherwise an applied steer leaves Queue
+    // without ever entering the Transcript.
+    expect(events.filter((event) => event.kind === "user_message").map((event) => event.payload)).toEqual([
+      { messageId: "m2", content: blocks("steer-body"), delivery: "steer" },
+    ]);
+    expect(events.filter((event) => event.kind === "input_delivery_update").map((e) => e.payload)).toEqual([
+      { messageId: "m2", state: "applied" },
+    ]);
+  } finally { await adapter.close(ref); }
+});
+
 test("DSH cancellation waits for runtime exit and leaves unapplied native input uncertain", async () => {
   const events: AnyEventDraft[] = [];
   const adapter = new DshAdapter({ dshBin });
