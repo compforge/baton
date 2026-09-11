@@ -17,6 +17,7 @@ import { planEntriesWithIds } from "../../event/plan.ts";
 import type {
   ContentBlock,
   StopReason,
+  ToolEffect,
   ToolKind,
   UsageUpdate,
 } from "../../event/index.ts";
@@ -33,12 +34,15 @@ import {
   type SendTurnReceipt,
   unsupportedPromptBlocks,
 } from "../adapter.ts";
+import { READ_ONLY_COMMAND_RULES } from "../command-effect/rules.ts";
+import { shellCommandIsReadOnly } from "../command-effect/shell.ts";
+import { planSnapshotDraft } from "../plan.ts";
 import {
   type HarnessResumeState,
   sessionIdFromResumeState,
   sessionIdResumeState,
 } from "../resume.ts";
-import { planSnapshotDraft } from "../plan.ts";
+import { kindEffect } from "../tool-effect.ts";
 
 const DSH_REQUEST_TIMEOUT_MS = 15_000;
 const DSH_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -251,6 +255,18 @@ function toolKind(name: string): ToolKind {
   if (/bash|shell|terminal|exec|run/.test(normalized)) return "execute";
   if (/fetch|http|web/.test(normalized)) return "fetch";
   return "other";
+}
+
+/** DSH only supplies raw tool arguments, so prove shell reads with Baton's shared recognizer. */
+function toolEffect(name: string, input: unknown): ToolEffect | undefined {
+  const kind = toolKind(name);
+  const direct = kindEffect(kind);
+  if (direct) return direct;
+  if (kind !== "execute") return undefined;
+  const command = text(record(input)?.command);
+  return command && shellCommandIsReadOnly(command, READ_ONLY_COMMAND_RULES)
+    ? "read"
+    : "write";
 }
 
 export class DshAdapter implements HarnessAdapter {
@@ -593,13 +609,14 @@ export class DshAdapter implements HarnessAdapter {
         const rawInput = `${turn.toolArguments.get(nativeId) ?? ""}${text(chunk.argumentsDelta) ?? ""}`;
         turn.toolArguments.set(nativeId, rawInput);
         const name = text(chunk.name);
+        const input = toolInput(rawInput);
         this.emit(runtime, turn, {
           kind: "tool_call_update",
           payload: {
             toolCallId,
-            ...(name ? { title: name, kind: toolKind(name) } : {}),
+            ...(name ? { title: name, kind: toolKind(name), effect: toolEffect(name, input) } : {}),
             status: "in_progress",
-            rawInput: toolInput(rawInput),
+            rawInput: input,
           },
         }, raw);
       } else if (chunkType === "usage") {
@@ -656,14 +673,16 @@ export class DshAdapter implements HarnessAdapter {
       const nativeId = text(data.callId);
       const name = text(data.name);
       if (!nativeId || !name) return;
+      const input = toolInput(data.arguments);
       this.emit(runtime, turn, {
         kind: "tool_call_update",
         payload: {
           toolCallId: mappedId(turn.toolCallIds, nativeId, "tc"),
           title: name,
           kind: toolKind(name),
+          effect: toolEffect(name, input),
           status: "in_progress",
-          rawInput: toolInput(data.arguments),
+          rawInput: input,
         },
       }, raw);
       return;

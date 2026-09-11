@@ -12,12 +12,19 @@ import { sortCommandIsReadOnly } from "./sort.ts";
  * with meaningful argument semantics into their own rule module.
  */
 export const READ_ONLY_COMMAND_RULES: ReadOnlyCommandRules = new Map([
+  ["cat", () => true],
+  ["cd", () => true],
+  ["echo", () => true],
   ["find", findCommandIsReadOnly],
   ["gh", ghCommandIsReadOnly],
   ["git", gitCommandIsReadOnly],
   ["head", () => true],
+  ["ls", () => true],
   ["npm", npmCommandIsReadOnly],
+  ["pwd", () => true],
   ["rg", rgCommandIsReadOnly],
   ["sed", sedCommandIsReadOnly],
   ["sort", sortCommandIsReadOnly],
+  ["tail", () => true],
+  ["wc", () => true],
 ]);

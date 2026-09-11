@@ -99,16 +99,17 @@ input、关键结论、执行过的 command 和改动过的文件。原始事件
 ### 4.1 投影规则
 
 Transcript 先把每条事实投影为原子 block，再只按 Baton 已知语义合并兼容 block。每条事实
-从第一条起就进入稳定的 `TranscriptGroupItem`；可合并的工具动作按首个 member 定位，中间穿插的
-reasoning 摘要或 notice 不会把组拆开，其它工具动作、正文和错误会结束当前组。chat-tui 只负责
+从第一条起就进入稳定的 `TranscriptGroupItem`；同一执行坐标下的 `read` effect 共享一个探索组，
+不再按 read/search/fetch/execute 的展示 kind 拆分。可合并的工具动作按首个 member 定位，中间穿插的
+reasoning 摘要或 notice 不会把组拆开；写操作、正文和错误会结束当前组。chat-tui 只负责
 默认收起和 `Ctrl+O` 展开，不反向猜测 Harness effect 或 reasoning 边界。
 
 | 内容 | 默认展示 | 完整信息 |
 |---|---|---|
 | 用户与 agent 正文 | 保留正文；agent 正文可以流式更新同一条消息 | Session / Ledger 与展开后的 block |
 | Reasoning / thought | 流式阶段只在 Activity 显示 `Working`；完成后才把非空有效摘要写入 Transcript；`<!-- -->` 等空占位隐藏 | Session / Ledger 保留 Harness 上报的完整 reasoning；`/thoughts` 控制历史摘要是否可见 |
-| 只读探索 | 同类 read/list/search 合并成一行有数量和代表动作的摘要 | group members 保留逐项路径和 output |
-| 成功命令 | 同一执行片段的多条已完成命令压成 `Ran N commands`；单条保留命令本体 | group members 保留逐条 command 和 output |
+| 只读探索 | read/search/fetch 和已识别为只读的 command 合并成 `Explored N actions` | group members 保留逐项动作、路径、command 和 output |
+| 其它成功命令 | 同一执行片段的多条已完成命令压成 `Ran N commands`；单条保留命令本体 | group members 保留逐条 command 和 output |
 | 写文件、编辑与 diff | 保留一行文件路径、操作和统计；写操作会打断只读探索组 | members 中保留完整 diff / output |
 | 失败与拒绝 | 不藏在成功组里，默认直接可见并保留诊断 | 原始 tool/result 事实 |
 | Plan | 活跃时放 Plan Pin，避免和历史重复；结束后按结果保留一次 | 原始 `plan_update` / `plan_remove` 事实 |
@@ -142,7 +143,7 @@ Baton 当前选择 Codex 风格作为基线：流式 reasoning 只贡献 Activit
 ### 4.3 可验证性
 
 展示策略至少覆盖以下回归：流式 thought 不增长 Transcript、final 摘要只出现一次、空占位不可见、
-只读工具与成功命令稳定成组、reasoning/notice 穿插不拆组、写操作与失败结束分组、展开仍能看到完整 members，以及 live/replay 得到相同
+跨 kind 的只读 effect 与成功命令稳定成组、reasoning/notice 穿插不拆组、写操作与失败结束分组、展开仍能看到完整 members，以及 live/replay 得到相同
 Transcript。测试应围绕 Projection 输入输出，不通过篡改上游事实制造期望 UI。
 
 ## 5. 接入另一种 View

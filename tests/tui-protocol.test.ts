@@ -1771,10 +1771,14 @@ describe("tool call grouping", () => {
     rawInput: kind === "search" ? { pattern: toolCallId } : { file_path: `${toolCallId}.ts` },
   });
 
-  test("groups only successful exploratory tools with the same projection coordinates", () => {
+  test("groups every successful read effect with the same projection coordinates", () => {
     const read = tool("tc_read", "read");
     expect(toolGroupKey(read)).toBe(toolGroupKey({ ...read, toolCallId: "tc_read_2" }));
-    expect(toolGroupKey(read)).not.toBe(toolGroupKey(tool("tc_search", "search")));
+    expect(toolGroupKey(read)).toBe(toolGroupKey(tool("tc_search", "search")));
+    expect(toolGroupKey(read)).toBe(toolGroupKey({
+      ...tool("tc_exec", "execute"),
+      effect: "read",
+    }));
     expect(toolGroupKey({ ...read, turnId: "t2" })).not.toBe(toolGroupKey(read));
     expect(toolGroupKey({ ...read, harnessTargetId: "codex-2" })).not.toBe(toolGroupKey(read));
     expect(toolGroupKey({ ...read, status: "failed" })).toBeUndefined();
@@ -1789,7 +1793,7 @@ describe("tool call grouping", () => {
     expect(toolGroupKey({ ...tool("tc_read_w", "read"), effect: "write" })).toBeUndefined();
   });
 
-  test("renders a completed command group with command text per line", () => {
+  test("renders read-only commands as exploration with command text per line", () => {
     const exec = (
       toolCallId: string,
       command: string,
@@ -1811,7 +1815,7 @@ describe("tool call grouping", () => {
         id: "group:tc_one:summary",
         kind: "tool",
         author: "codex",
-        title: "Ran 2 commands",
+        title: "Explored 2 actions · grep -rn task src/ | head -20",
         status: "completed",
       },
       members: [
@@ -1856,7 +1860,7 @@ describe("tool call grouping", () => {
         id: "group:src/one:summary",
         kind: "tool",
         author: "codex",
-        title: "Read ×2 · src/two.ts",
+        title: "Explored 2 actions · src/two.ts",
         status: "in_progress",
       },
       members: [
@@ -1882,7 +1886,7 @@ describe("tool call grouping", () => {
     });
   });
 
-  test("groups consecutive reads in the session transcript and preserves boundaries", async () => {
+  test("groups read effects across tool kinds and preserves semantic boundaries", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-tool-groups-"));
     try {
       const store = new SessionStore(root);
@@ -1934,7 +1938,7 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:one",
           collapsedByDefault: true,
-          summary: { title: "Read ×2 · two.ts" },
+          summary: { title: "Explored 2 actions · two.ts" },
           members: [{ id: "one" }, { id: "two" }],
         },
         {
@@ -1958,22 +1962,22 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:three",
           collapsedByDefault: true,
-          summary: { title: "Read · three.ts · 1 line" },
-          members: [{ id: "three" }],
-        },
-        {
-          type: "group",
-          id: "group:query",
-          collapsedByDefault: true,
-          summary: { title: "Search · query · 1 line" },
-          members: [{ id: "query" }],
+          summary: { title: "Explored 2 actions · query" },
+          members: [{ id: "three" }, { id: "query" }],
         },
         {
           type: "group",
           id: "group:status",
           collapsedByDefault: true,
-          summary: { title: "Ran 3 commands" },
-          members: [{ id: "status" }, { id: "probe1" }, { id: "probe2" }],
+          summary: { title: "Ran · status · 1 line" },
+          members: [{ id: "status" }],
+        },
+        {
+          type: "group",
+          id: "group:probe1",
+          collapsedByDefault: true,
+          summary: { title: "Explored 2 actions · probe2" },
+          members: [{ id: "probe1" }, { id: "probe2" }],
         },
       ]);
       await protocol.exit();
@@ -1998,7 +2002,10 @@ describe("tool call grouping", () => {
           content: [{ type: "text" as const, text: `**${title}**` }],
         },
       });
-      const appendRead = (toolCallId: string) => session.appendEvent({
+      const appendExplore = (
+        toolCallId: string,
+        kind: "read" | "search" | "execute",
+      ) => session.appendEvent({
         source: { type: "harness" as const, harnessTargetId: "codex" },
         kind: "tool_call_update" as const,
         harness: "codex",
@@ -2006,18 +2013,22 @@ describe("tool call grouping", () => {
         turnId: "t1",
         payload: {
           toolCallId,
-          title: `Read: ${toolCallId}`,
-          kind: "read",
+          title: `${kind}: ${toolCallId}`,
+          kind,
           effect: "read" as const,
           status: "completed" as const,
-          rawInput: { file_path: `${toolCallId}.ts` },
+          rawInput: kind === "execute"
+            ? { command: toolCallId }
+            : kind === "search"
+              ? { pattern: toolCallId }
+              : { file_path: `${toolCallId}.ts` },
           content: [{ type: "text" as const, text: "result\n" }],
         },
       });
 
       appendThought("thought-1", "Found the relevant files");
       appendThought("thought-2", "The adapter owns this behavior");
-      appendRead("read-1");
+      appendExplore("read-1", "execute");
       appendThought("thought-3", "The implementation is ready");
       session.appendEvent({
         source: { type: "baton" as const },
@@ -2027,7 +2038,8 @@ describe("tool call grouping", () => {
         turnId: "t1",
         payload: { level: "info" as const, title: "Context refreshed" },
       });
-      appendRead("read-2");
+      appendExplore("read-2", "search");
+      appendExplore("read-3", "read");
 
       const protocol = new BatonChatProtocol(
         store,
@@ -2050,8 +2062,8 @@ describe("tool call grouping", () => {
           type: "group",
           id: "group:read-1",
           collapsedByDefault: true,
-          summary: { kind: "tool", title: "Read ×2 · read-2.ts" },
-          members: [{ id: "read-1" }, { id: "read-2" }],
+          summary: { kind: "tool", title: "Explored 3 actions · read-3.ts" },
+          members: [{ id: "read-1" }, { id: "read-2" }, { id: "read-3" }],
         },
         {
           type: "group",
