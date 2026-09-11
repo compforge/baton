@@ -189,6 +189,28 @@ export class BatonResourceProvider {
     return bound?.harness === requested.harness ? bound.id : requestedTargetId;
   }
 
+  /**
+   * Make an explicit Target selection authoritative over a same-family binding.
+   * Bindings for another Harness family stay intact so a temporary cross-Harness
+   * handoff does not discard the Session's established account affinity.
+   */
+  selectExactTarget(targetId: string): void {
+    const targets = this.configuredTargets();
+    const requested = targets.find((target) => target.id === targetId);
+    if (!requested) throw new Error(`Unknown HarnessTarget: ${targetId}`);
+
+    const binding = sessionTargetBindingMeta(this.session.meta);
+    if (!binding.targetId || binding.targetId === requested.id) return;
+    const bound = targets.find((target) => target.id === binding.targetId);
+    if (bound?.harness !== requested.harness) return;
+
+    this.session.setTargetBinding(
+      requested.id,
+      String(binding.resourceVersion),
+      this.now(),
+    );
+  }
+
   private sessionObservations(): readonly BatonSessionObservation[] {
     const observed = new Map(
       (this.sessions?.() ?? []).map((session) => [

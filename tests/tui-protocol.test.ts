@@ -890,6 +890,49 @@ describe("BatonChatProtocol harness commands", () => {
     }
   });
 
+  test("lets the /target picker override a same-family Session binding exactly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-target-exact-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.setTargetBinding("codex2", "1");
+      const config = {
+        ...DEFAULT_CONFIG,
+        targets: {
+          ...DEFAULT_CONFIG.targets,
+          codex2: { harness: "codex" },
+        },
+      };
+      const protocol = new BatonChatProtocol(
+        store,
+        config,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const submitted: string[] = [];
+      stubCompletedSend(protocol, (target) => submitted.push(target));
+
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({
+        author: "codex2",
+      });
+      await protocol.command("target", "");
+      const picker = protocol.stateStore.getState("composer").picker;
+      expect(picker?.options.map((option) => option.value)).toContain("codex");
+      protocol.resolvePicker(picker!.id, "codex");
+      await Bun.sleep(25);
+      expect(protocol.stateStore.getState("activity").items?.[0]).toMatchObject({
+        author: "codex",
+      });
+      expect(store.openSession(session.id).meta.targetBinding?.targetId).toBe("codex");
+
+      await protocol.submit("use the exact target");
+      expect(submitted).toEqual(["codex"]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("switches the input target and sends a trailing message in one action", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-harness-command-"));
     try {
