@@ -3,8 +3,15 @@ import { JsonRpcResponseError, type HarnessClient, type HarnessNotification, typ
 export type DshTransport = Pick<HarnessClient, "prompt" | "subscribeSessionTree">;
 type Delivery = "applied" | "failed" | "uncertain";
 interface PendingInput { messageId: string; steer: boolean; nativeId?: string }
+type InboxTarget = "next-turn" | "next-step";
 
-/** One Baton turn can contain several DSH inbox messages; only their receipts prove consumption. */
+/**
+ * One Baton turn can contain several DSH inbox messages; only their receipts prove consumption.
+ *
+ * @spec Durable inbox insertion keeps a steer pending; only a claimed entry that reaches
+ * user/message is applied. A claimed entry missing at idle is failed instead of hanging.
+ * @see {@link ../../../docs/harness/deepseek-harness.md}
+ */
 export class DshActivity {
   readonly done: Promise<void>;
   private resolve!: () => void;
@@ -12,6 +19,12 @@ export class DshActivity {
   private readonly subscription: NotificationSubscription;
   private readonly pending = new Set<PendingInput>();
   private readonly receipts = new Map<string, HarnessNotification>();
+  private readonly failedReceipts = new Map<string, string>();
+  private readonly inbox: Record<InboxTarget, Array<string | undefined>> = {
+    "next-turn": [],
+    "next-step": [],
+  };
+  private readonly claimed: Array<string | undefined> = [];
   private idle = false;
   private settled = false;
   private started = false;
@@ -36,7 +49,7 @@ export class DshActivity {
     void this.client.prompt(this.sessionId, blocks).then((nativeId) => {
       if (this.settled) return;
       input.nativeId = nativeId;
-      this.applyReceipt(input);
+      this.settleReceipt(input);
       this.finishIfIdle();
     }, (error: unknown) => {
       if (this.settled) return;
@@ -58,11 +71,84 @@ export class DshActivity {
     this.subscription.close();
   }
 
-  private applyReceipt(input: PendingInput): void {
+  private settleReceipt(input: PendingInput): void {
+    const failure = input.nativeId ? this.failedReceipts.get(input.nativeId) : undefined;
+    if (failure) {
+      this.pending.delete(input);
+      if (input.steer) this.delivery(input.messageId, "failed", failure);
+      return;
+    }
     const receipt = input.nativeId ? this.receipts.get(input.nativeId) : undefined;
     if (!receipt) return;
     this.pending.delete(input);
     if (input.steer) this.delivery(input.messageId, "applied", undefined, receipt);
+  }
+
+  /**
+   * DSH persists inbox insertion before admission. Only the later pure deletion
+   * claims a batch for a step, and the following user/message makes one claimed
+   * entry model-visible. Keep that distinction so Baton's Queue does not retire
+   * an input merely because DSH durably queued it.
+   */
+  private observeSessionEvent(notification: HarnessNotification): void {
+    const event = notification.params.event;
+    if (event === null || typeof event !== "object" || Array.isArray(event)) return;
+    const envelope = event as Record<string, unknown>;
+    const data = envelope.data;
+    if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+    const payload = data as Record<string, unknown>;
+
+    if (envelope.type === "agent/inbox/spliced") {
+      const target = payload.target;
+      const start = payload.start;
+      const removedCount = payload.removedCount ?? 0;
+      if (
+        (target !== "next-turn" && target !== "next-step") ||
+        typeof start !== "number" ||
+        !Number.isSafeInteger(start) ||
+        start < 0 ||
+        typeof removedCount !== "number" ||
+        !Number.isSafeInteger(removedCount) ||
+        removedCount < 0
+      ) return;
+      const queue = this.inbox[target];
+      while (queue.length < start + removedCount) {
+        queue.push(undefined);
+      }
+      const inserted = Array.isArray(payload.inserted)
+        ? payload.inserted.map((candidate) => {
+          if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+            return undefined;
+          }
+          const id = (candidate as Record<string, unknown>).id;
+          return typeof id === "string" ? id : undefined;
+        })
+        : [];
+      const removed = queue.splice(start, removedCount, ...inserted);
+      if (
+        removed.length > 0 &&
+        inserted.length === 0 &&
+        payload.outcome === undefined
+      ) {
+        this.claimed.push(...removed);
+      }
+      return;
+    }
+
+    if (envelope.type !== "user/message") return;
+    const nativeId = this.claimed.shift();
+    if (!nativeId) return;
+    this.receipts.set(nativeId, notification);
+    for (const input of this.pending) this.settleReceipt(input);
+  }
+
+  private failUnappliedClaims(): void {
+    if (this.claimed.length === 0) return;
+    const detail = "DSH claimed the input but ended before it became model-visible";
+    for (const nativeId of this.claimed.splice(0)) {
+      if (nativeId) this.failedReceipts.set(nativeId, detail);
+    }
+    for (const input of this.pending) this.settleReceipt(input);
   }
 
   private async collect(): Promise<void> {
@@ -72,16 +158,11 @@ export class DshActivity {
         const params = notification.params;
         if (params.sessionId === this.sessionId) {
           if (notification.method === "session.event") {
-            const event = params.event as { type?: string; data?: { inserted?: Array<{ id?: string }> } } | undefined;
-            if (event?.type === "agent/inbox/spliced") {
-              this.idle = false;
-              for (const message of event.data?.inserted ?? []) {
-                if (typeof message.id === "string") this.receipts.set(message.id, notification);
-              }
-              for (const input of this.pending) this.applyReceipt(input);
-            }
+            this.observeSessionEvent(notification);
+            this.idle = false;
           } else if (notification.method === "session.status") {
             this.idle = params.status === "idle";
+            if (this.idle) this.failUnappliedClaims();
           }
         }
         this.notify(notification);

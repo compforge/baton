@@ -143,7 +143,21 @@ class FakeClient implements DshClientLike {
       const turn = this.createdSessions.at(-1)!.next(input);
       const subscription = this.subscription!;
       void (async () => {
-        subscription.push(sessionEvent(sessionId, "agent/inbox/spliced", { inserted: [{ id: nativeId }] }));
+        subscription.push(sessionEvent(sessionId, "agent/inbox/spliced", {
+          target: "next-turn",
+          start: 0,
+          inserted: [{ id: nativeId }],
+        }));
+        subscription.push(sessionEvent(sessionId, "agent/inbox/spliced", {
+          target: "next-turn",
+          start: 0,
+          removedCount: 1,
+          inserted: [],
+        }));
+        subscription.push(sessionEvent(sessionId, "user/message", {
+          content: input,
+          source: { kind: "user" },
+        }));
         let sawMessage = false;
         for await (const event of turn) {
           if ((event.params.event as { type?: string })?.type === "assistant/message") sawMessage = true;
@@ -286,7 +300,7 @@ describe("DshAdapter", () => {
         step: 1,
         callId: "call-1",
         name: "bash",
-        arguments: '{"cmd":"pwd"}',
+        arguments: '{"command":"pwd"}',
       }),
       sessionEvent(sessionId, "tool/result", {
         turn: 1,
@@ -370,7 +384,12 @@ describe("DshAdapter", () => {
 
     const tools = events.filter((event) => event.kind === "tool_call_update");
     expect(tools).toHaveLength(2);
-    expect(tools[0]?.payload).toMatchObject({ title: "bash", kind: "execute", status: "in_progress" });
+    expect(tools[0]?.payload).toMatchObject({
+      title: "bash",
+      kind: "execute",
+      status: "in_progress",
+      rawInput: { command: "pwd" },
+    });
     expect(tools[1]?.payload).toMatchObject({ status: "completed", content: [{ type: "text", text: "/repo" }] });
     expect((tools[0]?.payload as { toolCallId: string }).toolCallId).toBe(
       (tools[1]?.payload as { toolCallId: string }).toolCallId,
@@ -410,7 +429,7 @@ describe("DshAdapter", () => {
         payload: { state: "idle", stopReason: "end_turn" },
       }),
     ]);
-    expect(native).toHaveLength(notifications.length + 2);
+    expect(native).toHaveLength(notifications.length + 4);
     await adapter.close(ref);
   });
 

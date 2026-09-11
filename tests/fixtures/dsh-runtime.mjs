@@ -13,7 +13,9 @@ for await (const line of lines) {
     const event = (type, data) => send({ method: "session.event", params: { sessionId, event: { type, data } } });
     // Idle before this input's durable receipt must not finish the run.
     send({ method: "session.status", params: { sessionId, status: "idle" } });
-    event("agent/inbox/spliced", { inserted: [{ id: "input-1" }] });
+    event("agent/inbox/spliced", { target: "next-turn", start: 0, removedCount: 0, inserted: [{ id: "input-1" }] });
+    event("agent/inbox/spliced", { target: "next-turn", start: 0, removedCount: 1, inserted: [] });
+    event("user/message", { content: params.contentBlocks, source: { kind: "user" } });
     event("assistant/message", { turn: 1, step: 1, message: { id: "reply-1", content: [{ type: "text", text: JSON.stringify(params.contentBlocks) }] } });
     event("turn/end", { turn: 1, reason: { kind: "completed" } });
     send({ method: "session.status", params: { sessionId, status: "idle" } });
