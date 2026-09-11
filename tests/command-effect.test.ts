@@ -40,6 +40,9 @@ describe("shell command read effects", () => {
 
   test("accepts the session's structured read compositions", () => {
     expectCommands([
+      "ls -la baton/ && echo '---DOCS---' && ls -la baton/docs/ 2>/dev/null",
+      "cd baton && echo '=== recent commits ===' && git log --oneline -5",
+      "pwd && cat VERSION && tail -20 README.md | wc -l",
       "find . -type f 2>/dev/null && rg -n commandActions src",
       "for c in 28fcda2751 219d2a1fb9; do git show --no-patch --format='%H%n%s' \"$c\"; done",
       "gh release list --repo compforge/baton --limit 10",

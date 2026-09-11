@@ -387,6 +387,7 @@ describe("DshAdapter", () => {
     expect(tools[0]?.payload).toMatchObject({
       title: "bash",
       kind: "execute",
+      effect: "read",
       status: "in_progress",
       rawInput: { command: "pwd" },
     });

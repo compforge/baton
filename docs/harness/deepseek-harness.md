@@ -98,7 +98,8 @@ DSH 声明 explicit delivery tracking，并由 Adapter 保留取消时的投递�
   `assistant/message.usage` 将 uncached input、cache read 和 cache write 相加，与缓存路由严格配对后
   生成 `context_window_update`。其中 `modelSelection` 来自 Target 配置，`effectiveModel` 来自 DSH
   路由；
-- `tool/call` / `tool/result` → 同一 Baton tool call 的 running/terminal upsert；
+- `tool/call` / `tool/result` → 同一 Baton tool call 的 running/terminal upsert；原生读工具直接标记
+  `read` effect，shell command 复用 Core 的保守只读分类器；
 - `todo/write` → 带确定性 entry ID 的 plan snapshot，空 snapshot → `plan_remove`；
 - `turn/end.reason` → Baton stop reason 与结构化 error；
 - `subagent.started` / `subagent.finished` → task lifecycle。

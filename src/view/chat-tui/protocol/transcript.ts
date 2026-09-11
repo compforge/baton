@@ -275,32 +275,31 @@ export function toolTranscriptItem(
   };
 }
 
-// 只读探索与已完成命令可以聚合成组行；写类 edit/delete/move 与未结束命令不进组。
+// 同一执行坐标下的只读 effect 统一视为探索链；已完成的其它命令也可聚合成组行。
+// 写类 edit/delete/move 与未结束的非只读命令不进组。
 // diff 与命令详情保留在 members，默认摘要只压缩 View 投影。
 
+type ToolGroupFamily = "explore" | "execute";
+
+function toolGroupFamily(tc: ToolCallState): ToolGroupFamily | undefined {
+  const status = normalizeToolStatus(tc.status);
+  if (status === "failed" || status === "declined") return undefined;
+  const effect = tc.effect ?? kindEffect(tc.kind);
+  if (effect === "read") return "explore";
+  return tc.kind === "execute" && status === "completed" ? "execute" : undefined;
+}
+
 /**
- * 可分组工具的分组键：同类动作 + 同 turn + 同 harness target 才能并组。
+ * 可分组工具的分组键：同一 read effect（跨 read/search/fetch/execute）或命令族，
+ * 再加同 turn + 同 harness target 才能并组。
  * undefined = 该调用不参与分组。failed/declined 不进组——错误详情必须单独成块显眼展示。
  */
 export function toolGroupKey(tc: ToolCallState): string | undefined {
   if (!tc.kind) return undefined;
-  const status = normalizeToolStatus(tc.status);
-  if (status === "failed" || status === "declined") return undefined;
-  if (tc.kind === "execute") {
-    if (status !== "completed") return undefined;
-    return JSON.stringify([
-      "execute",
-      tc.turnId ?? "",
-      tc.harnessTargetId ?? "",
-      tc.laneId ?? "",
-      tc.harness ?? "",
-    ]);
-  }
-  const effect = tc.effect ?? kindEffect(tc.kind);
-  if (effect !== "read") return undefined;
+  const family = toolGroupFamily(tc);
+  if (!family) return undefined;
   return JSON.stringify([
-    "read",
-    tc.kind,
+    family,
     tc.turnId ?? "",
     tc.harnessTargetId ?? "",
     tc.laneId ?? "",
@@ -372,8 +371,11 @@ export function toolGroupTranscriptItem(
   const last = tcs[tcs.length - 1]!;
   const label = TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind;
   const detail = toolKeyArg(last, last.title ?? last.toolCallId);
-  const title = first.kind === "execute" && tcs.length > 1
+  const family = toolGroupFamily(first);
+  const title = family === "execute" && tcs.length > 1
     ? `Ran ${countLabel(tcs.length, "command")}`
+    : family === "explore" && tcs.length > 1
+      ? `Explored ${countLabel(tcs.length, "action")}${detail ? ` · ${detail}` : ""}`
     : `${label} ×${tcs.length}${detail ? ` · ${detail}` : ""}`;
   return transcriptGroup(
     tcs.map(toolTranscriptItem),
@@ -381,12 +383,11 @@ export function toolGroupTranscriptItem(
   );
 }
 
-type CompactBlockFamily = "read" | "execute" | "thought";
+type CompactBlockFamily = ToolGroupFamily | "thought";
 
 interface CompactBlockCandidate {
   mergeKey: string;
   family: CompactBlockFamily;
-  label: string;
   detail?: string;
   block: TranscriptBlockItem;
 }
@@ -400,7 +401,7 @@ function compactBlockGroup(candidates: CompactBlockCandidate[]): TranscriptGroup
       ? `Thought ×${candidates.length} · ${compactText(last.block.title, 48)}`
       : first.family === "execute"
         ? `Ran ${countLabel(candidates.length, "command")}`
-        : `${first.label} ×${candidates.length}${last.detail ? ` · ${last.detail}` : ""}`;
+        : `Explored ${countLabel(candidates.length, "action")}${last.detail ? ` · ${last.detail}` : ""}`;
   return transcriptGroup(candidates.map((candidate) => candidate.block), title);
 }
 
@@ -495,8 +496,7 @@ export function buildTranscript(
       if (groupKey !== undefined) {
         appendTool({
           mergeKey: groupKey,
-          family: tc.kind === "execute" ? "execute" : "read",
-          label: TOOL_KIND_LABELS[tc.kind ?? ""] ?? tc.kind ?? "Read",
+          family: toolGroupFamily(tc)!,
           detail: toolKeyArg(tc, tc.title ?? tc.toolCallId),
           block: toolTranscriptItem(tc),
         });
@@ -575,7 +575,6 @@ export function buildTranscript(
           appendThought({
             mergeKey: thoughtGroupKey(msg),
             family: "thought",
-            label: "Thought",
             block: {
               type: "block",
               id: `${entry.id}:${index}`,
