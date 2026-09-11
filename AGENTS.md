@@ -65,6 +65,8 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 
 ## 关键约定
 
+OpenTUI 已提供的终端能力由 View 直接复用，最低依赖随采用的能力升级；Baton 不维护平行实现或旧版兼容分支，只保留产品输入、展示与 Harness 协调语义。
+
 1. **作用域决定 owner**：Project 组织同 cwd 的 Session；BatonSession 拥有正典历史与交互/Harness
    执行；PluginInstance 是启用配置与 Worker 生命周期单位，Plugin 只是 Resource schema、Controller
    与 Connector 的组织单位；每份 Resource 通过 `v1`、`v1/project/<projectId>` 或
