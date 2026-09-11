@@ -161,9 +161,10 @@ export type ToolKind =
 
 /**
  * 工具调用对世界的效果声明，与 kind（动作词汇）正交：kind 说"做了什么动作"，
- * effect 说"有没有改东西"。read = 纯只读（可聚合展示、未来可服务自动审批/并行调度）；
- * write = 有副作用。adapter 边界负责按 harness 的工具语义填写；不上报 = 未知，
- * 消费方一律保守按 write 处理。开放联合留扩展位（如交互式）。
+ * effect 说"有没有改东西"。read = 已证明纯只读；write = 已确认有副作用。
+ * adapter 边界负责按 harness 的工具语义填写；不上报 = 未知。安全消费者可以保守按
+ * write 处理 unknown，View 则独立计算 ViewPolicy，不能把保守决策当成写入事实。
+ * 开放联合留扩展位（如交互式）。
  */
 export type ToolEffect = "read" | "write" | (string & {});
 

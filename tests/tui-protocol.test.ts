@@ -20,6 +20,7 @@ import {
   toolGroupKey,
   toolGroupTranscriptItem,
 } from "../src/view/chat-tui/protocol/transcript.ts";
+import { contentViewPolicy, toolViewPolicy } from "../src/view/policy.ts";
 
 function transcriptBlocks(items: readonly TranscriptItem[]): TranscriptBlockItem[] {
   return items.flatMap((item) => {
@@ -1834,6 +1835,45 @@ describe("tool call grouping", () => {
     );
     expect(toolGroupKey(tool("tc_exec_running", "execute", "in_progress"))).toBeUndefined();
     expect(toolGroupKey({ ...tool("tc_read_w", "read"), effect: "write" })).toBeUndefined();
+  });
+
+  test("derives display value independently from effect certainty", () => {
+    expect(toolViewPolicy(tool("tc_read", "read"))).toEqual({
+      family: "explore",
+      grade: "background",
+      detail: "summary",
+      breaksGroup: false,
+    });
+    expect(toolViewPolicy(tool("tc_unknown", "execute"))).toEqual({
+      family: "command",
+      grade: "background",
+      detail: "summary",
+      breaksGroup: true,
+    });
+    expect(toolViewPolicy({ ...tool("tc_write", "execute"), effect: "write" })).toEqual({
+      family: "command",
+      grade: "background",
+      detail: "summary",
+      breaksGroup: true,
+    });
+    expect(toolViewPolicy(tool("tc_edit", "edit"))).toEqual({
+      family: "change",
+      grade: "important",
+      detail: "summary",
+      breaksGroup: true,
+    });
+    expect(toolViewPolicy(tool("tc_failed", "read", "failed"))).toEqual({
+      family: "explore",
+      grade: "important",
+      detail: "preview",
+      breaksGroup: true,
+    });
+    expect(contentViewPolicy("message")).toEqual({
+      family: "other",
+      grade: "important",
+      detail: "full",
+      breaksGroup: true,
+    });
   });
 
   test("renders read-only commands as exploration with command text per line", () => {

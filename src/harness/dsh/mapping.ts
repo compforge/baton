@@ -178,6 +178,5 @@ export function toolEffect(name: string, input: unknown): ToolEffect | undefined
   const command = text(record(input)?.command);
   return command && shellCommandIsReadOnly(command, READ_ONLY_COMMAND_RULES)
     ? "read"
-    : "write";
+    : undefined;
 }
-

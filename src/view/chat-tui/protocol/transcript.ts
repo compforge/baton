@@ -15,13 +15,17 @@ import {
   type DiffBlock,
 } from "../../../event/index.ts";
 import { harnessShortName } from "../../../harness/registry.ts";
-import { kindEffect } from "../../../harness/tool-effect.ts";
 import {
   isTurnRunning,
   type MessageState,
   type SessionState,
   type ToolCallState,
 } from "../../../store/reduce.ts";
+import {
+  contentViewPolicy,
+  toolViewPolicy,
+  type ViewPolicy,
+} from "../../policy.ts";
 import { composerTextOf } from "../prompt-images.ts";
 
 // Baton 的状态类型是开放联合（容忍未知 wire 值），chat-tui 是闭集；
@@ -275,18 +279,20 @@ export function toolTranscriptItem(
   };
 }
 
-// 同一执行坐标下的只读 effect 统一视为探索链；已完成的其它命令也可聚合成组行。
-// 写类 edit/delete/move 与未结束的非只读命令不进组。
-// diff 与命令详情保留在 members，默认摘要只压缩 View 投影。
+// ViewPolicy 把信息价值与 effect 解耦：只有 background + summary 内容参加过程分组；
+// important 内容保留独立位置，完整 diff / output 仍只存在于 members。
 
-type ToolGroupFamily = "explore" | "execute";
+type ToolGroupFamily = "explore" | "command";
 
-function toolGroupFamily(tc: ToolCallState): ToolGroupFamily | undefined {
+function toolGroupFamily(
+  tc: ToolCallState,
+  policy: ViewPolicy = toolViewPolicy(tc),
+): ToolGroupFamily | undefined {
   const status = normalizeToolStatus(tc.status);
   if (status === "failed" || status === "declined") return undefined;
-  const effect = tc.effect ?? kindEffect(tc.kind);
-  if (effect === "read") return "explore";
-  return tc.kind === "execute" && status === "completed" ? "execute" : undefined;
+  if (policy.grade !== "background" || policy.detail !== "summary") return undefined;
+  if (policy.family === "explore") return "explore";
+  return policy.family === "command" && status === "completed" ? "command" : undefined;
 }
 
 /**
@@ -294,9 +300,12 @@ function toolGroupFamily(tc: ToolCallState): ToolGroupFamily | undefined {
  * 再加同 turn + 同 harness target 才能并组。
  * undefined = 该调用不参与分组。failed/declined 不进组——错误详情必须单独成块显眼展示。
  */
-export function toolGroupKey(tc: ToolCallState): string | undefined {
+export function toolGroupKey(
+  tc: ToolCallState,
+  policy: ViewPolicy = toolViewPolicy(tc),
+): string | undefined {
   if (!tc.kind) return undefined;
-  const family = toolGroupFamily(tc);
+  const family = toolGroupFamily(tc, policy);
   if (!family) return undefined;
   return JSON.stringify([
     family,
@@ -355,7 +364,7 @@ function standaloneTranscriptGroup(block: TranscriptBlockItem): TranscriptGroupI
  * command, output, and diff stay one Ctrl+O away. Failures use the transparent
  * group above so their diagnostics remain visible without another action.
  */
-function summarizedToolGroup(block: TranscriptBlockItem): TranscriptGroupItem {
+function summarizedBlockGroup(block: TranscriptBlockItem): TranscriptGroupItem {
   return transcriptGroup([block], block.title);
 }
 
@@ -372,7 +381,7 @@ export function toolGroupTranscriptItem(
   const label = TOOL_KIND_LABELS[first.kind ?? ""] ?? first.kind;
   const detail = toolKeyArg(last, last.title ?? last.toolCallId);
   const family = toolGroupFamily(first);
-  const title = family === "execute" && tcs.length > 1
+  const title = family === "command" && tcs.length > 1
     ? `Ran ${countLabel(tcs.length, "command")}`
     : family === "explore" && tcs.length > 1
       ? `Explored ${countLabel(tcs.length, "action")}${detail ? ` · ${detail}` : ""}`
@@ -399,7 +408,7 @@ function compactBlockGroup(candidates: CompactBlockCandidate[]): TranscriptGroup
     ? first.block.title
     : first.family === "thought"
       ? `Thought ×${candidates.length} · ${compactText(last.block.title, 48)}`
-      : first.family === "execute"
+      : first.family === "command"
         ? `Ran ${countLabel(candidates.length, "command")}`
         : `Explored ${countLabel(candidates.length, "action")}${last.detail ? ` · ${last.detail}` : ""}`;
   return transcriptGroup(candidates.map((candidate) => candidate.block), title);
@@ -462,6 +471,16 @@ export function buildTranscript(
   const closeToolGroup = () => {
     activeToolGroup = undefined;
   };
+  const applyPolicyBoundary = (policy: ViewPolicy, compatibleKey?: string) => {
+    if (policy.breaksGroup && activeToolGroup?.mergeKey !== compatibleKey) closeToolGroup();
+  };
+  const appendPolicyBlock = (block: TranscriptBlockItem, policy: ViewPolicy) => {
+    if (policy.detail === "summary") {
+      items.push(summarizedBlockGroup(block));
+      return;
+    }
+    appendStandaloneBlock(block);
+  };
   const appendThought = (candidate: CompactBlockCandidate) => {
     if (
       pendingThoughts.length > 0 &&
@@ -492,24 +511,21 @@ export function buildTranscript(
     if (entry.type === "tool_call") {
       const tc = state.toolCalls.get(entry.id);
       if (!tc || hidden(tc.laneId)) continue;
-      const groupKey = toolGroupKey(tc);
+      const policy = toolViewPolicy(tc);
+      const groupKey = toolGroupKey(tc, policy);
+      applyPolicyBoundary(policy, groupKey);
       if (groupKey !== undefined) {
         appendTool({
           mergeKey: groupKey,
-          family: toolGroupFamily(tc)!,
+          family: toolGroupFamily(tc, policy)!,
           detail: toolKeyArg(tc, tc.title ?? tc.toolCallId),
           block: toolTranscriptItem(tc),
         });
         continue;
       }
       flushThoughts();
-      closeToolGroup();
       const block = toolTranscriptItem(tc);
-      if (block.status === "failed" || block.status === "declined") {
-        appendStandaloneBlock(block);
-      } else {
-        items.push(summarizedToolGroup(block));
-      }
+      appendPolicyBlock(block, policy);
       continue;
     }
     if (entry.type === "notice") {
@@ -517,29 +533,32 @@ export function buildTranscript(
       const notice = noticesById.get(entry.id);
       if (!notice) continue;
       if (hidden(notice.laneId)) continue;
-      appendStandaloneBlock({
+      const policy = contentViewPolicy("notice", { failed: notice.level !== "info" });
+      applyPolicyBoundary(policy);
+      appendPolicyBlock({
         type: "block",
         id: entry.id,
         kind: "notice",
         status: notice.level === "info" ? "pending" : "failed",
         title: notice.detail ? `${notice.title} · ${notice.detail}` : notice.title,
-      });
+      }, policy);
       continue;
     }
     if (entry.type === "error") {
       flushThoughts();
-      closeToolGroup();
+      const policy = contentViewPolicy("error");
+      applyPolicyBoundary(policy);
       const error = state.errors.get(entry.id);
       if (!error) continue;
       if (hidden(error.laneId)) continue;
-      appendStandaloneBlock({
+      appendPolicyBlock({
         type: "block",
         id: entry.id,
         kind: "error",
         status: "failed",
         title: error.code ? `Error: ${error.code}` : "Error",
         content: { type: "text", text: error.message },
-      });
+      }, policy);
       continue;
     }
     if (entry.type === "message") {
@@ -559,6 +578,8 @@ export function buildTranscript(
         }
       }
       if (msg.role === "thought") {
+        const policy = contentViewPolicy("thought");
+        applyPolicyBoundary(policy);
         const turnCompleted = state.turnSummaries.some(
           (summary) => summary.turnId === msg.turnId,
         );
@@ -572,7 +593,7 @@ export function buildTranscript(
         // the finalized summary to transcript so partial planning titles do not interrupt history.
         if (status === "in_progress") continue;
         for (const [index, block] of thoughtDisplayBlocks(textOf(msg.content)).entries()) {
-          appendThought({
+          const candidate: CompactBlockCandidate = {
             mergeKey: thoughtGroupKey(msg),
             family: "thought",
             block: {
@@ -584,12 +605,18 @@ export function buildTranscript(
               title: block.title,
               content: block.content ? { type: "text", text: block.content } : undefined,
             },
-          });
+          };
+          if (policy.grade === "background" && policy.detail === "summary") {
+            appendThought(candidate);
+          } else {
+            flushThoughts();
+            appendPolicyBlock(candidate.block, policy);
+          }
         }
         continue;
       }
       flushThoughts();
-      closeToolGroup();
+      applyPolicyBoundary(contentViewPolicy("message"));
       const author =
         msg.role === "user"
           ? msg.source?.type === "plugin"
@@ -618,7 +645,6 @@ export function buildTranscript(
     }
     if (entry.type === "harness_invocation") {
       flushThoughts();
-      closeToolGroup();
       const request = state.harnessInvocations.get(entry.id);
       if (!request) continue;
       if (
@@ -641,6 +667,10 @@ export function buildTranscript(
               : request.phase === "running" || request.phase === "uncertain"
                 ? "in_progress"
                 : "pending";
+      const policy = contentViewPolicy("task", {
+        failed: status === "failed" || status === "declined",
+      });
+      applyPolicyBoundary(policy);
       const details = [
         request.pluginInstanceId ? `Requested by ${request.pluginInstanceId}` : undefined,
         request.harnessTargetId ? `Target: ${request.harnessTargetId}` : undefined,
@@ -649,7 +679,7 @@ export function buildTranscript(
         request.failure?.detail,
         request.phase === "uncertain" ? "Delivery outcome is uncertain" : undefined,
       ].filter((value): value is string => Boolean(value));
-      appendStandaloneBlock({
+      appendPolicyBlock({
         type: "block",
         id: `harness-invocation:${request.invocationId}`,
         kind: "task",
@@ -659,25 +689,27 @@ export function buildTranscript(
         ...(details.length > 0
           ? { content: { type: "lines", lines: details } }
           : {}),
-      });
+      }, policy);
       continue;
     }
     if (entry.type === "approval_review") {
       flushThoughts();
-      closeToolGroup();
+      const policy = contentViewPolicy("interaction");
+      applyPolicyBoundary(policy);
       const review = state.approvalReviews.get(entry.id);
       if (review) {
-        appendStandaloneBlock(approvalReviewTranscriptItem(review));
+        appendPolicyBlock(approvalReviewTranscriptItem(review), policy);
       }
       continue;
     }
     if (entry.type === "proposed_plan") {
       flushThoughts();
-      closeToolGroup();
+      const policy = contentViewPolicy("plan");
+      applyPolicyBoundary(policy);
       const proposal = state.proposedPlans.get(entry.id);
       if (!proposal) continue;
       if (hidden(proposal.laneId)) continue;
-      appendStandaloneBlock({
+      appendPolicyBlock({
         type: "block",
         id: entry.id,
         kind: "proposed_plan",
@@ -687,22 +719,23 @@ export function buildTranscript(
           ? "Proposed plan · implementation started"
           : "Proposed plan",
         content: { type: "text", text: proposal.content },
-      });
+      }, policy);
       continue;
     }
     if (entry.type === "task") {
       flushThoughts();
-      closeToolGroup();
       const task = state.tasks.get(entry.id);
       if (!task) continue;
       if (hidden(task.laneId)) continue;
       if (task.status === "in_progress") continue;
       const status = task.status === "stopped" ? "failed" : task.status;
+      const policy = contentViewPolicy("task", { failed: status === "failed" });
+      applyPolicyBoundary(policy);
       const details = [
         task.summary,
         task.lastToolName ? `Last tool: ${task.lastToolName}` : undefined,
       ].filter((value): value is string => Boolean(value));
-      appendStandaloneBlock({
+      appendPolicyBlock({
         type: "block",
         id: entry.id,
         kind: "task",
@@ -712,11 +745,12 @@ export function buildTranscript(
         ...(details.length
           ? { content: { type: "lines", lines: details } }
           : {}),
-      });
+      }, policy);
       continue;
     }
     flushThoughts();
-    closeToolGroup();
+    const policy = contentViewPolicy("plan");
+    applyPolicyBoundary(policy);
     if (entry.type !== "plan") continue;
     const plan = state.plans.get(entry.id);
     if (!plan || plan.planId === pinnedPlanId) continue;
@@ -734,14 +768,14 @@ export function buildTranscript(
             )
           ? "in_progress"
           : "pending";
-    appendStandaloneBlock({
+    appendPolicyBlock({
       type: "block",
       id: entry.id,
       kind: "plan",
       title: "Plan",
       status,
       content: { type: "plan", entries },
-    });
+    }, policy);
   }
   flushThoughts();
   return items;
