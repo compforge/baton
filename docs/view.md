@@ -98,9 +98,11 @@ input、关键结论、执行过的 command 和改动过的文件。原始事件
 
 ### 4.1 投影规则
 
-Transcript 先把每条事实投影为原子 block，再由 Baton View 计算 `ViewPolicy`。策略只存在于 View，
-不写入 Event 或 Session：`family` 选择摘要和兼容分组，`grade` 表达默认信息价值，`detail` 决定摘要、
-预览或全文，`breaksGroup` 保留关键动作前后的顺序边界。
+View 投影遵循一条主链路：**语义事实 → `ViewPolicy` 决策 → Transcript 展示结构 → chat-tui 渲染**。
+Baton 先从 `SessionState` 取得 tool、message、thought、notice 等语义事实，再计算策略并投影为
+`TranscriptItem`（message / block / group）。策略只存在于 View，不写入 Event 或 Session：`family`
+选择摘要和兼容分组，`grade` 表达默认信息价值，`detail` 决定摘要、预览或全文，`breaksGroup` 保留
+关键动作前后的顺序边界。
 
 ```ts
 type ViewGrade = "background" | "normal" | "important";
