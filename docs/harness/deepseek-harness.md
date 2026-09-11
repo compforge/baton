@@ -110,7 +110,8 @@ SDK 会同时转发已发现子 agent 的 `session.event`。Adapter 不把子 ag
 
 ## 6. 代码与测试锚点
 
-- `src/harness/dsh/adapter.ts` — SDK lifecycle、session resume、事件 mapping 与 coarse cancel
+- `src/harness/dsh/adapter.ts` — SDK lifecycle、session resume、事件分发与 coarse cancel
+- `src/harness/dsh/mapping.ts` — DSH wire 值、usage、工具 effect 与 resume state 映射
 - `src/harness/dsh/activity.ts` — 原生 inbox 消息、消费回执与单 Turn 活动边界
 - `tests/dsh-queue.test.ts` — 官方 SDK + 子进程的追加、取消、重连和 Controller Queue 集成
 - `src/harness/dsh/config.ts`、`prompt.ts` — 原生启动选项与文本/图片输入

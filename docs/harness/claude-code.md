@@ -132,7 +132,10 @@ Claude Agent SDK 与 Claude Code 会快速演进，Baton 持续升级 SDK，但�
 
 ## 8. 代码与测试锚点
 
-- `src/harness/claude/adapter.ts` — streaming query、Interaction、Capability 与 mapping
+- `src/harness/claude/adapter.ts` — Session、streaming query 与 Turn 编排
+- `src/harness/claude/runtime.ts` — SDK runtime 状态、模型目录、prompt channel 与 context 统计
+- `src/harness/claude/events.ts` — SDK 消息、Interaction 与 Baton Event 映射
+- `src/harness/claude/mapping.ts` — 工具、diff、任务与 durable message 的纯映射
 - `src/harness/claude/settings.ts` — Claude settings、Plugin 与 MCP 加载
 - `src/harness/claude/native-session.ts` — 只读历史 Inspector
 - `tests/claude-send-turn.test.ts`、`tests/claude-turn-race.test.ts` — submit/steer 与终态竞速
