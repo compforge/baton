@@ -230,14 +230,22 @@ export interface ModelOption {
   description?: string;
 }
 
+/** Adapter 对当前 model selection 的只读事实；不意味着支持 `/model` 修改。 */
+export interface ModelReadable {
+  currentModel(ref: HarnessSessionHandle): string | null;
+}
+
+export function isModelReadable(adapter: HarnessAdapter): adapter is HarnessAdapter & ModelReadable {
+  return typeof (adapter as Partial<ModelReadable>).currentModel === "function";
+}
+
 /**
  * 可选模型能力。setModel 只影响后续 prompt，不得改变已经在运行的 turn，
  * 让 `/model` 在 harness busy 时也有稳定、跨 harness 一致的语义。
  */
-export interface ModelConfigurable {
+export interface ModelConfigurable extends ModelReadable {
   listModels(ref: HarnessSessionHandle): Promise<ModelOption[]>;
   setModel(ref: HarnessSessionHandle, modelId: string | null): Promise<void>;
-  currentModel(ref: HarnessSessionHandle): string | null;
 }
 
 export function isModelConfigurable(adapter: HarnessAdapter): adapter is HarnessAdapter & ModelConfigurable {
@@ -245,7 +253,7 @@ export function isModelConfigurable(adapter: HarnessAdapter): adapter is Harness
   return (
     typeof candidate.listModels === "function" &&
     typeof candidate.setModel === "function" &&
-    typeof candidate.currentModel === "function"
+    isModelReadable(adapter)
   );
 }
 

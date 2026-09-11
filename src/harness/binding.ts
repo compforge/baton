@@ -11,6 +11,7 @@ import {
   type HarnessSessionHandle,
   type HarnessSessionIdentity,
   type ModelOption,
+  isModelReadable,
 } from "./adapter.ts";
 import { newId } from "../event/ids.ts";
 import type { ConfigValue, SessionConfigOption } from "../event/index.ts";
@@ -140,7 +141,7 @@ export class HarnessBinding {
   }
 
   currentModel(): string | null {
-    if (!this.ref || !isModelConfigurable(this.adapter)) {
+    if (!this.ref || !isModelReadable(this.adapter)) {
       return this.preferredModel() ?? null;
     }
     return this.adapter.currentModel(this.ref);
@@ -277,7 +278,7 @@ export class HarnessBinding {
       const configAdapter = isSessionConfigurable(this.adapter) ? this.adapter : undefined;
       const modelAdapter = isModelConfigurable(this.adapter) ? this.adapter : undefined;
       const effortAdapter = isEffortConfigurable(this.adapter) ? this.adapter : undefined;
-      const model = configAdapter || modelAdapter ? this.preferredModel() : undefined;
+      let model = configAdapter || modelAdapter ? this.preferredModel() : undefined;
       const effort = configAdapter || effortAdapter ? this.preferredEffort() : undefined;
       const mode = configAdapter ? this.preferredMode() : undefined;
       this.session.setHarnessTarget(this.target.id, {
@@ -287,7 +288,7 @@ export class HarnessBinding {
         ...(effort === undefined ? {} : { effort }),
         ...(mode === undefined ? {} : { mode }),
       });
-      const launchSnapshot = createHarnessLaunchSnapshot({
+      let launchSnapshot = createHarnessLaunchSnapshot({
         target: this.target,
         harnessSessionKey: this.adapter.harness,
         cwd: this.cwd,
@@ -322,6 +323,23 @@ export class HarnessBinding {
       if (model) {
         if (configAdapter) await configAdapter.setConfig(this.ref, "model", model);
         else await modelAdapter?.setModel(this.ref, model);
+      }
+      if (isModelReadable(this.adapter)) {
+        model = this.adapter.currentModel(this.ref) ?? undefined;
+        this.session.setHarnessTarget(this.target.id, {
+          harnessTargetId: this.target.id,
+          harness: this.target.harness,
+          ...(model === undefined ? {} : { model }),
+          ...(effort === undefined ? {} : { effort }),
+          ...(mode === undefined ? {} : { mode }),
+        });
+        launchSnapshot = createHarnessLaunchSnapshot({
+          target: this.target,
+          harnessSessionKey: this.adapter.harness,
+          cwd: this.cwd,
+          model,
+          effort,
+        });
       }
       if (effort) {
         if (configAdapter) await configAdapter.setConfig(this.ref, "effort", effort);

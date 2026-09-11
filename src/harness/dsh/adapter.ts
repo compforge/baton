@@ -125,6 +125,10 @@ export class DshAdapter implements HarnessAdapter {
 
   constructor(private readonly options: DshAdapterOptions = {}) {}
 
+  currentModel(_ref: HarnessSessionHandle): string | null {
+    return this.options.model ?? null;
+  }
+
   async open(
     opts: OpenOptions,
     sink: HarnessEventSink,

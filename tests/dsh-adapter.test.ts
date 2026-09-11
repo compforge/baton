@@ -242,6 +242,7 @@ describe("DshAdapter", () => {
       (binding) => bindings.push(binding),
     );
     expect(ref).toMatchObject({ harness: "deepseek-harness", resumed: false });
+    expect(adapter.currentModel(ref)).toBe("prod");
     expect(client.starts).toBe(1);
     expect(options[0]).toMatchObject({
       dshBin: "/tmp/dsh/lib/bin.js",
