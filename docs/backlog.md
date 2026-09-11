@@ -40,6 +40,9 @@ Harness 或其子进程不能假设自己能直接访问宿主桌面。Baton 包
 输出浏览器认证 URL 并调用系统 `open`，也可能无法连接 macOS LaunchServices；远程或 headless
 Harness 下更不存在可直接打开的本地图形环境。
 
+用户在本机 TUI 中明确选择并打开可见的 Board URL 属于 View 操作，可直接调用宿主能力；这里暂缓的
+是 Harness 主动请求打开 URL 的跨进程协议及其确认、等待和恢复语义。
+
 后续把打开外部 URL 建模为显式的 `open-url` Interaction：请求方只贡献 URL、用途和等待语义，
 Baton 负责持久化并向用户展示，由宿主能力在用户确认后打开并回传明确结果。Harness 不直接
 调用桌面命令，也不能把“子进程成功启动”当作用户已完成认证；宿主无法打开时仍保留可复制的

@@ -533,6 +533,47 @@ describe("BatonChatProtocol status command", () => {
 });
 
 describe("BatonChatProtocol Board", () => {
+  test("delegates an explicit link-open intent to the desktop host", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-open-url-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const openedUrls: string[] = [];
+      let openError: Error | undefined;
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+        {
+          openPlugins: () => undefined,
+          openUrl: (url) => {
+            if (openError) throw openError;
+            openedUrls.push(url);
+          },
+        },
+      );
+
+      await protocol.openUrl("https://example.com/pulls/42");
+
+      expect(openedUrls).toEqual(["https://example.com/pulls/42"]);
+      expect(protocol.stateStore.getState("footer").toast).toEqual({
+        text: "Opened link in browser",
+        tone: "success",
+      });
+
+      openError = new Error("desktop unavailable");
+      await protocol.openUrl("https://example.com/pulls/43");
+      expect(protocol.stateStore.getState("footer").toast).toEqual({
+        text: "Could not open link: desktop unavailable",
+        tone: "error",
+      });
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("maps Board items to the optional sidecar and hides it when empty", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-board-"));
     try {

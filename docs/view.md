@@ -82,6 +82,7 @@ Plugin 可以通过 `view.input` 和 `view.output` Hook 观察两个边界：前
 |---|---|
 | composer 草稿、焦点、键位、终端布局 | chat-tui / 具体 View surface |
 | 系统/终端剪贴板读取、写入、格式协商与 fallback | OpenTUI `ClipboardService`；Baton 只解释 representation |
+| Sidecar 链接选择与打开 intent | chat-tui；Baton View 校验 URL 并调用本机桌面宿主 |
 | intent 与 `ViewInput`、Projection 与 `ChatState` 的映射 | Baton View Adapter |
 | ViewOutput publication、Queue、Turn、Interaction 与 Event 生命周期 | Baton Core 对应 domain |
 | Harness 原生协议和流式输出归一 | Harness Adapter |

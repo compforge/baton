@@ -24,6 +24,7 @@ import { ensureConfigFile, loadConfig } from "../../config/config.ts";
 import { openBatonSession, type OpenBatonSessionResult } from "../../session/open.ts";
 import { SessionStore } from "../../store/store.ts";
 import { BatonTui, type BatonTuiHandle } from "./app.tsx";
+import { openExternalUrl } from "./external-url.ts";
 import { BatonChatProtocol } from "./protocol/index.ts";
 import { SessionPickerScreen } from "./session-picker.tsx";
 import { batonThemeFor, themeModeForBackground } from "./theme.ts";
@@ -143,6 +144,7 @@ function startChat(opened: OpenBatonSessionResult): void {
   const tui = createRef<BatonTuiHandle>();
   const protocol = new BatonChatProtocol(store, config, opened, quit, {
     openPlugins: () => tui.current?.openPlugins(),
+    openUrl: openExternalUrl,
   });
   activeProtocol = protocol;
   root.render(

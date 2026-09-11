@@ -136,6 +136,7 @@ function initialHarnessTargetId(
 
 export interface BatonNavigation {
   openPlugins(): void;
+  openUrl?(url: string): void | Promise<void>;
 }
 
 interface PendingPicker {
@@ -816,6 +817,22 @@ export class BatonChatProtocol implements ChatProtocol {
   dismissSidecar(): void {
     this.boardMode = "hidden";
     this.boardChanged();
+  }
+
+  async openUrl(url: string): Promise<void> {
+    try {
+      if (!this.navigation?.openUrl) {
+        throw new Error("This Baton host cannot open external links");
+      }
+      await this.navigation.openUrl(url);
+      this.toast = { text: "Opened link in browser", tone: "success" };
+    } catch (error) {
+      this.toast = {
+        text: `Could not open link: ${error instanceof Error ? error.message : String(error)}`,
+        tone: "error",
+      };
+    }
+    this.changed();
   }
 
   /** 只释放 Baton 运行时；信号路径用它避免向已经断开的终端继续渲染。 */
