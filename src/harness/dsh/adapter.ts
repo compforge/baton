@@ -306,6 +306,18 @@ export class DshAdapter implements HarnessAdapter {
         return { accepted: false, effective: "rejected", reason: "DSH turn is ending or does not match" };
       }
       runtime.activity!.submit(input.messageId, blocks, true);
+      // 原生接受只代表 Baton 承担投递责任；ack 之后是否 applied 由
+      // input_delivery_update 决定。Core 只为 Queue 驱动的新 Turn 落 user_message，
+      // same-turn steer 必须由 Adapter 补 delivery:"steer" 的用户消息，
+      // 否则 applied 后它既离开 Queue 又无从进入 Transcript。
+      this.emit(runtime, active, {
+        kind: "user_message",
+        payload: {
+          messageId: input.messageId,
+          content: input.blocks,
+          delivery: "steer",
+        },
+      });
       return { accepted: true, effective: "steer" };
     }
     const session = await this.ensureSession(runtime);
