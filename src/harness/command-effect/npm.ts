@@ -1,8 +1,8 @@
 import type { ReadOnlyCommandRule } from "./shell.ts";
 
-const READ_ONLY_COMMANDS = new Set(["view", "whoami"]);
+const READ_ONLY_COMMANDS = new Set(["list", "ls", "view", "whoami"]);
 
-/** Read semantics for npm registry queries used by release preparation. */
+/** Read semantics for npm package-tree and registry queries. */
 export const npmCommandIsReadOnly: ReadOnlyCommandRule = (args) => {
   let index = 0;
   const cacheOption = args[index];
