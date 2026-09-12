@@ -141,9 +141,9 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   );
 });
 
-test("Claude result applies a steer folded into the active turn", async () => {
+test("Claude assistant and result correlation apply a folded steer exactly once", async () => {
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
-  let releaseResult: ((message: unknown) => void) | undefined;
+  let releaseMessages: ((messages: unknown[]) => void) | undefined;
   let finishOutput: (() => void) | undefined;
   const outputFinished = new Promise<void>((resolve) => {
     finishOutput = resolve;
@@ -151,11 +151,11 @@ test("Claude result applies a steer folded into the active turn", async () => {
   const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
     if (typeof params.prompt === "string") throw new Error("expected streaming Claude prompt");
     promptIterator = params.prompt[Symbol.asyncIterator]();
-    const result = new Promise<unknown>((resolve) => {
-      releaseResult = resolve;
+    const messages = new Promise<unknown[]>((resolve) => {
+      releaseMessages = resolve;
     });
     const output = (async function* () {
-      yield (await result) as never;
+      for (const message of await messages) yield message as never;
       finishOutput?.();
     })();
     return Object.assign(output, {
@@ -182,18 +182,26 @@ test("Claude result applies a steer folded into the active turn", async () => {
   });
   const folded = (await promptIterator?.next())?.value as SDKUserMessage;
 
-  releaseResult?.({
-    type: "result",
-    subtype: "success",
-    user_message_uuid: folded.uuid,
-    usage: {
-      input_tokens: 1,
-      output_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
+  releaseMessages?.([
+    {
+      type: "assistant",
+      message: { content: [] },
+      parent_tool_use_id: null,
+      user_message_uuid: folded.uuid,
     },
-    modelUsage: {},
-  });
+    {
+      type: "result",
+      subtype: "success",
+      user_message_uuid: folded.uuid,
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+      modelUsage: {},
+    },
+  ]);
   await outputFinished;
 
   const appliedIndex = events.findIndex(
@@ -205,6 +213,12 @@ test("Claude result applies a steer folded into the active turn", async () => {
   );
   expect(appliedIndex).toBeGreaterThan(-1);
   expect(idleIndex).toBeGreaterThan(appliedIndex);
+  expect(
+    events.filter(
+      (event) => event.kind === "input_delivery_update" && event.payload.messageId === "m_folded" &&
+        event.payload.state === "applied",
+    ),
+  ).toHaveLength(1);
   expect(events).not.toContainEqual(
     expect.objectContaining({
       kind: "input_delivery_update",

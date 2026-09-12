@@ -140,7 +140,7 @@ describe("Claude model capability", () => {
     });
   });
 
-  test("maps Plan mode to Claude permissionMode", async () => {
+  test("maps Plan mode and keeps canUseTool as the permission entry", async () => {
     let queryOptions: Parameters<NonNullable<ClaudeAdapterOptions["queryFactory"]>>[0]["options"];
     const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
       queryOptions = params.options;
@@ -166,6 +166,7 @@ describe("Claude model capability", () => {
     await Bun.sleep(0);
 
     expect(queryOptions?.permissionMode).toBe("plan");
+    expect(queryOptions?.canUseTool).toBeFunction();
   });
 
   test("omits Claude permissionMode after returning to Default mode", async () => {
