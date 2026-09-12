@@ -1859,7 +1859,7 @@ describe("tool call grouping", () => {
     expect(toolViewPolicy(tool("tc_edit", "edit"))).toEqual({
       family: "change",
       grade: "important",
-      detail: "summary",
+      detail: "preview",
       breaksGroup: true,
     });
     expect(toolViewPolicy(tool("tc_failed", "read", "failed"))).toEqual({
@@ -2027,8 +2027,6 @@ describe("tool call grouping", () => {
         {
           type: "group",
           id: "group:change",
-          collapsedByDefault: true,
-          summary: { title: "Edit · change.ts · 1 line" },
           members: [{ id: "change" }],
         },
         {

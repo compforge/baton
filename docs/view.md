@@ -126,7 +126,7 @@ interface ViewPolicy {
 | Reasoning / thought | 流式阶段只在 Activity 显示 `Working`；完成后才把非空有效摘要写入 Transcript；`<!-- -->` 等空占位隐藏 | Session / Ledger 保留 Harness 上报的完整 reasoning；`/thoughts` 控制历史摘要是否可见 |
 | 只读探索 | `explore / background / summary`；read/search/fetch 和已证明只读的 command 合并成 `Explored N actions` | group members 保留逐项动作、路径、command 和 output |
 | 其它成功命令 | 无法判断 effect 时仍按 `command / background / summary` 稳定降级；同一执行片段压成 `Ran N commands` | group members 保留逐条 command 和 output |
-| 写文件、编辑与 diff | `change / important / summary`；保留一行文件路径、操作和统计，并打断过程组 | members 中保留完整 diff / output |
+| 写文件、编辑与 diff | `change / important / preview`；展示有限行数的 diff 预览，并打断过程组 | 展开后显示完整 diff / output |
 | 失败与拒绝 | 不藏在成功组里，默认直接可见并保留诊断 | 原始 tool/result 事实 |
 | Plan | 活跃时放 Plan Pin，避免和历史重复；结束后按结果保留一次 | 原始 `plan_update` / `plan_remove` 事实 |
 | queued / steer | 未执行、正在 Adapter 投递或未 applied 时只在 Queue；applied 后才进入 Transcript | Input、Attempt 与 delivery receipt |
