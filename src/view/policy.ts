@@ -74,7 +74,7 @@ export function toolViewPolicy(tc: ToolCallState): ViewPolicy {
     return { family, grade: "important", detail: "preview", breaksGroup: true };
   }
   if (family === "change") {
-    return { family, grade: "important", detail: "summary", breaksGroup: true };
+    return { family, grade: "important", detail: "preview", breaksGroup: true };
   }
   if (family === "explore") {
     return { family, grade: "background", detail: "summary", breaksGroup: false };
