@@ -67,6 +67,12 @@ Turn 时可能没有 lifecycle frame，此时 thinking progress、首个 reply �
 UUID 幂等。CLI 可能让 queued command 跨过当前 Turn 才启动，回执允许迟到于 Turn 收口，只补
 `deliveryOutcome`，不回迁 status。
 
+`/queue` 可对仍在原生队列中的单条 steer 发起取消。Controller 只传 Baton `messageId`，Adapter
+用进程内 `pendingOfferUuids` 找回 Claude UUID 并调用 SDK `cancelAsyncMessage(uuid)`；返回 false
+表示该消息已经出队，不能冒充取消成功。成功后仍保留关联，直到
+`command_lifecycle.cancelled` 映射成 `input_delivery_update(failed)`，因此 UUID 不进入 Core/UI，
+取消请求也不会提前伪造 durable 终态。
+
 Harness 自行开始的 Turn 没有对应 Queue item。后台消息在上一 Queue-driven Turn 结束后到达时，
 Adapter 铸造新的普通 Turn；下一条 ViewInput 到达前会先明确收口该 Turn，避免两类消息共用
 `currentTurn` 发生归属混淆。

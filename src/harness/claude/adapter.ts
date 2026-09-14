@@ -91,6 +91,14 @@ export interface ClaudeAdapterOptions {
   queryFactory?: typeof query;
 }
 
+/**
+ * 0.3.270 runtime exposes this control method, but its Query declaration has not caught up yet.
+ * Keep the temporary narrowing at the Claude boundary so Core never learns provider UUIDs.
+ */
+type AsyncMessageCancellableQuery = Query & {
+  cancelAsyncMessage(messageUuid: string): Promise<boolean>;
+};
+
 export class ClaudeAdapter implements HarnessAdapter {
   readonly harness = "claude-code";
   // 可选能力接口落地并验证后才声明对应 marker——契约测试钉住
@@ -101,6 +109,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     config: { supported: true },
     textgen: { supported: true },
     tasks: { stop: { supported: true } },
+    inputs: { cancel: { supported: true } },
   };
   // Claude 原生队列跨 Turn 存活（command_lifecycle/result UUID 回执迟到也会到），
   // 投递进度由 input_delivery_update 显式报告。
@@ -679,6 +688,21 @@ export class ClaudeAdapter implements HarnessAdapter {
       throw new Error(`Claude task is no longer attached to a live query: ${taskId}`);
     }
     await rt.activeQuery.stopTask(taskId);
+  }
+
+  async cancelInput(ref: HarnessSessionHandle, messageId: string): Promise<boolean> {
+    const rt = this.mustSession(ref);
+    const query = rt.activeQuery as Partial<AsyncMessageCancellableQuery> | undefined;
+    if (!query) return false;
+    const pending = [...(rt.pendingOfferUuids?.entries() ?? [])].find(
+      ([, offer]) => offer.messageId === messageId,
+    );
+    if (!pending) return false;
+    if (typeof query.cancelAsyncMessage !== "function") {
+      throw new Error("Claude SDK query does not support cancelling individual inputs");
+    }
+    // Keep the correlation until command_lifecycle(cancelled) emits the durable failed outcome.
+    return query.cancelAsyncMessage(pending[0]);
   }
 
   async close(ref: HarnessSessionHandle): Promise<void> {

@@ -329,7 +329,7 @@ describe("/queue manager overlay", () => {
       ]);
       await protocol.command("queue", "");
       const queue = protocol.stateStore.getState("queue")!;
-      expect(queue.manager?.title).toBe("Queued follow-ups");
+      expect(queue.manager?.title).toBe("Input queue");
       expect(queue.items).toEqual([
         {
           id: "m_a",

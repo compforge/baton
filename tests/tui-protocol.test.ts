@@ -831,6 +831,41 @@ describe("BatonChatProtocol streaming State", () => {
 });
 
 describe("BatonChatProtocol harness commands", () => {
+  test("Queue cancel intent targets one pending Harness input", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-input-cancel-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const cancelled: string[] = [];
+      const controller = (protocol as unknown as {
+        controller: {
+          canCancelInput(messageId: string): boolean;
+          cancelInput(messageId: string): Promise<boolean>;
+        };
+      }).controller;
+      controller.canCancelInput = (messageId) => messageId === "m_steer";
+      controller.cancelInput = async (messageId) => {
+        cancelled.push(messageId);
+        return true;
+      };
+      await expect(protocol.resolveQueue({ kind: "cancel", itemId: "m_steer" }))
+        .resolves.toEqual({ kind: "accepted" });
+      expect(cancelled).toEqual(["m_steer"]);
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
+        "Cancelled pending input",
+      );
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("Parallel Tasks action records typed input and reports stop admission", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-tasks-"));
     try {

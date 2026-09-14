@@ -265,6 +265,11 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 后续仍以 `input_delivery_update` 回执为准。
 `close` 释放 Adapter-owned 进程、query、订阅和句柄；若仍有已接受 Turn，必须先报告或合成终态。
 
+单条未决输入取消不复用 Turn `cancel`。Adapter 可声明 `inputs.cancel` 并实现
+`cancelInput(messageId)`：Core 只传稳定 Baton messageId，Adapter 在自身 live binding 内映射原生
+identity。返回 `true` 只表示原生队列接受移除，Input 终态仍由 `input_delivery_update` 报告；返回
+`false` 表示输入已越过可取消边界，Core 保留其未决事实。
+
 ## 5. Capability
 
 公共设计采用“小核心 + 可选能力”。descriptor 用 `{ supported: true }` marker，行为由对应接口
@@ -280,6 +285,7 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 | approval routing | 报告实际审批由用户还是 delegated reviewer 处理 |
 | textgen | 无状态的一次性结构化生成；不创建 HarnessSession/Turn，供会话标题等旁路工具降级调用 |
 | task stop | 通过产生 Task 的原生 HarnessSession 停止单个后台任务；终态仍由 `task_update` 报告 |
+| input cancel | 通过接受 Input 的原生 HarnessSession 取消单条未应用输入；终态仍由 `input_delivery_update` 报告 |
 | interactions | permission、question、elicitation 等原生交互 |
 | commands | 动态 Harness command 发现与执行 |
 

@@ -314,6 +314,9 @@ Turn，因此 Turn 收口不能把
 未决 steer 自动当成 applied，也不强迁它的 status：它留在 Queue（`steering` 且无 outcome），
 直到 Harness 报告应用或失败。queued follow-up 与未决 steer 共用 Queue surface，但前者等待
 Controller 开启新 Turn，后者等待 Harness 原生投递边界，两者不能互相冒充。
+支持 `inputs.cancel` 的 Adapter 允许 `/queue` 对单条未决 steer 发起取消。该动作按 Input 的
+`messageId` 与 `Lane × HarnessTarget` live binding 定向，不能退化成 Turn interrupt；Harness 返回
+false 时说明输入已离开原生队列，Baton 保留它并继续等待真实 applied/failed 回执。
 
 未决 / `failed` / `uncertain` 的 steer 同样不进入 TurnSummary 和后续 catch-up Context。延迟消息在
 `started` 时开启新的 Turn，由该 Turn 承接实际 `applied` 的用户正文，避免尚未执行或

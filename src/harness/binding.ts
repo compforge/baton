@@ -3,6 +3,7 @@ import {
   isEffortConfigurable,
   isModelConfigurable,
   isSessionConfigurable,
+  isInputCancellable,
   isTaskStoppable,
   type ApprovalRoute,
   type EffortOption,
@@ -219,6 +220,25 @@ export class HarnessBinding {
       throw new Error(`${this.target.id} does not support stopping individual tasks`);
     }
     await this.adapter.stopTask(this.ref, taskId);
+  }
+
+  canCancelInput(): boolean {
+    return Boolean(
+      this.ref &&
+        this.adapter.capabilities.inputs?.cancel?.supported &&
+        isInputCancellable(this.adapter),
+    );
+  }
+
+  async cancelInput(messageId: string): Promise<boolean> {
+    if (
+      !this.ref ||
+      !this.adapter.capabilities.inputs?.cancel?.supported ||
+      !isInputCancellable(this.adapter)
+    ) {
+      throw new Error(`${this.target.id} does not support cancelling individual inputs`);
+    }
+    return this.adapter.cancelInput(this.ref, messageId);
   }
 
   async getConfig(): Promise<SessionConfigOption[]> {

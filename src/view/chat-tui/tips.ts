@@ -3,7 +3,7 @@
 // 模块级常量，投影热路径只引用不分配；文案跟随现有 UI 的英文短句风格。
 
 export const ACTIVITY_TIPS: string[] = [
-  "/queue: recall or delete any queued follow-up",
+  "/queue: manage queued and Harness-pending inputs",
   "/parallel: inspect and manage parallel work",
   "/thoughts: toggle agent reasoning in the timeline",
   "ctrl+shift+y: copy the latest agent reply",

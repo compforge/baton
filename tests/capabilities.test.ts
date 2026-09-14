@@ -36,6 +36,7 @@ const CAPABILITY_CONTRACT: Record<string, string[]> = {
   approvalRouting: ["approvalRoute"],
   textgen: ["generateStructured"],
   "tasks.stop": ["stopTask"],
+  "inputs.cancel": ["cancelInput"],
   "interactions.permission": ["respond"],
   "interactions.question": ["respond"],
   "interactions.elicitation": ["respond"],

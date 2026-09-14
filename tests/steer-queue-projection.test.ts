@@ -151,6 +151,7 @@ describe("steer queue projection", () => {
       currentMode: () => "default",
       approvalRoute: () => null,
       preservesPendingSteers: () => true,
+      canCancelInput: (messageId: string) => messageId === "m_steer",
       isBusy: true,
       harnessQueueLength: 0,
     } as unknown as Controller;
@@ -160,6 +161,7 @@ describe("steer queue projection", () => {
       id: "m_steer",
       text: "prefer approach B",
       tag: "codex · current turn",
+      actions: ["cancel"],
     }]);
     expect(
       pending.timeline.items.some((item) => item.type === "message" && item.role === "user"),
@@ -183,6 +185,7 @@ describe("steer queue projection", () => {
       id: "m_steer",
       text: "prefer approach B",
       tag: "codex · native queue",
+      actions: ["cancel"],
     }]);
     expect(
       nativeQueued.timeline.items.some(

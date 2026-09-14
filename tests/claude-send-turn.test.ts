@@ -31,6 +31,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   const modelUpdates: Array<string | undefined> = [];
   const stoppedTasks: string[] = [];
+  const cancelledMessageUuids: string[] = [];
   const perTaskStopDeclarations: Array<boolean | undefined> = [];
   const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
     queryCount++;
@@ -48,6 +49,10 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
       interrupt: async () => undefined,
       stopTask: async (taskId: string) => {
         stoppedTasks.push(taskId);
+      },
+      cancelAsyncMessage: async (messageUuid: string) => {
+        cancelledMessageUuids.push(messageUuid);
+        return true;
       },
       close: () => {
         closes++;
@@ -81,7 +86,8 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     }),
   ).toEqual({ accepted: true, effective: "steer" });
   expect(queryCount).toBe(1);
-  expect(promptText((await promptIterator?.next())?.value as SDKUserMessage)).toBe("actually run fifteen");
+  const steeredMessage = (await promptIterator?.next())?.value as SDKUserMessage;
+  expect(promptText(steeredMessage)).toBe("actually run fifteen");
   expect(events).toContainEqual(
     expect.objectContaining({
       kind: "user_message",
@@ -92,6 +98,9 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
       }),
     }),
   );
+  expect(await adapter.cancelInput(ref, "m_2")).toBe(true);
+  expect(cancelledMessageUuids).toEqual([steeredMessage.uuid as string]);
+  expect(await adapter.cancelInput(ref, "m_unknown")).toBe(false);
 
   expect(
     await adapter.sendTurn(ref, {

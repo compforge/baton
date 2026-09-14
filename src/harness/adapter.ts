@@ -148,6 +148,10 @@ export interface AdapterCapabilities {
     /** 声明后必须实现 TaskStoppable：按 Harness 原生 task id 停止单个后台任务。 */
     stop?: CapabilityMarker;
   };
+  inputs?: {
+    /** 声明后必须实现 InputCancellable：按 Baton messageId 取消单条 Harness 原生待处理输入。 */
+    cancel?: CapabilityMarker;
+  };
   interactions?: {
     permission?: CapabilityMarker;
     question?: CapabilityMarker;
@@ -411,6 +415,17 @@ export function isTaskStoppable(
   adapter: HarnessAdapter,
 ): adapter is HarnessAdapter & TaskStoppable {
   return typeof (adapter as Partial<TaskStoppable>).stopTask === "function";
+}
+
+/** 可取消一条 Harness 已接受但尚未应用的输入；false 表示它已越过原生可取消边界。 */
+export interface InputCancellable {
+  cancelInput(ref: HarnessSessionHandle, messageId: string): Promise<boolean>;
+}
+
+export function isInputCancellable(
+  adapter: HarnessAdapter,
+): adapter is HarnessAdapter & InputCancellable {
+  return typeof (adapter as Partial<InputCancellable>).cancelInput === "function";
 }
 
 /**
