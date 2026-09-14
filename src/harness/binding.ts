@@ -3,6 +3,7 @@ import {
   isEffortConfigurable,
   isModelConfigurable,
   isSessionConfigurable,
+  isTaskStoppable,
   type ApprovalRoute,
   type EffortOption,
   type HarnessEventSink,
@@ -199,6 +200,25 @@ export class HarnessBinding {
   approvalRoute(): ApprovalRoute | null {
     if (!this.ref || !isApprovalRoutable(this.adapter)) return null;
     return this.adapter.approvalRoute(this.ref);
+  }
+
+  canStopTask(): boolean {
+    return Boolean(
+      this.ref &&
+        this.adapter.capabilities.tasks?.stop?.supported &&
+        isTaskStoppable(this.adapter),
+    );
+  }
+
+  async stopTask(taskId: string): Promise<void> {
+    if (
+      !this.ref ||
+      !this.adapter.capabilities.tasks?.stop?.supported ||
+      !isTaskStoppable(this.adapter)
+    ) {
+      throw new Error(`${this.target.id} does not support stopping individual tasks`);
+    }
+    await this.adapter.stopTask(this.ref, taskId);
   }
 
   async getConfig(): Promise<SessionConfigOption[]> {

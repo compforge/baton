@@ -9,11 +9,13 @@ import {
 } from "react";
 
 import { PluginScreen } from "./plugins/screen.tsx";
+import { ParallelScreen } from "./parallel/screen.tsx";
 import { ClipboardPasteInput } from "./clipboard-paste.tsx";
 import { BatonChatProtocol } from "./protocol/index.ts";
 
 export interface BatonTuiHandle {
   openPlugins(): void;
+  openParallel(): void;
 }
 
 interface BatonTuiProps {
@@ -28,7 +30,7 @@ interface BatonTuiProps {
  */
 export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
   function BatonTui(props, ref): ReactNode {
-    const [screen, setScreen] = useState<"chat" | "plugins">("chat");
+    const [screen, setScreen] = useState<"chat" | "plugins" | "parallel">("chat");
     const [, setProtocolRevision] = useState(0);
 
     useEffect(
@@ -43,6 +45,9 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
       openPlugins() {
         setScreen("plugins");
       },
+      openParallel() {
+        setScreen("parallel");
+      },
     }));
 
     if (screen === "plugins") {
@@ -51,6 +56,16 @@ export const BatonTui = forwardRef<BatonTuiHandle, BatonTuiProps>(
           protocol={props.protocol}
           registry={props.protocol.marketplace}
           manager={props.protocol.pluginManager}
+          theme={props.theme}
+          onBack={() => setScreen("chat")}
+        />
+      );
+    }
+
+    if (screen === "parallel") {
+      return (
+        <ParallelScreen
+          protocol={props.protocol}
           theme={props.theme}
           onBack={() => setScreen("chat")}
         />

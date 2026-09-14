@@ -30,8 +30,11 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   let closes = 0;
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   const modelUpdates: Array<string | undefined> = [];
+  const stoppedTasks: string[] = [];
+  const perTaskStopDeclarations: Array<boolean | undefined> = [];
   const queryFactory: NonNullable<ClaudeAdapterOptions["queryFactory"]> = ((params) => {
     queryCount++;
+    perTaskStopDeclarations.push(params.options?.perTaskStopAffordance);
     if (typeof params.prompt === "string") throw new Error("expected streaming Claude prompt");
     promptIterator = params.prompt[Symbol.asyncIterator]();
     const output = (async function* () {
@@ -43,6 +46,9 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
         modelUpdates.push(model);
       },
       interrupt: async () => undefined,
+      stopTask: async (taskId: string) => {
+        stoppedTasks.push(taskId);
+      },
       close: () => {
         closes++;
       },
@@ -61,7 +67,11 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     }),
   ).toEqual({ accepted: true, effective: "new_turn" });
   expect(queryCount).toBe(1);
+  expect(perTaskStopDeclarations).toEqual([true]);
   expect(promptText((await promptIterator?.next())?.value as SDKUserMessage)).toBe("run five commands");
+
+  await adapter.stopTask(ref, "task-1");
+  expect(stoppedTasks).toEqual(["task-1"]);
 
   expect(
     await adapter.sendTurn(ref, {
@@ -126,6 +136,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
     }),
   ).toEqual({ accepted: true, effective: "new_turn" });
   expect(queryCount).toBe(2);
+  expect(perTaskStopDeclarations).toEqual([true, true]);
   expect(promptText((await promptIterator?.next())?.value as SDKUserMessage)).toBe("high effort turn");
 
   await adapter.close(ref);
@@ -141,7 +152,7 @@ test("Claude sendTurn reuses one streaming query and steers the active turn", as
   );
 });
 
-test("Claude assistant and result correlation apply a folded steer exactly once", async () => {
+test("Claude correlation applies every coalesced steer exactly once", async () => {
   let promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   let releaseMessages: ((messages: unknown[]) => void) | undefined;
   let finishOutput: (() => void) | undefined;
@@ -177,22 +188,32 @@ test("Claude assistant and result correlation apply a folded steer exactly once"
   await promptIterator?.next();
   await adapter.sendTurn(ref, {
     turnId: "t_active",
-    messageId: "m_folded",
+    messageId: "m_folded_1",
     blocks: [{ type: "text", text: "use this additional context" }],
   });
-  const folded = (await promptIterator?.next())?.value as SDKUserMessage;
+  const folded1 = (await promptIterator?.next())?.value as SDKUserMessage;
+  await adapter.sendTurn(ref, {
+    turnId: "t_active",
+    messageId: "m_folded_2",
+    blocks: [{ type: "text", text: "and this constraint" }],
+  });
+  const folded2 = (await promptIterator?.next())?.value as SDKUserMessage;
+  const correlation = {
+    user_message_uuid: folded2.uuid,
+    user_message_uuids: [folded1.uuid, folded2.uuid],
+  };
 
   releaseMessages?.([
     {
       type: "assistant",
       message: { content: [] },
       parent_tool_use_id: null,
-      user_message_uuid: folded.uuid,
+      ...correlation,
     },
     {
       type: "result",
       subtype: "success",
-      user_message_uuid: folded.uuid,
+      ...correlation,
       usage: {
         input_tokens: 1,
         output_tokens: 1,
@@ -204,25 +225,20 @@ test("Claude assistant and result correlation apply a folded steer exactly once"
   ]);
   await outputFinished;
 
-  const appliedIndex = events.findIndex(
-    (event) => event.kind === "input_delivery_update" && event.payload.messageId === "m_folded" &&
-      event.payload.state === "applied",
+  const appliedEvents = events.filter(
+    (event) => event.kind === "input_delivery_update" && event.payload.state === "applied",
   );
+  const appliedIndex = events.findIndex((event) => event === appliedEvents[0]);
   const idleIndex = events.findIndex(
     (event) => event.kind === "state_update" && event.payload.state === "idle",
   );
   expect(appliedIndex).toBeGreaterThan(-1);
   expect(idleIndex).toBeGreaterThan(appliedIndex);
-  expect(
-    events.filter(
-      (event) => event.kind === "input_delivery_update" && event.payload.messageId === "m_folded" &&
-        event.payload.state === "applied",
-    ),
-  ).toHaveLength(1);
+  expect(appliedEvents.map((event) => event.payload.messageId)).toEqual(["m_folded_1", "m_folded_2"]);
   expect(events).not.toContainEqual(
     expect.objectContaining({
       kind: "input_delivery_update",
-      payload: expect.objectContaining({ messageId: "m_folded", state: "failed" }),
+      payload: expect.objectContaining({ state: "failed" }),
     }),
   );
 

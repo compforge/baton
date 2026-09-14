@@ -4,7 +4,6 @@ import type {
   ChatState,
   InteractionResponse,
   InteractionView,
-  ParallelItem,
   PickerSearchView,
   QueueItemAction,
   RunStatusItem,
@@ -30,6 +29,7 @@ import { MAIN_LANE_ID } from "../../../lane.ts";
 import type { SessionHandle } from "../../../store/store.ts";
 import { composerTextOf } from "../prompt-images.ts";
 import { ACTIVITY_TIPS } from "../tips.ts";
+import { projectParallelItems } from "../parallel/model.ts";
 import {
   buildTranscript,
   normalizePlanStatus,
@@ -308,86 +308,6 @@ function contextWindowStatusText(
   return `context ${percent}%`;
 }
 
-const LIVE_ASYNC_PHASES = new Set(["queued", "running", "uncertain"]);
-
-/** Current async tasks and side Lanes → chat-tui's provider-neutral Parallel items. */
-export function parallelItems(
-  state: SessionState,
-): ParallelItem[] {
-  const items: ParallelItem[] = [];
-  const representedLanes = new Set<string>();
-
-  for (const invocation of state.harnessInvocations.values()) {
-    if (!invocation.newLane || !LIVE_ASYNC_PHASES.has(invocation.phase)) continue;
-    const turn = invocation.laneId
-      ? [...state.activeTurns.values()].find(
-          (candidate) => candidate.laneId === invocation.laneId,
-        )
-      : undefined;
-    if (invocation.laneId) representedLanes.add(invocation.laneId);
-    const author = harnessAuthor(
-      turn?.harness ?? invocation.harnessTargetId,
-    );
-    items.push({
-      id: `invocation:${invocation.invocationId}`,
-      icon: "↗",
-      name: author ?? invocation.harnessTargetId ?? "Harness",
-      description: invocation.title,
-      progress: invocation.pluginInstanceId
-        ? `${invocation.phase} · requested by ${invocation.pluginInstanceId}`
-        : invocation.phase,
-      ...(turn?.startedAt === undefined ? {} : { startedAt: turn.startedAt }),
-    });
-  }
-
-  const unrepresentedSideRuns = [...state.activeTurns.values()].filter(
-    (turn) =>
-      turn.laneId !== undefined &&
-      turn.laneId !== MAIN_LANE_ID &&
-      !representedLanes.has(turn.laneId),
-  );
-  for (const turn of unrepresentedSideRuns) {
-    const laneId = turn.laneId!;
-    const author = harnessAuthor(turn.harness);
-    representedLanes.add(laneId);
-    items.push({
-      id: `lane:${laneId}`,
-      icon: "↗",
-      name: author ?? "Harness",
-      description: `Lane ${laneId}`,
-      progress: turn.state === "requires_action" ? "waiting" : "running",
-      ...(turn.startedAt === undefined ? {} : { startedAt: turn.startedAt }),
-    });
-  }
-
-  for (const task of state.tasks.values()) {
-    if (task.status !== "in_progress" || task.backgrounded === false) continue;
-    const harness = harnessAuthor(task.harness);
-    const author = [harness, task.taskType].filter(Boolean).join("/");
-    const description = task.title ?? task.summary;
-    const detail = [
-      task.spawnDepth !== undefined && task.spawnDepth > 1
-        ? `depth ${task.spawnDepth}`
-        : undefined,
-      task.lastToolName,
-      task.summary === description ? undefined : task.summary,
-    ].filter((value): value is string => Boolean(value)).join(" · ");
-    items.push({
-      id: `task:${task.taskId}`,
-      icon: task.taskType ? "◇" : "•",
-      name: author || "Task",
-      description,
-      progress: detail ? `running · ${detail}` : "running",
-      ...(task.usage?.totalTokens === undefined
-        ? {}
-        : { tokens: task.usage.totalTokens }),
-      ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
-    });
-  }
-
-  return items;
-}
-
 export function projectBoardView(
   items: readonly BoardItem[],
   mode: BoardMode,
@@ -555,7 +475,10 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
           label: `${harnessConfigStatus} · idle`,
         };
   const runStatus = [withStatusDetails(runStatusItem)];
-  const parallel = parallelItems(state);
+  const parallel = projectParallelItems(
+    state,
+    (taskKey) => controller.canStopTask?.(taskKey) ?? false,
+  );
   const busy = activeTargetId !== undefined || mainRuns.length > 0;
 
   const selectedLaneId = MAIN_LANE_ID;

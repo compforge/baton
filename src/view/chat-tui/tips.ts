@@ -4,6 +4,7 @@
 
 export const ACTIVITY_TIPS: string[] = [
   "/queue: recall or delete any queued follow-up",
+  "/parallel: inspect and manage parallel work",
   "/thoughts: toggle agent reasoning in the timeline",
   "ctrl+shift+y: copy the latest agent reply",
   "ctrl+o: expand collapsed tool output",

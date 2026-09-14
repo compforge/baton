@@ -199,6 +199,14 @@ export class Channel implements ChannelHookGateway {
     return this.dispatch(input, apply);
   }
 
+  /** Route a Task action from any Human surface through its current Core owner. */
+  dispatchTaskAction<T>(
+    input: Extract<ViewInput, { kind: "task_action" }>,
+    apply: (record: ViewInputRecord) => Promise<T>,
+  ): Promise<DispatchReceipt<T>> {
+    return this.dispatch(input, apply);
+  }
+
   /** Route an Interaction answer to the requester that owns its continuation. */
   resolveInteraction(
     input: Extract<ViewInput, { kind: "interaction_response" }>,

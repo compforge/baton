@@ -15,6 +15,7 @@ import {
   laneTargetStateKey,
   reduceEvents,
 } from "../src/store/reduce.ts";
+import { harnessTaskKey } from "../src/harness/task.ts";
 
 let seq = 0;
 function ev<K extends EventKind>(
@@ -318,15 +319,50 @@ describe("state / permission / plan / usage", () => {
         summary: "Found it",
       }),
     ]);
+    const taskKey = harnessTaskKey({ harnessTargetId: "test", taskId: "task-1" });
     expect(state.timeline.filter((entry) => entry.type === "task")).toEqual([
-      { type: "task", id: "task-1" },
+      { type: "task", id: taskKey },
     ]);
-    expect(state.tasks.get("task-1")).toMatchObject({
+    expect(state.tasks.get(taskKey)).toMatchObject({
+      taskKey,
       status: "completed",
       title: "Explore",
       summary: "Found it",
       startedAt: 0,
     });
+  });
+
+  test("scopes identical native task ids by Lane and HarnessTarget", () => {
+    const state = emptySessionState();
+    const first = ev("task_update", { taskId: "shared", status: "in_progress" });
+    applyEvent(state, { ...first, laneId: "main", harnessTargetId: "claude" });
+    const second = ev("task_update", { taskId: "shared", status: "in_progress" });
+    applyEvent(state, { ...second, laneId: "side", harnessTargetId: "codex" });
+    const third = ev("task_update", { taskId: "shared", status: "in_progress" });
+    applyEvent(state, {
+      ...third,
+      laneId: "main",
+      harnessTargetId: "claude",
+      harnessSessionId: "claude-new",
+    });
+
+    expect(state.tasks).toHaveLength(3);
+    expect(state.tasks.get(harnessTaskKey({
+      laneId: "main",
+      harnessTargetId: "claude",
+      taskId: "shared",
+    }))?.harnessTargetId).toBe("claude");
+    expect(state.tasks.get(harnessTaskKey({
+      laneId: "side",
+      harnessTargetId: "codex",
+      taskId: "shared",
+    }))?.harnessTargetId).toBe("codex");
+    expect(state.tasks.get(harnessTaskKey({
+      laneId: "main",
+      harnessTargetId: "claude",
+      harnessSessionId: "claude-new",
+      taskId: "shared",
+    }))?.harnessSessionId).toBe("claude-new");
   });
 
   test("usage accumulates as deltas", () => {

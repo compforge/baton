@@ -218,6 +218,60 @@ describe("codex: unmapped notifications", () => {
 });
 
 describe("claude: command lifecycle → steer delivery", () => {
+  test("applies a single folded steer when Claude starts thinking", () => {
+    const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+
+    feed({
+      type: "system",
+      subtype: "thinking_tokens",
+      user_message_uuid: "native-steer",
+      estimated_tokens: 12,
+      estimated_tokens_delta: 12,
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "input_delivery_update",
+      payload: { messageId: "m_steer", state: "applied" },
+    });
+    expect(pendingOfferUuids).toHaveLength(0);
+  });
+
+  test("applies every coalesced steer on the first correlated reply exactly once", () => {
+    const { events, feed, pendingOfferUuids } = claudeQueueHarness();
+    pendingOfferUuids.set("native-steer-2", {
+      turnId: "t1",
+      messageId: "m_steer_2",
+      blocks: [{ type: "text", text: "second queued steer" }],
+    });
+    const correlation = {
+      user_message_uuid: "native-steer-2",
+      user_message_uuids: ["native-steer", "native-steer-2"],
+    };
+
+    feed({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      event: { type: "ping" },
+      ...correlation,
+    });
+    feed({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { content: [] },
+      ...correlation,
+    });
+    feed({ type: "command_lifecycle", command_uuid: "native-steer-2", uuid: "frame", state: "completed" });
+
+    expect(
+      events.filter((event) => event.kind === "input_delivery_update").map((event) => event.payload),
+    ).toEqual([
+      { messageId: "m_steer", state: "applied" },
+      { messageId: "m_steer_2", state: "applied" },
+    ]);
+    expect(pendingOfferUuids).toHaveLength(0);
+  });
+
   test("keeps queued steer pending until Claude starts the command", () => {
     const { events, feed, pendingOfferUuids } = claudeQueueHarness();
 
@@ -1081,7 +1135,7 @@ describe("codex: reasoning summary parts", () => {
 
 describe("claude: approval options", () => {
   test("without SDK suggestions there is no always option (baton 不自造授权规则)", () => {
-    const options = claudeApprovalOptions(false);
+    const options = claudeApprovalOptions({ hasSuggestions: false });
     expect(options.map((o) => [o.polarity, o.lifetime])).toEqual([
       ["allow", "once"],
       ["reject", "once"],
@@ -1089,13 +1143,22 @@ describe("claude: approval options", () => {
   });
 
   test("with suggestions a persistent allow appears between allow and deny", () => {
-    const options = claudeApprovalOptions(true);
+    const options = claudeApprovalOptions({ hasSuggestions: true });
     expect(options.map((o) => [o.polarity, o.lifetime])).toEqual([
       ["allow", "once"],
       ["allow", "persistent"],
       ["reject", "once"],
     ]);
     expect(new Set(options.map((o) => o.optionId)).size).toBe(options.length);
+  });
+
+  test("honors Claude hints that default to deny and suppress persistent permission", () => {
+    const options = claudeApprovalOptions({
+      hasSuggestions: true,
+      defaultToNo: true,
+      suppressAlwaysAllowRule: true,
+    });
+    expect(options.map((option) => option.optionId)).toEqual(["deny", "allow"]);
   });
 });
 

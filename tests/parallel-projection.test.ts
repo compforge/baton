@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { TranscriptBlockItem, TranscriptItem } from "chat-tui";
 
 import type { Controller } from "../src/controller/index.ts";
+import { harnessTaskKey } from "../src/harness/task.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
 import { SessionStore, type SessionHandle } from "../src/store/store.ts";
 import { projectChatState } from "../src/view/chat-tui/protocol/state.ts";
@@ -84,9 +85,14 @@ describe("Parallel projection", () => {
     });
 
     const running = project();
+    const taskKey = harnessTaskKey({
+      laneId: MAIN_LANE_ID,
+      harnessTargetId: "claude",
+      taskId: "task-1",
+    });
     expect(running.parallel).toMatchObject({
       items: [{
-        id: "task:task-1",
+        id: taskKey,
         icon: "◇",
         name: "claude/Explore",
         description: "Inspect adapter",
@@ -94,7 +100,7 @@ describe("Parallel projection", () => {
         tokens: 12_345,
       }],
     });
-    expect(transcriptBlock(running.timeline.items, "task-1")).toBeUndefined();
+    expect(transcriptBlock(running.timeline.items, taskKey)).toBeUndefined();
 
     session.appendEvent({
       source: { type: "harness", harnessTargetId: "claude" },
@@ -104,7 +110,7 @@ describe("Parallel projection", () => {
     });
     const completed = project();
     expect(completed.parallel).toBeUndefined();
-    expect(transcriptBlock(completed.timeline.items, "task-1")).toMatchObject({
+    expect(transcriptBlock(completed.timeline.items, taskKey)).toMatchObject({
       kind: "task",
       status: "completed",
       title: "Inspect adapter",
@@ -129,7 +135,11 @@ describe("Parallel projection", () => {
 
     expect(project().parallel?.items).toEqual([
       expect.objectContaining({
-        id: "task:task-generic",
+        id: harnessTaskKey({
+          laneId: MAIN_LANE_ID,
+          harnessTargetId: "deepseek",
+          taskId: "task-generic",
+        }),
         icon: "•",
         name: "dsh",
         description: "Index repository",
@@ -173,7 +183,11 @@ describe("Parallel projection", () => {
     });
     expect(project().parallel?.items).toEqual([
       expect.objectContaining({
-        id: "task:task-nested",
+        id: harnessTaskKey({
+          laneId: MAIN_LANE_ID,
+          harnessTargetId: "claude",
+          taskId: "task-nested",
+        }),
         progress: "running · depth 2",
       }),
     ]);
@@ -201,7 +215,11 @@ describe("Parallel projection", () => {
 
     expect(project().parallel?.items).toEqual([
       expect.objectContaining({
-        id: "task:dsh-child",
+        id: harnessTaskKey({
+          laneId: MAIN_LANE_ID,
+          harnessTargetId: "deepseek",
+          taskId: "dsh-child",
+        }),
         name: "dsh/dsh-subagent",
         description: "DeepSeek Harness subagent",
       }),

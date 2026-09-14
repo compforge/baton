@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from "../src/config/config.ts";
 import type { InteractionResult } from "../src/interaction/types.ts";
 import { PluginResourceStore } from "../src/plugin/resource.ts";
 import { MAIN_LANE_ID } from "../src/lane.ts";
+import { harnessTaskKey } from "../src/harness/task.ts";
 import { sessionDisplayTitle, SessionStore } from "../src/store/store.ts";
 import {
   BatonChatProtocol,
@@ -700,29 +701,38 @@ describe("BatonChatProtocol proposed plan", () => {
   });
 });
 
-describe("BatonChatProtocol plugins command", () => {
-  test("opens the client Plugin manager without changing session state", async () => {
+describe("BatonChatProtocol manager commands", () => {
+  test("opens the client Plugin and Parallel managers without changing domain state", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-plugins-"));
     try {
       const store = new SessionStore(root);
       const session = store.createSession({ cwd: "/repo" });
-      let opened = 0;
+      let pluginsOpened = 0;
+      let parallelOpened = 0;
       const protocol = new BatonChatProtocol(
         store,
         DEFAULT_CONFIG,
         { session, resumed: false },
         () => undefined,
-        { openPlugins: () => opened++ },
+        {
+          openPlugins: () => pluginsOpened++,
+          openParallel: () => parallelOpened++,
+        },
       );
 
       await protocol.command("plugins", "");
+      await protocol.command("parallel", "");
 
-      expect(opened).toBe(1);
+      expect(pluginsOpened).toBe(1);
+      expect(parallelOpened).toBe(1);
       expect(session.ledger.read().map((event) => event.kind)).toEqual([
+        "input.received",
+        "input.settled",
         "input.received",
         "input.settled",
       ]);
       await expect(protocol.command("plugins", "extra")).rejects.toThrow("/plugins takes no arguments");
+      await expect(protocol.command("parallel", "extra")).rejects.toThrow("/parallel takes no arguments");
       await protocol.command("reload-plugins", "");
       expect(protocol.stateStore.getState("footer").toast).toEqual({
         text: "Reloaded 0 plugin instances",
@@ -731,7 +741,7 @@ describe("BatonChatProtocol plugins command", () => {
       await expect(protocol.command("reload-plugins", "extra")).rejects.toThrow(
         "/reload-plugins takes no arguments",
       );
-      expect(session.ledger.read()).toHaveLength(8);
+      expect(session.ledger.read()).toHaveLength(12);
       expect(session.ledger.read().every((event) =>
         event.kind === "input.received" || event.kind === "input.settled"
       )).toBe(true);
@@ -821,6 +831,96 @@ describe("BatonChatProtocol streaming State", () => {
 });
 
 describe("BatonChatProtocol harness commands", () => {
+  test("Parallel Tasks action records typed input and reports stop admission", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-tasks-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.appendEvent({
+        source: { type: "harness", harnessTargetId: "claude" },
+        harness: "claude-code",
+        harnessTargetId: "claude",
+        laneId: MAIN_LANE_ID,
+        turnId: "t-main",
+        kind: "task_update",
+        payload: {
+          taskId: "task-1",
+          status: "in_progress",
+          title: "Inspect adapter",
+          backgrounded: true,
+        },
+      });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const stopped: string[] = [];
+      const controller = (protocol as unknown as {
+        controller: {
+          canStopTask(taskKey: string): boolean;
+          stopTask(taskKey: string): Promise<void>;
+        };
+      }).controller;
+      const taskKey = harnessTaskKey({
+        laneId: MAIN_LANE_ID,
+        harnessTargetId: "claude",
+        taskId: "task-1",
+      });
+      controller.canStopTask = (candidate) => candidate === taskKey;
+      controller.stopTask = async (candidate) => {
+        stopped.push(candidate);
+      };
+
+      expect(protocol.listParallelItems()).toEqual([
+        expect.objectContaining({
+          id: taskKey,
+          kind: "task",
+          sourceId: "task-1",
+          actions: ["stop"],
+        }),
+      ]);
+
+      await expect(protocol.resolveParallelAction(taskKey, "stop")).resolves.toBe(
+        "Stop requested for background task task-1",
+      );
+      expect(stopped).toEqual([taskKey]);
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
+        "Stop requested for background task task-1",
+      );
+      expect(session.ledger.read().findLast((event) => event.kind === "input.received"))
+        .toMatchObject({
+          payload: {
+            input: {
+              kind: "task_action",
+              taskKey,
+              action: "stop",
+            },
+          },
+        });
+      expect(protocol.commands.some((command) => command.name === "tasks")).toBe(false);
+
+      session.appendEvent({
+        source: { type: "harness", harnessTargetId: "claude" },
+        harness: "claude-code",
+        harnessTargetId: "claude",
+        laneId: MAIN_LANE_ID,
+        turnId: "t-main",
+        kind: "task_update",
+        payload: { taskId: "task-1", status: "stopped" },
+      });
+      expect(protocol.listParallelItems()).toEqual([]);
+      await expect(protocol.resolveParallelAction(taskKey, "stop")).rejects.toThrow(
+        "Parallel item is no longer running",
+      );
+      expect(stopped).toEqual([taskKey]);
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("restores the selected Target after reopening a Session", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-target-resume-"));
     try {

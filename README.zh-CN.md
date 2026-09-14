@@ -60,6 +60,7 @@ baton
 /model               选择当前 Harness 的模型
 /effort              设置推理强度
 /plan                切换 Plan 模式
+/parallel            管理后台任务、支线 Lane 与 Harness 调用
 /sessions            打开历史 BatonSession
 /new                 新建干净的 BatonSession
 @                    搜索 Session 和 Plugin 上下文

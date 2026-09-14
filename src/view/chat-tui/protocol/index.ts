@@ -81,6 +81,11 @@ import {
 } from "../prompt-images.ts";
 import { userVisibleText } from "./transcript.ts";
 import {
+  projectParallelItems,
+  type BatonParallelItem,
+  type ParallelAction,
+} from "../parallel/model.ts";
+import {
   contextWindowText,
   projectBoardView,
   projectChatState,
@@ -136,6 +141,7 @@ function initialHarnessTargetId(
 
 export interface BatonNavigation {
   openPlugins(): void;
+  openParallel(): void;
 }
 
 interface PendingPicker {
@@ -253,6 +259,14 @@ export class BatonChatProtocol implements ChatProtocol {
 
   get pluginManager(): Manager {
     return this.plugins;
+  }
+
+  /** One View projection feeds both the compact Parallel surface and its manager. */
+  listParallelItems(): BatonParallelItem[] {
+    return projectParallelItems(
+      this.state,
+      (taskKey) => this.controller.canStopTask(taskKey),
+    );
   }
 
   subscribeCompletions(onChange: () => void): () => void {
@@ -657,6 +671,18 @@ export class BatonChatProtocol implements ChatProtocol {
       runPolicy: "always",
       input: { kind: "none", trailingText: "reject" },
       execute: async () => this.openQueueManager(),
+    });
+
+    register({
+      name: "parallel",
+      description: "Manage current parallel work",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "none", trailingText: "reject" },
+      execute: async () => {
+        if (!this.navigation) throw new Error("Parallel manager is not available in this client");
+        this.navigation.openParallel();
+      },
     });
 
     register({
@@ -1100,6 +1126,32 @@ export class BatonChatProtocol implements ChatProtocol {
       kind: "recalled",
       text: userVisibleText(composerTextOf(withdrawn.blocks)),
     };
+  }
+
+  async resolveParallelAction(
+    itemId: string,
+    action: ParallelAction,
+  ): Promise<string> {
+    const item = this.listParallelItems().find((candidate) => candidate.id === itemId);
+    if (!item) throw new Error(`Parallel item is no longer running: ${itemId}`);
+    if (!item.actions.includes(action)) {
+      throw new Error(`${item.kind} ${item.sourceId} does not support ${action}`);
+    }
+    const input: ViewInput = Object.freeze({
+      kind: "task_action",
+      taskKey: item.id,
+      action,
+    });
+    await this.channel.dispatchTaskAction(input, async () => {
+      if (item.kind !== "task" || action !== "stop") {
+        throw new Error(`Unsupported Parallel action: ${item.kind}.${action}`);
+      }
+      await this.controller.stopTask(item.id);
+    });
+    const message = `Stop requested for background task ${item.sourceId}`;
+    this.toast = { text: message, tone: "info" };
+    this.changed();
+    return message;
   }
 
   /**

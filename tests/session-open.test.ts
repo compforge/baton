@@ -9,6 +9,7 @@ import {
   PENDING_DELIVERY_RECOVERY_NOTICE_TITLE,
   openBatonSession,
 } from "../src/session/open.ts";
+import { harnessTaskKey } from "../src/harness/task.ts";
 import { SessionStore } from "../src/store/store.ts";
 
 let root: string;
@@ -108,9 +109,11 @@ describe("crash recovery on open", () => {
     const result = openBatonSession(store, { cwd: "/repo", sessionId: child.id });
 
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().tasks.get("dsh-running")?.status).toBe("stopped");
-    expect(result.session.loadState().tasks.get("dsh-completed")?.status).toBe("completed");
-    expect(source.loadState().tasks.get("dsh-running")?.status).toBe("in_progress");
+    const runningKey = harnessTaskKey({ laneId: "main", harnessTargetId: "dsh", taskId: "dsh-running" });
+    const completedKey = harnessTaskKey({ laneId: "main", harnessTargetId: "dsh", taskId: "dsh-completed" });
+    expect(result.session.loadState().tasks.get(runningKey)?.status).toBe("stopped");
+    expect(result.session.loadState().tasks.get(completedKey)?.status).toBe("completed");
+    expect(source.loadState().tasks.get(runningKey)?.status).toBe("in_progress");
     expect(
       result.session.ledger.read().findLast(
         (event) => event.kind === "task_update" && event.payload.taskId === "dsh-running",

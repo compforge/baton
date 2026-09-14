@@ -70,6 +70,35 @@ describe("Channel", () => {
     expect(fixture.readKinds()).toEqual(["input.received", "input.settled"]);
   });
 
+  test("records a Parallel action before routing it to the Core owner", async () => {
+    let fixture!: ReturnType<typeof channel>;
+    const calls: string[] = [];
+    fixture = channel(gateway({
+      inline: async (_stage, subject) => {
+        calls.push("input");
+        expect(fixture.readKinds()).toEqual(["input.received"]);
+        expect(subject).toMatchObject({
+          input: {
+            kind: "task_action",
+            taskKey: "task:main:claude:native-1",
+            action: "stop",
+          },
+        });
+      },
+    }));
+
+    await fixture.channel.dispatchTaskAction({
+      kind: "task_action",
+      taskKey: "task:main:claude:native-1",
+      action: "stop",
+    }, async () => {
+      calls.push("handle");
+    });
+
+    expect(calls).toEqual(["input", "handle"]);
+    expect(fixture.readKinds()).toEqual(["input.received", "input.settled"]);
+  });
+
   test("notifies ViewOutput only after publishing state", async () => {
     const calls: string[] = [];
     const fixture = channel(gateway({
