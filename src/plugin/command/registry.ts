@@ -41,6 +41,12 @@ function validateCommandResult(
   result: PluginCommandResult | undefined,
 ): PluginCommandResult | undefined {
   if (!result) return;
+  if (result.kind === "model_configuration") {
+    nonEmptyCommandText(`/${command.name} model`, result.model);
+    nonEmptyCommandText(`/${command.name} effort`, result.effort);
+    if (result.prompt !== undefined) nonEmptyCommandText(`/${command.name} prompt`, result.prompt);
+    return result;
+  }
   if (result.kind === "message") {
     nonEmptyCommandText(`/${command.name} message`, result.text);
     return result;

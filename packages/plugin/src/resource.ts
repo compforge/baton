@@ -161,7 +161,23 @@ export interface BatonTargetResourceSpec {
 
 export interface BatonTargetResourceStatus {
   readonly phase: "Ready" | "Unavailable";
+  /** list returns the last observation; get refreshes missing/expired discovery without opening a HarnessSession. */
+  readonly modelCatalog?: BatonTargetModelCatalog;
 }
+
+export interface BatonTargetModel {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly efforts: readonly { readonly id: string; readonly label: string }[];
+}
+
+/** Discovery state is independent of whether a Target is configured/eligible for routing. */
+export type BatonTargetModelCatalog =
+  | { readonly phase: "Pending" }
+  | { readonly phase: "Unavailable"; readonly observedAt: string }
+  | { readonly phase: "Failed"; readonly observedAt: string; readonly message: string }
+  | { readonly phase: "Ready"; readonly observedAt: string; readonly models: readonly BatonTargetModel[] };
 
 export interface BatonSessionTargetBindingResourceSpec {
   readonly sessionRef: ResourceRef;

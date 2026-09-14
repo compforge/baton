@@ -20,6 +20,7 @@ import type {
   HarnessEventSink,
   HarnessSessionBindingSink,
   ModelOption,
+  ModelConfiguration,
   OpenOptions,
   PromptInput,
   PromptReceipt,
@@ -32,6 +33,7 @@ import type {
 import { unsupportedPromptBlocks } from "../adapter.ts";
 import { generateCodexStructured } from "./textgen.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
+import { readCodexModelData } from "./catalog.ts";
 import { CodexEventHandler } from "./events.ts";
 import {
   sessionIdResumeState,
@@ -347,6 +349,26 @@ export class CodexAdapter implements HarnessAdapter {
     if (rt.effortUsesDefault) rt.effort = selected?.defaultEffort;
     rt.model = model;
     if (catalog !== undefined) updateCodexResolvedSettings(rt, catalog);
+  }
+
+  async setModelConfiguration(ref: HarnessSessionHandle, configuration: ModelConfiguration): Promise<void> {
+    const rt = this.mustThread(ref);
+    const catalog = await readCodexModelData(rt.peer);
+    const model = configuration.model === "default" ? undefined : configuration.model;
+    const selected = selectedCodexModel(catalog, model);
+    if (!selected) throw new Error(`Unknown Codex model: ${configuration.model}`);
+    const effort = configuration.effort === "default" ? undefined : configuration.effort;
+    if (effort && !codexModelSupportsEffort(selected, effort)) {
+      throw new Error(`Codex model ${selected.id} does not support effort ${effort}`);
+    }
+    // No await after validation: sendTurn can never observe a half-applied pair.
+    rt.model = model;
+    // Keep the selected collaboration mode, but do not let its old effort override this pair.
+    rt.modeEffort = undefined;
+    rt.effortSelection = effort;
+    rt.effortUsesDefault = effort === undefined;
+    rt.effort = effort ?? selected.defaultEffort;
+    updateCodexResolvedSettings(rt, catalog);
   }
 
   currentModel(ref: HarnessSessionHandle): string | null {

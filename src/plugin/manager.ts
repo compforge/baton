@@ -163,6 +163,7 @@ export interface ManagerOptions {
   >;
   /** Configured HarnessTargets exposed as Baton Target Resources. */
   harnessTargets?: readonly HarnessTarget[];
+  probeTarget?: import("./target-catalog.ts").TargetProbe;
   /** Known BatonSessions exposed as limited Session/SessionTargetBinding projections. */
   sessions?: () => readonly BatonSessionObservation[];
   /** 当前进程可激活的可信、不可变 Package 版本。 */
@@ -413,6 +414,11 @@ export class Manager {
         turns: this.batonResources,
         ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
         targets: () => options.harnessTargets ?? [],
+        probeTarget: options.probeTarget,
+        onProbeError: (target, error) => this.log?.({
+          level: "warn", source: "baton", component: "target.catalog",
+          message: "Target model discovery failed", harnessTargetId: target.id, error: logError(error),
+        }),
         now: this.now,
       });
       this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {

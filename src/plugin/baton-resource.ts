@@ -11,6 +11,7 @@ import type {
 } from "@compforge/baton-plugin";
 
 import type { HarnessTarget } from "../harness/target.ts";
+import { TargetCatalog, type TargetProbe } from "./target-catalog.ts";
 import {
   sessionTargetBindingMeta,
   type SessionHandle,
@@ -41,6 +42,8 @@ export interface BatonResourceProviderOptions {
   readonly turns?: BatonResourceIndex;
   readonly sessions?: () => readonly BatonSessionObservation[];
   readonly targets?: () => readonly HarnessTarget[];
+  readonly probeTarget?: TargetProbe;
+  readonly onProbeError?: (target: HarnessTarget, error: unknown) => void;
   readonly now?: () => Date;
 }
 
@@ -78,6 +81,7 @@ export class BatonResourceProvider {
   private readonly targets: NonNullable<BatonResourceProviderOptions["targets"]>;
   private readonly now: () => Date;
   private readonly targetCreationTimestamp: string;
+  private readonly catalogs: TargetCatalog;
 
   constructor(options: BatonResourceProviderOptions) {
     this.session = options.session;
@@ -85,6 +89,7 @@ export class BatonResourceProvider {
     this.sessions = options.sessions;
     this.targets = options.targets ?? (() => []);
     this.now = options.now ?? (() => new Date());
+    this.catalogs = new TargetCatalog(options.probeTarget, this.now, options.onProbeError);
     const created = this.now();
     if (Number.isNaN(created.getTime())) {
       throw new Error("Baton Resource provider now() returned an invalid Date");
@@ -101,15 +106,20 @@ export class BatonResourceProvider {
     ].some((candidate) => typeMatches(candidate, type));
   }
 
-  get<TSpec, TStatus>(
+  async get<TSpec, TStatus>(
     ref: ResourceRef,
-  ): Readonly<Resource<TSpec, TStatus>> | undefined {
+  ): Promise<Readonly<Resource<TSpec, TStatus>> | undefined> {
     if (ref.namespace !== BATON_SYSTEM_NAMESPACE || !this.handles(ref)) return undefined;
     const resource = this.list<TSpec, TStatus>(ref).find(
       (candidate) => candidate.metadata.name === ref.name,
     );
     if (!resource || (ref.uid !== undefined && resource.metadata.uid !== ref.uid)) {
       return undefined;
+    }
+    if (typeMatches(ref, BATON_TARGET_RESOURCE_TYPE)) {
+      const target = this.configuredTargets().find((candidate) => candidate.id === ref.name)!;
+      await this.catalogs.refresh(target);
+      return this.targetResource(target) as Readonly<Resource<TSpec, TStatus>>;
     }
     return resource;
   }
@@ -249,6 +259,7 @@ export class BatonResourceProvider {
   }
 
   private targetResource(target: HarnessTarget): BatonTargetResource {
+    const catalog = this.catalogs.snapshot(target.id);
     return deepFreeze({
       ...BATON_TARGET_RESOURCE_TYPE,
       metadata: {
@@ -256,11 +267,11 @@ export class BatonResourceProvider {
         namespace: BATON_SYSTEM_NAMESPACE,
         uid: this.targetUid(target.id),
         generation: 1,
-        resourceVersion: "1",
+        resourceVersion: catalog.version,
         creationTimestamp: this.targetCreationTimestamp,
       },
       spec: { harness: target.harness },
-      status: { phase: "Ready" },
+      status: { phase: "Ready", modelCatalog: catalog.value },
     });
   }
 

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { withCodexPeer, type CodexNativePeer } from "./peer.ts";
 
 import type {
   HarnessHistorySnapshot,
@@ -9,17 +9,12 @@ import type {
 import { harnessHistoryBoundary } from "../../store/store.ts";
 import {
   codexItemLifecycleDrafts,
-  codexLaunchCommand,
 } from "./adapter.ts";
 import { resolveCodexTargetConfig } from "./config.ts";
-import { JsonRpcPeer } from "./jsonrpc.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const HISTORY_TURN_LIMIT = 50;
 
-interface CodexNativePeer {
-  request(method: string, params?: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
-}
 
 function missingThread(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -230,46 +225,6 @@ export async function inspectCodexSession(
   };
 }
 
-async function withCodexPeer<T>(
-  options: { command?: string[]; cwd: string },
-  operation: (peer: CodexNativePeer) => Promise<T>,
-): Promise<T> {
-  const [command, ...args] = codexLaunchCommand(options.command);
-  const child = spawn(command as string, args, {
-    cwd: options.cwd,
-    env: process.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const peer = new JsonRpcPeer((line) => child.stdin.write(line));
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => peer.feed(chunk));
-  let stderr = "";
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    // 物化前还没有 BatonSession 日志；保留有界尾部，在发现失败时带回诊断。
-    stderr = `${stderr}${chunk}`.slice(-4096);
-  });
-  child.once("error", (error) => peer.close(`codex app-server spawn error: ${error.message}`));
-  child.once("close", (code) => peer.close(`codex app-server exited (${code})`));
-  try {
-    await peer.request(
-      "initialize",
-      {
-        clientInfo: { name: "baton", version: "0.0.1", title: "baton" },
-        capabilities: { experimentalApi: true },
-      },
-      { timeoutMs: REQUEST_TIMEOUT_MS },
-    );
-    peer.notify("initialized", {});
-    return await operation(peer);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const detail = stderr.trim();
-    throw new Error(detail ? `${message}; codex stderr: ${detail}` : message, { cause: error });
-  } finally {
-    child.kill();
-  }
-}
 
 export const codexSessionInspector: HarnessSessionInspector = {
   inspect(sessionId, options) {

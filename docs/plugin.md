@@ -234,7 +234,19 @@ Resource API 或 `HookContext.verbs`，由 Core 继续执行权限、持久化�
 HarnessInvocation，最终是否 lowering 为 Core-owned `HarnessInput` 由 Core 决定。两个类型不共享名称，
 避免把 Plugin 动作请求误认为已经等待 Adapter 执行的 Harness Input。
 
-### 4.3 Board
+### 4.3 Command 配置请求
+
+宿主在 inline Hook 完成后向 Human 发起的 Command 提供有效 Target 坐标。模型目录统一
+属于内置 `Target.status.modelCatalog`，Command、Hook 和 Controller 都经 Resource API
+读取。`list` 保持轻量，`get` 按需探测并缓存只读目录，不为查询创建 HarnessSession；
+未探测、失败、不支持和空目录是不同状态。目录变化推进 Resource version，不改变 Target identity。
+Command 可以返回 `model_configuration`，请求将当前有效 Target 的 model 与 effort
+作为一组配置。宿主通过 Channel 记录配置输入，由 Harness Adapter 校验并一次应用；失败
+不继续发送附带 prompt。附带 prompt 是配置成功后的普通用户输入，但只排入新 Turn，不
+steer 仍使用旧配置的活跃 Turn。Plugin 不直接访问 Harness，也不保存另一份模型偏好；
+自主 reconcile 动作仍使用 Interaction verbs。
+
+### 4.4 Board
 
 Controller 的 `present(resource)` 把一份 Resource 派生为至多一个 Board 条目。Baton 补齐 owner、
 Resource reference 和身份，再生成面向用户的 Board view。`present` 只读、可重复，不能修改
@@ -244,7 +256,7 @@ Board 是共享协作读模型，但不是 Event、Resource 或外部系统的�
 和 Resource Type 分组排序，每组只展示有限条目，避免一个 Plugin 占满侧栏。持续状态进入
 Resource status/Board；toast 只用于一次操作或状态边沿的短寿命反馈。
 
-### 4.4 Mention 与 Context
+### 4.5 Mention 与 Context
 
 Mention 提供用户通过 `@` 明确选择的只读 Context。`search` 无副作用，`resolve` 遵守
 `maxChars`，不能返回 secret。Binding 关闭时注册整体撤销。

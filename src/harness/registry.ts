@@ -7,6 +7,7 @@ import { ClaudeAdapter, probeClaudeTarget } from "./claude/adapter.ts";
 import { resolveClaudeTargetConfig } from "./claude/config.ts";
 import { claudeSessionInspector } from "./claude/native-session.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
+import { probeCodexTarget } from "./codex/catalog.ts";
 import { resolveCodexTargetConfig } from "./codex/config.ts";
 import { codexSessionInspector } from "./codex/native-session.ts";
 import { DshAdapter } from "./dsh/adapter.ts";
@@ -76,6 +77,9 @@ export const HARNESS_REGISTRY = [
     shortName: "codex",
     color: "#73daca", // 青
     sessionInspector: codexSessionInspector,
+    probe: ({ cwd, env, targetConfig }) => probeCodexTarget({
+      cwd, env, command: resolveCodexTargetConfig(targetConfig).command,
+    }),
     create: ({ target, openInteraction, log, nativeEvent, targetConfig, env, rootDir }) => {
       const config = resolveCodexTargetConfig(targetConfig);
       return new CodexAdapter({

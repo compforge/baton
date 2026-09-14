@@ -335,6 +335,9 @@ export class Channel implements ChannelHookGateway {
       ...manager,
       session: this.options.session,
       harnessTargets,
+      probeTarget: this.options.controller.probeTarget
+        ? (target) => this.options.controller.probeTarget!(target, this.options.session.meta.cwd)
+        : undefined,
       snapshot: () =>
         createReconcileSnapshot({
           batonSessionId: this.options.session.id,

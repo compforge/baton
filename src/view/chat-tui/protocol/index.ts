@@ -16,6 +16,7 @@ import type {
   TranscriptMessageItem,
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
+import { configureTargetModel } from "./model-configuration.ts";
 import { decodePasteBytes, type ClipboardRepresentation } from "@opentui/core";
 
 import { CommandRegistry, type CommandDefinition } from "../../../commands/registry.ts";
@@ -123,7 +124,8 @@ function initialHarnessTargetId(
       input.setting === "harness";
   });
   const selectedTargetId = latestSelection?.kind === "input.received" &&
-      latestSelection.payload.input.kind === "configuration"
+      latestSelection.payload.input.kind === "configuration" &&
+      latestSelection.payload.input.setting === "harness"
     ? latestSelection.payload.input.value
     : undefined;
   const target = selectedTargetId
@@ -318,9 +320,9 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private async submitMessage(
     text: string,
-    options?: { sourceProposedPlanId?: string },
+    options?: { sourceProposedPlanId?: string; followUp?: boolean; harnessTargetId?: string },
   ): Promise<void> {
-    const target = this.harnessTargetId;
+    const target = options?.harnessTargetId ?? this.harnessTargetId;
     const receipt = await this.channel.submitPrompt(Object.freeze({
       kind: "prompt",
       text,
@@ -399,18 +401,24 @@ export class BatonChatProtocol implements ChatProtocol {
       harnessTargetId: this.harnessTargetId,
     });
     let trailingText: string | undefined;
+    let pluginPrompt: { text: string; target: string } | undefined;
     await this.channel.dispatchCommand(input, async () => {
       const invocation = this.commandRegistry.resolve(name, argument);
       if (!invocation) {
         if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
           throw new Error(`Unknown command: /${name}`);
         }
-        return await this.runPluginCommand(name, argument);
+        pluginPrompt = await this.runPluginCommand(name, argument);
+        return;
       }
       trailingText = invocation.trailingText;
       return await invocation.command.execute(invocation.argument);
     });
     if (trailingText) await this.submitMessage(trailingText);
+    if (pluginPrompt) await this.submitMessage(pluginPrompt.text, {
+      followUp: true,
+      harnessTargetId: pluginPrompt.target,
+    });
   }
 
   private createCommandRegistry(): CommandRegistry {
@@ -1479,7 +1487,7 @@ export class BatonChatProtocol implements ChatProtocol {
   }
 
   private async runHumanConfiguration(
-    setting: Extract<ViewInput, { kind: "configuration" }>["setting"],
+    setting: Exclude<Extract<ViewInput, { kind: "configuration" }>["setting"], "model_configuration">,
     target: string,
     value: string | null,
     action: () => Promise<void>,
@@ -1623,15 +1631,29 @@ export class BatonChatProtocol implements ChatProtocol {
     name: string,
     argument: string,
     selectedValue?: string,
-  ): Promise<void> {
+  ): Promise<{ text: string; target: string } | undefined> {
     const command = this.plugins
       .listCommands()
       .find((candidate) => candidate.name === name);
     if (!command) throw new Error(`Plugin command is not active: /${name}`);
+    const targetId = this.plugins.resolveHarnessTargetId(this.harnessTargetId);
+    const target = resolveHarnessTarget(this.config, targetId);
+    if (!target) throw new Error(`Unknown HarnessTarget: ${targetId}`);
     const result = await this.executePluginCommand(command.pluginId, name, {
       argument,
+      target: { id: target.id, harness: target.harness },
       ...(selectedValue === undefined ? {} : { selectedValue }),
     });
+    if (result?.kind === "model_configuration") {
+      await configureTargetModel(this.channel, this.store.rootDir, target.id, {
+        model: result.model,
+        effort: result.effort,
+      }, { models: this.modelPreferences, efforts: this.effortPreferences });
+      this.toast = { text: `${target.id}: ${result.model} / ${result.effort} (takes effect next turn)`, tone: "info" };
+      this.commandOutput = null;
+      this.changed();
+      return result.prompt ? { text: result.prompt, target: target.id } : undefined;
+    }
     this.presentPluginCommandResult(command.pluginId, name, argument, result);
   }
 
@@ -1667,7 +1689,7 @@ export class BatonChatProtocol implements ChatProtocol {
     pluginId: string,
     name: string,
     argument: string,
-    result: PluginCommandResult | undefined,
+    result: Exclude<PluginCommandResult, { kind: "model_configuration" }> | undefined,
   ): void {
     if (!result) return;
     if (result.kind === "message") {
@@ -1721,7 +1743,8 @@ export class BatonChatProtocol implements ChatProtocol {
         }
         : {}),
       onSelect: async (value) => {
-        await this.runPluginCommand(name, argument, value);
+        const prompt = await this.runPluginCommand(name, argument, value);
+        if (prompt) await this.submitMessage(prompt.text, { followUp: true, harnessTargetId: prompt.target });
       },
     });
   }

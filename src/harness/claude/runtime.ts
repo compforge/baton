@@ -345,6 +345,10 @@ export async function probeClaudeTarget(options: {
     const runtime = { modelInfos: initialized.models } as ClaudeRuntime;
     return {
       models: claudeModels(initialized.models),
+      modelCatalog: claudeModels(initialized.models).map((model) => ({
+        ...model,
+        efforts: claudeEffortsForModel(runtime, model.id === "default" ? undefined : model.id),
+      })),
       efforts: claudeEffortsForModel(runtime, undefined),
       commands: commands.map((command) => ({
         name: command.name,

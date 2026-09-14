@@ -1,11 +1,14 @@
 /** A slash command invocation routed to the owning PluginPackage. */
 export interface PluginCommandInput {
   readonly argument: string;
+  /** Host-resolved selection after inline input hooks; absent outside a Session surface. */
+  readonly target?: { readonly id: string; readonly harness: string };
   /** Set when the user selects an option returned by an earlier invocation. */
   readonly selectedValue?: string;
   /** Set when a remote-search picker asks the command for a fresh result page. */
   readonly searchQuery?: string;
 }
+
 
 export interface PluginCommandOption {
   readonly name: string;
@@ -21,6 +24,14 @@ export interface PluginCommandPickerSearch {
 }
 
 export type PluginCommandResult =
+  | {
+      /** Request configuration of the invoking Target, never an arbitrary account. */
+      readonly kind: "model_configuration";
+      readonly model: string;
+      readonly effort: string;
+      /** Optional user prompt submitted only after configuration succeeds, as a new turn. */
+      readonly prompt?: string;
+    }
   | {
       readonly kind: "message";
       readonly text: string;

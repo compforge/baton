@@ -25,6 +25,7 @@ import type {
   HarnessEventSink,
   HarnessSessionBindingSink,
   ModelOption,
+  ModelConfiguration,
   NativeEventSink,
   OpenOptions,
   PromptInput,
@@ -208,6 +209,23 @@ export class ClaudeAdapter implements HarnessAdapter {
     }
     if (rt.activeQuery) await rt.activeQuery.setModel(model);
     rt.model = model;
+  }
+
+  async setModelConfiguration(ref: HarnessSessionHandle, configuration: ModelConfiguration): Promise<void> {
+    const rt = this.mustSession(ref);
+    const models = await this.listModels(ref);
+    const model = configuration.model === "default" ? undefined : configuration.model;
+    if (model && !models.some((candidate) => candidate.id === model)) {
+      throw new Error(`Unknown Claude model: ${model}`);
+    }
+    const effort = configuration.effort === "default" ? undefined : configuration.effort;
+    if (effort && !claudeEffortsForModel(rt, model).some((candidate) => candidate.id === effort)) {
+      throw new Error(`Claude model ${configuration.model} does not support effort ${effort}`);
+    }
+    rt.model = model;
+    rt.effort = effort as EffortLevel | undefined;
+    // Recreate query options at the next new turn, never mutate the active query.
+    if (rt.activeQuery) rt.queryOptionsDirty = true;
   }
 
   currentModel(ref: HarnessSessionHandle): string | null {

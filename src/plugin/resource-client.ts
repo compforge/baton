@@ -45,7 +45,7 @@ export interface BatonResourceAccess {
   handles(type: ResourceType): boolean;
   get<TSpec, TStatus>(
     ref: ResourceRef,
-  ): Readonly<Resource<TSpec, TStatus>> | undefined;
+  ): Readonly<Resource<TSpec, TStatus>> | undefined | Promise<Readonly<Resource<TSpec, TStatus>> | undefined>;
   list<TSpec, TStatus>(
     type: ResourceType,
     options?: ResourceListOptions,

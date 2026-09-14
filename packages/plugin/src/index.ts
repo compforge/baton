@@ -135,6 +135,8 @@ export type {
   BatonSessionResourceKind,
   BatonSessionResourceStatus,
   BatonTargetResource,
+  BatonTargetModel,
+  BatonTargetModelCatalog,
   BatonTargetResourceKind,
   BatonTargetResourceSpec,
   BatonTargetResourceStatus,
