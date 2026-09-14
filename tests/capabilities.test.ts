@@ -35,6 +35,7 @@ const CAPABILITY_CONTRACT: Record<string, string[]> = {
   reconcile: ["reconcile"],
   approvalRouting: ["approvalRoute"],
   textgen: ["generateStructured"],
+  "tasks.stop": ["stopTask"],
   "interactions.permission": ["respond"],
   "interactions.question": ["respond"],
   "interactions.elicitation": ["respond"],

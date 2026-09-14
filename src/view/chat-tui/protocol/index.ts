@@ -660,6 +660,40 @@ export class BatonChatProtocol implements ChatProtocol {
     });
 
     register({
+      name: "tasks",
+      description: "Stop a running background task",
+      scope: "baton",
+      runPolicy: "always",
+      input: { kind: "argument" },
+      execute: async (argument) => {
+        const taskId = argument.trim();
+        if (taskId) {
+          await this.stopTask(taskId);
+          return;
+        }
+        const tasks = [...this.state.tasks.values()].filter(
+          (task) => this.controller.canStopTask(task.taskId),
+        );
+        if (tasks.length === 0) {
+          throw new Error("No individually stoppable background task is running");
+        }
+        this.openPicker({
+          title: "Stop background task",
+          options: tasks.map((task) => ({
+            name: task.title ?? task.taskType ?? task.taskId,
+            description: [
+              task.harnessTargetId ?? task.harness,
+              task.summary === task.title ? undefined : task.summary,
+              task.taskId,
+            ].filter((value): value is string => Boolean(value)).join(" · "),
+            value: task.taskId,
+          })),
+          onSelect: async (value) => await this.stopTask(value),
+        });
+      },
+    });
+
+    register({
       name: "thoughts",
       description: "Toggle agent thought display (this session only)",
       scope: "baton",
@@ -1540,6 +1574,12 @@ export class BatonChatProtocol implements ChatProtocol {
   private openPicker(picker: Omit<PendingPicker, "id">): void {
     this.cancelPickerSearch();
     this.picker = { ...picker, id: `pk_${this.nextPickerId++}` };
+    this.changed();
+  }
+
+  private async stopTask(taskId: string): Promise<void> {
+    await this.controller.stopTask(taskId);
+    this.toast = { text: `Stop requested for background task ${taskId}`, tone: "info" };
     this.changed();
   }
 

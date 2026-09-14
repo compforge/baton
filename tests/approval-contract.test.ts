@@ -89,13 +89,25 @@ describe("approval loop closes through the host (all adapters)", () => {
         () => "t1",
         "Bash",
         { command: "bun install" },
-        { toolUseID: "tu-bash" },
+        {
+          toolUseID: "tu-bash",
+          title: "Run package install?",
+          description: "This command may modify project dependencies.",
+          suggestions: [{ type: "addRules", rules: [], behavior: "allow", destination: "session" }],
+          defaultToNo: true,
+          suppressAlwaysAllowRule: true,
+        },
       );
       expect(events).toEqual([]);
       expect(interactions[0]).toMatchObject({
         kind: "permission",
-        title: "Bash: bun install",
+        title: "Run package install?",
+        description: "This command may modify project dependencies.",
         toolCallId: "tu-bash",
+        options: [
+          { optionId: "deny" },
+          { optionId: "allow" },
+        ],
       });
       expect(result.behavior).toBe(behavior);
     }

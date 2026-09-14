@@ -4,10 +4,24 @@ import { planEntriesWithIds } from "../../event/plan.ts";
 import type { PermissionOption } from "../../interaction/types.ts";
 import { planSnapshotDraft } from "../plan.ts";
 
-const APPROVAL_OPTIONS: PermissionOption[] = [
-  { optionId: "allow", name: "Allow once", polarity: "allow", lifetime: "once" },
-  { optionId: "deny", name: "Deny", polarity: "reject", lifetime: "once" },
-];
+const ALLOW_ONCE: PermissionOption = {
+  optionId: "allow",
+  name: "Allow once",
+  polarity: "allow",
+  lifetime: "once",
+};
+const DENY: PermissionOption = {
+  optionId: "deny",
+  name: "Deny",
+  polarity: "reject",
+  lifetime: "once",
+};
+
+export interface ClaudeApprovalHints {
+  hasSuggestions: boolean;
+  defaultToNo?: boolean;
+  suppressAlwaysAllowRule?: boolean;
+}
 
 /**
  * 审批候选。always 项只在 SDK 给出 permission suggestions 时提供：baton 不自造
@@ -16,20 +30,20 @@ const APPROVAL_OPTIONS: PermissionOption[] = [
  *
  * lifetime 取 `persistent` 而非 `session`：作用域实际由 SDK 定、baton 不确知，
  * 而在审批展示上低报持续性才是危险的一侧（用户以为一次性、实则长期）。悲观取强档，
- * 与 name 的 "don't ask again" 一致（不变量 #2）。
+ * 与 name 的 "don't ask again" 一致（不变量 #2）。SDK 要求 suppress 时删除该项；
+ * defaultToNo 时把拒绝放首位，对齐 chat-tui 默认选中第一项的交互。
  */
-export function claudeApprovalOptions(hasSuggestions: boolean): PermissionOption[] {
-  if (!hasSuggestions) return APPROVAL_OPTIONS;
-  return [
-    APPROVAL_OPTIONS[0] as PermissionOption,
-    {
+export function claudeApprovalOptions(hints: ClaudeApprovalHints): PermissionOption[] {
+  const allowOptions: PermissionOption[] = [ALLOW_ONCE];
+  if (hints.hasSuggestions && !hints.suppressAlwaysAllowRule) {
+    allowOptions.push({
       optionId: "allowAlways",
       name: "Always allow (don't ask again)",
       polarity: "allow",
       lifetime: "persistent",
-    },
-    APPROVAL_OPTIONS[1] as PermissionOption,
-  ];
+    });
+  }
+  return hints.defaultToNo ? [DENY, ...allowOptions] : [...allowOptions, DENY];
 }
 
 /** Claude 工具名 → 内部 tool kind */

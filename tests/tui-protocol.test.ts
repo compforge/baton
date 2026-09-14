@@ -821,6 +821,66 @@ describe("BatonChatProtocol streaming State", () => {
 });
 
 describe("BatonChatProtocol harness commands", () => {
+  test("/tasks selects one stoppable background task and reports request admission", async () => {
+    const root = mkdtempSync(join(tmpdir(), "baton-tui-tasks-"));
+    try {
+      const store = new SessionStore(root);
+      const session = store.createSession({ cwd: "/repo" });
+      session.appendEvent({
+        source: { type: "harness", harnessTargetId: "claude" },
+        harness: "claude-code",
+        harnessTargetId: "claude",
+        laneId: MAIN_LANE_ID,
+        turnId: "t-main",
+        kind: "task_update",
+        payload: {
+          taskId: "task-1",
+          status: "in_progress",
+          title: "Inspect adapter",
+          backgrounded: true,
+        },
+      });
+      const protocol = new BatonChatProtocol(
+        store,
+        DEFAULT_CONFIG,
+        { session, resumed: false },
+        () => undefined,
+      );
+      const stopped: string[] = [];
+      const controller = (protocol as unknown as {
+        controller: {
+          canStopTask(taskId: string): boolean;
+          stopTask(taskId: string): Promise<void>;
+        };
+      }).controller;
+      controller.canStopTask = (taskId) => taskId === "task-1";
+      controller.stopTask = async (taskId) => {
+        stopped.push(taskId);
+      };
+
+      await protocol.command("tasks", "");
+      const picker = protocol.stateStore.getState("composer").picker;
+      expect(picker).toMatchObject({
+        title: "Stop background task",
+        options: [{
+          name: "Inspect adapter",
+          description: "claude · task-1",
+          value: "task-1",
+        }],
+      });
+
+      protocol.resolvePicker(picker!.id, "task-1");
+      await Bun.sleep(10);
+      expect(stopped).toEqual(["task-1"]);
+      expect(protocol.stateStore.getState("footer").toast?.text).toBe(
+        "Stop requested for background task task-1",
+      );
+      await protocol.exit();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("restores the selected Target after reopening a Session", async () => {
     const root = mkdtempSync(join(tmpdir(), "baton-tui-target-resume-"));
     try {

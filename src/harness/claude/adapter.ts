@@ -7,7 +7,6 @@ import {
   type EffortLevel,
   type Options,
   type PermissionResult,
-  type PermissionUpdate,
   type Query,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -41,7 +40,7 @@ import {
   sessionIdFromResumeState,
   sessionIdResumeState,
 } from "../resume.ts";
-import { ClaudeEventHandler } from "./events.ts";
+import { ClaudeEventHandler, type ClaudePermissionMeta } from "./events.ts";
 
 export {
   applyTaskOp,
@@ -101,6 +100,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     compact: { supported: true },
     config: { supported: true },
     textgen: { supported: true },
+    tasks: { stop: { supported: true } },
   };
   // Claude 原生队列跨 Turn 存活（command_lifecycle/result UUID 回执迟到也会到），
   // 投递进度由 input_delivery_update 显式报告。
@@ -434,6 +434,9 @@ export class ClaudeAdapter implements HarnessAdapter {
       },
       resume: rt.claudeSessionId,
       includePartialMessages: true,
+      // Baton exposes /tasks as the matching per-task stop affordance. With this
+      // declaration Esc only aborts the foreground turn and leaves background work controllable.
+      perTaskStopAffordance: true,
       // Agent SDK 默认使用空 system prompt；显式恢复 Claude Code 语义，确保
       // skills、auto-memory 等原生能力与直接运行 claude CLI 一致。
       systemPrompt: { type: "preset", preset: "claude_code" },
@@ -670,6 +673,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     }
   }
 
+  async stopTask(ref: HarnessSessionHandle, taskId: string): Promise<void> {
+    const rt = this.mustSession(ref);
+    if (!rt.activeQuery) {
+      throw new Error(`Claude task is no longer attached to a live query: ${taskId}`);
+    }
+    await rt.activeQuery.stopTask(taskId);
+  }
+
   async close(ref: HarnessSessionHandle): Promise<void> {
     const rt = this.sessions.get(ref.handleId);
     if (!rt) return;
@@ -704,7 +715,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     turnId: () => string,
     toolName: string,
     input: Record<string, unknown>,
-    meta: { title?: string; suggestions?: PermissionUpdate[]; toolUseID?: string },
+    meta: ClaudePermissionMeta,
   ): Promise<PermissionResult> {
     return this.events.handleCanUseTool(rt, emit, turnId, toolName, input, meta);
   }

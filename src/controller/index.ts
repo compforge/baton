@@ -966,6 +966,45 @@ export class Controller {
       ?.approvalRoute() ?? null;
   }
 
+  /** Whether the live task's owning Lane x HarnessTarget binding can stop it individually. */
+  canStopTask(taskId: string): boolean {
+    const task = this.options.session.projection.tasks.get(taskId);
+    if (
+      task?.status !== "in_progress" ||
+      task.backgrounded === false ||
+      !task.laneId ||
+      !task.harnessTargetId
+    ) {
+      return false;
+    }
+    return this.bindings
+      .get(this.bindingKey(task.laneId, task.harnessTargetId))
+      ?.canStopTask() ?? false;
+  }
+
+  /**
+   * Stop one background task through the exact live binding that emitted it.
+   * Resolve only acknowledges the request; the Harness still owns the terminal task_update.
+   */
+  async stopTask(taskId: string): Promise<void> {
+    this.assertOpen();
+    const task = this.options.session.projection.tasks.get(taskId);
+    if (!task) throw new Error(`Background task not found: ${taskId}`);
+    if (task.status !== "in_progress" || task.backgrounded === false) {
+      throw new Error(`Background task is no longer running: ${taskId}`);
+    }
+    if (!task.laneId || !task.harnessTargetId) {
+      throw new Error(`Background task has no live Harness binding: ${taskId}`);
+    }
+    const binding = this.bindings.get(
+      this.bindingKey(task.laneId, task.harnessTargetId),
+    );
+    if (!binding?.canStopTask()) {
+      throw new Error(`${task.harnessTargetId} does not support stopping individual tasks`);
+    }
+    await binding.stopTask(taskId);
+  }
+
   /**
    * 施加一个 Control 信号（Input / Interaction result 之外的第三种用户信号，见
    * `Control`）。当前唯一

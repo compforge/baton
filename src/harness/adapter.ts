@@ -144,6 +144,10 @@ export interface AdapterCapabilities {
    * 由 core 的路由器跨 harness 降级（某家 quota/auth 不可用时换一家）。
    */
   textgen?: CapabilityMarker;
+  tasks?: {
+    /** 声明后必须实现 TaskStoppable：按 Harness 原生 task id 停止单个后台任务。 */
+    stop?: CapabilityMarker;
+  };
   interactions?: {
     permission?: CapabilityMarker;
     question?: CapabilityMarker;
@@ -396,6 +400,17 @@ export function isContextSynchronizable(
   adapter: HarnessAdapter,
 ): adapter is HarnessAdapter & ContextSynchronizable {
   return typeof (adapter as Partial<ContextSynchronizable>).syncContext === "function";
+}
+
+/** 可通过 Harness 原生控制面停止单个后台任务；完成事实仍由 task_update 报告。 */
+export interface TaskStoppable {
+  stopTask(ref: HarnessSessionHandle, taskId: string): Promise<void>;
+}
+
+export function isTaskStoppable(
+  adapter: HarnessAdapter,
+): adapter is HarnessAdapter & TaskStoppable {
+  return typeof (adapter as Partial<TaskStoppable>).stopTask === "function";
 }
 
 /**

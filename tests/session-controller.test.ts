@@ -240,6 +240,42 @@ class CompactAdapter extends FakeAdapter {
   }
 }
 
+class TaskStoppableAdapter extends FakeAdapter {
+  override readonly capabilities: AdapterCapabilities = {
+    prompt: {},
+    tasks: { stop: { supported: true } },
+  };
+  stoppedTasks: string[] = [];
+  turnId?: string;
+
+  override async sendTurn(
+    _ref: HarnessSessionHandle,
+    input: PromptInput,
+  ): Promise<SendTurnReceipt> {
+    this.turnId = input.turnId;
+    this.sink?.({
+      kind: "task_update",
+      turnId: input.turnId,
+      payload: {
+        taskId: "task-background",
+        status: "in_progress",
+        title: "Inspect repository",
+        backgrounded: true,
+      },
+    });
+    return { accepted: true, effective: "new_turn" };
+  }
+
+  async stopTask(_ref: HarnessSessionHandle, taskId: string): Promise<void> {
+    this.stoppedTasks.push(taskId);
+    this.sink?.({
+      kind: "task_update",
+      turnId: this.turnId,
+      payload: { taskId, status: "stopped" },
+    });
+  }
+}
+
 let root: string;
 let session: SessionHandle;
 
@@ -278,6 +314,31 @@ function completedTurn(handle: SessionHandle, harness: string, turnId: string, t
 }
 
 describe("Controller", () => {
+  test("routes per-task stop to the exact live Harness binding", async () => {
+    const adapter = new TaskStoppableAdapter("example-harness");
+    const controller = new Controller({
+      session,
+      mentionBudgetChars: 4096,
+      resolveTarget: resolveTestTarget,
+      createAdapter: () => adapter,
+    });
+
+    void controller.submit("example", [{ type: "text", text: "start a background task" }]);
+    await Bun.sleep(25);
+    expect(controller.canStopTask("task-background")).toBe(true);
+
+    await controller.stopTask("task-background");
+
+    expect(adapter.stoppedTasks).toEqual(["task-background"]);
+    expect(session.loadState().tasks.get("task-background")?.status).toBe("stopped");
+    expect(controller.canStopTask("task-background")).toBe(false);
+    expect(controller.activeTurnId).toBe(adapter.turnId);
+    await expect(controller.stopTask("task-background")).rejects.toThrow(
+      "Background task is no longer running",
+    );
+    await controller.close();
+  });
+
   test("uses HarnessTarget probe for discovery without opening an Adapter session", async () => {
     let adaptersCreated = 0;
     const controller = new Controller({

@@ -1,4 +1,4 @@
-import type { PermissionResult, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
 import { newId } from "../../event/ids.ts";
 import type { LogSink } from "../../logging.ts";
@@ -38,6 +38,16 @@ interface ClaudeEventHandlerOptions {
   ): void;
 }
 
+export type ClaudePermissionMeta = Parameters<CanUseTool>[2];
+
+function consumedUserMessageUuids(correlation: {
+  user_message_uuid?: string;
+  user_message_uuids?: string[];
+}): readonly string[] {
+  return correlation.user_message_uuids ??
+    (correlation.user_message_uuid ? [correlation.user_message_uuid] : []);
+}
+
 /** Maps Claude SDK messages and permission callbacks into Baton protocol events. */
 export class ClaudeEventHandler {
   constructor(private options: ClaudeEventHandlerOptions) {}
@@ -47,7 +57,7 @@ export class ClaudeEventHandler {
     turnId: () => string,
     toolName: string,
     input: Record<string, unknown>,
-    meta: { title?: string; suggestions?: PermissionUpdate[]; toolUseID?: string },
+    meta: ClaudePermissionMeta,
   ): Promise<PermissionResult> {
     if (toolName === "AskUserQuestion") return this.handleQuestion(turnId, input, meta.toolUseID);
     if (toolName === "ExitPlanMode") {
@@ -62,8 +72,13 @@ export class ClaudeEventHandler {
     const interaction: InteractionDraft = {
       kind: "permission",
       title: meta.title ?? claudeToolTitle(toolName, input),
+      ...(meta.description ? { description: meta.description } : {}),
       ...(meta.toolUseID ? { toolCallId: meta.toolUseID } : {}),
-      options: claudeApprovalOptions(suggestions.length > 0),
+      options: claudeApprovalOptions({
+        hasSuggestions: suggestions.length > 0,
+        defaultToNo: meta.defaultToNo,
+        suppressAlwaysAllowRule: meta.suppressAlwaysAllowRule,
+      }),
     };
     const result = await this.options.openInteraction(interaction, {
       turnId: turnId(),
@@ -141,6 +156,30 @@ export class ClaudeEventHandler {
   ): void {
     const draft = claudeProposedPlanDraft(rt, turnId, input, toolUseId, raw);
     if (draft) emit(draft);
+  }
+
+  /**
+   * Claude may coalesce several queued user messages into one model turn. Newer SDKs report the
+   * complete consumed batch in user_message_uuids; consuming only the representative singular UUID
+   * leaves the other Baton inputs stuck in the Composer Queue. Delete before emitting so the
+   * partial/assistant/result and command-lifecycle correlation paths remain idempotent.
+   */
+  private applyConsumedOffers(
+    rt: Pick<ClaudeRuntime, "pendingOfferUuids">,
+    emit: HarnessEventSink,
+    uuids: readonly string[],
+    raw: unknown,
+  ): void {
+    for (const uuid of new Set(uuids)) {
+      const offer = rt.pendingOfferUuids?.get(uuid);
+      if (!offer) continue;
+      rt.pendingOfferUuids?.delete(uuid);
+      emit({
+        kind: "input_delivery_update",
+        payload: { messageId: offer.messageId, state: "applied" },
+        raw,
+      });
+    }
   }
 
   handleMessage(rt: ClaudeRuntime, emit: HarnessEventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
@@ -303,11 +342,16 @@ export class ClaudeEventHandler {
             },
             raw: msg,
           });
+        } else if (msg.subtype === "thinking_tokens") {
+          // The SDK stamps thinking progress before the first reply frame, so a single folded input
+          // can leave the Composer Queue as soon as Claude demonstrably starts consuming it.
+          this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg);
         } else if (!CLAUDE_IGNORED_SYSTEM_SUBTYPES.has(msg.subtype)) {
           this.noticeUnmappedMessage(rt, `system/${msg.subtype}`);
         }
         break;
       case "stream_event": {
+        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg);
         // 子 agent（parent_tool_use_id 非空）的流式输出不进主时间线，内容随 tool result 汇总
         if (msg.parent_tool_use_id) break;
         const event = msg.event as {
@@ -373,6 +417,7 @@ export class ClaudeEventHandler {
         break;
       }
       case "assistant": {
+        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg);
         if (msg.context_usage) {
           const context = claudeStructuredContextWindow(msg.context_usage);
           if (context) {
@@ -408,19 +453,12 @@ export class ClaudeEventHandler {
         break;
       }
       case "result": {
-        if (msg.subtype === "success" && msg.user_message_uuid) {
-          const offer = rt.pendingOfferUuids?.get(msg.user_message_uuid);
-          if (offer) {
-            // A steer folded into the active Claude turn may not emit command_lifecycle.
-            // The result's correlated input UUID is then the authoritative applied receipt.
-            rt.pendingOfferUuids?.delete(msg.user_message_uuid);
-            emit({
-              kind: "input_delivery_update",
-              payload: { messageId: offer.messageId, state: "applied" },
-              raw: msg,
-            });
-          }
-        }
+        // An error result's singular UUID may describe delivery failure rather than consumption;
+        // user_message_uuids is present only when the turn actually ran and is safe on either subtype.
+        const consumedUuids = msg.subtype === "success"
+          ? consumedUserMessageUuids(msg)
+          : (msg.user_message_uuids ?? []);
+        this.applyConsumedOffers(rt, emit, consumedUuids, msg);
         const usage = msg.usage;
         if (usage) {
           emit({

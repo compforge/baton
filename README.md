@@ -61,6 +61,7 @@ The essential commands are:
 /effort              Set reasoning effort
 /plan                 Toggle Plan mode
 /queue                Manage queued follow-ups (recall, delete, reorder, or dispatch now)
+/tasks                Stop one running background task
 /thoughts             Toggle agent thought display for this session
 /sessions             Open a previous BatonSession
 /new                  Start a clean BatonSession

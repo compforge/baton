@@ -279,12 +279,15 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 | reconcile | 查询 Harness 当前权威运行态，供 stall 恢复 |
 | approval routing | 报告实际审批由用户还是 delegated reviewer 处理 |
 | textgen | 无状态的一次性结构化生成；不创建 HarnessSession/Turn，供会话标题等旁路工具降级调用 |
+| task stop | 通过产生 Task 的原生 HarnessSession 停止单个后台任务；终态仍由 `task_update` 报告 |
 | interactions | permission、question、elicitation 等原生交互 |
 | commands | 动态 Harness command 发现与执行 |
 
 Capability 表达是否支持，不表达 Harness 名称。Controller 只做 feature detection 和优雅降级，
-不能写 provider 分支。若只有一家 Harness 需要某种行为，先留在其 Adapter；至少两家共同印证且
-owner、生命周期和恢复语义一致时，才考虑提升公共 Capability。
+不能写 provider 分支。若只有一家 Harness 需要某种协议字段，先留在其 Adapter；只有当行为作用于
+既有公共对象且沿用同一 identity、owner 与生命周期时，才提升为公共 Capability。Task stop
+作用于已有 `HarnessTaskUpdate.taskId`，请求按产生它的 `Lane × HarnessTarget` Binding 路由，
+请求 resolve 只表示 Harness 已接受，Parallel 是否移除仍以终态 `task_update` 为准。
 
 Model selection 的读取与修改是两个层级：`ModelReadable` 只报告当前 selection，供状态与 context
 投影使用；`ModelConfigurable` 在其上增加目录与修改能力，对应 `/model`。静态选择模型的 Harness
