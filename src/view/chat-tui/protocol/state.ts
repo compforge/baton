@@ -513,13 +513,18 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     return controller.preservesPendingSteers(input.harnessTargetId);
   });
   const queuedItems = [
-    ...pendingSteers.map((input) => ({
-      id: input.messageId,
-      text: userVisibleText(composerTextOf(input.blocks)),
-      tag: `${input.harnessTargetId} · ${input.status === "dispatching"
-        ? "sending"
-        : state.activeTurns.has(input.turnId) ? "current turn" : "native queue"}`,
-    })),
+    ...pendingSteers.map((input) => {
+      const actions: QueueItemAction[] = [];
+      if (controller.canCancelInput?.(input.messageId)) actions.push("cancel");
+      return {
+        id: input.messageId,
+        text: userVisibleText(composerTextOf(input.blocks)),
+        tag: `${input.harnessTargetId} · ${input.status === "dispatching"
+          ? "sending"
+          : state.activeTurns.has(input.turnId) ? "current turn" : "native queue"}`,
+        ...(actions.length > 0 ? { actions } : {}),
+      };
+    }),
     ...mainQueuedInputs.map((turn, index) => {
       const actions: QueueItemAction[] = [];
       if (manageable(index)) {
@@ -576,7 +581,7 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     queue: {
       items: queuedItems,
       manager: input.queueManagerOpen
-        ? { title: "Queued follow-ups" }
+        ? { title: "Input queue" }
         : null,
     },
     activity: {

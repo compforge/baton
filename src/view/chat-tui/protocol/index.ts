@@ -666,7 +666,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
     register({
       name: "queue",
-      description: "Manage queued follow-ups by item",
+      description: "Manage queued and Harness-pending inputs by item",
       scope: "baton",
       runPolicy: "always",
       input: { kind: "none", trailingText: "reject" },
@@ -1055,8 +1055,10 @@ export class BatonChatProtocol implements ChatProtocol {
 
   /** /queue opens chat-tui's dedicated pane; item actions return through typed intents. */
   private openQueueManager(): void {
-    const items = this.controller.listQueued();
-    if (items.length === 0) {
+    if (
+      this.controller.listQueued().length === 0 &&
+      !this.controller.hasPendingSteeringInputs()
+    ) {
       this.toast = { text: "Queue is empty", tone: "info" };
       this.changed();
       return;
@@ -1068,6 +1070,20 @@ export class BatonChatProtocol implements ChatProtocol {
   async resolveQueue(intent: QueueIntent): Promise<QueueIntentResult> {
     if (intent.kind === "close") {
       this.queueManagerOpen = false;
+      this.changed();
+      return { kind: "accepted" };
+    }
+    if (intent.kind === "cancel") {
+      const onlyItem = (this.stateStore.getState("queue")?.items.length ?? 0) === 1;
+      const cancelled = await this.controller.cancelInput(intent.itemId);
+      if (!cancelled) {
+        return {
+          kind: "rejected",
+          message: "That pending input has already left the native queue",
+        };
+      }
+      if (onlyItem) this.queueManagerOpen = false;
+      this.toast = { text: "Cancelled pending input", tone: "info" };
       this.changed();
       return { kind: "accepted" };
     }

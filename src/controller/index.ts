@@ -483,6 +483,23 @@ export class Controller {
     );
   }
 
+  /** Pending steer facts that still belong in the shared Queue surface. */
+  hasPendingSteeringInputs(): boolean {
+    const state = this.options.session.projection;
+    return [...state.harnessInputs.values()].some((input) => {
+      if (
+        input.laneId !== MAIN_LANE_ID ||
+        input.delivery !== "steer" ||
+        (input.status !== "dispatching" && input.status !== "steering") ||
+        input.deliveryOutcome !== undefined
+      ) {
+        return false;
+      }
+      return state.activeTurns.has(input.turnId) ||
+        this.preservesPendingSteers(input.harnessTargetId);
+    });
+  }
+
   get sideRunCount(): number {
     return this.activeSideRuns;
   }
@@ -777,6 +794,51 @@ export class Controller {
   /** Delete is a withdraw without returning content to the composer. */
   discardQueuedById(messageId: string): QueueSnapshot | undefined {
     return this.recallQueuedById(messageId);
+  }
+
+  /** Whether a user-owned pending steer is still attached to a cancellable live binding. */
+  canCancelInput(messageId: string): boolean {
+    const input = this.options.session.projection.harnessInputs.get(messageId);
+    if (
+      input?.laneId !== MAIN_LANE_ID ||
+      input.delivery !== "steer" ||
+      input.status !== "steering" ||
+      input.deliveryOutcome !== undefined ||
+      input.source.type !== "user" ||
+      input.harnessInvocationId !== undefined
+    ) {
+      return false;
+    }
+    return this.bindings
+      .get(this.bindingKey(input.laneId, input.harnessTargetId))
+      ?.canCancelInput() ?? false;
+  }
+
+  /**
+   * Cancel one accepted-but-unapplied steer through its exact live Lane x HarnessTarget binding.
+   * true only acknowledges native queue removal; input_delivery_update owns the durable terminal fact.
+   */
+  async cancelInput(messageId: string): Promise<boolean> {
+    this.assertOpen();
+    const input = this.options.session.projection.harnessInputs.get(messageId);
+    if (!input) throw new Error(`Pending input not found: ${messageId}`);
+    if (
+      input.laneId !== MAIN_LANE_ID ||
+      input.delivery !== "steer" ||
+      input.status !== "steering" ||
+      input.deliveryOutcome !== undefined ||
+      input.source.type !== "user" ||
+      input.harnessInvocationId !== undefined
+    ) {
+      throw new Error(`Input is no longer cancellable: ${messageId}`);
+    }
+    const binding = this.bindings.get(
+      this.bindingKey(input.laneId, input.harnessTargetId),
+    );
+    if (!binding?.canCancelInput()) {
+      throw new Error(`${input.harnessTargetId} does not support cancelling individual inputs`);
+    }
+    return binding.cancelInput(messageId);
   }
 
   /** Reorder one user-owned item without crossing Plugin-owned queued work. */

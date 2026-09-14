@@ -24,19 +24,32 @@ import { resolveTestTarget } from "./harness-target.ts";
 
 /** turn 停在进行中，直到 finish() 或 cancel()；cancel 模拟 harness 的 cancelled 终态 */
 class HoldingAdapter implements HarnessAdapter {
-  readonly capabilities: AdapterCapabilities = { prompt: {} };
+  readonly capabilities: AdapterCapabilities;
   readonly steering?: HarnessAdapter["steering"];
   sink?: HarnessEventSink;
   prompts: string[] = [];
   received: PromptInput[] = [];
   steerGate?: Promise<void>;
   steerResult: SendTurnReceipt = { accepted: true, effective: "steer" };
+  cancelInputResult = true;
+  cancelledInputs: string[] = [];
   private active?: PromptInput;
 
-  constructor(readonly harness: string, options?: { requeuePendingSteers?: boolean }) {
+  constructor(
+    readonly harness: string,
+    options?: { requeuePendingSteers?: boolean; cancelPendingInputs?: boolean },
+  ) {
+    this.capabilities = {
+      prompt: {},
+      ...(options?.cancelPendingInputs
+        ? { inputs: { cancel: { supported: true } } }
+        : {}),
+    };
     // 默认 ack-only（接受即应用，Core 合成回执）；requeuePendingSteers 模拟
     // codex 形态：显式回执 + cancel 后原生队列不可达。
-    this.steering = options?.requeuePendingSteers
+    this.steering = options?.cancelPendingInputs
+      ? { deliveryTracking: "explicit", cancelOwnership: "survives" }
+      : options?.requeuePendingSteers
       ? { deliveryTracking: "explicit", cancelOwnership: "unreachable" }
       : { deliveryTracking: "ack-only", cancelOwnership: "survives" };
   }
@@ -84,6 +97,16 @@ class HoldingAdapter implements HarnessAdapter {
   async cancel(_ref: HarnessSessionHandle): Promise<void> {
     this.finish("cancelled");
   }
+  async cancelInput(_ref: HarnessSessionHandle, messageId: string): Promise<boolean> {
+    this.cancelledInputs.push(messageId);
+    if (!this.cancelInputResult) return false;
+    this.sink?.({
+      kind: "input_delivery_update",
+      ...(this.active ? { turnId: this.active.turnId } : {}),
+      payload: { messageId, state: "failed", detail: "cancelled by user" },
+    });
+    return true;
+  }
   async close(_ref: HarnessSessionHandle): Promise<void> {
     this.finish("cancelled");
   }
@@ -113,6 +136,46 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("Input lifecycle (HarnessInput)", () => {
+  test("cancels one accepted pending steer through its live Harness binding", async () => {
+    const adapter = new HoldingAdapter("claude-code", { cancelPendingInputs: true });
+    const controller = controllerWith(adapter);
+    const active = controller.submit("codex", text("build it"));
+    await until(() => adapter.prompts.length === 1);
+    await controller.sendTurn("codex", text("use the simpler implementation"));
+    const pending = controller.harnessInputs.find((input) => input.delivery === "steer")!;
+
+    expect(controller.canCancelInput(pending.messageId)).toBe(true);
+    expect(await controller.cancelInput(pending.messageId)).toBe(true);
+    expect(adapter.cancelledInputs).toEqual([pending.messageId]);
+    expect(controller.canCancelInput(pending.messageId)).toBe(false);
+    expect(session.loadState().harnessInputs.get(pending.messageId)).toMatchObject({
+      status: "failed",
+      deliveryOutcome: "failed",
+    });
+
+    adapter.finish("end_turn");
+    await active;
+    await controller.close();
+  });
+
+  test("keeps a pending steer when the Harness says it is too late to cancel", async () => {
+    const adapter = new HoldingAdapter("claude-code", { cancelPendingInputs: true });
+    adapter.cancelInputResult = false;
+    const controller = controllerWith(adapter);
+    const active = controller.submit("codex", text("build it"));
+    await until(() => adapter.prompts.length === 1);
+    await controller.sendTurn("codex", text("also update docs"));
+    const pending = controller.harnessInputs.find((input) => input.delivery === "steer")!;
+
+    expect(await controller.cancelInput(pending.messageId)).toBe(false);
+    expect(controller.canCancelInput(pending.messageId)).toBe(true);
+    expect(session.loadState().harnessInputs.get(pending.messageId)?.deliveryOutcome).toBeUndefined();
+
+    adapter.finish("end_turn");
+    await active;
+    await controller.close();
+  });
+
   test("close cancels the active turn without draining queued input", async () => {
     const adapter = new HoldingAdapter("codex");
     const controller = controllerWith(adapter);

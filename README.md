@@ -60,7 +60,7 @@ The essential commands are:
 /model               Pick a model for the active Harness
 /effort              Set reasoning effort
 /plan                 Toggle Plan mode
-/queue                Manage queued follow-ups (recall, delete, reorder, or dispatch now)
+/queue                Manage queued/pending inputs (recall, cancel, delete, reorder, or dispatch now)
 /parallel             Manage parallel tasks, side Lanes, and Harness invocations
 /thoughts             Toggle agent thought display for this session
 /sessions             Open a previous BatonSession

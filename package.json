@@ -42,7 +42,7 @@
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.269",
+    "@anthropic-ai/claude-agent-sdk": "0.3.270",
     "@compforge/baton-plugin": "0.8.3",
     "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.2",
     "@lumis-sh/wasm-bash": "0.26.4",
@@ -50,7 +50,7 @@
     "@opentui/keymap": "^0.5.11",
     "@opentui/react": "^0.5.11",
     "bun": "^1.4.2",
-    "chat-tui": "github:compforge/chat-tui#eb86d09c4f2b5097a167d1738cec5b4e7149c2fd",
+    "chat-tui": "github:compforge/chat-tui#75197e92b2889327fa23a7142a8be60a0c1c81ba",
     "cron-parser": "^5.6.2",
     "react": "^19.2.7",
     "web-tree-sitter": "0.25.10",
