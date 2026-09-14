@@ -50,7 +50,7 @@
     "@opentui/keymap": "^0.5.11",
     "@opentui/react": "^0.5.11",
     "bun": "^1.4.2",
-    "chat-tui": "github:compforge/chat-tui#b36e5d9feba6d6fc30958d64e84a9500fa3ad6cb",
+    "chat-tui": "github:compforge/chat-tui#75197e92b2889327fa23a7142a8be60a0c1c81ba",
     "cron-parser": "^5.6.2",
     "react": "^19.2.7",
     "web-tree-sitter": "0.25.10",
