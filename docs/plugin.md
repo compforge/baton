@@ -234,17 +234,31 @@ Resource API 或 `HookContext.verbs`，由 Core 继续执行权限、持久化�
 HarnessInvocation，最终是否 lowering 为 Core-owned `HarnessInput` 由 Core 决定。两个类型不共享名称，
 避免把 Plugin 动作请求误认为已经等待 Adapter 执行的 Harness Input。
 
-### 4.3 Command 配置请求
+### 4.3 Command 与 CommandVerbs
+
+内置与 Plugin Command 共用 `Command / CommandInput / CommandContext / CommandVerbs /
+CommandResult`，不再按提供方分叉执行契约。宿主指定 namespace：内置为 `baton`，Plugin 为
+其 pluginId；Plugin 注册的是省略 namespace 的 `CommandDefinition`。短名与 alias 冲突时拒绝
+注册，namespace 只表达归属，不借用 `kind` 区分来源。
 
 宿主在 inline Hook 完成后向 Human 发起的 Command 提供有效 Target 坐标。模型目录统一
 属于内置 `Target.status.modelCatalog`，Command、Hook 和 Controller 都经 Resource API
 读取。`list` 保持轻量，`get` 按需探测并缓存只读目录，不为查询创建 HarnessSession；
 未探测、失败、不支持和空目录是不同状态。目录变化推进 Resource version，不改变 Target identity。
-Command 可以返回 `model_configuration`，请求将当前有效 Target 的 model 与 effort
-作为一组配置。宿主通过 Channel 记录配置输入，由 Harness Adapter 校验并一次应用；失败
-不继续发送附带 prompt。附带 prompt 是配置成功后的普通用户输入，但只排入新 Turn，不
-steer 仍使用旧配置的活跃 Turn。Plugin 不直接访问 Harness，也不保存另一份模型偏好；
-自主 reconcile 动作仍使用 Interaction verbs。
+`CommandResult` 只表达 message/picker。`CommandVerbs` 与 `PluginVerbs` 一样是具体 typed
+verb 的能力集合，按调用上下文和授权边界区分，不按“模型配置”等功能划分抽象。当前通过
+`CommandContext.verbs` 提供：
+
+- `submit({ prompt })`：以 command Input 为因果父节点准入新 Turn，返回 messageId、turnId、
+  queued 回执，不等待执行终态。使用 Target 的当前配置，忙时排队，不 steer。
+- `configureModel({ model?, effort? })`：记录配置 Input，经 Adapter 应用并保存 Target
+  默认偏好；内置 `/model`、`/effort` 也使用这一能力。`/easy`、`/hard` 是它们的组合快捷命令，
+  选择持续生效；附带任务时先 await 配置成功，再 submit。
+
+两种来源都经 Channel 的公共执行层；Worker IPC 只搬运执行 ID 与 typed 参数，不能自行
+选择 Session、Target 或提交因果身份。能力在本次 execute 结束后撤销，搜索回调无动作权限，
+picker 选择开启新的、绑定原 namespace 的调用。Human 显式 Command 已是动作入口，不再套
+一个自主动作 Inbox；Hook/reconcile 的 `PluginVerbs` 仍遵循 Interaction gate。
 
 ### 4.4 Board
 

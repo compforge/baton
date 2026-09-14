@@ -1,6 +1,6 @@
 import type { Controller } from "./reconcile.ts";
 import type { ResourceClient } from "./resource.ts";
-import type { Command } from "./command.ts";
+import type { CommandDefinition } from "./command.ts";
 import type { Hook, HookStage } from "./hook.ts";
 import type { Mention } from "./mention.ts";
 
@@ -107,7 +107,7 @@ export interface PluginContext {
   readonly toast: ToastSink;
   /** Session-scoped structured diagnostics. Never log secrets or use logs as domain state. */
   readonly logger: PluginLogger;
-  readonly commands: PluginRegistry<Command>;
+  readonly commands: PluginRegistry<CommandDefinition>;
   readonly mentions: PluginRegistry<Mention>;
   readonly controllers: PluginControllerRegistry;
   readonly hooks: PluginHookRegistry;

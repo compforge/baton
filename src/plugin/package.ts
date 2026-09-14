@@ -1,7 +1,7 @@
 import type {
   BoardPresentation,
   BoardItemTone,
-  Command,
+  CommandDefinition,
   DeferredHookStage,
   Hook,
   HookStage,
@@ -16,9 +16,9 @@ import type {
   EventHandler,
   EventResource,
   MapFunc,
-  PluginCommandInput,
-  PluginCommandPickerSearch,
-  PluginCommandResult,
+  CommandInput,
+  CommandPickerSearch,
+  CommandResult,
   PluginContext,
   PluginDataDirectories,
   PluginLogContext,
@@ -50,7 +50,7 @@ import { validateResourceType } from "./resource.ts";
 export type {
   BoardPresentation,
   BoardItemTone,
-  Command,
+  CommandDefinition,
   DeferredHookStage,
   Hook,
   HookStage,
@@ -65,9 +65,9 @@ export type {
   EventHandler,
   EventResource,
   MapFunc,
-  PluginCommandInput,
-  PluginCommandPickerSearch,
-  PluginCommandResult,
+  CommandInput,
+  CommandPickerSearch,
+  CommandResult,
   PluginContext,
   PluginDataDirectories,
   PluginLogContext,
@@ -167,7 +167,7 @@ type ResourceRegistrar = <TSpec, TStatus>(
 ) => () => void;
 
 type CommandRegistrar = (
-  command: Command,
+  command: CommandDefinition,
 ) => () => void;
 
 type MentionRegistrar = (
@@ -271,7 +271,7 @@ export class PluginBinding implements PluginContext {
         write("error", message, context),
     });
     this.commands = Object.freeze({
-      register: (command: Command) => this.registerCommand(command),
+      register: (command: CommandDefinition) => this.registerCommand(command),
     });
     this.mentions = Object.freeze({
       register: (mention: Mention) => this.registerMention(mention),
@@ -314,7 +314,7 @@ export class PluginBinding implements PluginContext {
     this.cleanups.push(this.registrars.registerController(controller));
   }
 
-  private registerCommand(command: Command): void {
+  private registerCommand(command: CommandDefinition): void {
     this.assertRegistering();
     this.cleanups.push(this.registrars.registerCommand(command));
   }

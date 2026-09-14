@@ -16,7 +16,7 @@ import type {
   TranscriptMessageItem,
 } from "chat-tui";
 import { createChatStore } from "chat-tui";
-import { configureTargetModel } from "./model-configuration.ts";
+import type { CommandRef } from "@compforge/baton-plugin";
 import { decodePasteBytes, type ClipboardRepresentation } from "@opentui/core";
 
 import { CommandRegistry, type CommandDefinition } from "../../../commands/registry.ts";
@@ -26,8 +26,8 @@ import {
   type ChannelPluginOptions,
 } from "../../../channel/index.ts";
 import { targetConfigFor, type BatonConfig } from "../../../config/config.ts";
-import { loadEffortPreferences, saveEffortPreference } from "../../../config/effort-preferences.ts";
-import { loadModelPreferences, saveModelPreference } from "../../../config/model-preferences.ts";
+import { loadEffortPreferences } from "../../../config/effort-preferences.ts";
+import { loadModelPreferences } from "../../../config/model-preferences.ts";
 import {
   expandMentions,
   parseMentions,
@@ -54,8 +54,8 @@ import type { InteractionResult } from "../../../interaction/types.ts";
 import type { Manager } from "../../../plugin/manager.ts";
 import { BATON_TURN_RESOURCE_KIND } from "../../../plugin/baton-resource-controller.ts";
 import type {
-  PluginCommandInput,
-  PluginCommandResult,
+  CommandInput,
+  CommandResult,
   ToastMessage,
   ViewInput,
 } from "../../../plugin/package.ts";
@@ -256,7 +256,21 @@ export class BatonChatProtocol implements ChatProtocol {
   // ===== 输出：baton → TUI =====
 
   get commands(): readonly CommandSpec[] {
-    return [...this.commandRegistry.list(), ...this.plugins.listCommands()];
+    return this.availableCommands().list();
+  }
+
+  private availableCommands(): CommandRegistry {
+    const registry = new CommandRegistry();
+    for (const entry of this.commandRegistry.list()) {
+      if (entry.kind === "command") registry.register(entry.command);
+    }
+    for (const command of this.plugins.listCommands()) {
+      registry.register({
+        ...command,
+        execute: async (input, context) => await this.plugins.executeCommand(command.name, input, context),
+      });
+    }
+    return registry;
   }
 
   get pluginManager(): Manager {
@@ -394,6 +408,15 @@ export class BatonChatProtocol implements ChatProtocol {
    * @spec 一次 Commandable 提交先完整执行并结算 canonical Command；只有成功后，允许的 trailing text 才作为下一条普通 Prompt 提交。
    */
   async command(name: string, argument: string): Promise<void> {
+    const command = this.availableCommands().list().find((entry) => entry.name === name)?.command;
+    if (!command) throw new Error(`Unknown command: /${name}`);
+    const identity = { namespace: command.namespace, name: command.name };
+    const result = await this.invokeCommand(name, { argument }, identity);
+    this.presentCommandResult(name, argument, result, identity);
+  }
+
+  private async invokeCommand(name: string, commandInput: CommandInput, identity: CommandRef): Promise<CommandResult | void> {
+    const argument = commandInput.argument;
     const input: ViewInput = Object.freeze({
       kind: "command",
       command: name,
@@ -401,24 +424,17 @@ export class BatonChatProtocol implements ChatProtocol {
       harnessTargetId: this.harnessTargetId,
     });
     let trailingText: string | undefined;
-    let pluginPrompt: { text: string; target: string } | undefined;
-    await this.channel.dispatchCommand(input, async () => {
-      const invocation = this.commandRegistry.resolve(name, argument);
-      if (!invocation) {
-        if (!this.plugins.listCommands().some((candidate) => candidate.name === name)) {
-          throw new Error(`Unknown command: /${name}`);
-        }
-        pluginPrompt = await this.runPluginCommand(name, argument);
-        return;
+    const receipt = await this.channel.dispatchCommand(input, async (record) => {
+      const invocation = this.availableCommands().resolve(name, argument);
+      if (!invocation) throw new Error(`Unknown command: /${name}`);
+      if (invocation.command.namespace !== identity.namespace || invocation.command.name !== identity.name) {
+        throw new Error(`Command provider changed: /${name}; invoke it again`);
       }
       trailingText = invocation.trailingText;
-      return await invocation.command.execute(invocation.argument);
+      return await this.channel.executeCommand(invocation.command, { ...commandInput, argument: invocation.argument }, record, this.harnessTargetId);
     });
     if (trailingText) await this.submitMessage(trailingText);
-    if (pluginPrompt) await this.submitMessage(pluginPrompt.text, {
-      followUp: true,
-      harnessTargetId: pluginPrompt.target,
-    });
+    return receipt.result;
   }
 
   private createCommandRegistry(): CommandRegistry {
@@ -426,9 +442,10 @@ export class BatonChatProtocol implements ChatProtocol {
     const register = (command: CommandDefinition): void => {
       registry.register({
         ...command,
-        execute: async (argument) => {
+        namespace: "baton",
+        execute: async (input, context) => {
           if (command.name !== "status") this.commandOutput = null;
-          await command.execute(argument);
+          return await command.execute(input, context);
         },
       });
     };
@@ -455,7 +472,7 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "baton",
       runPolicy: "always",
       input: { kind: "argument" },
-      execute: async (argument) => {
+      execute: async ({ argument }, context) => {
         const targets = configuredHarnessTargets(this.config);
         if (!argument) {
           this.openPicker({
@@ -487,30 +504,28 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "harness",
       runPolicy: "always",
       input: { kind: "argument" },
-      execute: async (argument) => {
-        const target = this.harnessTargetId;
+      execute: async ({ argument, selectedValue }, context) => {
+        argument = selectedValue ?? argument;
+        const target = context.target!.id;
         const models = await this.controller.listModels(target);
         if (!argument) {
-          this.openPicker({
+          return {
+            kind: "picker",
             title: `Select ${target} model`,
             options: models.map((model) => ({
               name: model.label,
               description: model.description ?? model.id,
               value: model.id,
             })),
-            onSelect: async (value) => {
-              const model = models.find((candidate) => candidate.id === value);
-              if (model) await this.configureModel(target, model);
-            },
-          });
-          return;
+          };
         }
         const normalized = argument.toLowerCase();
         const model = models.find(
           (candidate) => candidate.id.toLowerCase() === normalized || candidate.label.toLowerCase() === normalized,
         );
         if (!model) throw new Error(`Unknown ${target} model: ${argument}`);
-        await this.configureModel(target, model);
+        await context.verbs.configureModel({ model: model.id });
+        return { kind: "message", text: `${target} model: ${model.label} (takes effect next turn)` };
       },
     });
 
@@ -534,30 +549,28 @@ export class BatonChatProtocol implements ChatProtocol {
           input: { kind: "none", trailingText: "submit" },
         },
       ],
-      execute: async (argument) => {
-        const target = this.harnessTargetId;
+      execute: async ({ argument, selectedValue }, context) => {
+        argument = selectedValue ?? argument;
+        const target = context.target!.id;
         const efforts = await this.controller.listEfforts(target);
         if (!argument) {
-          this.openPicker({
+          return {
+            kind: "picker",
             title: `Select ${target} effort`,
             options: efforts.map((effort) => ({
               name: effort.label,
               description: effort.description ?? effort.id,
               value: effort.id,
             })),
-            onSelect: async (value) => {
-              const effort = efforts.find((candidate) => candidate.id === value);
-              if (effort) await this.configureEffort(target, effort);
-            },
-          });
-          return;
+          };
         }
         const normalized = argument.toLowerCase();
         const effort = efforts.find(
           (candidate) => candidate.id.toLowerCase() === normalized || candidate.label.toLowerCase() === normalized,
         );
         if (!effort) throw new Error(`Unknown ${target} effort: ${argument}`);
-        await this.configureEffort(target, effort);
+        await context.verbs.configureModel({ effort: effort.id });
+        return { kind: "message", text: `${target} effort: ${effort.label} (takes effect next turn)` };
       },
     });
 
@@ -615,7 +628,7 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "baton",
       runPolicy: "always",
       input: { kind: "argument" },
-      execute: async (argument) => {
+      execute: async ({ argument }, context) => {
         const explicitId = argument.trim();
         const proposal = explicitId
           ? this.state.proposedPlans.get(explicitId)
@@ -652,7 +665,7 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "baton",
       runPolicy: "always",
       input: { kind: "argument" },
-      execute: async (argument) => {
+      execute: async ({ argument }, context) => {
         const identifier = argument.trim() || undefined;
         const cancelled = await this.plugins.cancelHarnessInvocation(identifier);
         if (!cancelled) {
@@ -715,7 +728,7 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "baton",
       runPolicy: "always",
       input: { kind: "argument" },
-      execute: async (argument) => {
+      execute: async ({ argument }, context) => {
         const mode = argument.trim().toLowerCase() ||
           (this.boardMode === "open" ? "hide" : "open");
         if (mode !== "open" && mode !== "hide" && mode !== "auto") {
@@ -778,7 +791,7 @@ export class BatonChatProtocol implements ChatProtocol {
       scope: "baton",
       runPolicy: "idle",
       input: { kind: "argument" },
-      execute: async (argument) => {
+      execute: async ({ argument }, context) => {
         // chat-tui Picker 没有自定义按键，模式经参数选择（启动 picker 则用 Tab 就地切换）
         const mode = argument || "list";
         if (mode !== "list" && mode !== "tree") {
@@ -1281,6 +1294,7 @@ export class BatonChatProtocol implements ChatProtocol {
 
   private createChannel(): Channel {
     return new Channel({
+      commandPreferences: { rootDir: this.store.rootDir, models: this.modelPreferences, efforts: this.effortPreferences },
       session: this.session,
       controller: this.controllerOptions(),
       plugins: this.pluginOptions(),
@@ -1515,16 +1529,6 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  private async configureModel(target: string, model: { id: string; label: string }): Promise<void> {
-    await this.runHumanConfiguration("model", target, model.id, async () => {
-      await this.controller.setModel(target, model.id);
-      saveModelPreference(this.store.rootDir, target, model.id);
-      if (model.id === "default") delete this.modelPreferences[target];
-      else this.modelPreferences[target] = model.id;
-      this.toast = { text: `${target} model: ${model.label} (takes effect next turn)`, tone: "info" };
-      this.changed();
-    });
-  }
 
   private async modeOption(target: string) {
     const option = (await this.controller.getConfig(target)).find(
@@ -1549,16 +1553,6 @@ export class BatonChatProtocol implements ChatProtocol {
     });
   }
 
-  private async configureEffort(target: string, effort: { id: string; label: string }): Promise<void> {
-    await this.runHumanConfiguration("effort", target, effort.id, async () => {
-      await this.controller.setEffort(target, effort.id);
-      saveEffortPreference(this.store.rootDir, target, effort.id);
-      if (effort.id === "default") delete this.effortPreferences[target];
-      else this.effortPreferences[target] = effort.id;
-      this.toast = { text: `${target} effort: ${effort.label} (takes effect next turn)`, tone: "info" };
-      this.changed();
-    });
-  }
 
   /** 控制命令输出只进入当前 timeline State，不写 session.jsonl，避免污染可恢复的会话历史。 */
   private sessionStatusItem(): TranscriptItem {
@@ -1627,76 +1621,18 @@ export class BatonChatProtocol implements ChatProtocol {
     this.pickerSearchRevision += 1;
   }
 
-  private async runPluginCommand(
+  private presentCommandResult(
     name: string,
     argument: string,
-    selectedValue?: string,
-  ): Promise<{ text: string; target: string } | undefined> {
-    const command = this.plugins
-      .listCommands()
-      .find((candidate) => candidate.name === name);
-    if (!command) throw new Error(`Plugin command is not active: /${name}`);
-    const targetId = this.plugins.resolveHarnessTargetId(this.harnessTargetId);
-    const target = resolveHarnessTarget(this.config, targetId);
-    if (!target) throw new Error(`Unknown HarnessTarget: ${targetId}`);
-    const result = await this.executePluginCommand(command.pluginId, name, {
-      argument,
-      target: { id: target.id, harness: target.harness },
-      ...(selectedValue === undefined ? {} : { selectedValue }),
-    });
-    if (result?.kind === "model_configuration") {
-      await configureTargetModel(this.channel, this.store.rootDir, target.id, {
-        model: result.model,
-        effort: result.effort,
-      }, { models: this.modelPreferences, efforts: this.effortPreferences });
-      this.toast = { text: `${target.id}: ${result.model} / ${result.effort} (takes effect next turn)`, tone: "info" };
-      this.commandOutput = null;
-      this.changed();
-      return result.prompt ? { text: result.prompt, target: target.id } : undefined;
-    }
-    this.presentPluginCommandResult(command.pluginId, name, argument, result);
-  }
-
-  private async executePluginCommand(
-    pluginId: string,
-    name: string,
-    input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined> {
-    try {
-      return await this.plugins.executeCommand(name, input);
-    } catch (error) {
-      this.session.log({
-        level: "error",
-        source: "baton",
-        component: "plugin.command",
-        message: `Plugin command /${name} failed`,
-        pluginId,
-        error: logError(error),
-        attributes: {
-          command: name,
-          phase: input.selectedValue !== undefined
-            ? "select"
-            : input.searchQuery !== undefined
-            ? "search"
-            : "invoke",
-        },
-      });
-      throw error;
-    }
-  }
-
-  private presentPluginCommandResult(
-    pluginId: string,
-    name: string,
-    argument: string,
-    result: Exclude<PluginCommandResult, { kind: "model_configuration" }> | undefined,
+    result: CommandResult | void,
+    identity: CommandRef,
   ): void {
     if (!result) return;
     if (result.kind === "message") {
       this.toast = null;
       this.commandOutput = {
         ...this.batonTranscriptItem(`_plugin_command_${name}`, result.text),
-        author: pluginId,
+        author: identity.namespace,
       };
       this.changed();
       return;
@@ -1718,10 +1654,10 @@ export class BatonChatProtocol implements ChatProtocol {
       ...(result.search?.mode === "remote"
         ? {
           onSearch: async (query: string) => {
-            const next = await this.executePluginCommand(pluginId, name, {
+            const next = await this.invokeCommand(name, {
               argument,
               searchQuery: query,
-            });
+            }, identity);
             if (
               !next ||
               next.kind !== "picker" ||
@@ -1743,8 +1679,8 @@ export class BatonChatProtocol implements ChatProtocol {
         }
         : {}),
       onSelect: async (value) => {
-        const prompt = await this.runPluginCommand(name, argument, value);
-        if (prompt) await this.submitMessage(prompt.text, { followUp: true, harnessTargetId: prompt.target });
+        const next = await this.invokeCommand(name, { argument, selectedValue: value }, identity);
+        this.presentCommandResult(name, argument, next, identity);
       },
     });
   }

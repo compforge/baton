@@ -253,7 +253,6 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
         plugins: {
           listCommands(): Array<{
             pluginId: string;
-            commandId: string;
             name: string;
             description: string;
           }>;
@@ -262,7 +261,7 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
       };
       internals.plugins.listCommands = () => [{
         pluginId: "qiankun/reqloop",
-        commandId: "requirements",
+        namespace: "qiankun/reqloop",
         name: "requirements",
         description: "Browse requirements",
       }];
@@ -281,8 +280,8 @@ describe("BatonChatProtocol plugin command diagnostics", () => {
       expect(log).toMatchObject({
         batonSessionId: session.id,
         level: "error",
-        component: "plugin.command",
-        message: "Plugin command /requirements failed",
+        component: "command",
+        message: "Command execution failed",
         pluginId: "qiankun/reqloop",
         error: {
           name: "Error",

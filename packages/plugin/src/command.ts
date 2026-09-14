@@ -1,57 +1,87 @@
-/** A slash command invocation routed to the owning PluginPackage. */
-export interface PluginCommandInput {
+/** Stable identity; namespaces are assigned by the host, never by a Plugin. */
+export interface CommandRef {
+  readonly namespace: string;
+  readonly name: string;
+}
+
+export interface CommandInput {
   readonly argument: string;
-  /** Host-resolved selection after inline input hooks; absent outside a Session surface. */
-  readonly target?: { readonly id: string; readonly harness: string };
-  /** Set when the user selects an option returned by an earlier invocation. */
   readonly selectedValue?: string;
-  /** Set when a remote-search picker asks the command for a fresh result page. */
   readonly searchQuery?: string;
 }
 
+export type CommandInputShape =
+  | { readonly kind: "argument" }
+  | { readonly kind: "none"; readonly trailingText: "reject" | "submit" };
 
-export interface PluginCommandOption {
+export interface CommandAlias {
+  readonly name: string;
+  readonly description?: string;
+  readonly boundArgument?: string;
+  readonly input?: CommandInputShape;
+}
+
+export interface CommandSubmitInput {
+  readonly prompt: string;
+}
+
+/** A durable Queue admission, not evidence that the Harness completed the turn. */
+export interface CommandSubmitReceipt {
+  readonly messageId: string;
+  readonly turnId: string;
+  readonly queued: boolean;
+}
+
+/**
+ * Host capabilities scoped to one live Command invocation. Like PluginVerbs,
+ * this is a collection of typed actions, not a model-configuration abstraction.
+ */
+export interface CommandVerbs {
+  /** @spec Submit a new turn on the invoking Target, queueing instead of steering while busy. */
+  submit(input: CommandSubmitInput): Promise<CommandSubmitReceipt>;
+  /** Change the invoking Target's defaults for subsequent turns. */
+  configureModel(input: { readonly model?: string; readonly effort?: string }): Promise<void>;
+}
+
+export interface CommandContext {
+  readonly executionId: string;
+  readonly command: CommandRef;
+  readonly target?: { readonly id: string; readonly harness: string };
+  readonly laneId?: string;
+  readonly verbs: CommandVerbs;
+}
+
+export interface CommandOption {
   readonly name: string;
   readonly description?: string;
   readonly value: string;
 }
 
-export interface PluginCommandPickerSearch {
+export interface CommandPickerSearch {
   readonly mode: "local" | "remote";
-  /** Query represented by this result. Used to initialize or refresh the field. */
   readonly query?: string;
   readonly placeholder?: string;
 }
 
-export type PluginCommandResult =
-  | {
-      /** Request configuration of the invoking Target, never an arbitrary account. */
-      readonly kind: "model_configuration";
-      readonly model: string;
-      readonly effort: string;
-      /** Optional user prompt submitted only after configuration succeeds, as a new turn. */
-      readonly prompt?: string;
-    }
-  | {
-      readonly kind: "message";
-      readonly text: string;
-    }
+/** Presentation only. Host effects must be awaited through CommandContext.verbs. */
+export type CommandResult =
+  | { readonly kind: "message"; readonly text: string }
   | {
       readonly kind: "picker";
       readonly title: string;
-      readonly options: readonly PluginCommandOption[];
-      readonly search?: PluginCommandPickerSearch;
+      readonly options: readonly CommandOption[];
+      readonly search?: CommandPickerSearch;
     };
 
-/**
- * Package-owned slash command. Baton owns completion and rendering; the Plugin
- * owns the domain query and interprets any selected value.
- */
-export interface Command {
-  readonly commandId: string;
-  readonly name: string;
+/** Builtin and Plugin commands share identity, invocation and presentation contracts. */
+export interface Command extends CommandRef {
   readonly description: string;
-  execute(
-    input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined>;
+  readonly scope?: "baton" | "harness";
+  readonly runPolicy?: "always" | "idle";
+  readonly input?: CommandInputShape;
+  readonly aliases?: readonly CommandAlias[];
+  execute(input: CommandInput, context: CommandContext): Promise<CommandResult | void>;
 }
+
+/** The registrar binds namespace to the trusted provider identity. */
+export type CommandDefinition = Omit<Command, "namespace">;

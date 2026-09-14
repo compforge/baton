@@ -161,6 +161,13 @@ Plugin 决定领域下一步，Core 决定协作动作如何授权、持久化�
 
 ## 4. 运行边界
 
+Human 显式调用 Command 是另一条输入路径：内置与 Plugin 共用 `Command`、
+`CommandContext`、`CommandVerbs` 和仅展示的 `CommandResult`，由 namespace 区分归属。
+Channel 在 inline Hook 后签发本次调用的 Target 与能力；`submit` 准入新 Turn，
+`configureModel` 修改默认配置。它不是自主 loop 请求，因而不重复进入 Human Inbox；
+Hook/reconcile 的 PluginVerbs gate 不变。能力不跨调用保存，Worker 不能自行指定执行坐标。
+模型快捷 Command 复用 Target 默认配置，不引入另一份活跃 preset 状态。
+
 ```text
 User-level Baton Daemon
 ├── Plugin Host

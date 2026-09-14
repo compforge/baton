@@ -5,10 +5,18 @@ export type {
 
 export type {
   Command,
-  PluginCommandInput,
-  PluginCommandOption,
-  PluginCommandPickerSearch,
-  PluginCommandResult,
+  CommandDefinition,
+  CommandContext,
+  CommandVerbs,
+  CommandRef,
+  CommandInputShape,
+  CommandAlias,
+  CommandSubmitInput,
+  CommandSubmitReceipt,
+  CommandInput,
+  CommandOption,
+  CommandPickerSearch,
+  CommandResult,
 } from "./command.ts";
 
 export type {

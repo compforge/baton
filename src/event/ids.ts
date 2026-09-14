@@ -45,6 +45,7 @@ export type IdPrefix =
   | "pi"
   | "pr"
   | "pex"
+  | "cex"
   | "hinv"
   | "hia"
   | "vo";

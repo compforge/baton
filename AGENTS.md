@@ -89,12 +89,16 @@ OpenTUI 已提供的终端能力由 View 直接复用，最低依赖随采用的
    状态，也不代替 Queue、Controller、Interaction domain 或 Harness 干活。
    人、Harness 和 Baton Plugin 通过稳定 verb 与 Core-owned 对象协作，而不是向通用 topic 投递 opaque message。Baton Plugin 通过 Resource /
    Controller 与 reconcile 作用域能力推进领域 loop；`ask/confirm` 组织 human-in-the-loop，
-   `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。所有发起新动作的 verb 都先持久化为
+   `draft` 交给用户修改，`harness` 请求在主 Lane 或新 Lane 执行。自主 Hook/reconcile 的 PluginVerbs 都先持久化为
    Interaction；策略可以自动批准，但不能绕过 gate。通过后才创建 HarnessInvocation，最终 Input
    统一走 Context、Permission、Attempt 与 routing。Plugin verb 属于 Core 签发的 live execution，
    不以 Resource 或 caller key 作为 continuation identity；调用必须带 timeout，并真实 await
    `success/dismissed/timeout/failure`。等待时释放 Controller 与 Manager 并发位，Worker/Core 崩溃
    则以 failure 收口而不重放调用栈。
+   Human 显式调用的内置与 Plugin Command 共用 Command/CommandContext/CommandVerbs/CommandResult，
+   namespace 区分来源；CommandVerbs 由 Channel 按本次调用签发，submit 进入新 Turn，
+   configureModel 修改并保存默认配置，结果只承载展示。
+   这条显式用户输入路径不借用自主 PluginVerbs 的 Inbox gate，搜索回调没有动作权限。
    Plugin 只能依赖
    `packages/plugin` 公共契约，不能持有宿主 Store、Controller、Harness 进程或 SDK 句柄。
    Marketplace Plugin 的每个启用 Instance 通过一份活动 Binding 进入独立 Worker；Plugin Host 按

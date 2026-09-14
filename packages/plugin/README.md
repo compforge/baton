@@ -44,7 +44,6 @@ const plugin: PluginPackage = {
     });
     context.toast.show({ text: "Example plugin ready", tone: "success" });
     context.commands.register({
-      commandId: "examples",
       name: "examples",
       description: "List examples",
       async execute() {
@@ -115,7 +114,31 @@ This package contains protocol types only. Baton host implementations such as
 Daemon, Plugin Host, Worker, Manager, Binding, Controller, Store, Marketplace,
 persistence, and Harness routing are intentionally excluded.
 
-## Model-aware commands
+## Commands
+
+Builtin and Plugin commands share `Command`, `CommandInput`, `CommandContext`,
+`CommandVerbs`, and `CommandResult`. The host assigns each command's namespace:
+`baton` for builtins, the Plugin ID for plugins. A Plugin registers a
+`CommandDefinition` (the same contract without namespace). Short names and aliases
+must not collide; namespace identifies ownership, not a second execution path.
+
+`execute(input, command)` receives an invocation-scoped context. Results only
+present messages or pickers; host actions must be awaited through `command.verbs`:
+
+Like `PluginVerbs`, `CommandVerbs` is a collection of concrete typed actions. The
+distinction is the calling context and its authority, not the kind of feature.
+The current Command verbs are:
+
+- `submit({ prompt })` admits a new turn on the effective Target, using its current configuration.
+  The receipt contains `messageId`, `turnId`, and `queued`, not a completion verdict.
+- `configureModel({ model?, effort? })` changes that Target's defaults. Builtin
+  `/model` and `/effort` use this same capability and persist Target preferences.
+
+Context identity and Target come from Core, after inline input hooks. Capabilities
+expire when the invocation settles or its Worker/Channel closes; remote picker
+search cannot invoke actions. Picker selections are fresh invocations pinned to
+the original command namespace. Background Hook/reconcile work uses `PluginVerbs`
+and its Interaction gates; it cannot retain a Command's human-action authority.
 
 Models are discovered through the builtin `Target` Resource, available to Commands,
 Hooks and Controllers through the same Resource API. `list(Target)` returns the
@@ -128,18 +151,17 @@ discovery capability), and `Failed`; only `Ready` contains `models`. An empty Re
 catalog is not a probe failure. Each model lists its supported efforts, including
 `default` when supported. Native credentials and account environment are not exposed.
 `SessionTargetBinding.status.effectiveTargetRef` identifies a Session's bound Target;
-Command input also supplies the effective selection after inline input hooks.
+`CommandContext.target` also supplies the effective selection after inline input hooks.
 
 ```ts
 import type { BatonTargetResourceSpec, BatonTargetResourceStatus } from "@compforge/baton-plugin";
 
 context.commands.register({
-  commandId: "choose-model",
   name: "choose-model",
   description: "Choose an available model",
-  async execute(input) {
+  async execute(input, command) {
     const targets = await context.resources.list({ apiVersion: "baton.dev/v1alpha1", kind: "Target" });
-    const selected = targets.find((target) => target.metadata.name === input.target?.id);
+    const selected = targets.find((target) => target.metadata.name === command.target?.id);
     if (!selected) throw new Error("Target unavailable");
     const target = await context.resources.get<BatonTargetResourceSpec, BatonTargetResourceStatus>({
       apiVersion: selected.apiVersion, kind: selected.kind,
@@ -149,20 +171,21 @@ context.commands.register({
     if (catalog?.phase !== "Ready") throw new Error(`Model discovery: ${catalog?.phase ?? "Unavailable"}`);
     if (!input.selectedValue) return {
       kind: "picker",
-      title: `Models for ${input.target?.id}`,
+      title: `Models for ${command.target?.id}`,
       options: catalog.models.map((model) => ({ name: model.label, value: model.id })),
     };
-    return { kind: "model_configuration", model: input.selectedValue, effort: "default" };
+    await command.verbs.configureModel({ model: input.selectedValue, effort: "default" });
+    return { kind: "message", text: `Default model: ${input.selectedValue}` };
   },
 });
 ```
 
-The `model_configuration` result requests a model/effort pair on the invoking
-Target. Baton revalidates it through the Adapter before changing either value,
-records the configuration input, and reuses Target-scoped preferences. An optional
-`prompt` is submitted only after success and starts a new turn instead of steering
-the active turn. This is a Human command result, not a background Plugin verb or a
-direct Harness handle. Native availability may change between discovery and apply.
+Baton validates model configuration at the Adapter boundary before changing either
+value. Preset commands such as `/easy` and `/hard` use `configureModel` as a shortcut
+for `/model` plus `/effort`; the choice persists for subsequent turns and Sessions.
+If a command also submits a task, it awaits successful configuration first.
+Command submissions always start a new turn, queueing while busy. Native
+availability may change between discovery and configuration.
 
 One enabled Plugin instance has one Binding and one Worker. A Plugin is the
 organization and ownership unit for Resource schemas, Controllers, Sources, and
@@ -425,7 +448,7 @@ await associate(decision.value);
 
 A command can return `search.mode: "local"` to let chat-tui filter its current
 options, or `"remote"` to receive later query text in
-`PluginCommandInput.searchQuery`. Baton debounces remote queries and ignores
+`CommandInput.searchQuery`. Baton debounces remote queries and ignores
 responses superseded by a newer query. A remote result may contain no options;
 return the same remote-search picker shape so the field stays open.
 

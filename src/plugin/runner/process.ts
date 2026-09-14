@@ -1,5 +1,9 @@
 import type {
-  Command,
+  CommandDefinition,
+  CommandContext,
+  CommandInput,
+  CommandSubmitInput,
+  CommandSubmitReceipt,
   Controller,
   EventHandler,
   Hook,
@@ -184,14 +188,35 @@ const resources: ResourceClient = Object.freeze({
   },
 });
 
-function commandRegistration(command: Command): PluginRegistration {
+function commandRegistration(command: CommandDefinition): PluginRegistration {
   return {
+    input: command.input,
+    aliases: command.aliases,
+    runPolicy: command.runPolicy,
+    scope: command.scope,
     kind: "command",
     handlerId: handler(
-      `command:${command.commandId}`,
-      command.execute.bind(command) as (...args: never[]) => unknown,
+      `command:${command.name}`,
+      (async (input: CommandInput, snapshot: Omit<CommandContext, "verbs">) => {
+        let active = true;
+        const invoke = (request: HostRequest) => {
+          if (!active) throw new Error("Command execution is no longer active");
+          return callHost(request);
+        };
+        try {
+          return await command.execute(input, Object.freeze({
+            ...snapshot,
+            verbs: Object.freeze({
+              submit: async (input: CommandSubmitInput) =>
+                await invoke({ method: "command.verb", executionId: snapshot.executionId, verb: "submit", input }) as CommandSubmitReceipt,
+              configureModel: async (input: { model?: string; effort?: string }) => {
+                await invoke({ method: "command.verb", executionId: snapshot.executionId, verb: "configureModel", input });
+              },
+            }),
+          }));
+        } finally { active = false; }
+      }) as (...args: never[]) => unknown,
     ),
-    commandId: command.commandId,
     name: command.name,
     description: command.description,
   };
@@ -366,7 +391,7 @@ async function activate(
     }),
     logger: pluginLogger(),
     commands: Object.freeze({
-      register(command: Command) {
+      register(command: CommandDefinition) {
         assertRegistering();
         registrations.push(commandRegistration(command));
       },

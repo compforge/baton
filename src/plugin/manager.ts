@@ -1,3 +1,4 @@
+import type { CommandContext } from "@compforge/baton-plugin";
 import {
   Controller,
   type ReconcileFailure,
@@ -25,8 +26,8 @@ import {
   PluginBinding,
   type Controller as PluginResourceController,
   type CronSource,
-  type PluginCommandInput,
-  type PluginCommandResult,
+  type CommandInput,
+  type CommandResult,
   type DeferredHookStage,
   type HookStage,
   type HookSubjectMap,
@@ -975,9 +976,10 @@ export class Manager {
 
   async executeCommand(
     name: string,
-    input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined> {
-    return await this.commandRegistry.execute(name, input);
+    input: CommandInput,
+    context: CommandContext,
+  ): Promise<CommandResult | void> {
+    return await this.commandRegistry.execute(name, input, context);
   }
 
   /** Persist the Interaction result before resuming its live Plugin execution. */

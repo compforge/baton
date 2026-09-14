@@ -1,4 +1,7 @@
 import type {
+  CommandInputShape,
+  CommandAlias,
+  CommandSubmitInput,
   PluginDataDirectories,
   PluginInstance,
   PluginSessionContext,
@@ -25,9 +28,12 @@ export interface PluginPackageEntry {
 }
 
 export interface CommandRegistration {
+  readonly input?: CommandInputShape;
+  readonly aliases?: readonly CommandAlias[];
+  readonly runPolicy?: "always" | "idle";
+  readonly scope?: "baton" | "harness";
   readonly kind: "command";
   readonly handlerId: string;
-  readonly commandId: string;
   readonly name: string;
   readonly description: string;
 }
@@ -119,6 +125,8 @@ export type RunnerRequest =
     };
 
 export type HostRequest =
+  | { readonly method: "command.verb"; readonly executionId: string; readonly verb: "submit"; readonly input: CommandSubmitInput }
+  | { readonly method: "command.verb"; readonly executionId: string; readonly verb: "configureModel"; readonly input: { readonly model?: string; readonly effort?: string } }
   | {
       readonly method: "verb.invoke";
       readonly context: ExecutionScope;

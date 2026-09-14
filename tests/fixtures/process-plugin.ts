@@ -17,10 +17,14 @@ const plugin: PluginPackage = {
       },
     });
     context.commands.register({
-      commandId: "process-check",
       name: "process-check",
       description: "Exercise Plugin Runner process isolation",
-      async execute(input) {
+      async execute(input, command) {
+        if (input.argument === "submit") {
+          await command.verbs.configureModel({ model: "fast", effort: "medium" });
+          const receipt = await command.verbs.submit({ prompt: "task" });
+          return { kind: "message", text: JSON.stringify({ command: command.command, target: command.target, receipt }) };
+        }
         if (input.argument === "data-dirs") {
           return {
             kind: "message",

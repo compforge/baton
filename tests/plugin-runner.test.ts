@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { commandContext, executeCommand } from "./fixtures/command-context.ts";
 import {
   cpSync,
   mkdirSync,
@@ -409,7 +410,7 @@ describe("Plugin Runner process boundary", () => {
       },
     });
     await expect(
-      manager.executeCommand("process-check", { argument: "data-dirs" }),
+      executeCommand(manager, "process-check", { argument: "data-dirs" }),
     ).resolves.toEqual({
       kind: "message",
       text: JSON.stringify({
@@ -443,22 +444,37 @@ describe("Plugin Runner process boundary", () => {
       }),
     });
     await expect(
-      manager.executeCommand("process-check", { argument: "resource-ref" }),
+      executeCommand(manager, "process-check", { argument: "resource-ref" }),
     ).resolves.toEqual({
       kind: "message",
       text: expect.stringMatching(
         /^\{"currentUid":"pr_[^"]+"\}$/,
       ),
     });
+    const submitted: unknown[] = [];
+    const configurations: unknown[] = [];
+    const command = commandContext("tests/process-plugin", "process-check");
+    const submitReceipt = { messageId: "m_command", turnId: "t_command", queued: true };
+    expect(await manager.executeCommand("process-check", { argument: "submit" }, {
+      ...command, target: { id: "codex2", harness: "codex" },
+      verbs: {
+        async submit(input) { submitted.push(input); return submitReceipt; },
+        async configureModel(input) { configurations.push(input); },
+      },
+    })).toEqual({ kind: "message", text: JSON.stringify({
+      command: command.command, target: { id: "codex2", harness: "codex" }, receipt: submitReceipt,
+    }) });
+    expect(submitted).toEqual([{ prompt: "task" }]);
+    expect(configurations).toEqual([{ model: "fast", effort: "medium" }]);
     const heartbeat = Bun.sleep(25).then(() => "heartbeat");
-    const invocation = manager.executeCommand("process-check", {
+    const invocation = executeCommand(manager, "process-check", {
       argument: "200",
     }).then(() => "invocation");
     expect(await Promise.race([heartbeat, invocation])).toBe("heartbeat");
     expect(await invocation).toBe("invocation");
 
     await expect(
-      manager.executeCommand("process-check", { argument: "crash" }),
+      executeCommand(manager, "process-check", { argument: "crash" }),
     ).rejects.toThrow(/Plugin Runner (IPC disconnected|exited unexpectedly)/);
     await waitFor(() => !manager.isInstanceActive("process_default"));
     expect(manager.listCommands()).toEqual([]);
@@ -499,7 +515,7 @@ describe("Plugin Runner process boundary", () => {
 
     await manager.start();
     await expect(
-      manager.executeCommand("process-check", { argument: "2000" }),
+      executeCommand(manager, "process-check", { argument: "2000" }),
     ).rejects.toThrow(/Plugin Runner invoke timed out/);
     await waitFor(() => !manager.isInstanceActive("process_timeout"));
     expect(manager.listCommands()).toEqual([]);
