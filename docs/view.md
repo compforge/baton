@@ -44,11 +44,11 @@ chat-tui 的主壳按概念分成历史区、当前态 dock、输入区、辅助
 | Queue | queued follow-up、正在投递和尚未 applied 的 steer | Core Queue / Input 投影；属于未来态，不提前进入 Transcript |
 | Interaction Dock | approval、question、suggested input | Core `Interaction` 的待决当前态；回答或取消后退出 |
 | Activity | `Working`、retry、当前工具等短寿命运行状态 | 当前 Turn 的现在时；完成后消失，不作为历史逐行沉淀 |
-| Parallel | 正在运行的 side Lane、原生 subagent 或异步 task | 并行工作的现在时；终结后由 Transcript 任务卡片承接历史 |
+| Parallel | 正在运行的 side Lane、原生 subagent 或异步 task | 并行工作的现在时；`/parallel` 打开 All / Tasks / Runs 管理页，终结后由 Transcript 任务卡片承接历史 |
 | Composer | 草稿、补全、目标模式与提交入口 | View 本地编辑态；提交后成为 `ViewInput` |
 | Footer / Toast | 键位提示、一次性操作回执、警告 | View 状态或已确认事实的短寿命反馈 |
 | Sidecar / Board | Plugin Board sections 与资源状态 | Board Projection；是共享读模型，不是 Session 历史替代品 |
-| Picker / Queue manager | session、command、mention、queue 等选择与管理界面 | 具体 View 的临时 overlay；选择结果再翻译为 typed intent |
+| Picker / manager | session、command、mention、queue、plugins、parallel 等选择与管理界面 | 具体 View 的临时 overlay；选择结果再翻译为 typed intent |
 
 区域选择遵循时态，而不是来源：同一个 Harness 事件在执行中可以只贡献 Activity，完成后再贡献
 Transcript；同一个 side Lane 在运行中位于 Parallel，结束后进入可回看的任务卡片。View 不复制事实，
@@ -62,9 +62,15 @@ View input 只表达人的语义动作：
 chat-tui intent → Baton View Adapter → ViewInput → Channel → Core owner
 ```
 
-prompt、command、configuration、Interaction response 和 interrupt 都先成为 `ViewInput`。View 可以做
+prompt、command、configuration、Interaction response、Task action 和 interrupt 都先成为
+`ViewInput`。View 可以做
 编辑态、焦点和本地 picker 等短寿命交互，但不创建 `HarnessInput`，也不直接调用 Harness 或 Plugin。
 Core 决定输入如何持久化、lowering、授权与调度。
+
+Parallel 的紧凑区域与 `/parallel` 管理页必须消费同一个 Baton `ParallelItem` 投影。`kind` 只用于
+All / Tasks / Runs 分组和展示；它不把 UI item 提升为运行时 owner。管理页发出的 action 携带稳定
+item ID，Controller 在执行时重新解析当前 Projection、检查 capability，再调用真实 owner；已经终结
+或已失去能力的旧选择必须失败关闭。
 
 View output 只消费 Core 已建立的投影：
 

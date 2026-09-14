@@ -48,7 +48,7 @@ Review 等领域语义。完整边界见 [View](./view.md)。
 | **Channel** | BatonSession 的 active composition root 与 typed coordination facade；拥有进程期组件引用、订阅和 `open/closing/closed`，不拥有任何可恢复业务状态或状态机 |
 | **PluginBinding** | 一份启用 PluginInstance 的具体激活；拥有注册与清理生命周期，不决定 Resource namespace |
 | **Human Inbox** | Baton 与 Human 之间的持久待决/复核列表；所有 Plugin 发起的 human-facing action 都先进入这里 |
-| **ViewInput** | View 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response 或 interrupt，并非所有 Input 都会进入 Harness |
+| **ViewInput** | View 提交给 Baton 的原始输入事实；可以是 text/prompt、command、configuration、Interaction response、Task action 或 interrupt，并非所有 Input 都会进入 Harness |
 | **ViewOutput** | Core 发布给 View 的投影更新；表示可供 surface 消费，不证明用户已经看见 |
 | **HarnessInput** | Core lowering 后准备交给 Harness 的输入；具有稳定 message identity、目标 Lane 和可查询消费状态 |
 | **HarnessEvent** | Adapter 将 Harness 原生流式观察归一后的输出；Core 补齐可信坐标并提交后才成为 Baton Event |

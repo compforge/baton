@@ -967,8 +967,8 @@ export class Controller {
   }
 
   /** Whether the live task's owning Lane x HarnessTarget binding can stop it individually. */
-  canStopTask(taskId: string): boolean {
-    const task = this.options.session.projection.tasks.get(taskId);
+  canStopTask(taskKey: string): boolean {
+    const task = this.options.session.projection.tasks.get(taskKey);
     if (
       task?.status !== "in_progress" ||
       task.backgrounded === false ||
@@ -977,32 +977,43 @@ export class Controller {
     ) {
       return false;
     }
-    return this.bindings
-      .get(this.bindingKey(task.laneId, task.harnessTargetId))
-      ?.canStopTask() ?? false;
+    const binding = this.bindings.get(this.bindingKey(task.laneId, task.harnessTargetId));
+    if (
+      task.harnessSessionId &&
+      binding?.sessionIdentity()?.id !== task.harnessSessionId
+    ) {
+      return false;
+    }
+    return binding?.canStopTask() ?? false;
   }
 
   /**
    * Stop one background task through the exact live binding that emitted it.
    * Resolve only acknowledges the request; the Harness still owns the terminal task_update.
    */
-  async stopTask(taskId: string): Promise<void> {
+  async stopTask(taskKey: string): Promise<void> {
     this.assertOpen();
-    const task = this.options.session.projection.tasks.get(taskId);
-    if (!task) throw new Error(`Background task not found: ${taskId}`);
+    const task = this.options.session.projection.tasks.get(taskKey);
+    if (!task) throw new Error(`Background task not found: ${taskKey}`);
     if (task.status !== "in_progress" || task.backgrounded === false) {
-      throw new Error(`Background task is no longer running: ${taskId}`);
+      throw new Error(`Background task is no longer running: ${task.taskId}`);
     }
     if (!task.laneId || !task.harnessTargetId) {
-      throw new Error(`Background task has no live Harness binding: ${taskId}`);
+      throw new Error(`Background task has no live Harness binding: ${task.taskId}`);
     }
     const binding = this.bindings.get(
       this.bindingKey(task.laneId, task.harnessTargetId),
     );
+    if (
+      task.harnessSessionId &&
+      binding?.sessionIdentity()?.id !== task.harnessSessionId
+    ) {
+      throw new Error(`Background task is no longer attached to its HarnessSession: ${task.taskId}`);
+    }
     if (!binding?.canStopTask()) {
       throw new Error(`${task.harnessTargetId} does not support stopping individual tasks`);
     }
-    await binding.stopTask(taskId);
+    await binding.stopTask(task.taskId);
   }
 
   /**

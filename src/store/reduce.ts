@@ -38,6 +38,7 @@ import {
   type HarnessInputSource,
   type HarnessInputStatus,
 } from "../harness/input.ts";
+import { harnessTaskKey } from "../harness/task.ts";
 
 export interface MessageState {
   messageId: string;
@@ -96,8 +97,11 @@ export interface ProposedPlanState extends ProposedPlan {
 }
 
 export interface HarnessTaskState extends HarnessTaskUpdate {
+  /** Baton identity; taskId remains the Harness-native identity. */
+  taskKey: string;
   harness?: string;
   harnessTargetId?: string;
+  harnessSessionId?: string;
   laneId?: string;
   turnId?: string;
   /** First observed lifecycle edge; projection-only elapsed time survives replay. */
@@ -664,9 +668,16 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     }
     case "task_update": {
       const p = ev.payload;
-      const existing = state.tasks.get(p.taskId);
+      const harnessTargetId = eventTargetId(ev);
+      const taskKey = harnessTaskKey({
+        taskId: p.taskId,
+        laneId: ev.laneId,
+        harnessTargetId,
+        harnessSessionId: ev.harnessSessionId,
+      });
+      const existing = state.tasks.get(taskKey);
       if (!existing && !p.skipTranscript) {
-        state.timeline.push({ type: "task", id: p.taskId });
+        state.timeline.push({ type: "task", id: taskKey });
       }
       // optional 字段只做 defined patch；否则 live 对象里的 undefined 会抹掉旧值，
       // JSONL replay 时该字段又因 JSON.stringify 丢失，造成 live/resume 投影不一致。
@@ -680,11 +691,13 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
         const startedAt = Date.parse(ev.ts);
         if (!Number.isNaN(startedAt)) next.startedAt = startedAt;
       }
+      next.taskKey = taskKey;
       next.harness = ev.harness ?? existing?.harness;
-      next.harnessTargetId = eventTargetId(ev) ?? existing?.harnessTargetId;
+      next.harnessTargetId = harnessTargetId ?? existing?.harnessTargetId;
+      next.harnessSessionId = ev.harnessSessionId ?? existing?.harnessSessionId;
       next.laneId = ev.laneId ?? existing?.laneId;
       next.turnId = ev.turnId ?? existing?.turnId;
-      state.tasks.set(p.taskId, next);
+      state.tasks.set(taskKey, next);
       break;
     }
     // Interaction requested/answered/cancelled 驱动 per-turn requires_action ↔ running：不变量收在 reducer，

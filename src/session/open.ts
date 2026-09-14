@@ -198,6 +198,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       source: { type: "baton" },
       harness: task.harness ?? "baton",
       ...(task.harnessTargetId ? { harnessTargetId: task.harnessTargetId } : {}),
+      ...(task.harnessSessionId ? { harnessSessionId: task.harnessSessionId } : {}),
       ...(task.laneId ? { laneId: task.laneId } : {}),
       ...(task.turnId ? { turnId: task.turnId } : {}),
       payload: {

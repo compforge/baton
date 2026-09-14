@@ -52,8 +52,9 @@ Plugin 不另开执行通道。需要用户决定时调用 `ask` / `confirm`；�
 
 `src/view/chat-tui` 把 chat-tui 的键盘、文本和页面 intent 翻译成 ViewInput，再交给 Core `Channel`。
 Input 是判别联合：
-prompt、command、configuration、Interaction response 和 interrupt 都是输入事实；只有一部分会 lowering 为 HarnessInput，另一部分
-操作 Core 的 Queue、配置或 Interaction。
+prompt、command、configuration、Interaction response、Task action 和 interrupt 都是输入事实；
+只有一部分会 lowering 为 HarnessInput，另一部分操作 Core 的 Queue、配置、Interaction 或 Harness
+后台任务控制面。
 mention、Session 引用和 Plugin Context 在 Baton Adapter / Context 层解析；公共 chat-tui 不理解
 BatonSession、HarnessSession 或 Harness wire。
 
@@ -330,10 +331,12 @@ follow-up 保留并在当前 Turn 收口后继续。cancel 请求本身不等于
 HarnessInvocation 只用 invocation identity 定向取消自己的 queued HarnessInput 或 active Queue run，不论它位于主 Lane
 还是新 Lane。
 
-后台 Task 与 Turn 的中断正交。`/tasks` 从当前 Projection 列出可单独停止的后台 Task，Controller
-按该 Task 已记录的 `laneId + harnessTargetId` 路由到原始 HarnessSession；不能用当前输入 Target
-代替真实 owner。停止请求被原生控制面接受后只显示短期回执，Task 仍保持 `in_progress`，直到
-Harness 发出 `completed`、`failed` 或 `stopped` 的 `task_update`。不支持此能力的 Adapter 不进入选择器。
+后台 Task 与 Turn 的中断正交。`/parallel` 打开当前并行工作的统一管理页；Tasks 只是
+`ParallelItem.kind=task` 的一个 tab。View 先把用户动作翻译并记录为 `task_action` ViewInput，Controller 再按
+任务键重新解析当前 Task，并用其 `laneId + harnessTargetId` 路由到原始 HarnessSession；不能用当前
+输入 Target 或 UI 列表中的旧对象代替真实 owner。停止请求被原生控制面接受后只显示短期回执，Task
+仍保持 `in_progress`，直到 Harness 发出 `completed`、`failed` 或 `stopped` 的 `task_update`。
+不支持此能力的 Adapter 仍展示任务，但不提供 Stop action。
 
 ## 5. Interaction 闭环
 

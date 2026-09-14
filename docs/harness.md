@@ -286,7 +286,10 @@ cancel 前收回仍未 applied 的 Input。能自行继续原生队列的 Adapte
 Capability 表达是否支持，不表达 Harness 名称。Controller 只做 feature detection 和优雅降级，
 不能写 provider 分支。若只有一家 Harness 需要某种协议字段，先留在其 Adapter；只有当行为作用于
 既有公共对象且沿用同一 identity、owner 与生命周期时，才提升为公共 Capability。Task stop
-作用于已有 `HarnessTaskUpdate.taskId`，请求按产生它的 `Lane × HarnessTarget` Binding 路由，
+作用于已有 `HarnessTaskUpdate.taskId`。Projection 用
+`Lane × HarnessTarget × HarnessSession × taskId` 形成 Baton
+任务键，避免不同执行边界复用原生 ID；Adapter 仍只接收自己命名空间内的原生 `taskId`。请求按产生
+Task 的 `Lane × HarnessTarget` Binding 路由，
 请求 resolve 只表示 Harness 已接受，Parallel 是否移除仍以终态 `task_update` 为准。
 
 Model selection 的读取与修改是两个层级：`ModelReadable` 只报告当前 selection，供状态与 context

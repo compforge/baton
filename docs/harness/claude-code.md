@@ -39,7 +39,7 @@ Claude `session_id` 是稳定 HarnessSession identity。resume state 已知时�
 | image prompt | Adapter 读取 path-backed block，并转成 SDK base64 image block |
 | compact | 在空闲 Session 中发送原生 `/compact` control Turn |
 | Session config | model、effort、permission mode |
-| task stop | `/tasks` 选择后台任务后调用 SDK `Query.stopTask(taskId)` |
+| task stop | `/parallel` 的 Tasks tab 选择后台任务后调用 SDK `Query.stopTask(taskId)` |
 
 当前不声明独立 Context sync、submit side-channel、reconcile、approval routing、audio、
 embedded resource 或 resource link。跨 Harness catch-up 因此回落到预算受控的 prompt prepend；
@@ -72,8 +72,8 @@ Adapter 铸造新的普通 Turn；下一条 ViewInput 到达前会先明确收�
 `currentTurn` 发生归属混淆。
 
 cancel 调用 SDK `interrupt()`，但保持 streaming query 存活，等待 SDK result 或消费循环给出
-`idle/cancelled`。Baton 提供 `/tasks` 作为单任务停止入口，因此创建 query 时声明
-`perTaskStopAffordance:true`：Esc 只中断前台 Turn，不顺带杀死仍可通过 `/tasks` 控制的后台任务。
+`idle/cancelled`。Baton 在 `/parallel` 的 Tasks tab 提供单任务停止入口，因此创建 query 时声明
+`perTaskStopAffordance:true`：Esc 只中断前台 Turn，不顺带杀死仍可单独控制的后台任务。
 停止请求调用 `Query.stopTask(taskId)`；是否已经停止以随后映射的 `task_update(stopped)` 为准。
 close 主动关闭 channel/query；仍有活跃 Turn 时合成 cancelled 终态。
 

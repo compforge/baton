@@ -143,6 +143,7 @@ function startChat(opened: OpenBatonSessionResult): void {
   const tui = createRef<BatonTuiHandle>();
   const protocol = new BatonChatProtocol(store, config, opened, quit, {
     openPlugins: () => tui.current?.openPlugins(),
+    openParallel: () => tui.current?.openParallel(),
   });
   activeProtocol = protocol;
   root.render(

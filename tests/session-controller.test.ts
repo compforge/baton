@@ -17,6 +17,7 @@ import type {
   HarnessSessionHandle,
 } from "../src/harness/adapter.ts";
 import { sessionIdResumeState } from "../src/harness/resume.ts";
+import { harnessTaskKey } from "../src/harness/task.ts";
 import type { AnyEventDraft, AnyEventEnvelope, PromptBlock } from "../src/event/index.ts";
 import { textOf } from "../src/event/index.ts";
 import { Controller, type HarnessAdapterPorts } from "../src/controller/index.ts";
@@ -256,6 +257,7 @@ class TaskStoppableAdapter extends FakeAdapter {
     this.sink?.({
       kind: "task_update",
       turnId: input.turnId,
+      harnessSessionId: `${this.harness}-native`,
       payload: {
         taskId: "task-background",
         status: "in_progress",
@@ -271,6 +273,7 @@ class TaskStoppableAdapter extends FakeAdapter {
     this.sink?.({
       kind: "task_update",
       turnId: this.turnId,
+      harnessSessionId: `${this.harness}-native`,
       payload: { taskId, status: "stopped" },
     });
   }
@@ -325,16 +328,47 @@ describe("Controller", () => {
 
     void controller.submit("example", [{ type: "text", text: "start a background task" }]);
     await Bun.sleep(25);
-    expect(controller.canStopTask("task-background")).toBe(true);
+    const taskKey = harnessTaskKey({
+      laneId: "main",
+      harnessTargetId: "example",
+      harnessSessionId: "example-harness-native",
+      taskId: "task-background",
+    });
+    expect(controller.canStopTask(taskKey)).toBe(true);
 
-    await controller.stopTask("task-background");
+    await controller.stopTask(taskKey);
 
     expect(adapter.stoppedTasks).toEqual(["task-background"]);
-    expect(session.loadState().tasks.get("task-background")?.status).toBe("stopped");
-    expect(controller.canStopTask("task-background")).toBe(false);
+    expect(session.loadState().tasks.get(taskKey)?.status).toBe("stopped");
+    expect(controller.canStopTask(taskKey)).toBe(false);
     expect(controller.activeTurnId).toBe(adapter.turnId);
-    await expect(controller.stopTask("task-background")).rejects.toThrow(
+    await expect(controller.stopTask(taskKey)).rejects.toThrow(
       "Background task is no longer running",
+    );
+
+    session.appendEvent({
+      source: { type: "harness", harnessTargetId: "example" },
+      harness: "example-harness",
+      harnessTargetId: "example",
+      harnessSessionId: "stale-native-session",
+      laneId: "main",
+      turnId: adapter.turnId,
+      kind: "task_update",
+      payload: {
+        taskId: "task-background",
+        status: "in_progress",
+        backgrounded: true,
+      },
+    });
+    const staleTaskKey = harnessTaskKey({
+      laneId: "main",
+      harnessTargetId: "example",
+      harnessSessionId: "stale-native-session",
+      taskId: "task-background",
+    });
+    expect(controller.canStopTask(staleTaskKey)).toBe(false);
+    await expect(controller.stopTask(staleTaskKey)).rejects.toThrow(
+      "no longer attached to its HarnessSession",
     );
     await controller.close();
   });

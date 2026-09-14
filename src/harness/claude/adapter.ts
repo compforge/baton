@@ -434,8 +434,8 @@ export class ClaudeAdapter implements HarnessAdapter {
       },
       resume: rt.claudeSessionId,
       includePartialMessages: true,
-      // Baton exposes /tasks as the matching per-task stop affordance. With this
-      // declaration Esc only aborts the foreground turn and leaves background work controllable.
+      // Baton exposes per-task stop in /parallel. With this declaration Esc only aborts
+      // the foreground turn and leaves background work individually controllable.
       perTaskStopAffordance: true,
       // Agent SDK 默认使用空 system prompt；显式恢复 Claude Code 语义，确保
       // skills、auto-memory 等原生能力与直接运行 claude CLI 一致。

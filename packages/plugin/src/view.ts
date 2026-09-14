@@ -22,6 +22,11 @@ export type ViewInput =
       readonly interactionId: string;
     }
   | {
+      readonly kind: "task_action";
+      readonly taskKey: string;
+      readonly action: "stop";
+    }
+  | {
       readonly kind: "interrupt";
       readonly harnessTargetId?: string;
     };
