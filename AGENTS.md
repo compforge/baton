@@ -18,7 +18,7 @@ baton core 位于人、Harness 和 Baton Plugin 三类参与者之间：
    Harness Turn，也可用 Hook 观察 Core 协调边界；Harness 只是后续执行端，Plugin 不能绕过 Baton
    直接调用。
 
-Core 只接受 typed intent/verb，并将其物化为 Input、Interaction、HarnessInvocation、Event 等
+Core 只接受 typed intent/verb，并将其物化为 Message（Input、Output、InputRequest、InputResponse）、HarnessInvocation、Event 等
 有身份和状态机的持久对象；它拥有路由、权限、调度、取消、恢复与 Projection，但不提供任意
 payload 的 publish/subscribe，也不理解 Requirement、Deployment、Review 等领域语义。
 
@@ -47,6 +47,7 @@ reqloop 是按需安装、可禁用和独立升级的 Marketplace / Plugin 场�
 | `src/plugin/` | Marketplace、Package/Instance/Binding、Plugin Host/Worker、Resource/Controller 与 Board |
 | `src/daemon/`、`src/inbox/` | 用户级 Daemon、Session Gateway 与 Human Inbox |
 | `src/context/`、`src/interaction/` | 上下文注册/交付与 Session 内统一待决交互 |
+| `src/message/` | Message 公共模型、Actor、请求／答复归一与统一查询；设计见 `docs/message.md` |
 | `src/view/` | View/Core Adapter；内置 chat-tui intent、Projection 映射与 ViewOutput publication |
 | `src/cli/` | TUI 进程入口与 headless 工具 |
 | `tests/` | 内核、Harness 与 Plugin 契约测试 |
@@ -77,6 +78,7 @@ OpenTUI 已提供的终端能力由 View 直接复用，最低依赖随采用的
    Binding、上下文水位和执行投影按 `Lane × HarnessTarget` 隔离，偏好按 Target 共享；未知 ID
    fail closed，不能从 Harness 名、alias 或 wire key 猜实例。
 2. **事实与投影分层**：Event 是 Session 内的正典事实，Event Ledger 只负责持久记录与回放；
+   Message 侧重交互、引用与渲染，由事实投影得到；Interaction 是 InputRequest / InputResponse 的统称。
    BatonSession 直接用同一 reducer 维护 live Projection，消费者不订阅 Ledger。Plugin Resource
    `spec/status` 是领域期望与观测的真相源，外部系统继续拥有自己的事实；TUI 与 Board 都是
    带归属的派生投影。live、resume 和自愈必须走同一 reducer；Board 更新、Context
@@ -122,6 +124,7 @@ OpenTUI 已提供的终端能力由 View 直接复用，最低依赖随采用的
 ## References
 
 - `docs/kernel.md` — 稳定内核、核心模型与关键不变量
+- `docs/message.md` — Message、Actor、请求／答复与事实投影边界
 - `docs/workflow.md` — Input、Context、Attempt、Harness Event、Interaction 与用户反馈主流程
 - `docs/harness.md` — HarnessTarget、Session、Adapter、Capability 与扩展契约
 - `docs/harness/codex.md`、`docs/harness/claude-code.md`、`docs/harness/deepseek-harness.md` — 内置 Harness 的协议适配

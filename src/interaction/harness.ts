@@ -1,8 +1,10 @@
 import type { InteractionContext } from "../harness/adapter.ts";
-import { newId } from "../event/ids.ts";
+import { resolutionEvent, requestResult } from "./resolution.ts";
+import { createInputRequest } from "../message/project.ts";
+import { actorOf } from "../message/actor.ts";
+import type { SessionState } from "../store/reduce.ts";
 import type { AnyEventDraft, EventSource } from "../event/index.ts";
 import type {
-  Interaction,
   InteractionDraft,
   InteractionResult,
 } from "./types.ts";
@@ -28,7 +30,6 @@ export class HarnessInteractionContinuations<
   private readonly pending = new Map<
     string,
     {
-      interaction: Interaction;
       binding: TBinding;
       turnId?: string;
       resolve: (result: InteractionResult) => void;
@@ -38,6 +39,7 @@ export class HarnessInteractionContinuations<
   constructor(
     private readonly appendEvent: AppendEvent<TBinding>,
     private readonly changed: () => void,
+    private readonly projection: () => SessionState,
   ) {}
 
   open(
@@ -47,19 +49,10 @@ export class HarnessInteractionContinuations<
     context?: InteractionContext,
   ): Promise<InteractionResult> {
     const harnessTargetId = binding.target.id;
-    const interaction: Interaction = {
-      ...draft,
-      interactionId: newId("ix"),
-      requester: {
-        type: "harness",
-        harnessTargetId,
-        laneId: binding.laneId,
-      },
-    };
+    const request = createInputRequest(draft, { kind: "harness", key: harnessTargetId });
 
     return new Promise((resolve, reject) => {
-      this.pending.set(interaction.interactionId, {
-        interaction,
+      this.pending.set(request.messageId, {
         binding,
         turnId,
         resolve,
@@ -70,13 +63,13 @@ export class HarnessInteractionContinuations<
           {
             kind: "interaction.requested",
             ...(turnId ? { turnId } : {}),
-            payload: interaction,
+            payload: request,
             ...(context?.raw !== undefined ? { raw: context.raw } : {}),
           },
           { type: "harness", harnessTargetId },
         );
       } catch (error) {
-        this.pending.delete(interaction.interactionId);
+        this.pending.delete(request.messageId);
         reject(error);
         return;
       }
@@ -84,18 +77,17 @@ export class HarnessInteractionContinuations<
     });
   }
 
-  complete(interactionId: string, result: InteractionResult): boolean {
-    const entry = this.pending.get(interactionId);
+  complete(messageId: string, result: InteractionResult): boolean {
+    const entry = this.pending.get(messageId);
     if (!entry) return false;
-    if (result.kind !== "cancelled" && result.kind !== entry.interaction.kind) return false;
-    return this.settle(interactionId, result, { type: "user" });
+    return this.settle(messageId, result, { type: "user" });
   }
 
   cancelForTurn(turnId: string): void {
-    for (const [interactionId, entry] of this.pending) {
+    for (const [messageId, entry] of this.pending) {
       if (entry.turnId !== turnId) continue;
       this.settle(
-        interactionId,
+        messageId,
         { kind: "cancelled", reason: "turn" },
         { type: "baton" },
       );
@@ -103,40 +95,31 @@ export class HarnessInteractionContinuations<
   }
 
   private settle(
-    interactionId: string,
+    messageId: string,
     result: InteractionResult,
     source: EventSource,
   ): boolean {
-    const entry = this.pending.get(interactionId);
+    const entry = this.pending.get(messageId);
     if (!entry) return false;
-    const turn = entry.turnId ? { turnId: entry.turnId } : {};
-    if (result.kind === "cancelled") {
-      this.appendEvent(
-        entry.binding,
-        {
-          kind: "interaction.cancelled",
-          ...turn,
-          payload: {
-            interactionId,
-            reason: result.reason,
-            ...(result.detail === undefined ? {} : { detail: result.detail }),
-          },
-        },
-        source,
-      );
-    } else {
-      this.appendEvent(
-        entry.binding,
-        {
-          kind: "interaction.answered",
-          ...turn,
-          payload: { interactionId, answer: result },
-        },
-        source,
-      );
+    const request = this.projection().interactions.get(messageId)?.request;
+    const event = request && resolutionEvent(request, result, actorOf(source));
+    if (!event) {
+      this.observe();
+      return false;
     }
-    this.pending.delete(interactionId);
-    entry.resolve(result);
-    return true;
+    this.appendEvent(entry.binding, { ...event, ...(entry.turnId ? { turnId: entry.turnId } : {}) }, source);
+    const committed = requestResult(this.projection(), messageId);
+    this.observe();
+    return committed !== undefined;
+  }
+
+  /** Session reduction, including external cancellation, is the sole decision owner. */
+  observe(): void {
+    for (const [messageId, entry] of this.pending) {
+      const result = requestResult(this.projection(), messageId);
+      if (!result) continue;
+      this.pending.delete(messageId);
+      entry.resolve(result);
+    }
   }
 }

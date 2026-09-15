@@ -37,6 +37,7 @@ export interface BatonEventReference {
 }
 
 export interface HookSubjectMap {
+  /** Boundary observations, not Hook arguments paired with a Hook return value. */
   readonly "view.input": ViewInputRecord;
   readonly "view.output": ViewOutput;
   readonly "harness.input": HarnessInputDispatch;

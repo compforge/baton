@@ -2,6 +2,8 @@
 // tool_call_update upsert），wire 协议不必是 ACP——adapter 负责把各家原生协议归一到这里。
 // baton 自有扩展事件用 _baton_ 前缀；公共归一契约见 docs/harness.md。
 
+import type { InputRequestCreated, InputRequestCancelled } from "./interaction.ts";
+import type { InputResponse } from "../message/types.ts";
 import type { HarnessDeliveryAttemptUpdate } from "../controller/attempt.ts";
 import type { HarnessInputUpdate } from "../harness/input.ts";
 import type { ViewInput } from "@compforge/baton-plugin";
@@ -25,13 +27,7 @@ export type {
   ResourceLinkBlock,
   TextBlock,
 } from "../input/blocks.ts";
-import type {
-  Interaction,
-  InteractionAnswered,
-  InteractionCancelled,
-} from "../interaction/types.ts";
-
-export const ENVELOPE_VERSION = 6 as const;
+export const ENVELOPE_VERSION = 7 as const;
 
 /**
  * 事实来源：回答“谁对这条 Event 负责”，不是 payload 中行为主体的角色，也不承载执行坐标。
@@ -490,9 +486,9 @@ export type EventPayloadMap = {
   proposed_plan: ProposedPlan;
   proposed_plan_implementation_started: ProposedPlanImplementationStarted;
   task_update: HarnessTaskUpdate;
-  "interaction.requested": Interaction;
-  "interaction.answered": InteractionAnswered;
-  "interaction.cancelled": InteractionCancelled;
+  "interaction.requested": InputRequestCreated;
+  "interaction.answered": InputResponse;
+  "interaction.cancelled": InputRequestCancelled;
   approval_review_update: ApprovalReviewUpdate;
   usage_update: UsageUpdate;
   available_commands_update: AvailableCommandsUpdate;

@@ -116,6 +116,30 @@ describe("Channel", () => {
     expect(calls).toEqual(["publish", "output"]);
   });
 
+  test("exposes the request Message reference to the ViewInput Hook before resolution", async () => {
+    const calls: string[] = [];
+    const input = { kind: "interaction_response" as const, messageId: "missing-request" };
+    const fixture = channel(gateway({
+      inline: async (stage, subject) => {
+        expect(stage).toBe("view.input");
+        expect(subject).toMatchObject({ input });
+        calls.push("hook");
+      },
+    }));
+    const receipt = await fixture.channel.resolveInteraction(input, async (record) => {
+      expect(record.input).toEqual(input);
+      expect(record.inputId).not.toBe(input.messageId);
+      calls.push("resolve");
+      return { kind: "cancelled", reason: "user" };
+    });
+    expect(calls).toEqual(["hook", "resolve"]);
+    expect(receipt.result).toBe(false);
+    // An observed operation is not an accepted answer or a fabricated Message.
+    expect(fixture.readKinds()).toEqual(["input.received", "input.settled"]);
+    expect(fixture.session.projection.inputResponses.size).toBe(0);
+    await fixture.channel.close();
+  });
+
   test("reports each published ViewOutput kind", async () => {
     const outputKinds: string[] = [];
     const fixture = channel(gateway({

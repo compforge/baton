@@ -1,3 +1,4 @@
+import { responseMessage } from "./fixtures/messages.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 import { ReconcileInteractionStore } from "../src/interaction/reconcile.ts";
 import type { ExecutionScope } from "../src/plugin/verb.ts";
 import { SessionStore } from "../src/store/store.ts";
+import { requestResult } from "../src/interaction/resolution.ts";
 
 const roots: string[] = [];
 
@@ -25,7 +27,7 @@ function scope(batonSessionId: string, executionId = "pex_1"): ExecutionScope {
 }
 
 function latestInteraction(handle: ReturnType<typeof session>) {
-  return [...handle.loadState().interactions.values()].at(-1)!.interaction;
+  return [...handle.loadState().interactions.values()].at(-1)!.request;
 }
 
 afterEach(() => {
@@ -35,6 +37,67 @@ afterEach(() => {
 });
 
 describe("ReconcileInteractionStore", () => {
+  test("rejected terminal facts cannot settle a Plugin continuation independently of Message state", async () => {
+    const handle = session();
+    const store = new ReconcileInteractionStore(handle);
+    try {
+      let resumed = false;
+      const pending = store.ask(scope(handle.id), {
+        title: "Choose", prompt: "Which?", choices: [{ value: "yes", label: "Yes" }], timeoutMs: 60_000,
+      }).then((result) => { resumed = true; return result; });
+      const interactionId = latestInteraction(handle).messageId;
+      const answer = { kind: "question" as const, outcome: "answered" as const, answers: { decision: ["yes"] } };
+      handle.appendEvent({
+        kind: "interaction.answered", source: { type: "plugin", pluginInstanceId: "other" },
+        payload: responseMessage(interactionId, answer, { kind: "plugin", key: "reqloop_default" }, { messageId: "spoofed", source: { kind: "plugin", key: "other" } }),
+      });
+      handle.appendEvent({
+        kind: "interaction.answered", source: { type: "user" },
+        payload: responseMessage(interactionId, { ...answer, answers: { decision: ["unoffered"] } }, { kind: "plugin", key: "reqloop_default" }, { messageId: "invalid", source: { kind: "user", key: "local" } }),
+      });
+      handle.appendEvent({
+        kind: "interaction.answered", source: { type: "user" },
+        payload: responseMessage(interactionId, answer, { kind: "plugin", key: "reqloop_default" }, { messageId: interactionId, source: { kind: "user", key: "local" } }),
+      });
+      await Promise.resolve();
+      expect(resumed).toBe(false);
+      expect(latestInteraction(handle).status).toBe("pending");
+      expect(handle.projection.inputResponses.size).toBe(0);
+      expect(handle.loadState()).toEqual(handle.projection);
+
+      expect(store.complete(interactionId, answer)).toBe(true);
+      expect(await pending).toEqual({ state: "success", value: "yes" });
+      expect(requestResult(handle.projection, interactionId)).toEqual(answer);
+      handle.appendEvent({
+        kind: "interaction.cancelled", source: { type: "baton" },
+        payload: { messageId: interactionId, reason: "timeout" },
+      });
+      expect(store.complete(interactionId, answer)).toBe(false);
+      expect(requestResult(handle.projection, interactionId)).toEqual(answer);
+      expect(handle.loadState()).toEqual(handle.projection);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("recovery uses the Session request projection and fails only orphaned Plugin waits", async () => {
+    const handle = session();
+    const first = new ReconcileInteractionStore(handle);
+    const pending = first.ask(scope(handle.id), { title: "Wait", prompt: "Choose", allowOther: true, timeoutMs: 60_000 });
+    const interactionId = latestInteraction(handle).messageId;
+    const recovered = new ReconcileInteractionStore(handle);
+    recovered.failOrphans("execution lost");
+    expect(await pending).toEqual({ state: "failure", error: "execution lost" });
+    expect(latestInteraction(handle).status).toBe("cancelled");
+    expect(handle.projection.inputResponses.size).toBe(0);
+    const count = handle.ledger.read().length;
+    recovered.failOrphans("execution lost again");
+    expect(handle.ledger.read()).toHaveLength(count);
+    expect(recovered.complete(interactionId, { kind: "question", outcome: "answered", answers: { decision: ["late"] } })).toBe(false);
+    first.close();
+    recovered.close();
+  });
+
   test("awaits an answer and correlates it with the live execution", async () => {
     const handle = session();
     const store = new ReconcileInteractionStore(handle);
@@ -47,11 +110,11 @@ describe("ReconcileInteractionStore", () => {
     });
     const interaction = latestInteraction(handle);
 
-    expect(interaction.pluginContext).toEqual({
+    expect(handle.projection.interactions.get(interaction.messageId)?.pluginContext).toEqual({
       executionId: context.executionId,
       verb: "ask",
     });
-    expect(store.complete(interaction.interactionId, {
+    expect(store.complete(interaction.messageId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["req_1"] },
@@ -73,7 +136,7 @@ describe("ReconcileInteractionStore", () => {
       timeoutMs: 1_000,
       allowOther: true,
     });
-    expect(store.complete(latestInteraction(handle).interactionId, {
+    expect(store.complete(latestInteraction(handle).messageId, {
       kind: "cancelled",
       reason: "user",
     })).toBe(true);
@@ -85,7 +148,7 @@ describe("ReconcileInteractionStore", () => {
       timeoutMs: 10,
       allowOther: true,
     });
-    const timedOutId = latestInteraction(handle).interactionId;
+    const timedOutId = latestInteraction(handle).messageId;
     await expect(timedOut).resolves.toEqual({ state: "timeout" });
     expect(store.complete(timedOutId, {
       kind: "question",
@@ -115,7 +178,7 @@ describe("ReconcileInteractionStore", () => {
       prompt: "Close it?",
       timeoutMs: 1_000,
     });
-    expect(store.complete(latestInteraction(handle).interactionId, {
+    expect(store.complete(latestInteraction(handle).messageId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["decline"] },
@@ -135,7 +198,7 @@ describe("ReconcileInteractionStore", () => {
       prompt: "Implement the focused fix.",
       timeoutMs: 1_000,
     });
-    expect(store.complete(latestInteraction(handle).interactionId, {
+    expect(store.complete(latestInteraction(handle).messageId, {
       kind: "suggested_input",
       outcome: "submitted",
       blocks: [{ type: "text", text: "Implement only src/a.ts." }],
@@ -150,7 +213,7 @@ describe("ReconcileInteractionStore", () => {
       prompt: "Implement the focused fix.",
       timeoutMs: 1_000,
     });
-    expect(store.complete(latestInteraction(handle).interactionId, {
+    expect(store.complete(latestInteraction(handle).messageId, {
       kind: "suggested_input",
       outcome: "dismissed",
     })).toBe(true);
@@ -186,7 +249,7 @@ describe("ReconcileInteractionStore", () => {
       timeoutMs: 1_000,
       laneId: "main",
     });
-    expect(manualStore.complete(latestInteraction(manualHandle).interactionId, {
+    expect(manualStore.complete(latestInteraction(manualHandle).messageId, {
       kind: "harness_invocation",
       outcome: "declined",
     })).toBe(true);

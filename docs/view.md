@@ -60,6 +60,11 @@ Transcript；同一个 side Lane 在运行中位于 Parallel，结束后进入�
 
 ## 3. View input、publication 与 owner
 
+ViewInput / ViewOutput 是 View 与 Core 的边界契约，不是 Message 的子类，也不是 Hook 自己的
+入参与返回结果。ViewInput 表达操作，Message 表达可寻址的交互对象，ViewOutput 表达视图更新已发布。
+一次操作可以产生 Message，也可以只修改配置或控制执行；一次 publication 可以展示多条 Message，
+也可以只更新状态或 Board。一条流式 Output 可以对应多次 publication。
+
 View input 只表达人的语义动作：
 
 ```text
@@ -70,6 +75,10 @@ prompt、command、configuration、Interaction response、Task action 和 interr
 `ViewInput`。View 可以做
 编辑态、焦点和本地 picker 等短寿命交互，但不创建 `HarnessInput`，也不直接调用 Harness 或 Plugin。
 Core 决定输入如何持久化、lowering、授权与调度。
+
+回答或取消请求的 ViewInput 通过 messageId 引用待处理的 InputRequest；操作身份由
+ViewInputRecord.inputId 表达。Core 校验并接受答案后创建具有独立身份的 InputResponse；
+取消只终结请求，不产生答复消息。
 
 Parallel 的紧凑区域与 `/parallel` 管理页必须消费同一个 Baton `ParallelItem` 投影。`kind` 只用于
 All / Tasks / Runs 分组和展示；它不把 UI item 提升为运行时 owner。管理页发出的 action 携带稳定
@@ -88,6 +97,9 @@ Plugin 可以通过 `view.input` 和 `view.output` Hook 观察两个边界：前
 之前 inline 通知，后者在 publication 之后 deferred 通知。Hook 不能替换 `ViewInput` 或修改
 `ViewOutput`。
 
+Hook 通过 HookContext 接收边界观察，回调返回 void；需要动作时调用 PluginVerbs，仍遵守 Core
+的权限与生命周期规则。界面 publication 不能作为 Message 已完成或用户已阅读的业务回执。
+
 | 内容 | Owner |
 |---|---|
 | composer 草稿、焦点、键位、终端布局 | chat-tui / 具体 View surface |
@@ -102,6 +114,11 @@ Interaction 会由 UI 呈现和收集回答，但 requested/answered/cancelled �
 Controller/Queue typed path。桌面通知（OSC 9）只观察已确认的 live Event，不产生或修改 Core 事实。
 
 ## 4. Transcript 展示策略
+
+Transcript 选择性展示 Message 流，并结合工具、文件变更等执行活动；它不是 Event Ledger 的直接
+渲染。Input、Output、InputRequest、InputResponse 共用消息身份和 Actor 来源／目标，详见
+[Message](./message.md)。待决请求由 Interaction Dock 展示，终结后历史可以保留请求和明确答复；
+取消只展示请求的终态，敏感答案不会进入历史或回复引用预览。ViewInput / ViewOutput 仍是原有边界契约。
 
 Transcript 的目标不是复刻 event log，而是在有限屏幕中保留最高信息密度，并让用户仍能看到上一条
 input、关键结论、执行过的 command 和改动过的文件。原始事件量、UI 行数和信息量是三件不同的事。

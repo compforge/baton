@@ -85,7 +85,7 @@ describe("cancel cascades to pending Interactions", () => {
 
     const turn = controller.submit("codex", text("do it"));
     // 阻塞在审批：pending 落盘 → 会话派生 requires_action
-    await until(() => [...session.loadState().interactions.values()].some((value) => !value.result));
+    await until(() => [...session.loadState().interactions.values()].some((value) => value.request.status === "pending"));
     expect(session.loadState().runState).toBe("requires_action");
 
     await controller.control({ kind: "interrupt" });
@@ -97,7 +97,7 @@ describe("cancel cascades to pending Interactions", () => {
     expect(cancelled?.payload.reason).toBe("turn");
 
     const state = session.loadState();
-    expect([...state.interactions.values()].every((value) => value.result)).toBe(true); // 不再悬挂
+    expect([...state.interactions.values()].every((value) => value.request.status !== "pending")).toBe(true); // 不再悬挂
     expect(state.runState).toBe("idle"); // requires_action 落下
     // 打断标记仍在（turn 确实被取消）
     expect(events.some((e) => e.kind === "_baton_notice")).toBe(true);

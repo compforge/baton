@@ -1,5 +1,7 @@
 import { textOf, type EventEnvelope } from "../event/index.ts";
 import type { MessageState, SessionState } from "./reduce.ts";
+import { getMessage } from "../message/query.ts";
+import { inputMessage } from "../message/project.ts";
 
 /** @spec Reply references preserve unknown versus empty, are unique, and never infer consumption or reorder history. */
 export function applyMessageReplies(
@@ -11,7 +13,7 @@ export function applyMessageReplies(
   const unique = [...new Set(ids)];
   // A partial relation would falsely claim completeness. Keep the previous/unknown
   // relation if an adapter references a foreign, missing, or self message.
-  if (unique.some((id) => id === message.messageId || !state.messages.has(id) && !state.harnessInputs.has(id))) return;
+  if (unique.some((id) => id === message.messageId || !getMessage(state, id))) return;
   message.replyToMessageIds = unique;
 }
 
@@ -30,8 +32,10 @@ export function placeMessage(state: SessionState, id: string, beforeMessageId?: 
  */
 export function applyInputDelivery(state: SessionState, ev: EventEnvelope<"input_delivery_update">): void {
   const { messageId, state: outcome, beforeMessageId } = ev.payload;
+  const known = getMessage(state, messageId);
+  if (known && known.kind !== "input") return;
   const input = state.harnessInputs.get(messageId);
-  let message = state.messages.get(messageId);
+  let message = known?.kind === "input" ? known : undefined;
   if (input?.deliveryOutcome === "applied" || message?.consumedAt !== undefined) return;
   if (input) {
     input.deliveryOutcome = outcome;
@@ -39,7 +43,7 @@ export function applyInputDelivery(state: SessionState, ev: EventEnvelope<"input
   }
   if (outcome === "applied") {
     if (!message) {
-      message = { messageId, role: "user", content: input ? [...input.blocks] : [], delivery: "steer" };
+      message = { ...inputMessage(messageId, ev.ts, input?.source, ev.harnessTargetId), content: input ? [...input.blocks] : [], delivery: "steer" };
       state.messages.set(messageId, message);
     }
     message.turnId = ev.turnId;

@@ -1,19 +1,14 @@
 /**
- * Baton 持有的、需要外部参与者给出结果后才能继续的持久协作对象。
+ * InputRequest / InputResponse 的强类型请求、答案与执行边界。
  *
- * Harness 与 Plugin 都通过 typed request 打开 Interaction，人或宿主 policy 通过同一 Core
- * 生命周期作答。
- * 它不是承载任意 payload 的消息信封；permission、question、suggested input、
+ * Interaction 是请求与答复 Message 的统称。Harness 与 Plugin 通过 typed request 打开请求，
+ * 人或宿主 policy 通过同一 Core 生命周期作答；Event 直接携带 Message，View 契约独立。
+ * Message 不是承载任意 payload 的信封；permission、question、suggested input、
  * HarnessInvocation gate、hook trust 是封闭 kind。
- * Event source 表示谁报告生命周期事实，requester 表示谁在等待结果，两者不能混用。
+ * Event source 表示谁报告事实，Message source 表示作者，两者不能混用。
  */
 
 import type { PromptBlock } from "../input/blocks.ts";
-
-export type InteractionRequester =
-  | { type: "harness"; harnessTargetId: string; laneId?: string }
-  | { type: "plugin"; pluginInstanceId: string }
-  | { type: "baton" };
 
 /**
  * 审批选项的两根正交轴都只用于忠实展示 Harness 给出的候选。
@@ -105,7 +100,7 @@ export interface HookTrustInteraction {
   hooks: HookTrustCandidate[];
 }
 
-/** Producer 提交的 kind-specific 内容；Controller 在可信边界补 identity 与 requester。 */
+/** Producer 提交的 kind-specific 内容；Core 在可信边界签发 Message 身份与 source/target。 */
 export type InteractionDraft =
   | PermissionInteraction
   | QuestionInteraction
@@ -118,15 +113,6 @@ export interface ReconcileInteractionContext {
   executionId: string;
   verb: "ask" | "confirm" | "draft" | "harness";
 }
-
-export type Interaction = InteractionDraft & {
-  interactionId: string;
-  requester: InteractionRequester;
-  /** Correlates the answer with the suspended Plugin execution. */
-  pluginContext?: ReconcileInteractionContext;
-  /** Durable absolute deadline for host-owned timeout cancellation. */
-  expiresAt?: string;
-};
 
 /** 外部参与者针对 Interaction 提交的 kind-specific 答案。 */
 export type InteractionAnswer =
@@ -165,13 +151,4 @@ export type InteractionResult =
       detail?: string;
     };
 
-export interface InteractionAnswered {
-  interactionId: string;
-  answer: InteractionAnswer;
-}
-
-export interface InteractionCancelled {
-  interactionId: string;
-  reason: InteractionCancellationReason;
-  detail?: string;
-}
+export type { InputRequest, InputResponse, Interaction } from "../message/types.ts";

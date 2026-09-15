@@ -1,3 +1,4 @@
+import { requestResult } from "../src/interaction/resolution.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { commandContext, executeCommand } from "./fixtures/command-context.ts";
 import {
@@ -139,28 +140,28 @@ describe("Plugin Runner process boundary", () => {
     await manager.start();
     await waitFor(() => session.loadState().interactions.size === 1, 1_000);
     expect([...session.loadState().interactions.values()][0]).toMatchObject({
-      interaction: {
-        requester: {
-          type: "plugin",
-          pluginInstanceId: "process_default",
+      request: {
+        source: {
+          kind: "plugin",
+          key: "process_default",
         },
-        questions: [{
+        request: { questions: [{
           header: "Runner question",
           question: "Review turn_runner?",
-        }],
+        }] },
       },
     });
     await Bun.sleep(300);
     expect(manager.isInstanceActive("process_default")).toBe(true);
     const interaction = [...session.loadState().interactions.values()][0]!
-      .interaction;
-    expect(await manager.completeInteraction(interaction.interactionId, {
+      .request;
+    expect(await manager.completeInteraction(interaction.messageId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["continue"] },
     })).toBe(true);
     await waitFor(() =>
-      session.loadState().interactions.get(interaction.interactionId)?.result !==
+      requestResult(session.loadState(), interaction.messageId) !==
         undefined
     );
 
@@ -200,14 +201,14 @@ describe("Plugin Runner process boundary", () => {
     await Bun.sleep(300);
     expect(manager.isInstanceActive("process_default")).toBe(true);
     const interaction = [...session.loadState().interactions.values()][0]!
-      .interaction;
-    expect(interaction.kind).toBe("question");
-    if (interaction.kind !== "question") throw new Error("expected a question");
-    expect(interaction.questions[0]).toMatchObject({
+      .request;
+    expect(interaction.request.kind).toBe("question");
+    if (interaction.request.kind !== "question") throw new Error("expected a question");
+    expect(interaction.request.questions[0]).toMatchObject({
       header: "Hook question",
       question: "Continue from Hook?",
     });
-    expect(await manager.completeInteraction(interaction.interactionId, {
+    expect(await manager.completeInteraction(interaction.messageId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["continue"] },
@@ -330,8 +331,8 @@ describe("Plugin Runner process boundary", () => {
     await expect(channel.publishViewOutput("transcript", () => true)).resolves.toBe(true);
     await waitFor(() => session.loadState().interactions.size === 1, 1_000);
     const interaction = [...session.loadState().interactions.values()][0]!
-      .interaction;
-    expect(await manager.completeInteraction(interaction.interactionId, {
+      .request;
+    expect(await manager.completeInteraction(interaction.messageId, {
       kind: "question",
       outcome: "answered",
       answers: { decision: ["continue"] },
@@ -479,7 +480,7 @@ describe("Plugin Runner process boundary", () => {
     await waitFor(() => !manager.isInstanceActive("process_default"));
     expect(manager.listCommands()).toEqual([]);
     expect(failures).toHaveLength(1);
-    expect([...session.loadState().interactions.values()][0]?.result).toMatchObject({
+    expect(requestResult(session.projection, [...session.projection.interactions.keys()][0]!)).toMatchObject({
       kind: "cancelled",
       reason: "recovery",
     });

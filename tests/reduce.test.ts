@@ -1,3 +1,5 @@
+import { requestMessage, responseMessage } from "./fixtures/messages.ts";
+import { requestResult } from "../src/interaction/resolution.ts";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -76,9 +78,9 @@ describe("message upsert semantics", () => {
     ]);
     expect(state.messages.get("m1")!.role).toBe("user");
     expect(state.messages.get("m2")!.role).toBe("thought");
-    expect(state.messages.get("m2")!.streamStatus).toBe("in_progress");
+    expect(state.messages.get("m2")).toMatchObject({ streamStatus: "in_progress" });
     expect(state.messages.get("m3")!.role).toBe("agent");
-    expect(state.messages.get("m3")!.streamStatus).toBe("in_progress");
+    expect(state.messages.get("m3")).toMatchObject({ streamStatus: "in_progress" });
     expect(state.timeline.map((t) => t.id)).toEqual(["m1", "m2", "m3"]);
   });
 
@@ -87,7 +89,7 @@ describe("message upsert semantics", () => {
       ev("agent_thought_chunk", { messageId: "m1", content: { type: "text", text: "draft" } }),
       ev("agent_thought", { messageId: "m1", content: [{ type: "text", text: "final" }] }),
     ]);
-    expect(state.messages.get("m1")!.streamStatus).toBe("completed");
+    expect(state.messages.get("m1")).toMatchObject({ streamStatus: "completed" });
   });
 });
 
@@ -127,23 +129,18 @@ describe("state / permission / plan / usage", () => {
   });
 
   test("permission interaction pends until answered", () => {
-    const interaction = {
+    const interaction = requestMessage("ix1", {
       kind: "permission" as const,
-      interactionId: "ix1",
-      requester: { type: "harness" as const, harnessTargetId: "test" },
       title: "Run this script?",
-      options: [{ optionId: "allow", name: "Allow once", polarity: "allow" as const, lifetime: "once" as const }],
-    };
+      options: [{ optionId: "allow", name: "Allow once", polarity: "allow" as const, lifetime: "once" as const }]
+    }, { kind: "harness", key: "test" });
     const pending = reduceEvents([ev("interaction.requested", interaction)]);
-    expect(pending.interactions.get("ix1")?.result).toBeUndefined();
+    expect(requestResult(pending, "ix1")).toBeUndefined();
     const answered = reduceEvents([
       ev("interaction.requested", interaction),
-      ev("interaction.answered", {
-        interactionId: "ix1",
-        answer: { kind: "permission", outcome: "selected", optionId: "allow" },
-      }),
+      ev("interaction.answered", responseMessage("ix1", { kind: "permission", outcome: "selected", optionId: "allow" }, interaction.source)),
     ]);
-    expect(answered.interactions.get("ix1")?.result).toEqual({
+    expect(requestResult(answered, "ix1")).toEqual({
       kind: "permission",
       outcome: "selected",
       optionId: "allow",
@@ -151,22 +148,17 @@ describe("state / permission / plan / usage", () => {
   });
 
   test("question interaction pends until answered", () => {
-    const interaction = {
+    const interaction = requestMessage("ix2", {
       kind: "question" as const,
-      interactionId: "ix2",
-      requester: { type: "harness" as const, harnessTargetId: "test" },
-      questions: [{ questionId: "q1", header: "Mode", question: "Which mode?" }],
-    };
+      questions: [{ questionId: "q1", header: "Mode", question: "Which mode?" }]
+    }, { kind: "harness", key: "test" });
     const pending = reduceEvents([ev("interaction.requested", interaction)]);
-    expect(pending.interactions.get("ix2")?.result).toBeUndefined();
+    expect(requestResult(pending, "ix2")).toBeUndefined();
     const answered = reduceEvents([
       ev("interaction.requested", interaction),
-      ev("interaction.answered", {
-        interactionId: "ix2",
-        answer: { kind: "question", outcome: "answered", answers: { q1: ["fast"] } },
-      }),
+      ev("interaction.answered", responseMessage("ix2", { kind: "question", outcome: "answered", answers: { q1: ["fast"] } }, interaction.source)),
     ]);
-    expect(answered.interactions.get("ix2")?.result).toEqual({
+    expect(requestResult(answered, "ix2")).toEqual({
       kind: "question",
       outcome: "answered",
       answers: { q1: ["fast"] },
@@ -174,10 +166,8 @@ describe("state / permission / plan / usage", () => {
   });
 
   test("hook trust interaction pends until answered", () => {
-    const interaction = {
+    const interaction = requestMessage("ix3", {
       kind: "hook_trust" as const,
-      interactionId: "ix3",
-      requester: { type: "harness" as const, harnessTargetId: "test" },
       harnessName: "Codex",
       hooks: [
         {
@@ -187,47 +177,36 @@ describe("state / permission / plan / usage", () => {
           trustStatus: "modified" as const,
           command: "python hook.py",
         },
-      ],
-    };
+      ]
+    }, { kind: "harness", key: "test" });
     const pending = reduceEvents([ev("interaction.requested", interaction)]);
-    expect(pending.interactions.get("ix3")?.result).toBeUndefined();
+    expect(requestResult(pending, "ix3")).toBeUndefined();
     expect(pending.runState).toBe("requires_action");
     const answered = reduceEvents([
       ev("interaction.requested", interaction),
-      ev("interaction.answered", {
-        interactionId: "ix3",
-        answer: { kind: "hook_trust", outcome: "trusted" },
-      }),
+      ev("interaction.answered", responseMessage("ix3", { kind: "hook_trust", outcome: "trusted" }, interaction.source)),
     ]);
-    expect(answered.interactions.get("ix3")?.result).toEqual({
+    expect(requestResult(answered, "ix3")).toEqual({
       kind: "hook_trust",
       outcome: "trusted",
     });
   });
 
   test("Interaction identity and terminal result are first-write wins", () => {
-    const request = {
+    const request = requestMessage("ix_once", {
       kind: "permission" as const,
-      interactionId: "ix_once",
-      requester: { type: "harness" as const, harnessTargetId: "codex" },
       title: "Original",
-      options: [],
-    };
+      options: [{ optionId: "allow", name: "Allow", polarity: "allow" as const, lifetime: "once" as const }]
+    }, { kind: "harness", key: "codex" });
     const state = reduceEvents([
       ev("interaction.requested", request),
-      ev("interaction.requested", { ...request, title: "Rewritten" }),
-      ev("interaction.answered", {
-        interactionId: "ix_once",
-        answer: { kind: "permission", outcome: "selected", optionId: "allow" },
-      }),
-      ev("interaction.cancelled", {
-        interactionId: "ix_once",
-        reason: "recovery",
-      }),
+      ev("interaction.requested", { ...request, request: { ...request.request, title: "Rewritten" } }),
+      ev("interaction.answered", responseMessage("ix_once", { kind: "permission", outcome: "selected", optionId: "allow" }, { kind: "harness", key: "codex" })),
+      ev("interaction.cancelled", { messageId: "ix_once", reason: "recovery" }),
     ]);
-    const interaction = state.interactions.get("ix_once")?.interaction;
-    expect(interaction?.kind === "permission" ? interaction.title : undefined).toBe("Original");
-    expect(state.interactions.get("ix_once")?.result).toEqual({
+    const interaction = state.interactions.get("ix_once")?.request;
+    expect(interaction?.request.kind === "permission" ? interaction.request.title : undefined).toBe("Original");
+    expect(requestResult(state, "ix_once")).toEqual({
       kind: "permission",
       outcome: "selected",
       optionId: "allow",
@@ -751,22 +730,17 @@ describe("per-turn run state aggregation", () => {
   test("pending Interaction derives requires_action without adapter state_updates", () => {
     const state = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("interaction.requested", {
+      ev("interaction.requested", requestMessage("ix_1", {
         kind: "permission",
-        interactionId: "ix_1",
-        requester: { type: "harness", harnessTargetId: "test" },
         title: "Bash",
-        options: [],
-      }, "t1"),
+        options: [{ optionId: "allow", name: "Allow", polarity: "allow" as const, lifetime: "once" as const }]
+      }, { kind: "harness", key: "test" }), "t1"),
     ]);
     // 不变量收在 reducer：Controller 只需记录 requested，不要求配对 state_update(requires_action)
     expect(state.activeTurns.get("t1")?.state).toBe("requires_action");
     expect(state.runState).toBe("requires_action");
 
-    applyEvent(state, ev("interaction.answered", {
-      interactionId: "ix_1",
-      answer: { kind: "permission", outcome: "selected", optionId: "allow" },
-    }, "t1"));
+    applyEvent(state, ev("interaction.answered", responseMessage("ix_1", { kind: "permission", outcome: "selected", optionId: "allow" }, { kind: "harness", key: "test" }), "t1"));
     expect(state.activeTurns.get("t1")?.state).toBe("running");
     expect(state.runState).toBe("running");
   });
@@ -774,45 +748,33 @@ describe("per-turn run state aggregation", () => {
   test("requires_action holds until the last pending Interaction of the turn completes", () => {
     const state = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("interaction.requested", {
+      ev("interaction.requested", requestMessage("ix_1", {
         kind: "permission",
-        interactionId: "ix_1",
-        requester: { type: "harness", harnessTargetId: "test" },
         title: "Bash",
-        options: [],
-      }, "t1"),
-      ev("interaction.requested", {
+        options: [{ optionId: "allow", name: "Allow", polarity: "allow" as const, lifetime: "once" as const }]
+      }, { kind: "harness", key: "test" }), "t1"),
+      ev("interaction.requested", requestMessage("ix_2", {
         kind: "question",
-        interactionId: "ix_2",
-        requester: { type: "harness", harnessTargetId: "test" },
-        questions: [],
-      }, "t1"),
-      ev("interaction.answered", {
-        interactionId: "ix_1",
-        answer: { kind: "permission", outcome: "selected", optionId: "allow" },
-      }, "t1"),
+        questions: []
+      }, { kind: "harness", key: "test" }), "t1"),
+      ev("interaction.answered", responseMessage("ix_1", { kind: "permission", outcome: "selected", optionId: "allow" }, { kind: "harness", key: "test" }), "t1"),
     ]);
     // 同 turn 并发多个 Interaction：应答一个不提前撤掉 requires_action
     expect(state.activeTurns.get("t1")?.state).toBe("requires_action");
     expect(state.runState).toBe("requires_action");
 
-    applyEvent(state, ev("interaction.cancelled", {
-      interactionId: "ix_2",
-      reason: "user",
-    }, "t1"));
+    applyEvent(state, ev("interaction.cancelled", { messageId: "ix_2", reason: "user" }, "t1"));
     expect(state.runState).toBe("running");
   });
 
   test("replayed running cannot mask a pending Interaction (不变量钉子)", () => {
     const state = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("interaction.requested", {
+      ev("interaction.requested", requestMessage("ix_1", {
         kind: "permission",
-        interactionId: "ix_1",
-        requester: { type: "harness", harnessTargetId: "test" },
         title: "Bash",
-        options: [],
-      }, "t1"),
+        options: [{ optionId: "allow", name: "Allow", polarity: "allow" as const, lifetime: "once" as const }]
+      }, { kind: "harness", key: "test" }), "t1"),
       // reconnect 重放 running：pending 在场时必须钉在 requires_action
       ev("state_update", { state: "running" }, "t1"),
     ]);
@@ -823,13 +785,11 @@ describe("per-turn run state aggregation", () => {
   test("Interaction without a turnId still surfaces session-level requires_action", () => {
     const state = reduceEvents([
       ev("state_update", { state: "running" }, "t1"),
-      ev("interaction.requested", {
+      ev("interaction.requested", requestMessage("ix_1", {
         kind: "permission",
-        interactionId: "ix_1",
-        requester: { type: "harness", harnessTargetId: "test" },
         title: "login",
-        options: [],
-      }),
+        options: [{ optionId: "allow", name: "Allow", polarity: "allow" as const, lifetime: "once" as const }]
+      }, { kind: "harness", key: "test" })),
     ]);
     // setup Interaction 未归属到 turn：per-turn 不动，会话级仍要上浮
     expect(state.activeTurns.get("t1")?.state).toBe("running");

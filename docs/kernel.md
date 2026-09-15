@@ -54,16 +54,20 @@ Review 等领域语义。完整边界见 [View](./view.md)。
 | **HarnessEvent** | Adapter 将 Harness 原生流式观察归一后的输出；Core 补齐可信坐标并提交后才成为 Baton Event |
 | **Queue** | 一条 Lane 的 HarnessInput 背压缓冲；Lane 内按入队顺序串行，决定等待、steer、取消和何时提交给 Harness |
 | **Lane** | BatonSession 内持久的任务线边界；Lane 内串行，不同 Lane 可以并行，可在多个 Harness 之间接力 |
-| **Message** | Session 内可独立寻址的发言；回复关系可以关联零条、一条或多条消息，不以执行轮次定义一问一答 |
+| **Message** | 可独立寻址、引用和渲染的交互对象；统称 Input、Output、InputRequest、InputResponse，source / target Actor 表达参与者方向 |
 | **Turn** | 一段 Harness 执行的归属边界，有稳定 `turnId` 和 start/end；不定义消息回复关系，也不排队、调度或执行工作 |
 | **Event Ledger** | BatonSession 的 append-only WAL 和历史记录；它保存正典 Event 供审计与回放，不负责调度、reduce 或实时分发 |
-| **Interaction** | Harness 或 Plugin 等待 Human 或 policy 给出 typed decision 的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期 |
+| **Interaction** | InputRequest / InputResponse 的统称；Core 拥有请求的待决与终结规则，不另设协作身份 |
 | **Resource / reconcile** | Plugin 表达长期期望状态并主动推进领域 loop 的机制；领域事实与完成条件归 Plugin 和外部系统所有 |
 | **Hook / Resource API / Verb** | Hook 通知 Core 边界事实；Resource API 修改开放的期望字段；Verb 请求 typed action。Hook 不返回控制决策，写操作不绕过 Core |
 
 HarnessTarget、HarnessSession、Binding、Handle 和 Capability 属于 Harness 执行边界；HarnessInvocation、
 Delivery Attempt 与具体 Input 状态机属于工作流；Board、Context 与 Plugin execution 属于 Plugin 控制面。
 它们都有明确类型和契约，但不与上述最小模型平级。
+
+Event 侧重 append-only 事实，Message 侧重交互、引用与渲染；一条消息的多次变化由多个 Event
+还原。Message source 是作者，Event source 是报告者；公共消息类型不引入第二套事实存储或任意
+消息执行通道。类型、Actor 与请求答复规则见 [Message](./message.md)。
 
 ### 2.1 Lane 与 Turn 只表达归属
 
@@ -290,6 +294,7 @@ Kernel。
 ## 7. References
 
 - [工作流](./workflow.md) — Input lowering、HarnessInput、Queue、Turn 与 Interaction 闭环
+- [Message](./message.md) — 交互模型、Actor、回复关系与 InputRequest / InputResponse
 - [Harness](./harness.md) — Target、Session、Adapter、Capability 与扩展契约
 - [Plugin](./plugin.md) — Resource/reconcile、Hook/Verb、Runner、Board 与 Context
 - [View](./view.md) — View Adapter、chat-tui 公共库与 surface 接入边界

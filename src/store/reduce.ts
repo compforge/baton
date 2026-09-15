@@ -23,16 +23,12 @@ import type {
   SessionConfigOption,
   SessionRunState,
   StopReason,
-  SubmitDelivery,
   ToolCallStatus,
   ToolEffect,
   TurnSummary,
   UsageUpdate,
 } from "../event/index.ts";
-import type {
-  Interaction,
-  InteractionResult,
-} from "../interaction/types.ts";
+import type { ReconcileInteractionContext } from "../interaction/types.ts";
 import {
   normalizeHarnessInputStatus,
   type HarnessInputSource,
@@ -40,29 +36,14 @@ import {
 } from "../harness/input.ts";
 import { harnessTaskKey } from "../harness/task.ts";
 import { applyInputDelivery, applyMessageReplies, placeMessage, refreshConsumedSummary } from "./message-relations.ts";
+import type { InputState, OutputState, InputRequestState, InputResponseState } from "./message-state.ts";
+import { actorOf, HUMAN_ACTOR } from "../message/actor.ts";
+import { inputMessage, inputRequestMessage, inputResponseMessage } from "../message/project.ts";
+import { getMessage } from "../message/query.ts";
+import { canResolveRequest } from "../interaction/resolution.ts";
 
-export interface MessageState {
-  messageId: string;
-  role: MessageRole;
-  content: ContentBlock[];
-  replyToMessageIds?: readonly string[];
-  /** Sequence of the first confirmed input consumption; not submission/admission time. */
-  consumedAt?: number;
-  /** agent/thought chunk 仍在流式追加；完整 upsert 后转 completed。 */
-  streamStatus?: "in_progress" | "completed";
-  turnId?: string;
-  /** 产生该消息的 harness（多 agent 同时间线时用于标注说话人） */
-  harness?: string;
-  /** 产生该消息的具体配置目标；状态归属与查询使用它，不用 Harness 类型代替。 */
-  harnessTargetId?: string;
-  laneId?: string;
-  /** Who caused this message fact; message role remains a separate axis. */
-  source?: EventSource;
-  /** 仅 user 消息：effective delivery（steer = 中途注入当前 turn），缺省 = prompt */
-  delivery?: SubmitDelivery;
-  /** 仅 steer：pending 仍在 Harness 队列，applied 已进入模型上下文，failed 已确认未应用。 */
-  deliveryState?: "pending" | "applied" | "failed" | "uncertain";
-}
+/** Content-specific index; getMessage also resolves requests and responses. */
+export type MessageState = InputState | OutputState;
 
 export interface ToolCallState {
   toolCallId: string;
@@ -195,12 +176,10 @@ export interface ActiveTurnState {
 }
 
 export interface InteractionState {
-  interaction: Interaction;
-  /** 请求交互的 Event 执行坐标；用于 per-turn requires_action 与 cancel-cascade 投影。 */
-  turnId?: string;
-  laneId?: string;
-  /** 缺省即 pending；终结结果存在后不再要求用户动作。 */
-  result?: InteractionResult;
+  request: InputRequestState;
+  /** Execution/recovery correlation, deliberately outside the public Message. */
+  pluginContext?: ReconcileInteractionContext;
+  requestedEventId: string;
 }
 
 export interface HarnessInputState {
@@ -241,8 +220,9 @@ export interface SessionState {
   proposedPlans: Map<string, ProposedPlanState>;
   /** Harness 已启动的异步任务 / subagent，按 provider task id upsert。 */
   tasks: Map<string, HarnessTaskState>;
-  /** Interaction 是统一持久对象；是否 pending 由 result 是否存在派生。 */
+  /** Pending-request index and its terminal result; request identity is a Message identity. */
   interactions: Map<string, InteractionState>;
+  inputResponses: Map<string, InputResponseState>;
   /**
    * auto-review 回执，按回执自身的 `reviewId` 归档（见 docs/approval-lifecycle.md）。与 Interaction
    * 正交：这是“已被 reviewer 决策”的留痕，不是待决，不派生 requires_action。每条回执是
@@ -285,6 +265,7 @@ export function emptySessionState(): SessionState {
     proposedPlans: new Map(),
     tasks: new Map(),
     interactions: new Map(),
+    inputResponses: new Map(),
     approvalReviews: new Map(),
     harnessInvocations: new Map(),
     usage: {
@@ -314,24 +295,34 @@ function getOrCreateMessage(
   state: SessionState,
   id: string,
   role: MessageRole,
+  createdAt: string,
   turnId?: string,
   harness?: string,
   harnessTargetId?: string,
   laneId?: string,
   source?: EventSource,
   place = true,
-): MessageState {
+): MessageState | undefined {
+  const known = getMessage(state, id);
+  if (known && !(
+    known.kind === "input" && role === "user" ||
+    known.kind === "output" && known.role === role
+  )) return undefined;
   let msg = state.messages.get(id);
   if (!msg) {
+    const content: MessageState = role === "user"
+      ? inputMessage(id, createdAt, state.harnessInputs.get(id)?.source ?? source, harnessTargetId)
+      : {
+          kind: "output", messageId: id, role, content: [], createdAt,
+          source: harnessTargetId ? { kind: "harness", key: harnessTargetId } : actorOf(source ?? { type: "baton" }),
+          target: { ...HUMAN_ACTOR },
+        };
     msg = {
-      messageId: id,
-      role,
-      content: [],
+      ...content,
       turnId,
       harness,
       harnessTargetId,
       laneId,
-      ...(source === undefined ? {} : { source: { ...source } }),
     };
     state.messages.set(id, msg);
     if (place) placeMessage(state, id);
@@ -339,7 +330,6 @@ function getOrCreateMessage(
     if (!msg.harness) msg.harness = harness;
     if (!msg.harnessTargetId) msg.harnessTargetId = harnessTargetId;
     if (!msg.laneId) msg.laneId = laneId;
-    if (!msg.source && source) msg.source = { ...source };
   }
   return msg;
 }
@@ -380,15 +370,19 @@ function applyMessageUpsert(
   role: MessageRole,
 ): void {
   const p = ev.payload;
-  const pendingSteer = ev.kind === "user_message" &&
-    (ev as EventEnvelope<"user_message">).payload.delivery === "steer" &&
-    (state.harnessInputs.has(p.messageId) || (ev as EventEnvelope<"user_message">).payload.deliveryState !== undefined) &&
-    state.harnessInputs.get(p.messageId)?.deliveryOutcome !== "applied" &&
-    (ev as EventEnvelope<"user_message">).payload.deliveryState !== "applied";
+  const inputPatch = ev.kind === "user_message" ? (ev as EventEnvelope<"user_message">).payload : undefined;
+  const input = inputPatch ? state.harnessInputs.get(p.messageId) : undefined;
+  // Harness echoes need not repeat delivery metadata. The owned Input still
+  // determines whether consumption has occurred; a body is not a receipt.
+  const pendingSteer = inputPatch !== undefined &&
+    (inputPatch.delivery ?? input?.delivery) === "steer" &&
+    (input !== undefined || inputPatch.deliveryState !== undefined) &&
+    input?.deliveryOutcome !== "applied" && inputPatch.deliveryState !== "applied";
   const msg = getOrCreateMessage(
     state,
     p.messageId,
     role,
+    ev.ts,
     pendingSteer ? undefined : ev.turnId,
     ev.harness,
     eventTargetId(ev),
@@ -396,15 +390,20 @@ function applyMessageUpsert(
     ev.source,
     !pendingSteer,
   );
+  if (!msg) return;
   applyMessageReplies(state, msg, p.replyToMessageIds);
   // 三态：省略=不变；null/[]=清空；数组=整体替换
-  if (p.content !== undefined) {
+  // A managed Input already owns its original body. Harness echoes may contain
+  // transport Context or repeat that body; they only confirm execution here.
+  const inputEcho = role === "user" && state.harnessInputs.has(p.messageId) && ev.source.type === "harness";
+  if (p.content !== undefined && !inputEcho) {
     msg.content = p.content === null ? [] : [...p.content];
   }
   // EventEnvelope<union> 不随 kind 自动收窄（非判别联合入参），手动断言 user_message
-  if (ev.kind === "user_message") {
+  if (ev.kind === "user_message" && msg.kind === "input") {
     const userMessage = (ev as EventEnvelope<"user_message">).payload;
-    const delivery = userMessage.delivery;
+    if (!pendingSteer && msg.turnId === undefined) msg.turnId = ev.turnId;
+    const delivery = userMessage.delivery ?? input?.delivery;
     if (delivery !== undefined) msg.delivery = delivery;
     if (userMessage.deliveryState !== undefined) {
       msg.deliveryState = userMessage.deliveryState;
@@ -436,7 +435,7 @@ function applyMessageUpsert(
     if (!pendingSteer) placeMessage(state, msg.messageId);
     if (msg.consumedAt !== undefined) refreshConsumedSummary(state, msg.turnId, ev.seq);
   }
-  if (role !== "user") msg.streamStatus = "completed";
+  if (msg.kind === "output") msg.streamStatus = "completed";
 }
 
 function applyMessageChunk(
@@ -451,6 +450,7 @@ function applyMessageChunk(
     state,
     p.messageId,
     role,
+    ev.ts,
     pendingSteer ? undefined : ev.turnId,
     ev.harness,
     eventTargetId(ev),
@@ -458,19 +458,35 @@ function applyMessageChunk(
     ev.source,
     !pendingSteer,
   );
-  if (pendingSteer) msg.delivery = "steer";
-  msg.content.push(p.content);
+  if (!msg) return;
+  if (pendingSteer && msg.kind === "input") msg.delivery = "steer";
+  if (!input || ev.source.type !== "harness") msg.content.push(p.content);
   applyMessageReplies(state, msg, p.replyToMessageIds);
-  if (role !== "user") msg.streamStatus = "in_progress";
-  else if (msg.consumedAt !== undefined) refreshConsumedSummary(state, msg.turnId, ev.seq);
+  if (msg.kind === "output") msg.streamStatus = "in_progress";
+  else {
+    if (!pendingSteer) {
+      msg.turnId ??= ev.turnId;
+      placeMessage(state, msg.messageId);
+    }
+    if (msg.consumedAt !== undefined) refreshConsumedSummary(state, msg.turnId, ev.seq);
+  }
 }
 
+/** @spec Queue admission seeds Input content once; lifecycle snapshots never overwrite an existing Message. */
 function applyHarnessInputUpdate(
   state: SessionState,
   ev: EventEnvelope<"harness_input.updated">,
 ): void {
   const p = ev.payload;
   const status = normalizeHarnessInputStatus(p.status);
+  // Queue admission creates the same addressable Input, without granting it a
+  // Transcript position or an executed Turn. Later receipts only add facts.
+  const known = getMessage(state, p.messageId);
+  const message = getOrCreateMessage(state, p.messageId, "user", ev.ts, undefined, ev.harness,
+    p.harnessTargetId, p.laneId, p.source, false);
+  if (!message) return;
+  // Queue transitions update execution state, never rewrite an existing Message.
+  if (!known) message.content = [...p.blocks];
   const existing = state.harnessInputs.get(p.messageId);
   if (existing) {
     existing.status = status;
@@ -479,7 +495,7 @@ function applyHarnessInputUpdate(
     if (p.blocks.length > 0) existing.blocks = [...p.blocks];
     return;
   }
-  const deliveryState = state.messages.get(p.messageId)?.deliveryState;
+  const deliveryState = message.kind === "input" ? message.deliveryState : undefined;
   state.harnessInputs.set(p.messageId, {
     messageId: p.messageId,
     turnId: p.turnId,
@@ -522,7 +538,7 @@ function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_u
 /** 该 turn 是否还有未决 Interaction——per-turn requires_action 的派生依据。 */
 function hasPendingBlocking(state: SessionState, turnId: string): boolean {
   for (const interaction of state.interactions.values()) {
-    if (interaction.turnId === turnId && !interaction.result) return true;
+    if (interaction.request.turnId === turnId && interaction.request.status === "pending") return true;
   }
   return false;
 }
@@ -533,7 +549,7 @@ function hasPendingBlocking(state: SessionState, turnId: string): boolean {
  * "没有用户动作会话无法完整推进"；未归属 turn 的 setup Interaction 也不能漏。
  */
 function deriveRunState(state: SessionState): SessionRunState {
-  if ([...state.interactions.values()].some((interaction) => !interaction.result)) return "requires_action";
+  if ([...state.interactions.values()].some((interaction) => interaction.request.status === "pending")) return "requires_action";
   if (state.activeTurns.size === 0) return "idle";
   return [...state.activeTurns.values()].some((turn) => turn.state === "requires_action")
     ? "requires_action"
@@ -713,37 +729,44 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
     // 原生 state_update(requires_action) 仍然有效——覆盖登录、设备确认等没有结构化
     // Interaction 的场景（workflow：反向不强制成立）。
     case "interaction.requested": {
-      const interaction = ev.payload;
-      const existing = state.interactions.get(interaction.interactionId);
+      const request = inputRequestMessage(ev);
+      const existing = getMessage(state, request.messageId);
       // lifecycle 事实只认第一次：重复 request 不能重写 requester/payload，更不能复活已终结对象。
       if (existing) break;
-      state.interactions.set(interaction.interactionId, {
-        interaction,
-        turnId: ev.turnId,
-        laneId: ev.laneId,
+      state.interactions.set(request.messageId, {
+        request,
+        requestedEventId: ev.eventId,
+        ...(ev.payload.pluginContext === undefined ? {} : { pluginContext: ev.payload.pluginContext }),
       });
+      placeMessage(state, request.messageId);
       flagRequiresAction(state, ev.turnId);
       break;
     }
     case "interaction.answered": {
-      const existing = state.interactions.get(ev.payload.interactionId);
+      const existing = state.interactions.get(ev.payload.replyToMessageIds[0]);
       // terminal 只收一次；迟到/重复 answer 不得改写已经交付给 requester 的结果。
-      if (!existing || existing.result) break;
-      existing.result = ev.payload.answer;
-      unflagRequiresAction(state, existing.turnId);
+      if (!existing || existing.request.status !== "pending") break;
+      if (!canResolveRequest(existing.request, ev.payload.answer, ev.payload.source)) break;
+      if (ev.payload.replyToMessageIds.length !== 1 ||
+        ev.payload.target.kind !== existing.request.source.kind || ev.payload.target.key !== existing.request.source.key) break;
+      const response = inputResponseMessage(ev);
+      if (getMessage(state, response.messageId)) break;
+      existing.request.status = "answered";
+      existing.request.responseMessageId = response.messageId;
+      state.inputResponses.set(response.messageId, response);
+      placeMessage(state, response.messageId);
+      unflagRequiresAction(state, existing.request.turnId);
       break;
     }
     case "interaction.cancelled": {
-      const existing = state.interactions.get(ev.payload.interactionId);
-      if (!existing || existing.result) break;
-      existing.result = {
-        kind: "cancelled",
+      const existing = state.interactions.get(ev.payload.messageId);
+      if (!existing || !canResolveRequest(existing.request, { kind: "cancelled", reason: ev.payload.reason }, actorOf(ev.source))) break;
+      existing.request.status = "cancelled";
+      existing.request.cancellation = {
         reason: ev.payload.reason,
-        ...(ev.payload.detail === undefined
-          ? {}
-          : { detail: ev.payload.detail }),
+        ...(ev.payload.detail === undefined ? {} : { detail: ev.payload.detail }),
       };
-      unflagRequiresAction(state, existing.turnId);
+      unflagRequiresAction(state, existing.request.turnId);
       break;
     }
     case "approval_review_update": {

@@ -1,3 +1,4 @@
+import { requestResult } from "../src/interaction/resolution.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -996,10 +997,10 @@ describe("interaction completion registry", () => {
       optionId: "allow",
     })).toBe(false);
     const permission = session.ledger.read().find(
-      (event) => event.kind === "interaction.requested" && event.payload.kind === "permission",
+      (event) => event.kind === "interaction.requested" && event.payload.request.kind === "permission",
     );
     expect(permission?.kind).toBe("interaction.requested");
-    const permissionId = permission?.kind === "interaction.requested" ? permission.payload.interactionId : "";
+    const permissionId = permission?.kind === "interaction.requested" ? permission.payload.messageId : "";
     expect(controller.completeInteraction(permissionId, {
       kind: "permission",
       outcome: "selected",
@@ -1013,9 +1014,9 @@ describe("interaction completion registry", () => {
 
     await Bun.sleep(5); // question Interaction 已落盘
     const question = session.ledger.read().find(
-      (event) => event.kind === "interaction.requested" && event.payload.kind === "question",
+      (event) => event.kind === "interaction.requested" && event.payload.request.kind === "question",
     );
-    const questionId = question?.kind === "interaction.requested" ? question.payload.interactionId : "";
+    const questionId = question?.kind === "interaction.requested" ? question.payload.messageId : "";
     expect(controller.completeInteraction(questionId, {
       kind: "question",
       outcome: "answered",
@@ -1025,18 +1026,18 @@ describe("interaction completion registry", () => {
 
     const events = session.ledger.read();
     expect(events.find(
-      (event) => event.kind === "interaction.answered" && event.payload.interactionId === permissionId,
+      (event) => event.kind === "interaction.answered" && event.payload.replyToMessageIds[0] === permissionId,
     )?.payload).toMatchObject({
       answer: { kind: "permission", outcome: "selected", optionId: "allow" },
     });
     expect(events.find(
-      (event) => event.kind === "interaction.answered" && event.payload.interactionId === questionId,
+      (event) => event.kind === "interaction.answered" && event.payload.replyToMessageIds[0] === questionId,
     )?.payload).toMatchObject({
       answer: { kind: "question", outcome: "answered", answers: { q1: ["prod"] } },
     });
     // 事件流收支平衡：所有 Interaction 最终都有 result
     const state = session.loadState();
-    expect([...state.interactions.values()].every((value) => value.result)).toBe(true);
+    expect([...state.interactions.values()].every((value) => value.request.status !== "pending")).toBe(true);
   });
 
   test("a harness-startup hook trust request belongs to the preparing turn", async () => {
@@ -1088,16 +1089,16 @@ describe("interaction completion registry", () => {
     const outcome = controller.submit("codex", [{ type: "text", text: "go" }]);
     await Bun.sleep(5);
     const interaction = session.ledger.read().find(
-      (event) => event.kind === "interaction.requested" && event.payload.kind === "hook_trust",
+      (event) => event.kind === "interaction.requested" && event.payload.request.kind === "hook_trust",
     );
     expect(interaction?.turnId).toBeDefined();
-    const interactionId = interaction?.kind === "interaction.requested" ? interaction.payload.interactionId : "";
+    const interactionId = interaction?.kind === "interaction.requested" ? interaction.payload.messageId : "";
     expect(controller.completeInteraction(interactionId, {
       kind: "hook_trust",
       outcome: "trusted",
     })).toBe(true);
     await outcome;
-    expect(session.loadState().interactions.get(interactionId)?.result).toEqual({
+    expect(requestResult(session.loadState(), interactionId)).toEqual({
       kind: "hook_trust",
       outcome: "trusted",
     });
@@ -1148,17 +1149,17 @@ describe("interaction completion registry", () => {
     const outcome = controller.submit("codex", [{ type: "text", text: "go" }]);
     await Bun.sleep(5);
     const interaction = session.ledger.read().find(
-      (event) => event.kind === "interaction.requested" && event.payload.kind === "permission",
+      (event) => event.kind === "interaction.requested" && event.payload.request.kind === "permission",
     );
     expect(interaction?.turnId).toBeDefined();
-    const interactionId = interaction?.kind === "interaction.requested" ? interaction.payload.interactionId : "";
+    const interactionId = interaction?.kind === "interaction.requested" ? interaction.payload.messageId : "";
     expect(controller.completeInteraction(interactionId, {
       kind: "permission",
       outcome: "selected",
       optionId: "allow",
     })).toBe(true);
     await outcome;
-    expect(session.loadState().interactions.get(interactionId)?.result).toEqual({
+    expect(requestResult(session.loadState(), interactionId)).toEqual({
       kind: "permission",
       outcome: "selected",
       optionId: "allow",
