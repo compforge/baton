@@ -57,6 +57,29 @@ const input: PromptInput = {
   blocks: [{ type: "text", text: "prefer approach B" }],
 };
 
+test("codex receipt uses its native Turn identity, not the Turn active on arrival", async () => {
+  const { adapter, rt, events, ref, notify } = harness();
+  notify("turn/started", { threadId: "th1", turn: { id: "codex-turn-1" } });
+  await adapter.sendTurn(ref, input);
+  rt.activeTurn = { turnId: "t_next", finalized: false };
+  rt.turnId = "t_next";
+  notify("turn/started", { threadId: "th1", turn: { id: "codex-turn-2" } });
+  notify("item/completed", { threadId: "th1", turnId: "codex-turn-1", item: {
+    type: "userMessage", id: "native-user", clientId: input.messageId,
+  } });
+  expect(events.at(-1)).toMatchObject({ kind: "input_delivery_update", turnId: "t_A" });
+});
+
+test("codex receipt with an unknown native Turn preserves unknown ownership", async () => {
+  const { adapter, events, ref, notify } = harness();
+  await adapter.sendTurn(ref, input);
+  notify("item/completed", { threadId: "th1", turnId: "unmapped", item: {
+    type: "userMessage", id: "native-user", clientId: input.messageId,
+  } });
+  expect(events.at(-1)?.kind).toBe("input_delivery_update");
+  expect(events.at(-1)?.turnId).toBeUndefined();
+});
+
 test("codex steer: stays pending until codex emits the correlated userMessage", async () => {
   const { adapter, events, requests, ref, notify } = harness();
 
@@ -86,6 +109,7 @@ test("codex steer: stays pending until codex emits the correlated userMessage", 
 
   notify("item/completed", {
     threadId: "th1",
+    turnId: "codex-turn-1",
     item: {
       type: "userMessage",
       id: "native-user-1",

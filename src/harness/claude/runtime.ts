@@ -23,11 +23,13 @@ import type {
   ModelOption,
 } from "../adapter.ts";
 import type { HarnessTargetProbeResult } from "../target.ts";
+import type { MessageReplies } from "../message-replies.ts";
 import type { ClaudeDurableMappingState, TaskEntry, TaskToolOp } from "./mapping.ts";
 import { readClaudeSettings } from "./settings.ts";
 
 export interface ClaudeTurn {
   turnId: string;
+  replies?: MessageReplies;
   /** 保证任何退出路径（result 消息 / 流异常 / 流结束无 result）只发一次终态（见 docs/harness.md） */
   finalized: boolean;
   /** 用户主动中断时，SDK 会以 error result 结束消息流；该错误应归一成 cancelled。 */
@@ -98,6 +100,8 @@ export interface ClaudeRuntime extends ClaudeDurableMappingState {
     /** started 可能落在后续 harnessTurn turn；保留正文，让该 turn 的 summary 能准确承接。 */
     blocks: PromptBlock[];
   }>;
+  /** Correlation remains useful after a delivery receipt retires the pending offer. */
+  inputMessageIdsByUuid?: Map<string, string>;
   /** 主 agent 最近一次 message_start 的当次调用 usage；跨 turn 保留，compact 后由下一次 sample 覆盖。 */
   lastContextSample?: ClaudeContextSample;
   /** 最近一次已发布的 context window；后续 message_start 复用其容量，实时刷新当前占用。 */

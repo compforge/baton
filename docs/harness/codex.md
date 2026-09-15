@@ -69,6 +69,9 @@ Adapter 声明 `steering: { deliveryTracking: "explicit", cancelOwnership: "unre
 RPC 成功只证明进入 Codex `pending_input`，`userMessage` completed 通知才经
 `input_delivery_update(applied)` 证明已写入模型上下文；正常结束的 Turn 未消费的 steer 会随
 下一 Turn 应用，回执允许跨 Turn 迟到。
+Adapter 按通知中的原生 Turn ID 查找 Baton 执行归属，不使用回执到达时的 active Turn 猜测；
+映射未知时保留未知归属。单输入请求提供回复关联；steer 消费之后没有精确回复对象证据的新消息
+保持未知，不把该 Turn 的输入清单自动当作回复清单。
 
 cancel 映射 `turn/interrupt`。fast-submit 窗口里原生 turn ID 可能尚未返回，Adapter 先记录
 pending cancel，ID 就位后补发；Controller 的 cancel grace 仍负责最终兜底。Codex interrupt

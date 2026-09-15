@@ -65,7 +65,9 @@ Turn 时可能没有 lifecycle frame，此时 thinking progress、首个 reply �
 `user_message_uuid(s)` 是关联后的 `applied` 回执。Claude 把连续输入合并进同一 Turn 时，Adapter
 消费 `user_message_uuids` 中的完整批次，不能只处理代表该 Turn 的最后一个 UUID；多条原生回执按
 UUID 幂等。CLI 可能让 queued command 跨过当前 Turn 才启动，回执允许迟到于 Turn 收口，只补
-`deliveryOutcome`，不回迁 status。
+`deliveryOutcome` 与消息实际执行归属，不回迁 status。
+原生 `user_message_uuid(s)` 同时用于明确输出的回复关联，映射在投递回执退休后仍保留。
+对应输出已经开始流式显示时，以该消息作为迟到消费回执的锚点，不将输入放到回答之后。
 
 `/queue` 可对仍在原生队列中的单条 steer 发起取消。Controller 只传 Baton `messageId`，Adapter
 用进程内 `pendingOfferUuids` 找回 Claude UUID 并调用 SDK `cancelAsyncMessage(uuid)`；返回 false

@@ -249,7 +249,7 @@ CommandResult`，不再按提供方分叉执行契约。宿主指定 namespace�
 verb 的能力集合，按调用上下文和授权边界区分，不按“模型配置”等功能划分抽象。当前通过
 `CommandContext.verbs` 提供：
 
-- `submit({ prompt })`：以 command Input 为因果父节点准入新 Turn，返回 messageId、turnId、
+- `submit({ prompt })`：以 command Input 为因果父节点准入输入，返回 messageId、
   queued 回执，不等待执行终态。使用 Target 的当前配置，忙时排队，不 steer。
 - `configureModel({ model?, effort? })`：记录配置 Input，经 Adapter 应用并保存 Target
   默认偏好；内置 `/model`、`/effort` 也使用这一能力。`/easy`、`/hard` 是它们的组合快捷命令，

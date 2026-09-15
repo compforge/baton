@@ -39,7 +39,7 @@ export function normalizeHarnessInputStatus(status: string): HarnessInputStatus 
  */
 export interface HarnessInput {
   messageId: string;
-  /** 为新 Turn 预留的 ID；accepted steer 后改为实际承载它的当前 Turn ID。 */
+  /** Controller scheduling coordinate: reserved for a prompt or targeted by a steer. Not proof of actual consumption. */
   turnId: string;
   target: HarnessTarget;
   /** Baton-owned logical execution channel selected before admission. */

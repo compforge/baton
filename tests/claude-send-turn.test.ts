@@ -215,7 +215,7 @@ test("Claude correlation applies every coalesced steer exactly once", async () =
   releaseMessages?.([
     {
       type: "assistant",
-      message: { content: [] },
+      message: { content: [{ type: "text", text: "Combined answer" }] },
       parent_tool_use_id: null,
       ...correlation,
     },
@@ -244,6 +244,8 @@ test("Claude correlation applies every coalesced steer exactly once", async () =
   expect(appliedIndex).toBeGreaterThan(-1);
   expect(idleIndex).toBeGreaterThan(appliedIndex);
   expect(appliedEvents.map((event) => event.payload.messageId)).toEqual(["m_folded_1", "m_folded_2"]);
+  expect(events.find((event) => event.kind === "agent_message")?.payload.replyToMessageIds)
+    .toEqual(["m_folded_1", "m_folded_2"]);
   expect(events).not.toContainEqual(
     expect.objectContaining({
       kind: "input_delivery_update",

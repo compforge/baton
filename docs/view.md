@@ -50,6 +50,10 @@ chat-tui 的主壳按概念分成历史区、当前态 dock、输入区、辅助
 | Sidecar / Board | Plugin Board sections 与资源状态 | Board Projection；是共享读模型，不是 Session 历史替代品 |
 | Picker / manager | session、command、mention、queue、plugins、parallel 等选择与管理界面 | 具体 View 的临时 overlay；选择结果再翻译为 typed intent |
 
+Transcript 沿用公共消息投影的消费位置与输出顺序，不按提交时间或 Turn ID 重排。直接回复相邻
+问题时保持简洁；跨组与多输入回复显示引用提示，正文只出现一次。不把回复图强行排序成一问一答，
+也不为引用复制答案或改写消息正文。未知关联保持未知，历史回放与实时投影使用同一规则。
+
 区域选择遵循时态，而不是来源：同一个 Harness 事件在执行中可以只贡献 Activity，完成后再贡献
 Transcript；同一个 side Lane 在运行中位于 Parallel，结束后进入可回看的任务卡片。View 不复制事实，
 只为同一 Projection 选择合适的当前态或历史态表达。

@@ -12,6 +12,7 @@ import type {
   OpenInteraction,
 } from "../adapter.ts";
 import type { JsonRpcPeer } from "./jsonrpc.ts";
+import type { MessageReplies } from "../message-replies.ts";
 
 export interface CodexAdapterOptions {
   openInteraction: OpenInteraction;
@@ -36,6 +37,7 @@ export interface CodexAdapterOptions {
  */
 export interface CodexTurn {
   turnId: string;
+  replies?: MessageReplies;
   /** 保证物理终态重复到达（响应与 turn/completed 通知都可能带终态）时只终结一次 */
   finalized: boolean;
   /**
@@ -65,6 +67,8 @@ export interface ThreadRuntime {
   /** 当前被接受、尚未逻辑终结的 turn */
   activeTurn?: CodexTurn;
   codexTurnId?: string;
+  /** Native receipt ownership survives the active Turn changing. */
+  turnsByNativeId?: Map<string, CodexTurn>;
   /** turn/steer 已接受、但尚未收到 Codex userMessage 消费回执的 Baton messageId。 */
   pendingSteerMessageIds?: Set<string>;
   /** userMessage 回执可能先于 turn/steer RPC；保留到 admission waiter 消费。 */

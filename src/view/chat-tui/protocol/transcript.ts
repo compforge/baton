@@ -507,6 +507,7 @@ export function buildTranscript(
   const hidden = (laneId: string | undefined) =>
     laneId !== undefined && options.isSideLane?.(laneId) === true;
   const noticesById = new Map(state.notices.map((notice) => [`n_${notice.seq}`, notice]));
+  let latestUserMessageId: string | undefined;
   for (const entry of state.timeline) {
     if (entry.type === "tool_call") {
       const tc = state.toolCalls.get(entry.id);
@@ -623,6 +624,20 @@ export function buildTranscript(
             ? msg.source.pluginInstanceId
             : "you"
           : (harnessAuthor(msg.harness) ?? "agent");
+      const replies = msg.replyToMessageIds;
+      if (replies?.length && !(replies.length === 1 && replies[0] === latestUserMessageId)) {
+        // Cross-group and combined replies retain one body. References explain
+        // the relationship without sorting a many-to-many graph into fake turns.
+        appendStandaloneBlock({
+          type: "block", id: `${msg.messageId}:replies`, kind: "reply_reference", status: "completed",
+          title: `Replying to: ${replies.map((id) => {
+            const referenced = state.messages.get(id);
+            const label = referenced ? userVisibleText(composerTextOf(referenced.content)) : id;
+            return label.replace(/\s+/g, " ").slice(0, 80) || id;
+          }).join(" · ")}`,
+        });
+      }
+      if (msg.role === "user") latestUserMessageId = msg.messageId;
       items.push({
         type: "message",
         id: entry.id,

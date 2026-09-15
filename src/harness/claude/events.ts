@@ -1,6 +1,7 @@
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
 import { newId } from "../../event/ids.ts";
+import { MessageReplies } from "../message-replies.ts";
 import type { LogSink } from "../../logging.ts";
 import type { InteractionDraft, QuestionPrompt } from "../../interaction/types.ts";
 import type { HarnessEventSink, OpenInteraction } from "../adapter.ts";
@@ -169,6 +170,7 @@ export class ClaudeEventHandler {
     emit: HarnessEventSink,
     uuids: readonly string[],
     raw: unknown,
+    beforeMessageId?: string,
   ): void {
     for (const uuid of new Set(uuids)) {
       const offer = rt.pendingOfferUuids?.get(uuid);
@@ -176,13 +178,26 @@ export class ClaudeEventHandler {
       rt.pendingOfferUuids?.delete(uuid);
       emit({
         kind: "input_delivery_update",
-        payload: { messageId: offer.messageId, state: "applied" },
+        payload: { messageId: offer.messageId, state: "applied", ...(beforeMessageId ? { beforeMessageId } : {}) },
         raw,
       });
     }
   }
 
-  handleMessage(rt: ClaudeRuntime, emit: HarnessEventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
+  handleMessage(rt: ClaudeRuntime, sink: HarnessEventSink, msg: ClaudeStreamMessage, turn: ClaudeTurn): void {
+    const replies = turn.replies ??= new MessageReplies();
+    const correlation = msg as { user_message_uuid?: string; user_message_uuids?: string[] };
+    const uuids = consumedUserMessageUuids(correlation);
+    const ids = uuids.map((uuid) => rt.inputMessageIdsByUuid?.get(uuid) ?? rt.pendingOfferUuids?.get(uuid)?.messageId);
+    const explicit = ids.length > 0 && ids.every((id) => id !== undefined) ? ids : undefined;
+    if (uuids.length > 0) replies.current = explicit;
+    const emit: HarnessEventSink = (event) => {
+      if (event.kind === "input_delivery_update" && event.payload.state === "applied" && explicit === undefined) {
+        // A consumption receipt does not identify all questions addressed by an answer.
+        replies.current = undefined;
+      }
+      sink(replies.apply(event, explicit));
+    };
     switch (msg.type) {
       case "command_lifecycle": {
         const key = commandLifecycleKey(msg);
@@ -351,7 +366,8 @@ export class ClaudeEventHandler {
         }
         break;
       case "stream_event": {
-        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg);
+        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg,
+          msg.event.type === "message_start" ? undefined : turn.streamMessageId);
         // 子 agent（parent_tool_use_id 非空）的流式输出不进主时间线，内容随 tool result 汇总
         if (msg.parent_tool_use_id) break;
         const event = msg.event as {
@@ -417,7 +433,7 @@ export class ClaudeEventHandler {
         break;
       }
       case "assistant": {
-        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg);
+        this.applyConsumedOffers(rt, emit, consumedUserMessageUuids(msg), msg, turn.streamMessageId);
         if (msg.context_usage) {
           const context = claudeStructuredContextWindow(msg.context_usage);
           if (context) {

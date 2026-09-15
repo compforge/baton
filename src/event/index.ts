@@ -101,6 +101,8 @@ export interface StateUpdate {
 export interface MessageUpsert {
   messageId: string;
   content?: ContentBlock[] | null;
+  /** Replies to these existing Session messages, not all consumed inputs. Omitted = unknown/unchanged; [] = no specific reply target. */
+  replyToMessageIds?: readonly string[];
 }
 
 /**
@@ -124,19 +126,23 @@ export interface UserMessageUpsert extends MessageUpsert {
 /**
  * Harness 对 steer 输入的投递回执（Adapter → Core）：applied = 已写入模型上下文，
  * failed = Harness 明确丢弃；uncertain = 连接丢失等导致无法确认，禁止自动重投。投递事实是 Input 的一等状态，不再寄生 user_message；
- * 回执可能迟到于 Turn 收口（原生队列跨 Turn），只迁移 deliveryOutcome。
+ * 回执可能迟到于 Turn 收口（原生队列跨 Turn），不回迁调度 status；首次 applied 确认消息的实际执行归属。
  * deliveryTracking = "ack-only" 的 Harness 没有后续回执，接受即由 Core 合成 applied。
  */
 export interface InputDeliveryUpdate {
   messageId: string;
   state: "applied" | "failed" | "uncertain";
   detail?: string;
+  /** Proven consumption anchor when the receipt arrives after its corresponding output. Omitted = observed stream position. */
+  beforeMessageId?: string;
 }
 
 /** chunk 永远是追加语义；role 由事件 kind 决定（user_/agent_/agent_thought_ 前缀） */
 export interface MessageChunk {
   messageId: string;
   content: ContentBlock;
+  /** Same patch semantics as MessageUpsert; chunks must not retarget an existing reply implicitly. */
+  replyToMessageIds?: readonly string[];
 }
 
 /**

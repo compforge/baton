@@ -48,7 +48,7 @@ export async function executeCommand(
         // Command returns admission only. Controller records failure/terminal Events;
         // consume its caller-facing rejection without creating a second verdict.
         void receipt.outcome.catch(() => {});
-        return { ...identity, queued: receipt.queued };
+        return { messageId: identity.messageId, queued: receipt.queued };
       },
       configureModel: async (request) => {
         const selected = assertAction();

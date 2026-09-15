@@ -4,6 +4,7 @@
 // HarnessSession 元数据只用于优先恢复 harness 私有状态，缺失时仍可从 BatonSession 重建上下文。
 
 import { createHash } from "node:crypto";
+import { turnUserText } from "./message-relations.ts";
 import {
   appendFileSync,
   chmodSync,
@@ -1390,8 +1391,12 @@ export class SessionHandle {
     const state = reduceEvents(turnEvents);
 
     // 自动注入块保留在原始事件里供审计，但不能进入摘要后再次被下一棒递归放大。
-    const userText = stripBatonInjectedContext(joinMessages(state, "user"));
-    const agentText = joinMessages(state, "agent");
+    // A native queue can consume a body recorded in an earlier Turn. Resolve
+    // messages from the Session projection, then select their actual ownership;
+    // filtering the ledger first would discard the body or its consumption fact.
+    const messages = this.loadState();
+    const userText = turnUserText(messages, turnId);
+    const agentText = turnAgentText(messages, turnId);
     const toolCalls: TurnSummaryToolCall[] = [...state.toolCalls.values()].map((tc) => ({
       toolCallId: tc.toolCallId,
       title: tc.title,
@@ -1640,22 +1645,12 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-function joinMessages(state: SessionState, role: "user" | "agent"): string {
+function turnAgentText(state: SessionState, turnId: string): string {
   const parts: string[] = [];
   for (const item of state.timeline) {
     if (item.type !== "message") continue;
     const msg = state.messages.get(item.id);
-    if (msg && msg.role === role) {
-      if (role === "user" && msg.delivery === "steer") {
-        // 投递事实以 input 投影为准：有 input 记录时 outcome 未填写即未应用；
-        // 没有 input 记录的老 ledger 才回落 user_message.deliveryState。
-        const input = state.harnessInputs.get(msg.messageId);
-        if (input) {
-          if (input.deliveryOutcome !== "applied") continue;
-        } else if (msg.deliveryState !== undefined && msg.deliveryState !== "applied") {
-          continue;
-        }
-      }
+    if (msg && msg.role === "agent" && msg.turnId === turnId) {
       const text = textOf(msg.content);
       if (text) parts.push(text);
     }
