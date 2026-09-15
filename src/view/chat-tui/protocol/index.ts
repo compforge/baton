@@ -1014,7 +1014,7 @@ export class BatonChatProtocol implements ChatProtocol {
     id: string,
     response: InteractionResponse,
   ): Promise<InteractionResult | undefined> {
-    const interaction = this.state.interactions.get(id)?.interaction;
+    const interaction = this.state.interactions.get(id)?.request.request;
     let result: InteractionResult | undefined;
     if (
       response.kind === "suggested_input" &&
@@ -1255,7 +1255,7 @@ export class BatonChatProtocol implements ChatProtocol {
     for (const entry of this.state.timeline) {
       if (entry.type !== "message") continue;
       const msg = this.state.messages.get(entry.id);
-      if (!msg || msg.role !== "user" || msg.source?.type === "plugin") continue;
+      if (!msg || msg.role !== "user" || msg.source.kind === "plugin") continue;
       this.recordHistory(msg.content);
     }
     this.resetHistoryNav();

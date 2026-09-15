@@ -1,3 +1,4 @@
+import { requestMessage, responseMessage } from "./fixtures/messages.ts";
 import { describe, expect, test } from "bun:test";
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -806,13 +807,11 @@ describe("BatonChatProtocol streaming State", () => {
         kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
-        payload: {
+        payload: requestMessage("ix_stream", {
           kind: "permission",
-          interactionId: "ix_stream",
-          requester: { type: "harness", harnessTargetId: "codex" },
           title: "Run command?",
-          options: [],
-        },
+          options: []
+        }, { kind: "harness", key: "codex" }),
       });
 
       expect(notifications).toBe(1);
@@ -2431,14 +2430,12 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "interaction.requested",
         harness: "claude-code",
         turnId: "t1",
-        payload: {
+        payload: requestMessage("ix_1", {
           kind: "permission",
-          interactionId: "ix_1",
-          requester: { type: "harness", harnessTargetId: "claude-code" },
           title: "Write file?",
           description: "/repo/output.txt",
-          options: APPROVAL_OPTIONS,
-        },
+          options: APPROVAL_OPTIONS
+        }, { kind: "harness", key: "claude-code" }),
       });
       let composer = protocol.stateStore.getState("composer");
       expect(composer.interactions?.[0]).toMatchObject({
@@ -2464,10 +2461,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
-        payload: {
-          interactionId: "ix_1",
-          reason: "recovery",
-        },
+        payload: { messageId: "ix_1", reason: "recovery" },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
@@ -2488,12 +2482,10 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
-        payload: {
+        payload: requestMessage("ix_2", {
           kind: "question",
-          interactionId: "ix_2",
-          requester: { type: "harness", harnessTargetId: "codex" },
-          questions: [{ questionId: "q1", header: "Scope", question: "Which scope?" }],
-        },
+          questions: [{ questionId: "q1", header: "Scope", question: "Which scope?" }]
+        }, { kind: "harness", key: "codex" }),
       });
       expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_2",
@@ -2531,10 +2523,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
-        payload: {
-          interactionId: "ix_2",
-          reason: "recovery",
-        },
+        payload: { messageId: "ix_2", reason: "recovery" },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
@@ -2560,14 +2549,8 @@ describe("interaction eventization: pending projects from the event stream", () 
           pluginInstanceId: "reqloop_default",
         },
         kind: "interaction.requested",
-        payload: {
+        payload: requestMessage("ix_plugin", {
           kind: "question",
-          interactionId: "ix_plugin",
-          requester: {
-            type: "plugin",
-            pluginInstanceId: "reqloop_default",
-          },
-          pluginContext: { executionId: "pex_plugin", verb: "ask" },
           questions: [
             {
               questionId: "decision",
@@ -2587,8 +2570,8 @@ describe("interaction eventization: pending projects from the event stream", () 
                 },
               ],
             },
-          ],
-        },
+          ]
+        }, { kind: "plugin", key: "reqloop_default" }, { pluginContext: { executionId: "pex_plugin", verb: "ask" } }),
       });
       expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_plugin",
@@ -2665,10 +2648,8 @@ describe("interaction eventization: pending projects from the event stream", () 
         kind: "interaction.requested",
         harness: "codex",
         turnId: "t1",
-        payload: {
+        payload: requestMessage("ix_3", {
           kind: "hook_trust",
-          interactionId: "ix_3",
-          requester: { type: "harness", harnessTargetId: "codex" },
           harnessName: "Codex",
           hooks: [
             {
@@ -2679,8 +2660,8 @@ describe("interaction eventization: pending projects from the event stream", () 
               command: "python hook.py",
               pluginId: "devloop@devloop",
             },
-          ],
-        },
+          ]
+        }, { kind: "harness", key: "codex" }),
       });
       expect(protocol.stateStore.getState("composer").interactions?.[0]).toMatchObject({
         id: "ix_3",
@@ -2709,10 +2690,7 @@ describe("interaction eventization: pending projects from the event stream", () 
         source: { type: "baton" },
         kind: "interaction.cancelled",
         harness: "baton",
-        payload: {
-          interactionId: "ix_3",
-          reason: "recovery",
-        },
+        payload: { messageId: "ix_3", reason: "recovery" },
       });
       expect(protocol.stateStore.getState("composer").interactions).toEqual([]);
       await protocol.exit();
@@ -2749,13 +2727,13 @@ describe("Plugin draft projection", () => {
           session.appendEvent({
             kind: "interaction.cancelled",
             source: { type: "user" },
-            payload: { interactionId: id, reason: result.reason },
+            payload: { messageId: id, reason: result.reason },
           });
         } else {
           session.appendEvent({
             kind: "interaction.answered",
             source: { type: "user" },
-            payload: { interactionId: id, answer: result },
+            payload: responseMessage(id, result, { kind: "harness", key: "codex" }, { source: { kind: "user", key: "local" } }),
           });
         }
         return true;
@@ -2766,18 +2744,12 @@ describe("Plugin draft projection", () => {
           type: "plugin",
           pluginInstanceId: "reqloop_default",
         },
-        payload: {
-          interactionId: "ix_edit",
+        payload: requestMessage("ix_edit", {
           kind: "suggested_input",
-          requester: {
-            type: "plugin",
-            pluginInstanceId: "reqloop_default",
-          },
-          pluginContext: { executionId: "pex_edit", verb: "draft" },
           title: "Handle review",
           text: "Handle every review comment.",
-          harnessTargetId: "codex",
-        },
+          harnessTargetId: "codex"
+        }, { kind: "plugin", key: "reqloop_default" }, { pluginContext: { executionId: "pex_edit", verb: "draft" } }),
       });
       expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
         id: "ix_edit",
@@ -2840,19 +2812,13 @@ describe("Plugin draft projection", () => {
           type: "plugin",
           pluginInstanceId: "reqloop_default",
         },
-        payload: {
-          interactionId: "ix_run",
+        payload: requestMessage("ix_run", {
           kind: "harness_invocation",
-          requester: {
-            type: "plugin",
-            pluginInstanceId: "reqloop_default",
-          },
-          pluginContext: { executionId: "pex_run", verb: "harness" },
           title: "Implement",
           prompt: "Implement req_1.",
           laneId: "main",
-          newLane: false,
-        },
+          newLane: false
+        }, { kind: "plugin", key: "reqloop_default" }, { pluginContext: { executionId: "pex_run", verb: "harness" } }),
       });
       expect(protocol.stateStore.getState("composer").interactions).toMatchObject([{
         id: "ix_run",

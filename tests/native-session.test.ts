@@ -73,7 +73,7 @@ function logicalContent(session: SessionHandle) {
     messages: [...state.messages.values()].map((message) => ({
       role: message.role,
       content: textOf(message.content),
-      streamStatus: message.streamStatus,
+      streamStatus: message.kind === "output" ? message.streamStatus : undefined,
       harness: message.harness,
       harnessTargetId: message.harnessTargetId,
     })),

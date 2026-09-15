@@ -1,5 +1,6 @@
 // 终端桌面通知（OSC 9）纯逻辑：能力检测白名单、文案消毒、序列构造与事件路由。
 import { describe, expect, test } from "bun:test";
+import { requestMessage } from "./fixtures/messages.ts";
 
 import type { AnyEventEnvelope } from "../src/event/index.ts";
 import {
@@ -121,30 +122,27 @@ describe("TerminalNotifier", () => {
 
   test("notifies on blocking interactions only", () => {
     const { notifier, written } = notifierWith(osc9Env);
-    notifier.handleEvent(fakeEvent("interaction.requested", {
-      interactionId: "i_1",
+    notifier.handleEvent(fakeEvent("interaction.requested", requestMessage("i_1", {
       kind: "permission",
       title: "Run rm -rf?",
       options: [],
-    }));
+    }, { kind: "harness", key: "test" })));
     expect(written).toEqual([`${ESC}]9;baton: needs your input · Run rm -rf?${BEL}`]);
 
     written.length = 0;
-    notifier.handleEvent(fakeEvent("interaction.requested", {
-      interactionId: "i_2",
+    notifier.handleEvent(fakeEvent("interaction.requested", requestMessage("i_2", {
       kind: "question",
       questions: [{ questionId: "q1", header: "Pick one", question: "Which option?" }],
-    }));
+    }, { kind: "harness", key: "test" })));
     expect(written).toEqual([`${ESC}]9;baton: needs your input · Pick one${BEL}`]);
 
     // suggested_input 不阻断用户，不通知。
     written.length = 0;
-    notifier.handleEvent(fakeEvent("interaction.requested", {
-      interactionId: "i_3",
+    notifier.handleEvent(fakeEvent("interaction.requested", requestMessage("i_3", {
       kind: "suggested_input",
       title: "Try this",
       text: "suggestion",
-    }));
+    }, { kind: "plugin", key: "helper" })));
     expect(written).toEqual([]);
   });
 

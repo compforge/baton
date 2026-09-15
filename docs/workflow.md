@@ -360,9 +360,10 @@ HarnessInvocation 只用 invocation identity 定向取消自己的 queued Harnes
 
 ## 5. Interaction 闭环
 
-Interaction 表示“某个 requester 正在等待 typed decision”，当前 kind 包含 permission、question、
-suggested input、HarnessInvocation gate 和 hook trust。它是 Core-owned rendezvous，不是 Harness
-与 Plugin 互传任意 payload 的消息信封。decision 可以由人提交，也可以由宿主 policy 自动给出；
+Interaction 是 InputRequest 与 InputResponse 两类 Message 的统称。InputRequest 表示“某个
+Actor 正在请求 typed decision”，具体请求包含 permission、question、suggested input、
+HarnessInvocation gate 和 hook trust；InputResponse 是对应明确答复，不是另一次普通 prompt。
+Core 仍拥有等待与决议执行，不接受 Harness 与 Plugin 互传任意 payload。decision 可以由人提交，也可以由宿主 policy 自动给出；
 自动决议同样必须留下 requested/answered 事实。
 HarnessInvocation gate 同时固化 prompt、HarnessTarget 和 Lane policy，确保 policy 或用户批准的是
 随后实际执行的同一份请求。
@@ -371,11 +372,11 @@ HarnessInvocation gate 同时固化 prompt、HarnessTarget 和 Lane policy，确
 ```text
 Harness native verb → Adapter lowering ┐
 Plugin reconcile verb → Host lowering ─┴→ kind-specific draft
-  → Core signs interactionId + requester
+  → Core signs request Message identity + source/target Actors
   → interaction.requested persisted
   → Channel publishes ViewOutput to a Human surface, or host policy resolves it
   → user/policy answers, or request is cancelled
-  → interaction.answered / interaction.cancelled persisted
+  → interaction.answered (InputResponse) / interaction.cancelled persisted
   → waiting Adapter or Plugin execution continuation resumes
 ```
 
@@ -386,8 +387,12 @@ verb 归一到封闭的 Interaction kind。`draft` 的 submitted 和 `harness` �
 
 两类 requester 共享 identity、持久化、展示与终态规则，并都恢复当前等待 continuation：Harness
 result 返回 Adapter continuation，Plugin result 返回当前 Runner 或 in-process reconcile continuation。
+请求状态与答复由 Session 统一投影；两种 continuation 只读取已提交结果，不独立维护或解释终态。
 Plugin verb 的 deadline 由必填 `timeoutMs` 计算并随 Interaction 持久化；timeout、用户 Esc、执行失败
 和恢复清理都先记录终态，所有终态遵守 first-terminal-wins。
+
+请求 messageId 同时是等待关联；答复有独立 messageId，且只对应一条 InputRequest。取消、超时与
+恢复失败只终结请求，不伪造答复。完整交互模型及 Event / Message 分层见 [Message](./message.md)。
 
 `await ctx.verbs.ask(...)` 会真实等待人的结果。等待期间 Baton 保留当前 async continuation，但释放该
 Controller 的并发位和 Manager 总并发位，使其它 Resource 继续 reconcile；结果落盘后重新取得并发

@@ -160,17 +160,17 @@ describe("Baton Resource index", () => {
 
     await manager.start();
     const pendingDrafts = () => [...session.loadState().interactions.values()]
-      .filter(({ interaction, result }) =>
-        interaction.kind === "suggested_input" && !result
+      .filter(({ request: interaction }) =>
+        interaction.request.kind === "suggested_input" && interaction.status === "pending"
       )
-      .map(({ interaction }) => interaction);
+      .map(({ request: interaction }) => interaction);
     await waitFor(() => pendingDrafts().length === 1);
     expect(pendingDrafts()[0]).toMatchObject({
-      requester: {
-        type: "plugin",
-        pluginInstanceId: "router_default",
+      source: {
+        kind: "plugin",
+        key: "router_default",
       },
-      text: "Route: which harness?",
+      request: { text: "Route: which harness?" },
     });
     expect(manager.listHarnessInvocations()).toEqual([]);
 
@@ -178,7 +178,7 @@ describe("Baton Resource index", () => {
     await waitFor(() => pendingDrafts().length === 2);
     expect(reconciled).toEqual(["t_existing", "t_live"]);
     expect(pendingDrafts().map((interaction) =>
-      interaction.kind === "suggested_input" ? interaction.text : ""
+      interaction.request.kind === "suggested_input" ? interaction.request.text : ""
     )).toEqual([
       "Route: which harness?",
       "Route: continue with codex",

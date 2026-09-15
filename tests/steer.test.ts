@@ -158,7 +158,7 @@ describe("Controller.sendTurn", () => {
 
     // steer 消息落盘在被注入的 turn 内，带 effective delivery 标记
     const state = session.loadState();
-    const steerMsg = [...state.messages.values()].find((m) => m.delivery === "steer");
+    const steerMsg = [...state.messages.values()].find((m) => m.kind === "input" && m.delivery === "steer");
     expect(steerMsg).toBeDefined();
     expect(textOf(steerMsg?.content ?? [])).toBe("prefer approach B");
     expect(steerMsg?.turnId).toBe(adapter.steers[0]?.turnId as string);

@@ -128,7 +128,7 @@ function recoverInterruptedState(session: SessionHandle): boolean {
     interruptedTasks.length === 0 &&
     unsummarized.length === 0 &&
     pendingSteers.length === 0 &&
-    ![...state.interactions.values()].some((interaction) => !interaction.result)
+    ![...state.interactions.values()].some((interaction) => interaction.request.status === "pending")
   ) {
     return recoveredAttempt;
   }
@@ -166,11 +166,11 @@ function recoverInterruptedState(session: SessionHandle): boolean {
   }
 
   for (const [interactionId, interaction] of state.interactions) {
-    if (interaction.result) continue;
+    if (interaction.request.status !== "pending") continue;
     const requested = events.findLast(
       (event) =>
         event.kind === "interaction.requested" &&
-        event.payload.interactionId === interactionId,
+        event.payload.messageId === interactionId,
     );
     session.appendEvent({
       kind: "interaction.cancelled",
@@ -178,11 +178,11 @@ function recoverInterruptedState(session: SessionHandle): boolean {
       harness: requested?.harness ?? "baton",
       ...(requested?.harnessTargetId ? { harnessTargetId: requested.harnessTargetId } : {}),
       ...(requested?.laneId ? { laneId: requested.laneId } : {}),
-      ...(interaction.turnId ? { turnId: interaction.turnId } : {}),
+      ...(interaction.request.turnId ? { turnId: interaction.request.turnId } : {}),
       payload: {
-        interactionId,
+        messageId: interactionId,
         reason: "recovery",
-        ...(interaction.interaction.requester.type === "plugin"
+        ...(interaction.request.source.kind === "plugin"
           ? { detail: "Plugin execution was interrupted by Core restart" }
           : {}),
       },

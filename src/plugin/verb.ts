@@ -243,7 +243,7 @@ export function hookScope(context: HookContext): ExecutionScope {
 
 type VerbSession = Pick<
   SessionHandle,
-  "id" | "ledger" | "appendEvent" | "subscribe" | "requireLane"
+  "id" | "ledger" | "projection" | "appendEvent" | "subscribe" | "requireLane"
 >;
 
 interface ActiveExecution {

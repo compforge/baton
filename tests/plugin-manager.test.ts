@@ -1,3 +1,4 @@
+import { requestResult } from "../src/interaction/resolution.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -155,14 +156,14 @@ describe("plugin Manager", () => {
     const reconcile = manager.enqueue(reconcileKey);
     await waitFor(() => session.loadState().interactions.size === 1);
     const interaction = [...session.loadState().interactions.values()][0]
-      ?.interaction;
-    expect(interaction?.requester).toEqual({
-      type: "plugin",
-      pluginInstanceId: "reqloop_default",
+      ?.request;
+    expect(interaction?.source).toEqual({
+      kind: "plugin",
+      key: "reqloop_default",
     });
-    expect(interaction?.kind).toBe("question");
+    expect(interaction?.request.kind).toBe("question");
     expect(
-      await manager.completeInteraction(interaction!.interactionId, {
+      await manager.completeInteraction(interaction!.messageId, {
         kind: "question",
         outcome: "answered",
         answers: { decision: ["req_1"] },
@@ -171,8 +172,7 @@ describe("plugin Manager", () => {
     await reconcile;
     expect(states).toEqual(["success:req_1"]);
     expect(
-      session.loadState().interactions.get(interaction!.interactionId)
-        ?.result,
+      requestResult(session.loadState(), interaction!.messageId),
     ).toEqual({
       kind: "question",
       outcome: "answered",
@@ -343,14 +343,15 @@ describe("plugin Manager", () => {
     });
     expect(scheduled[0]?.laneId).not.toBe(MAIN_LANE_ID);
     expect([...session.loadState().interactions.values()]).toMatchObject([{
-      interaction: {
+      request: { request: {
         kind: "harness_invocation",
         harnessTargetId: "claude",
         laneId: MAIN_LANE_ID,
         newLane: true,
-      },
-      result: { kind: "harness_invocation", outcome: "approved" },
+      }, status: "answered" },
     }]);
+    const requestId = [...session.projection.interactions.keys()][0]!;
+    expect(requestResult(session.projection, requestId)).toEqual({ kind: "harness_invocation", outcome: "approved" });
     expect(session.ledger.read().filter((event) =>
       event.kind === "interaction.requested" ||
       event.kind === "interaction.answered" ||
@@ -463,18 +464,18 @@ describe("plugin Manager", () => {
     expect(scheduled).toEqual([]);
     expect(manager.listHarnessInvocations()).toEqual([]);
     const interaction = [...session.loadState().interactions.values()]
-      .find(({ interaction: candidate }) =>
-        candidate.kind === "suggested_input"
-      )?.interaction;
-    expect(interaction).toMatchObject({
+      .find(({ request: candidate }) =>
+        candidate.request.kind === "suggested_input"
+      )?.request;
+    expect(interaction?.request).toMatchObject({
       kind: "suggested_input",
       title: "Implement",
       text: "Implement run_1.",
     });
-    expect(interaction).not.toHaveProperty("harnessTargetId");
+    expect(interaction?.request).not.toHaveProperty("harnessTargetId");
 
     selectedHarnessTargetId = "claude";
-    expect(await manager.completeInteraction(interaction!.interactionId, {
+    expect(await manager.completeInteraction(interaction!.messageId, {
       kind: "suggested_input",
       outcome: "submitted",
       blocks: [{
@@ -505,17 +506,17 @@ describe("plugin Manager", () => {
     });
     await waitFor(() => session.loadState().interactions.size === 2);
     const fixed = [...session.loadState().interactions.values()]
-      .find(({ interaction: candidate }) =>
-        candidate.kind === "suggested_input" &&
-        candidate.text === "Implement run_2."
-      )?.interaction;
-    expect(fixed).toMatchObject({
+      .find(({ request: candidate }) =>
+        candidate.request.kind === "suggested_input" &&
+        candidate.request.text === "Implement run_2."
+      )?.request;
+    expect(fixed?.request).toMatchObject({
       kind: "suggested_input",
       title: "Implement",
       text: "Implement run_2.",
       harnessTargetId: "codex",
     });
-    expect(await manager.completeInteraction(fixed!.interactionId, {
+    expect(await manager.completeInteraction(fixed!.messageId, {
       kind: "suggested_input",
       outcome: "submitted",
       blocks: [{ type: "text", text: "Implement run_2." }],
@@ -591,22 +592,22 @@ describe("plugin Manager", () => {
     expect(manager.listHarnessInvocations()).toEqual([]);
     expect(states).toEqual(new Map());
     const interactions = [...session.loadState().interactions.values()]
-      .map(({ interaction }) => interaction)
-      .filter((interaction) => interaction.kind === "harness_invocation");
+      .map(({ request: interaction }) => interaction)
+      .filter((interaction) => interaction.request.kind === "harness_invocation");
     const approved = interactions.find((interaction) =>
-      interaction.kind === "harness_invocation" &&
-      interaction.prompt === "Implement approve."
+      interaction.request.kind === "harness_invocation" &&
+      interaction.request.prompt === "Implement approve."
     );
     const declined = interactions.find((interaction) =>
-      interaction.kind === "harness_invocation" &&
-      interaction.prompt === "Implement decline."
+      interaction.request.kind === "harness_invocation" &&
+      interaction.request.prompt === "Implement decline."
     );
 
-    expect(await manager.completeInteraction(approved!.interactionId, {
+    expect(await manager.completeInteraction(approved!.messageId, {
       kind: "harness_invocation",
       outcome: "approved",
     })).toBe(true);
-    expect(await manager.completeInteraction(declined!.interactionId, {
+    expect(await manager.completeInteraction(declined!.messageId, {
       kind: "harness_invocation",
       outcome: "declined",
     })).toBe(true);
@@ -740,21 +741,21 @@ describe("plugin Manager", () => {
     await waitFor(() => session.loadState().interactions.size === 2);
     expect(manager.listHarnessInvocations()).toEqual([]);
     const interactions = [...session.loadState().interactions.values()]
-      .map(({ interaction }) => interaction)
-      .filter((interaction) => interaction.kind === "suggested_input");
+      .map(({ request: interaction }) => interaction)
+      .filter((interaction) => interaction.request.kind === "suggested_input");
     const dismissed = interactions.find((interaction) =>
-      interaction.kind === "suggested_input" &&
-      interaction.text === "Implement dismiss."
+      interaction.request.kind === "suggested_input" &&
+      interaction.request.text === "Implement dismiss."
     );
     const failed = interactions.find((interaction) =>
-      interaction.kind === "suggested_input" &&
-      interaction.text === "Implement fail."
+      interaction.request.kind === "suggested_input" &&
+      interaction.request.text === "Implement fail."
     );
-    expect(await manager.completeInteraction(dismissed!.interactionId, {
+    expect(await manager.completeInteraction(dismissed!.messageId, {
       kind: "suggested_input",
       outcome: "dismissed",
     })).toBe(true);
-    expect(await manager.completeInteraction(failed!.interactionId, {
+    expect(await manager.completeInteraction(failed!.messageId, {
       kind: "suggested_input",
       outcome: "submitted",
       blocks: [{ type: "text", text: "Implement fail." }],

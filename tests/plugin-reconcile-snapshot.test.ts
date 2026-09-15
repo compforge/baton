@@ -29,13 +29,17 @@ describe("ReconcileSnapshot", () => {
       toolCalls: [{ toolCallId: "tc_1", status: "failed" }],
     });
     state.interactions.set("ix_1", {
-      interaction: {
-        interactionId: "ix_1",
-        requester: { type: "harness", harnessTargetId: "codex" },
-        kind: "question",
-        questions: [],
+      request: {
+        messageId: "ix_1",
+        source: { kind: "harness", key: "codex" },
+        target: { kind: "user", key: "local" },
+        kind: "input_request",
+        request: { kind: "question", questions: [] },
+        status: "pending",
+        createdAt: "2026-09-15T00:00:00Z",
+        turnId: "t_latest",
       },
-      turnId: "t_latest",
+      requestedEventId: "ev_request",
     });
 
     const snapshot = createReconcileSnapshot({
@@ -77,9 +81,10 @@ describe("ReconcileSnapshot", () => {
       "claude",
     ]);
     expect(snapshot.pendingInteractions).toEqual([{
-      interactionId: "ix_1",
+      messageId: "ix_1",
       kind: "question",
-      requester: { type: "harness", harnessTargetId: "codex" },
+      source: { kind: "harness", key: "codex" },
+      target: { kind: "user", key: "local" },
       turnId: "t_latest",
     }]);
     expect(snapshot.latestTurn?.turnId).toBe("t_latest");

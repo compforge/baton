@@ -16,7 +16,7 @@ import { textOf, type ContextWindowUpdate } from "../../../event/index.ts";
 import { harnessShortName } from "../../../harness/registry.ts";
 import type {
   HookTrustInteraction,
-  Interaction,
+  InputRequest,
   PermissionOption,
 } from "../../../interaction/types.ts";
 import type { BoardItem } from "../../../plugin/board.ts";
@@ -92,26 +92,27 @@ function harnessAuthor(harness: string | undefined): string | undefined {
   return harnessShortName(harness);
 }
 
-function interactionRequester(interaction: Interaction): string {
-  if (interaction.requester.type === "harness") {
+function interactionRequester(interaction: InputRequest): string {
+  if (interaction.source.kind === "harness") {
     return (
-      harnessAuthor(interaction.requester.harnessTargetId) ??
-      interaction.requester.harnessTargetId
+      harnessAuthor(interaction.source.key) ??
+      interaction.source.key
     );
   }
-  if (interaction.requester.type === "plugin") {
-    return interaction.requester.pluginInstanceId;
+  if (interaction.source.kind === "plugin") {
+    return interaction.source.key;
   }
   return "baton";
 }
 
 function interactionView(
-  interaction: Interaction,
+  message: InputRequest,
 ): InteractionView {
-  const requester = interactionRequester(interaction);
+  const requester = interactionRequester(message);
+  const interaction = message.request;
   if (interaction.kind === "permission") {
     return {
-      id: interaction.interactionId,
+      id: message.messageId,
       kind: "approval",
       blocking: true,
       requester,
@@ -145,7 +146,7 @@ function interactionView(
           }
         : { kind: "cancelled" };
     return {
-      id: interaction.interactionId,
+      id: message.messageId,
       kind: "question",
       blocking: true,
       requester,
@@ -169,7 +170,7 @@ function interactionView(
   }
   if (interaction.kind === "suggested_input") {
     return {
-      id: interaction.interactionId,
+      id: message.messageId,
       kind: "suggested_input",
       blocking: false,
       requester,
@@ -185,7 +186,7 @@ function interactionView(
   }
   if (interaction.kind === "harness_invocation") {
     return {
-      id: interaction.interactionId,
+      id: message.messageId,
       kind: "approval",
       blocking: true,
       requester,
@@ -209,7 +210,7 @@ function interactionView(
     };
   }
   return {
-    id: interaction.interactionId,
+    id: message.messageId,
     kind: "approval",
     blocking: true,
     requester,
@@ -399,8 +400,8 @@ export function projectChatState(input: ChatStateProjectionInput): ChatState {
     );
   };
   const interactions: InteractionView[] = [...state.interactions.values()]
-    .filter((item) => !item.result)
-    .map((item) => interactionView(item.interaction));
+    .filter((item) => item.request.status === "pending")
+    .map((item) => interactionView(item.request));
   const mainRuns = [...state.activeTurns.values()].filter(
     (turn) =>
       (!turn.laneId || turn.laneId === MAIN_LANE_ID),

@@ -27,6 +27,8 @@ import {
   type ViewPolicy,
 } from "../../policy.ts";
 import { composerTextOf } from "../prompt-images.ts";
+import { getMessage } from "../../../message/query.ts";
+import { messageText } from "./message.ts";
 
 // Baton 的状态类型是开放联合（容忍未知 wire 值），chat-tui 是闭集；
 // 未知值回落到与旧 TUI 相同的展示形态（工具 ⋯ / 计划 ☐）。
@@ -563,9 +565,25 @@ export function buildTranscript(
       continue;
     }
     if (entry.type === "message") {
-      const msg = state.messages.get(entry.id);
+      const msg = getMessage(state, entry.id);
       if (!msg) continue;
       if (hidden(msg.laneId)) continue;
+      if (msg.kind === "input_request" || msg.kind === "input_response") {
+        // Pending requests live in the Dock. Their identity remains unchanged
+        // when history later presents the settled request and explicit answer.
+        if (msg.kind === "input_request" && msg.status === "pending") continue;
+        flushThoughts();
+        applyPolicyBoundary(contentViewPolicy("message"));
+        appendStandaloneBlock({
+          type: "block", id: msg.messageId, kind: msg.kind,
+          status: "completed",
+          author: msg.source.kind === "user" ? "you" : msg.source.kind === "baton" ? "baton" : msg.source.key,
+          title: msg.kind === "input_request"
+            ? `Input request${msg.cancellation ? ` · ${msg.cancellation.reason}` : ""}` : "Input response",
+          content: { type: "text", text: messageText(msg, state) },
+        });
+        continue;
+      }
       // Harness 接受 steer 只代表承担投递责任。只有 applied 才是模型已看到的
       // Transcript 历史；pending 留在 Composer Queue，failed 由诊断事件说明且不伪造历史。
       // 投递事实以 input 投影（input_delivery_update）为准：有 input 记录时 outcome
@@ -620,8 +638,8 @@ export function buildTranscript(
       applyPolicyBoundary(contentViewPolicy("message"));
       const author =
         msg.role === "user"
-          ? msg.source?.type === "plugin"
-            ? msg.source.pluginInstanceId
+          ? msg.source.kind === "plugin"
+            ? msg.source.key
             : "you"
           : (harnessAuthor(msg.harness) ?? "agent");
       const replies = msg.replyToMessageIds;
@@ -631,8 +649,8 @@ export function buildTranscript(
         appendStandaloneBlock({
           type: "block", id: `${msg.messageId}:replies`, kind: "reply_reference", status: "completed",
           title: `Replying to: ${replies.map((id) => {
-            const referenced = state.messages.get(id);
-            const label = referenced ? userVisibleText(composerTextOf(referenced.content)) : id;
+            const referenced = getMessage(state, id);
+            const label = referenced ? userVisibleText(messageText(referenced, state)) : id;
             return label.replace(/\s+/g, " ").slice(0, 80) || id;
           }).join(" · ")}`,
         });

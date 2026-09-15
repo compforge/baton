@@ -3,7 +3,7 @@
 // BEL 只在配置显式开启时使用。
 
 import type { AnyEventEnvelope } from "../../event/index.ts";
-import type { Interaction } from "../../interaction/types.ts";
+import type { InteractionDraft } from "../../interaction/types.ts";
 
 const ESC = "\x1b";
 const BEL = "\x07";
@@ -94,7 +94,7 @@ export function buildNotificationSequences(
 }
 
 /** 需要人处理的 blocking Interaction；suggested_input 不打断用户，不通知。 */
-function interactionNotificationTitle(interaction: Interaction): string | null {
+function interactionNotificationTitle(interaction: InteractionDraft): string | null {
   switch (interaction.kind) {
     case "permission":
     case "harness_invocation":
@@ -134,7 +134,7 @@ export class TerminalNotifier {
       return;
     }
     if (event.kind === "interaction.requested") {
-      const title = interactionNotificationTitle(event.payload);
+      const title = interactionNotificationTitle(event.payload.request);
       if (title) this.emit(`baton: needs your input · ${title}`);
     }
   }

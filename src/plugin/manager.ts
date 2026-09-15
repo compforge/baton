@@ -155,6 +155,7 @@ export interface ManagerOptions {
     | "dir"
     | "meta"
     | "ledger"
+    | "projection"
     | "appendEvent"
     | "subscribe"
     | "log"

@@ -18,14 +18,12 @@ export type HarnessInputSource =
       readonly pluginInstanceId: string;
     };
 
-export type InteractionRequester =
-  | {
-      readonly type: "harness";
-      readonly harnessTargetId: string;
-      readonly laneId?: string;
-    }
-  | { readonly type: "plugin"; readonly pluginInstanceId: string }
-  | { readonly type: "baton" };
+export type ActorKind = "user" | "harness" | "plugin" | "baton" | (string & {});
+
+export interface ActorRef {
+  readonly kind: ActorKind;
+  readonly key: string;
+}
 
 export interface TurnSummaryToolCall {
   readonly toolCallId: string;
@@ -89,14 +87,15 @@ export interface HarnessTargetSnapshot {
 }
 
 export interface PendingInteractionSnapshot {
-  readonly interactionId: string;
+  readonly messageId: string;
   readonly kind:
     | "permission"
     | "question"
     | "suggested_input"
     | "harness_invocation"
     | "hook_trust";
-  readonly requester: InteractionRequester;
+  readonly source: ActorRef;
+  readonly target: ActorRef;
   readonly turnId?: string;
 }
 

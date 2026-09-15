@@ -429,6 +429,11 @@ and materializes the primary Resource before it is reconciled.
 A Controller receives a `ReconcileContext`, reads current facts from
 `ctx.snapshot`, and can await a typed user decision directly:
 
+`snapshot.pendingInteractions` identifies each pending request by `messageId`.
+Its `source` and `target` are `ActorRef` values (`kind` + `key`); they identify
+the participants independently of the optional execution `turnId`. Interaction
+is the family name for InputRequest and InputResponse messages, not another identity.
+
 ```ts
 const decision = await ctx.verbs.ask({
   title: "Associate pull request",

@@ -2,9 +2,9 @@ import type { HarnessInputSnapshot as ControllerInputSnapshot } from "../harness
 import type { TurnSummary } from "../event/index.ts";
 import type { HarnessTarget } from "../harness/target.ts";
 import type {
-  Interaction,
-  InteractionRequester,
+  InteractionDraft,
 } from "../interaction/types.ts";
+import type { ActorRef } from "../message/types.ts";
 import type { SessionState } from "../store/reduce.ts";
 
 type SnapshotReadonly<T> =
@@ -54,9 +54,10 @@ export interface HarnessTargetSnapshot {
 }
 
 export interface PendingInteractionSnapshot {
-  readonly interactionId: string;
-  readonly kind: Interaction["kind"];
-  readonly requester: SnapshotReadonly<InteractionRequester>;
+  readonly messageId: string;
+  readonly kind: InteractionDraft["kind"];
+  readonly source: ActorRef;
+  readonly target: ActorRef;
   readonly turnId?: string;
 }
 
@@ -123,12 +124,13 @@ export function createReconcileSnapshot(options: CreateReconcileSnapshotOptions)
       ...(target.label === undefined ? {} : { label: target.label }),
     })),
     pendingInteractions: [...options.state.interactions.values()]
-      .filter((entry) => entry.result === undefined)
+      .filter((entry) => entry.request.status === "pending")
       .map((entry) => ({
-        interactionId: entry.interaction.interactionId,
-        kind: entry.interaction.kind,
-        requester: { ...entry.interaction.requester },
-        ...(entry.turnId === undefined ? {} : { turnId: entry.turnId }),
+        messageId: entry.request.messageId,
+        kind: entry.request.request.kind,
+        source: { ...entry.request.source },
+        target: { ...entry.request.target },
+        ...(entry.request.turnId === undefined ? {} : { turnId: entry.request.turnId }),
       })),
     turns: options.state.turnSummaries.map((turn) => ({
       ...turn,

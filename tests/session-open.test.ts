@@ -1,3 +1,5 @@
+import { requestMessage } from "./fixtures/messages.ts";
+import { requestResult } from "../src/interaction/resolution.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -205,7 +207,7 @@ describe("crash recovery on open", () => {
       result.session.loadState().harnessInputs.get("m_pending")?.deliveryOutcome,
     ).toBe("failed");
     // 老 ledger：回执镜像到 legacy deliveryState。
-    expect(result.session.loadState().messages.get("m_legacy_pending")?.deliveryState).toBe("failed");
+    expect(result.session.loadState().messages.get("m_legacy_pending")).toMatchObject({ deliveryState: "failed" });
     expect(
       result.session
         .loadState()
@@ -424,20 +426,18 @@ describe("crash recovery on open", () => {
     h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
-      payload: {
+      payload: requestMessage("ix1", {
         kind: "permission",
-        interactionId: "ix1",
-        requester: { type: "harness", harnessTargetId: "codex" },
         title: "Run rm -rf?",
-        options: [{ optionId: "yes", name: "Yes", polarity: "allow", lifetime: "once" }],
-      },
+        options: [{ optionId: "yes", name: "Yes", polarity: "allow", lifetime: "once" }]
+      }, { kind: "harness", key: "codex" }),
       harness: "codex",
       turnId: "t1",
     });
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix1")?.result).toEqual({
+    expect(requestResult(result.session.loadState(), "ix1")).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });
@@ -449,19 +449,17 @@ describe("crash recovery on open", () => {
     h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
-      payload: {
+      payload: requestMessage("ix2", {
         kind: "question",
-        interactionId: "ix2",
-        requester: { type: "harness", harnessTargetId: "codex" },
-        questions: [{ questionId: "mode", header: "Mode", question: "Which mode?" }],
-      },
+        questions: [{ questionId: "mode", header: "Mode", question: "Which mode?" }]
+      }, { kind: "harness", key: "codex" }),
       harness: "codex",
       turnId: "t1",
     });
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix2")?.result).toEqual({
+    expect(requestResult(result.session.loadState(), "ix2")).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });
@@ -472,22 +470,16 @@ describe("crash recovery on open", () => {
     h.appendEvent({
       source: { type: "plugin", pluginInstanceId: "reqloop_default" },
       kind: "interaction.requested",
-      payload: {
+      payload: requestMessage("ix_plugin", {
         kind: "question",
-        interactionId: "ix_plugin",
-        requester: {
-          type: "plugin",
-          pluginInstanceId: "reqloop_default",
-        },
-        pluginContext: { executionId: "pex_plugin", verb: "ask" },
         questions: [
           {
             questionId: "decision",
             header: "Associate pull request",
             question: "Choose a requirement",
           },
-        ],
-      },
+        ]
+      }, { kind: "plugin", key: "reqloop_default" }, { pluginContext: { executionId: "pex_plugin", verb: "ask" } }),
     });
 
     const result = openBatonSession(store, {
@@ -496,7 +488,7 @@ describe("crash recovery on open", () => {
     });
     expect(result.recovered).toBe(true);
     expect(
-      result.session.loadState().interactions.get("ix_plugin")?.result,
+      requestResult(result.session.loadState(), "ix_plugin"),
     ).toEqual({
       kind: "cancelled",
       reason: "recovery",
@@ -510,10 +502,8 @@ describe("crash recovery on open", () => {
     h.appendEvent({
       source: { type: "baton" },
       kind: "interaction.requested",
-      payload: {
+      payload: requestMessage("ix3", {
         kind: "hook_trust",
-        interactionId: "ix3",
-        requester: { type: "harness", harnessTargetId: "codex" },
         harnessName: "Codex",
         hooks: [
           {
@@ -523,15 +513,15 @@ describe("crash recovery on open", () => {
             trustStatus: "modified",
             command: "python hook.py",
           },
-        ],
-      },
+        ]
+      }, { kind: "harness", key: "codex" }),
       harness: "codex",
       turnId: "t1",
     });
 
     const result = openBatonSession(store, { cwd: "/repo", sessionId: h.id });
     expect(result.recovered).toBe(true);
-    expect(result.session.loadState().interactions.get("ix3")?.result).toEqual({
+    expect(requestResult(result.session.loadState(), "ix3")).toEqual({
       kind: "cancelled",
       reason: "recovery",
     });

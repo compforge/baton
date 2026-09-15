@@ -9,17 +9,19 @@ import type {
   VerbResult,
 } from "@compforge/baton-plugin";
 
-import { newId } from "../event/ids.ts";
+import { resolutionEvent, requestResult } from "./resolution.ts";
+import { actorOf } from "../message/actor.ts";
+import { createInputRequest } from "../message/project.ts";
+import type { InputRequest } from "../message/types.ts";
 import type {
   AnyEventEnvelope,
-  EventEnvelope,
   EventSource,
 } from "../event/index.ts";
 import type { PromptBlock } from "../input/blocks.ts";
 import type { ExecutionScope } from "../plugin/verb.ts";
 import type { SessionHandle } from "../store/store.ts";
 import type {
-  Interaction,
+  InteractionDraft,
   InteractionCancellationReason,
   InteractionResult,
   QuestionChoice,
@@ -30,13 +32,8 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type InteractionSession = Pick<
   SessionHandle,
-  "id" | "ledger" | "appendEvent" | "subscribe"
+  "id" | "projection" | "appendEvent" | "subscribe"
 >;
-
-interface Entry {
-  readonly requested: EventEnvelope<"interaction.requested">;
-  result?: InteractionResult;
-}
 
 interface PluginQuestionInput {
   readonly verb: "ask" | "confirm";
@@ -85,30 +82,13 @@ export type ReconcileHarnessGateResult = VerbResult<"approved" | "declined">;
 export interface ReconcileInteractionStoreOptions {
   now?: () => Date;
   harnessInvocationGate?(
-    interaction: Extract<Interaction, { kind: "harness_invocation" }>,
+    interaction: InputRequest & { request: Extract<InteractionDraft, { kind: "harness_invocation" }> },
   ): "auto_approve" | "require_user";
 }
 
-function pluginInteraction(
-  scope: ExecutionScope,
-  request: PluginInteractionRequest,
-  expiresAt: string,
-): Interaction {
-  const base = {
-    interactionId: newId("ix"),
-    requester: {
-      type: "plugin" as const,
-      pluginInstanceId: scope.pluginInstanceId,
-    },
-    pluginContext: {
-      executionId: scope.executionId,
-      verb: request.verb,
-    },
-    expiresAt,
-  };
+function pluginRequestContent(request: PluginInteractionRequest): InteractionDraft {
   if (request.kind === "suggested_input") {
     return Object.freeze({
-      ...base,
       kind: "suggested_input",
       title: request.title,
       text: request.prompt,
@@ -119,7 +99,6 @@ function pluginInteraction(
   }
   if (request.kind === "harness_invocation") {
     return Object.freeze({
-      ...base,
       kind: "harness_invocation",
       title: request.title,
       prompt: request.prompt,
@@ -131,7 +110,6 @@ function pluginInteraction(
     });
   }
   return Object.freeze({
-    ...base,
     kind: "question",
     questions: [
       {
@@ -157,41 +135,6 @@ function pluginInteraction(
   });
 }
 
-function validResult(
-  interaction: Interaction,
-  result: InteractionResult,
-): boolean {
-  if (result.kind === "cancelled") return true;
-  if (
-    interaction.kind === "suggested_input" &&
-    result.kind === "suggested_input"
-  ) {
-    return result.outcome === "dismissed" || result.blocks.length > 0;
-  }
-  if (
-    interaction.kind === "harness_invocation" &&
-    result.kind === "harness_invocation"
-  ) {
-    return true;
-  }
-  if (interaction.kind !== "question" || result.kind !== "question") {
-    return false;
-  }
-  if (
-    Object.keys(result.answers).some((questionId) => questionId !== QUESTION_ID)
-  ) {
-    return false;
-  }
-  const values = result.answers[QUESTION_ID] ?? [];
-  if (values.length !== 1 || !values[0]?.trim()) return false;
-  const question = interaction.questions[0];
-  if (!question?.choices?.length) return true;
-  if (question.choices.some((choice) => choice.value === values[0])) {
-    return true;
-  }
-  return question.allowOther === true;
-}
-
 function cancelledResult<T>(
   reason: InteractionCancellationReason,
   detail?: string,
@@ -209,7 +152,7 @@ function cancelledResult<T>(
  * @rule Keep the Event Ledger as the durable fact store, not a continuation store: recovery must fail orphaned Plugin Interactions instead of reviving an old call stack.
  */
 export class ReconcileInteractionStore {
-  private readonly entries = new Map<string, Entry>();
+  private get entries() { return this.session.projection.interactions; }
   private readonly waiters = new Map<
     string,
     Set<(result: InteractionResult) => void>
@@ -220,7 +163,6 @@ export class ReconcileInteractionStore {
     ReconcileInteractionStoreOptions["harnessInvocationGate"]
   >;
   private timer?: ReturnType<typeof setTimeout>;
-  private replaying = true;
 
   constructor(
     private readonly session: InteractionSession,
@@ -229,8 +171,6 @@ export class ReconcileInteractionStore {
     this.now = options.now ?? (() => new Date());
     this.harnessInvocationGate = options.harnessInvocationGate ??
       (() => "auto_approve");
-    for (const event of session.ledger.read()) this.apply(event);
-    this.replaying = false;
     this.arm();
     this.unsubscribe = session.subscribe((event) => this.apply(event));
   }
@@ -288,7 +228,7 @@ export class ReconcileInteractionStore {
         ? {}
         : { harnessTargetId: input.harnessTargetId }),
     });
-    const result = await this.waitFor(interaction.interactionId);
+    const result = await this.waitFor(interaction.messageId);
     if (result.kind === "cancelled") {
       return cancelledResult(result.reason, result.detail);
     }
@@ -328,16 +268,16 @@ export class ReconcileInteractionStore {
         : { harnessTargetId: input.harnessTargetId }),
     });
     if (
-      interaction.kind === "harness_invocation" &&
-      this.harnessInvocationGate(interaction) === "auto_approve"
+      interaction.request.kind === "harness_invocation" &&
+      this.harnessInvocationGate({ ...interaction, request: interaction.request }) === "auto_approve"
     ) {
       this.settle(
-        interaction.interactionId,
+        interaction.messageId,
         { kind: "harness_invocation", outcome: "approved" },
         { type: "baton" },
       );
     }
-    const result = await this.waitFor(interaction.interactionId);
+    const result = await this.waitFor(interaction.messageId);
     if (result.kind === "cancelled") {
       return cancelledResult(result.reason, result.detail);
     }
@@ -350,32 +290,22 @@ export class ReconcileInteractionStore {
     return Object.freeze({ state: "success", value: result.outcome });
   }
 
-  complete(interactionId: string, result: InteractionResult): boolean {
-    const entry = this.entries.get(interactionId);
-    const interaction = entry?.requested.payload;
-    if (
-      !entry ||
-      entry.result ||
-      !interaction ||
-      interaction.requester.type !== "plugin" ||
-      !interaction.pluginContext ||
-      !validResult(interaction, result)
-    ) {
-      return false;
-    }
-    return this.settle(interactionId, result, { type: "user" });
+  complete(messageId: string, result: InteractionResult): boolean {
+    const entry = this.entries.get(messageId);
+    if (!entry || entry.request.source.kind !== "plugin" || !entry.pluginContext) return false;
+    return this.settle(messageId, result, { type: "user" });
   }
 
   failExecution(executionId: string, error: string): void {
-    for (const [interactionId, entry] of this.entries) {
+    for (const [messageId, entry] of this.entries) {
       if (
-        entry.result ||
-        entry.requested.payload.pluginContext?.executionId !== executionId
+        entry.request.status !== "pending" ||
+        entry.pluginContext?.executionId !== executionId
       ) {
         continue;
       }
       this.settle(
-        interactionId,
+        messageId,
         { kind: "cancelled", reason: "recovery", detail: error },
         { type: "baton" },
       );
@@ -384,8 +314,8 @@ export class ReconcileInteractionStore {
 
   failOrphans(error: string): void {
     for (const entry of this.entries.values()) {
-      const context = entry.requested.payload.pluginContext;
-      if (entry.result || !context) continue;
+      const context = entry.pluginContext;
+      if (entry.request.status !== "pending" || !context) continue;
       this.failExecution(context.executionId, error);
     }
   }
@@ -404,7 +334,7 @@ export class ReconcileInteractionStore {
       kind: "question",
       ...input,
     });
-    const result = await this.waitFor(interaction.interactionId);
+    const result = await this.waitFor(interaction.messageId);
     if (result.kind === "cancelled") {
       return cancelledResult(result.reason, result.detail);
     }
@@ -423,15 +353,15 @@ export class ReconcileInteractionStore {
   private open(
     scope: ExecutionScope,
     request: PluginInteractionRequest,
-  ): Interaction {
+  ): InputRequest {
     if (scope.batonSessionId !== this.session.id) {
       throw new Error(
         `plugin Interaction batonSessionId must be ${this.session.id}, got ${scope.batonSessionId}`,
       );
     }
-    const interaction = pluginInteraction(
-      scope,
-      request,
+    const interaction = createInputRequest(
+      pluginRequestContent(request),
+      { kind: "plugin", key: scope.pluginInstanceId },
       new Date(this.timestamp() + request.timeoutMs).toISOString(),
     );
     this.session.appendEvent({
@@ -440,48 +370,31 @@ export class ReconcileInteractionStore {
         type: "plugin",
         pluginInstanceId: scope.pluginInstanceId,
       },
-      payload: interaction,
+      payload: { ...interaction, pluginContext: { executionId: scope.executionId, verb: request.verb } },
     });
     return interaction;
   }
 
-  private waitFor(interactionId: string): Promise<InteractionResult> {
-    const result = this.entries.get(interactionId)?.result;
+  private waitFor(messageId: string): Promise<InteractionResult> {
+    const result = requestResult(this.session.projection, messageId);
     if (result) return Promise.resolve(result);
     return new Promise((resolve) => {
-      const waiters = this.waiters.get(interactionId) ?? new Set();
+      const waiters = this.waiters.get(messageId) ?? new Set();
       waiters.add(resolve);
-      this.waiters.set(interactionId, waiters);
+      this.waiters.set(messageId, waiters);
     });
   }
 
   private settle(
-    interactionId: string,
+    messageId: string,
     result: InteractionResult,
     source: EventSource,
   ): boolean {
-    const entry = this.entries.get(interactionId);
-    if (!entry || entry.result) return false;
-    if (result.kind === "cancelled") {
-      this.session.appendEvent({
-        kind: "interaction.cancelled",
-        source,
-        parentEventId: entry.requested.eventId,
-        payload: {
-          interactionId,
-          reason: result.reason,
-          ...(result.detail === undefined ? {} : { detail: result.detail }),
-        },
-      });
-    } else {
-      this.session.appendEvent({
-        kind: "interaction.answered",
-        source,
-        parentEventId: entry.requested.eventId,
-        payload: { interactionId, answer: result },
-      });
-    }
-    return true;
+    const entry = this.entries.get(messageId);
+    const event = entry && resolutionEvent(entry.request, result, actorOf(source));
+    if (!entry || !event) return false;
+    this.session.appendEvent({ ...event, source, parentEventId: entry.requestedEventId });
+    return requestResult(this.session.projection, messageId) !== undefined;
   }
 
   private timestamp(): number {
@@ -493,17 +406,16 @@ export class ReconcileInteractionStore {
   }
 
   private arm(): void {
-    if (this.replaying) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     let earliest = Number.POSITIVE_INFINITY;
     for (const entry of this.entries.values()) {
-      if (entry.result || entry.requested.payload.expiresAt === undefined) {
+      if (!entry.pluginContext || entry.request.source.kind !== "plugin" || entry.request.status !== "pending" || entry.request.expiresAt === undefined) {
         continue;
       }
       earliest = Math.min(
         earliest,
-        Date.parse(entry.requested.payload.expiresAt),
+        Date.parse(entry.request.expiresAt),
       );
     }
     if (!Number.isFinite(earliest)) return;
@@ -518,17 +430,18 @@ export class ReconcileInteractionStore {
   private expireDue(): void {
     this.timer = undefined;
     const now = this.timestamp();
-    for (const [interactionId, entry] of this.entries) {
-      const expiresAt = entry.requested.payload.expiresAt;
+    for (const [messageId, entry] of this.entries) {
+      const expiresAt = entry.request.expiresAt;
       if (
-        entry.result ||
+        !entry.pluginContext || entry.request.source.kind !== "plugin" ||
+        entry.request.status !== "pending" ||
         expiresAt === undefined ||
         Date.parse(expiresAt) > now
       ) {
         continue;
       }
       this.settle(
-        interactionId,
+        messageId,
         { kind: "cancelled", reason: "timeout" },
         { type: "baton" },
       );
@@ -537,39 +450,16 @@ export class ReconcileInteractionStore {
   }
 
   private apply(event: AnyEventEnvelope): void {
-    if (event.kind === "interaction.requested") {
-      const interaction = event.payload;
-      if (
-        interaction.requester.type !== "plugin" ||
-        !interaction.pluginContext ||
-        this.entries.has(interaction.interactionId)
-      ) {
-        return;
-      }
-      this.entries.set(interaction.interactionId, { requested: event });
-      this.arm();
-      return;
+    if (event.kind !== "interaction.requested" && event.kind !== "interaction.answered" && event.kind !== "interaction.cancelled") return;
+    // Session has already reduced this event. Rejected, duplicate and late facts
+    // cannot independently settle a continuation through this notification.
+    const messageId = event.kind === "interaction.answered" ? event.payload.replyToMessageIds[0] : event.payload.messageId;
+    const result = requestResult(this.session.projection, messageId);
+    if (result) {
+      const waiters = this.waiters.get(messageId);
+      this.waiters.delete(messageId);
+      for (const resolve of waiters ?? []) resolve(result);
     }
-    if (
-      event.kind !== "interaction.answered" &&
-      event.kind !== "interaction.cancelled"
-    ) {
-      return;
-    }
-    const entry = this.entries.get(event.payload.interactionId);
-    if (!entry || entry.result) return;
-    entry.result = event.kind === "interaction.answered"
-      ? event.payload.answer
-      : {
-          kind: "cancelled",
-          reason: event.payload.reason,
-          ...(event.payload.detail === undefined
-            ? {}
-            : { detail: event.payload.detail }),
-        };
-    const waiters = this.waiters.get(event.payload.interactionId);
-    this.waiters.delete(event.payload.interactionId);
-    for (const resolve of waiters ?? []) resolve(entry.result);
     this.arm();
   }
 }

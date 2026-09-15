@@ -15,8 +15,8 @@ import {
   resolveHarnessTargetSelection,
 } from "../harness/registry.ts";
 import { configuredTextgenTargets } from "../session/title.ts";
+import type { InteractionDraft } from "../interaction/types.ts";
 import type {
-  Interaction,
   InteractionResult,
 } from "../interaction/types.ts";
 import { SessionStore, sessionDisplayTitle } from "../store/store.ts";
@@ -29,7 +29,7 @@ function argValue(flag: string): string | undefined {
 const rl = createInterface({ input: stdin, output: stdout });
 
 // headless REPL 按 kind 收集严格配对的 Interaction 结果。
-async function collectInteractionResult(interaction: Interaction): Promise<InteractionResult> {
+async function collectInteractionResult(interaction: InteractionDraft): Promise<InteractionResult> {
   if (interaction.kind === "permission") {
     stdout.write(`\n⚠ ${interaction.title}\n`);
     interaction.options.forEach((o, i) => stdout.write(`  ${i + 1}. ${o.name} [${o.optionId}]\n`));
@@ -150,13 +150,13 @@ async function main(): Promise<void> {
     if (event.kind === "interaction.requested") {
       interactionChain = interactionChain
         .then(async () => {
-          const result = await collectInteractionResult(event.payload);
+          const result = await collectInteractionResult(event.payload.request);
           const receipt = await channel.resolveInteraction({
             kind: "interaction_response",
-            interactionId: event.payload.interactionId,
+            interactionId: event.payload.messageId,
           }, async () => result);
           if (!receipt.result) {
-            stdout.write(`\ninteraction ${event.payload.interactionId} is no longer pending\n`);
+            stdout.write(`\ninteraction ${event.payload.messageId} is no longer pending\n`);
           }
         })
         .catch((error) => {

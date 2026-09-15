@@ -103,6 +103,11 @@ Controller/Queue typed path。桌面通知（OSC 9）只观察已确认的 live 
 
 ## 4. Transcript 展示策略
 
+Transcript 选择性展示 Message 流，并结合工具、文件变更等执行活动；它不是 Event Ledger 的直接
+渲染。Input、Output、InputRequest、InputResponse 共用消息身份和 Actor 来源／目标，详见
+[Message](./message.md)。待决请求由 Interaction Dock 展示，终结后历史可以保留请求和明确答复；
+取消只展示请求的终态，敏感答案不会进入历史或回复引用预览。ViewInput / ViewOutput 仍是原有边界契约。
+
 Transcript 的目标不是复刻 event log，而是在有限屏幕中保留最高信息密度，并让用户仍能看到上一条
 input、关键结论、执行过的 command 和改动过的文件。原始事件量、UI 行数和信息量是三件不同的事。
 

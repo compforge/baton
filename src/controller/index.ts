@@ -213,6 +213,7 @@ export class Controller {
   private readonly deliveryAttempts: DeliveryAttempts<HarnessBinding>;
   private readonly contextDeliveries: ContextDeliveries<HarnessBinding>;
   private readonly harnessInteractions: HarnessInteractionContinuations<HarnessBinding>;
+  private readonly unsubscribeInteractions: () => void;
   private readonly harnessHooks: HarnessHookCoordinator;
   private lifecycleState: "open" | "closing" | "closed" = "open";
   private closePromise?: Promise<void>;
@@ -245,7 +246,13 @@ export class Controller {
     this.harnessInteractions = new HarnessInteractionContinuations(
       (binding, event, source) => this.appendEvent(binding, event, source),
       () => this.changed(),
+      () => options.session.projection,
     );
+    this.unsubscribeInteractions = options.session.subscribe((event) => {
+      if (event.kind === "interaction.answered" || event.kind === "interaction.cancelled") {
+        this.harnessInteractions.observe();
+      }
+    });
     this.harnessHooks = new HarnessHookCoordinator({
       gateway: options.hooks,
       append: (binding, event) =>
@@ -1220,6 +1227,7 @@ export class Controller {
       ...this.sideRunPromises,
     ]);
     await this.harnessHooks.close();
+    this.unsubscribeInteractions();
     this.lifecycleState = "closed";
   }
 
