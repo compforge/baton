@@ -997,7 +997,7 @@ export class BatonChatProtocol implements ChatProtocol {
   ): Promise<void> {
     const input: ViewInput = Object.freeze({
       kind: "interaction_response",
-      interactionId: id,
+      messageId: id,
     });
     const receipt = await this.channel.resolveInteraction(
       input,

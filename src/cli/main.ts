@@ -153,7 +153,7 @@ async function main(): Promise<void> {
           const result = await collectInteractionResult(event.payload.request);
           const receipt = await channel.resolveInteraction({
             kind: "interaction_response",
-            interactionId: event.payload.messageId,
+            messageId: event.payload.messageId,
           }, async () => result);
           if (!receipt.result) {
             stdout.write(`\ninteraction ${event.payload.messageId} is no longer pending\n`);

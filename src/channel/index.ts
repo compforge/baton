@@ -237,16 +237,16 @@ export class Channel implements ChannelHookGateway {
   ): Promise<DispatchReceipt<boolean>> {
     return this.dispatch(input, async (record) => {
       const interaction = this.options.session.projection.interactions.get(
-        input.interactionId,
+        input.messageId,
       )?.request;
       const result = await prepare(record);
       if (!interaction || !result) return false;
       const completed = interaction.source.kind === "plugin"
         ? await this.pluginManager?.completeInteraction(
-          input.interactionId,
+          input.messageId,
           result,
         ) ?? false
-        : this.controller.completeInteraction(input.interactionId, result);
+        : this.controller.completeInteraction(input.messageId, result);
       if (
         completed &&
         result.kind === "cancelled" &&

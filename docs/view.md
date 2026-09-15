@@ -60,6 +60,11 @@ Transcript；同一个 side Lane 在运行中位于 Parallel，结束后进入�
 
 ## 3. View input、publication 与 owner
 
+ViewInput / ViewOutput 是 View 与 Core 的边界契约，不是 Message 的子类，也不是 Hook 自己的
+入参与返回结果。ViewInput 表达操作，Message 表达可寻址的交互对象，ViewOutput 表达视图更新已发布。
+一次操作可以产生 Message，也可以只修改配置或控制执行；一次 publication 可以展示多条 Message，
+也可以只更新状态或 Board。一条流式 Output 可以对应多次 publication。
+
 View input 只表达人的语义动作：
 
 ```text
@@ -70,6 +75,10 @@ prompt、command、configuration、Interaction response、Task action 和 interr
 `ViewInput`。View 可以做
 编辑态、焦点和本地 picker 等短寿命交互，但不创建 `HarnessInput`，也不直接调用 Harness 或 Plugin。
 Core 决定输入如何持久化、lowering、授权与调度。
+
+回答或取消请求的 ViewInput 通过 messageId 引用待处理的 InputRequest；操作身份由
+ViewInputRecord.inputId 表达。Core 校验并接受答案后创建具有独立身份的 InputResponse；
+取消只终结请求，不产生答复消息。
 
 Parallel 的紧凑区域与 `/parallel` 管理页必须消费同一个 Baton `ParallelItem` 投影。`kind` 只用于
 All / Tasks / Runs 分组和展示；它不把 UI item 提升为运行时 owner。管理页发出的 action 携带稳定
@@ -87,6 +96,9 @@ View 不从 Ledger 另建状态机，不把“已渲染”解释为“用户已�
 Plugin 可以通过 `view.input` 和 `view.output` Hook 观察两个边界：前者在持久记录之后、Core lowering
 之前 inline 通知，后者在 publication 之后 deferred 通知。Hook 不能替换 `ViewInput` 或修改
 `ViewOutput`。
+
+Hook 通过 HookContext 接收边界观察，回调返回 void；需要动作时调用 PluginVerbs，仍遵守 Core
+的权限与生命周期规则。界面 publication 不能作为 Message 已完成或用户已阅读的业务回执。
 
 | 内容 | Owner |
 |---|---|

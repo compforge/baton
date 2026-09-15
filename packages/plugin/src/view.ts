@@ -1,4 +1,7 @@
-/** A semantic Human intent normalized by a Baton View. */
+/**
+ * A semantic Human operation normalized by a Baton View, not a Message.
+ * Core may create a Message, change configuration or control execution from it.
+ */
 export type ViewInput =
   | {
       readonly kind: "configuration";
@@ -25,7 +28,8 @@ export type ViewInput =
     }
   | {
       readonly kind: "interaction_response";
-      readonly interactionId: string;
+      /** The InputRequest.messageId being answered or cancelled, not a response ID. */
+      readonly messageId: string;
     }
   | {
       readonly kind: "task_action";
@@ -37,7 +41,7 @@ export type ViewInput =
       readonly harnessTargetId?: string;
     };
 
-/** A ViewInput after Core has durably accepted it. */
+/** A durably accepted operation; inputId identifies the operation, not a Message. */
 export interface ViewInputRecord {
   readonly inputId: string;
   readonly eventId: string;
@@ -45,7 +49,11 @@ export interface ViewInputRecord {
   readonly input: ViewInput;
 }
 
-/** A Core projection update published through a Baton View. */
+/**
+ * Notification that a projection update was published through a Baton View.
+ * It carries no Message body and does not prove rendering, reading or completion.
+ * One publication may cover multiple Messages, or only non-message view state.
+ */
 export interface ViewOutput {
   readonly outputId: string;
   readonly kind:

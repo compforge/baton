@@ -2424,7 +2424,7 @@ describe("interaction eventization: pending projects from the event stream", () 
       const session = store.createSession({ cwd: "/repo" });
       const protocol = new BatonChatProtocol(store, DEFAULT_CONFIG, { session, resumed: false }, () => undefined);
 
-      // 事件流是 pending 交互的唯一真相源：requested 落盘即出卡片，id = interactionId
+      // 事件流是 pending 交互的唯一真相源：requested 落盘即出卡片，id = InputRequest.messageId
       session.appendEvent({
         source: { type: "baton" },
         kind: "interaction.requested",
@@ -2452,6 +2452,14 @@ describe("interaction eventization: pending projects from the event stream", () 
 
       // 无 live continuation（如崩溃残留）：应答提示 stale，不静默吞掉
       await protocol.resolveInteraction("ix_1", { kind: "approval", optionId: "allow" });
+      const received = session.ledger.read().find((event) => event.kind === "input.received");
+      expect(received?.payload).toMatchObject({
+        input: { kind: "interaction_response", messageId: "ix_1" },
+      });
+      if (received?.kind === "input.received") {
+        expect(received.payload.input).not.toHaveProperty("interactionId");
+        expect(received.payload.inputId).not.toBe("ix_1");
+      }
       composer = protocol.stateStore.getState("composer");
       expect(composer.interactions).toHaveLength(1); // 卡片消失只由 terminal 事件驱动
       expect(protocol.stateStore.getState("footer").toast?.text).toContain("no longer pending");
