@@ -41,10 +41,13 @@
     "@compforge/spec-case": "0.0.3",
     "typescript": "^5.9.0"
   },
+  "//": {
+    "@deepseek-ai/dsh-sdk-client": "Temporary npm alias; switch back to the official package after it ships native session/open resume support."
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.270",
     "@compforge/baton-plugin": "0.11.0",
-    "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-sdk-client": "npm:@qiankun01/dsh-sdk-client@0.1.6-alpha.1",
     "@lumis-sh/wasm-bash": "0.26.4",
     "@opentui/core": "^0.5.11",
     "@opentui/keymap": "^0.5.11",
