@@ -238,6 +238,23 @@ export interface ModelOption {
   description?: string;
 }
 
+export interface ModelConfiguration {
+  readonly model: string;
+  readonly effort: string;
+}
+
+/**
+ * @spec Validate the model and effort together before changing either selection. Failure leaves both unchanged; success affects only subsequent turns.
+ * @why Sequential setters can reject a valid pair against the previous model or effort.
+ */
+export interface ModelConfigurationWritable {
+  setModelConfiguration(ref: HarnessSessionHandle, configuration: ModelConfiguration): Promise<void>;
+}
+
+export function isModelConfigurationWritable(adapter: HarnessAdapter): adapter is HarnessAdapter & ModelConfigurationWritable {
+  return typeof (adapter as Partial<ModelConfigurationWritable>).setModelConfiguration === "function";
+}
+
 /** Adapter 对当前 model selection 的只读事实；不意味着支持 `/model` 修改。 */
 export interface ModelReadable {
   currentModel(ref: HarnessSessionHandle): string | null;

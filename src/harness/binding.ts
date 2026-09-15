@@ -2,6 +2,8 @@ import {
   isApprovalRoutable,
   isEffortConfigurable,
   isModelConfigurable,
+  isModelConfigurationWritable,
+  type ModelConfiguration,
   isSessionConfigurable,
   isInputCancellable,
   isTaskStoppable,
@@ -139,6 +141,20 @@ export class HarnessBinding {
       harnessTargetId: this.target.id,
       harness: this.target.harness,
       model: !modelId || modelId === "default" ? undefined : modelId,
+    });
+  }
+
+  async setModelConfiguration(configuration: ModelConfiguration): Promise<void> {
+    if (!this.ref || !isModelConfigurationWritable(this.adapter)) {
+      throw new Error(`${this.target.id} does not support combined model/effort configuration`);
+    }
+    await this.adapter.setModelConfiguration(this.ref, configuration);
+    this.session.setHarnessTarget(this.target.id, {
+      ...this.session.meta.harnessTargets[this.target.id],
+      harnessTargetId: this.target.id,
+      harness: this.target.harness,
+      model: configuration.model === "default" ? undefined : configuration.model,
+      effort: configuration.effort === "default" ? undefined : configuration.effort,
     });
   }
 

@@ -1,6 +1,12 @@
 /** A semantic Human intent normalized by a Baton View. */
 export type ViewInput =
   | {
+      readonly kind: "configuration";
+      readonly setting: "model_configuration";
+      readonly harnessTargetId: string;
+      readonly value: { readonly model: string; readonly effort: string };
+    }
+  | {
       readonly kind: "prompt";
       readonly text: string;
       readonly harnessTargetId: string;

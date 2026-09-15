@@ -1,3 +1,4 @@
+import type { CommandContext } from "@compforge/baton-plugin";
 import {
   Controller,
   type ReconcileFailure,
@@ -25,8 +26,8 @@ import {
   PluginBinding,
   type Controller as PluginResourceController,
   type CronSource,
-  type PluginCommandInput,
-  type PluginCommandResult,
+  type CommandInput,
+  type CommandResult,
   type DeferredHookStage,
   type HookStage,
   type HookSubjectMap,
@@ -163,6 +164,7 @@ export interface ManagerOptions {
   >;
   /** Configured HarnessTargets exposed as Baton Target Resources. */
   harnessTargets?: readonly HarnessTarget[];
+  probeTarget?: import("./target-catalog.ts").TargetProbe;
   /** Known BatonSessions exposed as limited Session/SessionTargetBinding projections. */
   sessions?: () => readonly BatonSessionObservation[];
   /** 当前进程可激活的可信、不可变 Package 版本。 */
@@ -413,6 +415,11 @@ export class Manager {
         turns: this.batonResources,
         ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
         targets: () => options.harnessTargets ?? [],
+        probeTarget: options.probeTarget,
+        onProbeError: (target, error) => this.log?.({
+          level: "warn", source: "baton", component: "target.catalog",
+          message: "Target model discovery failed", harnessTargetId: target.id, error: logError(error),
+        }),
         now: this.now,
       });
       this.unsubscribeBatonResources = this.batonResources.subscribe((resource) => {
@@ -969,9 +976,10 @@ export class Manager {
 
   async executeCommand(
     name: string,
-    input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined> {
-    return await this.commandRegistry.execute(name, input);
+    input: CommandInput,
+    context: CommandContext,
+  ): Promise<CommandResult | void> {
+    return await this.commandRegistry.execute(name, input, context);
   }
 
   /** Persist the Interaction result before resuming its live Plugin execution. */

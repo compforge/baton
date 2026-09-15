@@ -1,4 +1,6 @@
 import type {
+  Command,
+  CommandInput,
   DeferredHookStage,
   HookStage,
   HookSubjectMap,
@@ -15,6 +17,7 @@ import {
   type SendTurnOutcome,
 } from "../controller/index.ts";
 import { newId } from "../event/ids.ts";
+import { executeCommand, type CommandPreferences } from "../commands/execution.ts";
 import type {
   AnyEventEnvelope,
   PromptBlock,
@@ -62,6 +65,7 @@ export type ChannelPluginOptions = Omit<
 };
 
 export interface ChannelOptions {
+  readonly commandPreferences?: CommandPreferences;
   readonly session: SessionHandle;
   readonly controller: ChannelControllerOptions;
   readonly plugins?: ChannelPluginOptions;
@@ -189,6 +193,25 @@ export class Channel implements ChannelHookGateway {
     execute: (record: ViewInputRecord) => Promise<T>,
   ): Promise<DispatchReceipt<T>> {
     return this.dispatch(input, execute);
+  }
+
+  async executeCommand(command: Command, input: CommandInput, record: ViewInputRecord, requestedTargetId: string) {
+    const targetId = this.pluginManager?.resolveHarnessTargetId(requestedTargetId) ?? requestedTargetId;
+    const target = this.options.controller.resolveTarget?.(targetId);
+    try {
+      return await executeCommand(this, command, input, record, target, this.options.commandPreferences);
+    } catch (error) {
+      this.options.session.log({
+        level: "error", source: "baton", component: "command",
+        message: "Command execution failed", error: logError(error),
+        ...(command.namespace !== "baton" ? { pluginId: command.namespace } : {}),
+        attributes: {
+          namespace: command.namespace, command: command.name, inputId: record.inputId,
+          phase: input.searchQuery !== undefined ? "search" : "invoke",
+        },
+      });
+      throw error;
+    }
   }
 
   /** Apply one typed configuration input through its concrete setting owner. */
@@ -335,6 +358,9 @@ export class Channel implements ChannelHookGateway {
       ...manager,
       session: this.options.session,
       harnessTargets,
+      probeTarget: this.options.controller.probeTarget
+        ? (target) => this.options.controller.probeTarget!(target, this.options.session.meta.cwd)
+        : undefined,
       snapshot: () =>
         createReconcileSnapshot({
           batonSessionId: this.options.session.id,

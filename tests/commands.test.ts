@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { parseSlashCommand } from "chat-tui";
 
 import { CommandRegistry } from "../src/commands/registry.ts";
+import { commandContext } from "./fixtures/command-context.ts";
 
 function fixture() {
   const calls: Array<{ command: string; argument: string }> = [];
   const registry = new CommandRegistry();
-  registry.register({
+  registry.register({ namespace: "baton",
     name: "effort",
     description: "Set effort",
     scope: "harness",
@@ -24,27 +25,27 @@ function fixture() {
         input: { kind: "none", trailingText: "submit" },
       },
     ],
-    execute: async (argument) => {
+    execute: async ({ argument }) => {
       calls.push({ command: "effort", argument });
     },
   });
-  registry.register({
+  registry.register({ namespace: "baton",
     name: "plan",
     description: "Switch to Plan mode",
     scope: "harness",
     runPolicy: "idle",
     input: { kind: "none", trailingText: "submit" },
-    execute: async (argument) => {
+    execute: async ({ argument }) => {
       calls.push({ command: "plan", argument });
     },
   });
-  registry.register({
+  registry.register({ namespace: "baton",
     name: "status",
     description: "Show status",
     scope: "baton",
     runPolicy: "always",
     input: { kind: "none", trailingText: "reject" },
-    execute: async (argument) => {
+    execute: async ({ argument }) => {
       calls.push({ command: "status", argument });
     },
   });
@@ -74,7 +75,7 @@ describe("CommandRegistry", () => {
     });
 
     const invocation = registry.resolve("h", "fix this")!;
-    await invocation.command.execute(invocation.argument);
+    await invocation.command.execute({ argument: invocation.argument }, commandContext("baton", invocation.command.name));
     expect(calls).toEqual([{ command: "effort", argument: "high" }]);
   });
 
@@ -121,7 +122,7 @@ describe("CommandRegistry", () => {
   test("rejects duplicate direct or Alias tokens at registration", () => {
     const { registry } = fixture();
     expect(() =>
-      registry.register({
+      registry.register({ namespace: "baton",
         name: "other",
         description: "Other",
         scope: "baton",

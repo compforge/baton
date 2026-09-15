@@ -128,6 +128,8 @@ export type SendTurnOutcome =
     };
 
 export interface SendTurnOptions {
+  /** Configuration-following input must not steer a turn using the previous settings. */
+  readonly followUp?: boolean;
   readonly sourceProposedPlanId?: string;
   /** Host-prepared intake identity used to correlate human Hook stages with the Input. */
   readonly identity?: { readonly messageId: string; readonly turnId: string };
@@ -652,7 +654,7 @@ export class Controller {
     const input = submission.input;
     this.changed();
     options?.onEnqueued?.();
-    const steer = await this.trySteerQueued(queue, active, submission);
+    const steer = options?.followUp ? undefined : await this.trySteerQueued(queue, active, submission);
     if (steer) return steer;
     void this.drainMain();
     return {
@@ -893,6 +895,11 @@ export class Controller {
     await (
       await this.ensureHarness(this.mainLaneId(), harnessTargetId)
     ).setModel(modelId);
+    this.changed();
+  }
+
+  async setModelConfiguration(harnessTargetId: string, configuration: import("../harness/adapter.ts").ModelConfiguration): Promise<void> {
+    await (await this.ensureHarness(this.mainLaneId(), harnessTargetId)).setModelConfiguration(configuration);
     this.changed();
   }
 

@@ -1,6 +1,5 @@
 import {
   PluginBinding,
-  type PluginCommandResult,
   type SourceContext,
   type Watch,
 } from "../package.ts";
@@ -45,13 +44,17 @@ function installCommand(
   registration: CommandRegistration,
 ): void {
   binding.commands.register({
-    commandId: registration.commandId,
+    input: registration.input,
+    aliases: registration.aliases,
+    runPolicy: registration.runPolicy,
+    scope: registration.scope,
     name: registration.name,
     description: registration.description,
-    execute: async (input) =>
-      await runner.invoke<PluginCommandResult | undefined>(
+    execute: async (input, context) =>
+      await runner.invokeCommand(
         registration.handlerId,
         input,
+        context,
       ),
   });
 }

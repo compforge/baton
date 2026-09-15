@@ -138,6 +138,12 @@ HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 
 ### 2.2 Turn 开界
 
+Human Command 先经过 inline 输入 Hook，再通过统一 Command 执行层获得有效 Target。
+`CommandVerbs.submit` 以原 command Input 为因果父节点，创建带 messageId/turnId 的
+HarnessInput；回执只确认准入，不证明 Harness 完成。内置与 Plugin 共用此路径。
+`configureModel` 通过配置 Input 应用并保存 Target 偏好。`/easy`、`/hard` 是持久修改
+model + effort 的快捷方式；带任务文本时先配置成功，再 submit 新 Turn，不 steer 到旧 Turn。
+
 Turn 与 Lane 一样是 scope，不是执行器。Lane 提供长期归属，Turn 提供一次 Harness loop 的
 临时归属；Event、Attempt、Interaction 等对象用 `turnId` 关联到这一边界。Queue 负责调度，
 Controller 负责协调，Harness 负责执行，Turn 本身只表达 start/end。

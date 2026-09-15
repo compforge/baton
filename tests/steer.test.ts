@@ -122,6 +122,23 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("Controller.sendTurn", () => {
+  test("configuration-following input waits for a new turn even when steer is supported", async () => {
+    const adapter = new SendTurnFakeAdapter("codex");
+    const controller = controllerWith(adapter);
+    const first = controller.submit("codex", text("old settings"));
+    await until(() => adapter.prompts.length === 1);
+    const next = await controller.sendTurn("codex", text("new settings"), { followUp: true });
+    expect(next.effective).toBe("new_turn");
+    expect(adapter.steers).toHaveLength(0);
+    expect(controller.harnessQueueLength).toBe(1);
+    adapter.finish();
+    await first;
+    await until(() => adapter.prompts.length === 2);
+    adapter.finish();
+    if (next.effective === "new_turn") expect(await next.outcome).toBe("completed");
+    expect(adapter.prompts).toEqual(["old settings", "new settings"]);
+    await controller.close();
+  });
   test("steers the active turn: no new turn, message lands in the steered turn", async () => {
     const adapter = new SendTurnFakeAdapter("codex");
     const controller = controllerWith(adapter);

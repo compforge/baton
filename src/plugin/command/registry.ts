@@ -1,19 +1,26 @@
 import type {
-  Command,
-  PluginCommandInput,
-  PluginCommandResult,
+  CommandDefinition,
+  CommandInput,
+  CommandResult,
 } from "../package.ts";
 import type { PluginInstance } from "../instance.ts";
+import type { CommandContext } from "@compforge/baton-plugin";
+import { CommandRegistry } from "../../commands/registry.ts";
+import { validateCommandResult } from "../../commands/result.ts";
 
 export interface AvailablePluginCommand {
+  readonly namespace: string;
+  readonly input?: CommandDefinition["input"];
+  readonly aliases?: CommandDefinition["aliases"];
+  readonly runPolicy?: CommandDefinition["runPolicy"];
+  readonly scope?: CommandDefinition["scope"];
   readonly pluginId: string;
-  readonly commandId: string;
   readonly name: string;
   readonly description: string;
 }
 
 interface ManagedPluginCommand extends AvailablePluginCommand {
-  readonly handlers: Map<string, Command>;
+  readonly handlers: Map<string, CommandDefinition>;
 }
 
 interface PluginCommandRegistryOptions {
@@ -22,55 +29,8 @@ interface PluginCommandRegistryOptions {
   readonly onChanged?: () => void;
 }
 
-function pluginCommandKey(pluginId: string, commandId: string): string {
-  return JSON.stringify([pluginId, commandId]);
-}
-
-function commandIdentifier(name: string, value: string): void {
-  if (!/^[a-z][a-z0-9-]*$/.test(value)) {
-    throw new Error(`${name} must use lowercase letters, digits, and hyphens`);
-  }
-}
-
-function nonEmptyCommandText(name: string, value: string): void {
-  if (!value.trim()) throw new Error(`${name} must not be empty`);
-}
-
-function validateCommandResult(
-  command: AvailablePluginCommand,
-  result: PluginCommandResult | undefined,
-): PluginCommandResult | undefined {
-  if (!result) return;
-  if (result.kind === "message") {
-    nonEmptyCommandText(`/${command.name} message`, result.text);
-    return result;
-  }
-  if (result.kind !== "picker") {
-    throw new Error(`/${command.name} returned an unsupported result`);
-  }
-  nonEmptyCommandText(`/${command.name} picker title`, result.title);
-  if (
-    result.options.length === 0 &&
-    result.search?.mode !== "remote"
-  ) {
-    throw new Error(`/${command.name} picker must contain at least one option`);
-  }
-  if (result.search?.placeholder !== undefined) {
-    nonEmptyCommandText(
-      `/${command.name} picker search placeholder`,
-      result.search.placeholder,
-    );
-  }
-  const values = new Set<string>();
-  for (const option of result.options) {
-    nonEmptyCommandText(`/${command.name} option name`, option.name);
-    nonEmptyCommandText(`/${command.name} option value`, option.value);
-    if (values.has(option.value)) {
-      throw new Error(`/${command.name} returned duplicate option value: ${option.value}`);
-    }
-    values.add(option.value);
-  }
-  return result;
+function pluginCommandKey(pluginId: string, name: string): string {
+  return JSON.stringify([pluginId, name]);
 }
 
 /**
@@ -93,44 +53,49 @@ export class PluginCommandRegistry {
 
   register(
     instance: PluginInstance,
-    registered: Command,
+    registered: CommandDefinition,
   ): () => void {
-    commandIdentifier("plugin commandId", registered.commandId);
-    commandIdentifier("plugin command name", registered.name);
-    nonEmptyCommandText("plugin command description", registered.description);
-    if (this.reservedNames.has(registered.name)) {
-      throw new Error(`plugin command name is reserved by Baton: /${registered.name}`);
-    }
-    const key = pluginCommandKey(instance.pluginId, registered.commandId);
-    const owner = this.commandKeysByName.get(registered.name);
-    if (owner && owner !== key) {
-      throw new Error(`plugin command name is already registered: /${registered.name}`);
+    const key = pluginCommandKey(instance.pluginId, registered.name);
+    const declarations = new CommandRegistry();
+    declarations.register({ ...registered, namespace: instance.pluginId });
+    const tokens = declarations.names();
+    for (const token of tokens) {
+      if (this.reservedNames.has(token)) throw new Error(`plugin command name is reserved by Baton: /${token}`);
+      const owner = this.commandKeysByName.get(token);
+      if (owner && owner !== key) throw new Error(`plugin command name is already registered: /${token}`);
     }
     let command = this.commands.get(key);
     if (command) {
       if (
         command.name !== registered.name ||
-        command.description !== registered.description
+        command.description !== registered.description ||
+        command.runPolicy !== registered.runPolicy || command.scope !== registered.scope ||
+        JSON.stringify(command.input) !== JSON.stringify(registered.input) ||
+        JSON.stringify(command.aliases) !== JSON.stringify(registered.aliases)
       ) {
         throw new Error(
-          `plugin command definition differs across instances: ${instance.pluginId}/${registered.commandId}`,
+          `plugin command definition differs across instances: ${instance.pluginId}/${registered.name}`,
         );
       }
       if (command.handlers.has(instance.pluginInstanceId)) {
         throw new Error(
-          `plugin command already registered by ${instance.pluginInstanceId}: ${registered.commandId}`,
+          `plugin command already registered by ${instance.pluginInstanceId}: ${registered.name}`,
         );
       }
     } else {
       command = {
+        namespace: instance.pluginId,
+        input: registered.input,
+        aliases: registered.aliases,
+        runPolicy: registered.runPolicy,
+        scope: registered.scope,
         pluginId: instance.pluginId,
-        commandId: registered.commandId,
         name: registered.name,
         description: registered.description,
         handlers: new Map(),
       };
       this.commands.set(key, command);
-      this.commandKeysByName.set(registered.name, key);
+      for (const token of tokens) this.commandKeysByName.set(token, key);
     }
     command.handlers.set(instance.pluginInstanceId, registered);
     return () => {
@@ -139,9 +104,7 @@ export class PluginCommandRegistry {
       current.handlers.delete(instance.pluginInstanceId);
       if (current.handlers.size === 0) {
         this.commands.delete(key);
-        if (this.commandKeysByName.get(current.name) === key) {
-          this.commandKeysByName.delete(current.name);
-        }
+        for (const token of tokens) if (this.commandKeysByName.get(token) === key) this.commandKeysByName.delete(token);
       }
       this.onChanged?.();
     };
@@ -164,8 +127,9 @@ export class PluginCommandRegistry {
 
   async execute(
     name: string,
-    input: PluginCommandInput,
-  ): Promise<PluginCommandResult | undefined> {
+    input: CommandInput,
+    context: CommandContext,
+  ): Promise<CommandResult | void> {
     const key = this.commandKeysByName.get(name);
     const command = key ? this.commands.get(key) : undefined;
     if (!command) throw new Error(`Unknown plugin command: /${name}`);
@@ -182,7 +146,10 @@ export class PluginCommandRegistry {
           .join(", ")}`,
       );
     }
-    const result = await active[0]![1].execute(Object.freeze({ ...input }));
+    if (context.command.namespace !== command.namespace || context.command.name !== command.name) {
+      throw new Error("Command context does not match its registered provider");
+    }
+    const result = await active[0]![1].execute(Object.freeze({ ...input }), context);
     return validateCommandResult(command, result);
   }
 }

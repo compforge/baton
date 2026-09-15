@@ -302,6 +302,12 @@ Model selection 的读取与修改是两个层级：`ModelReadable` 只报告当
 投影使用；`ModelConfigurable` 在其上增加目录与修改能力，对应 `/model`。静态选择模型的 Harness
 可以只实现前者，不能因此向用户暴露并不存在的配置入口。
 
+组合 model/effort 请求使用独立的 `ModelConfigurationWritable` 能力：Adapter 针对目标
+模型校验整组参数后才修改 selection，不用先后两个 setter 模拟事务，失败保持原值。
+只读 Target probe 可以提供每个模型对应的 effort 目录，宿主将其投影为内置 Target Resource
+的 `status.modelCatalog`；目录是发现快照，应用时仍须重新
+校验。配置只影响后续 Turn，不能修改正在执行的原生请求。
+
 ## 6. 外部 HarnessSession 纳管
 
 Adapter 负责 live 执行，`HarnessSessionInspector` 负责只读观察已经存在的原生 Session。Inspector

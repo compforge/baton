@@ -1,4 +1,5 @@
 import type { AvailableCommand } from "../event/index.ts";
+import type { BatonTargetModel } from "@compforge/baton-plugin";
 import type { EffortOption, ModelOption } from "./adapter.ts";
 
 /**
@@ -15,6 +16,7 @@ export interface HarnessTarget {
  * model / command 等静态目录可在用户真正发 turn 前安全查询。
  */
 export interface HarnessTargetProbeResult {
+  modelCatalog?: readonly BatonTargetModel[];
   models?: ModelOption[];
   efforts?: EffortOption[];
   commands?: AvailableCommand[];

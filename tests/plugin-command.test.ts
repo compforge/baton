@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { executeCommand } from "./fixtures/command-context.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +28,6 @@ function requirementPackage(name = "requirements"): PluginPackage {
     version: "1.0.0",
     async activate(context) {
       context.commands.register({
-        commandId: "requirements",
         name,
         description: "Browse requirements",
         async execute(input) {
@@ -54,7 +54,6 @@ function searchableRequirementPackage(): PluginPackage {
     version: "1.0.0",
     async activate(context) {
       context.commands.register({
-        commandId: "requirements",
         name: "search-requirements",
         description: "Search requirements",
         async execute(input) {
@@ -103,19 +102,20 @@ describe("Plugin commands", () => {
     await manager.start();
     expect(manager.listCommands()).toEqual([
       {
+        namespace: "qiankun/reqloop",
+        input: undefined, aliases: undefined, runPolicy: undefined, scope: undefined,
         pluginId: "qiankun/reqloop",
-        commandId: "requirements",
         name: "requirements",
         description: "Browse requirements",
       },
     ]);
-    expect(await manager.executeCommand("requirements", { argument: "" })).toEqual({
+    expect(await executeCommand(manager, "requirements", { argument: "" })).toEqual({
       kind: "picker",
       title: "Requirements",
       options: [{ name: "Ship command support", value: "REQ-1" }],
     });
     expect(
-      await manager.executeCommand("requirements", {
+      await executeCommand(manager, "requirements", {
         argument: "",
         selectedValue: "REQ-1",
       }),
@@ -163,7 +163,7 @@ describe("Plugin commands", () => {
 
     await manager.start();
     expect(
-      await manager.executeCommand("search-requirements", {
+      await executeCommand(manager, "search-requirements", {
         argument: "",
         searchQuery: "recovery",
       }),
@@ -173,7 +173,7 @@ describe("Plugin commands", () => {
       options: [{ name: "Result for recovery", value: "REQ-1" }],
     });
     expect(
-      await manager.executeCommand("search-requirements", {
+      await executeCommand(manager, "search-requirements", {
         argument: "",
         searchQuery: "missing",
       }),

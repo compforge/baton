@@ -1,48 +1,20 @@
-// Baton 只实现自己承诺的命令，不透传各 harness TUI 的私有 slash command。
-// `/` 控制 baton/harness；`@` 只引用 baton session/turn/产物。
-
-export type CommandInput =
-  | {
-      kind: "argument";
-    }
-  | {
-      kind: "none";
-      trailingText: "reject" | "submit";
-    };
-
-export interface CommandAliasDefinition {
-  name: string;
-  description?: string;
-  boundArgument?: string;
-  /** Alias 可绑定 canonical 参数，因此它的剩余输入形状可以不同于 Command。 */
-  input?: CommandInput;
-}
-
-export interface CommandDefinition {
-  name: string;
-  description: string;
-  scope: "baton" | "harness";
-  /** 切换 BatonSession 会替换 controller，只允许 idle；其它控制命令可随时执行。 */
-  runPolicy: "always" | "idle";
-  input: CommandInput;
-  aliases?: readonly CommandAliasDefinition[];
-  execute(argument: string): Promise<void>;
-}
+import type { Command, CommandInputShape } from "@compforge/baton-plugin";
+export type { CommandDefinition } from "@compforge/baton-plugin";
 
 export interface DirectCommandable {
   kind: "command";
   name: string;
   description: string;
-  command: CommandDefinition;
-  input: CommandInput;
+  command: Command;
+  input: CommandInputShape;
 }
 
 export interface AliasCommandable {
   kind: "alias";
   name: string;
   description: string;
-  command: CommandDefinition;
-  input: CommandInput;
+  command: Command;
+  input: CommandInputShape;
   boundArgument?: string;
 }
 
@@ -50,7 +22,7 @@ export interface AliasCommandable {
 export type Commandable = DirectCommandable | AliasCommandable;
 
 export interface CommandInvocation {
-  command: CommandDefinition;
+  command: Command;
   invokedAs: string;
   argument: string;
   trailingText?: string;
@@ -66,14 +38,15 @@ export class CommandRegistry {
   private readonly byName = new Map<string, Commandable>();
   private readonly entries: Commandable[] = [];
 
-  register(command: CommandDefinition): void {
+  register(command: Command): void {
+    if (!command.namespace.trim() || !command.description.trim()) throw new Error("Command namespace and description must not be empty");
     commandToken("command name", command.name);
     const commandables: Commandable[] = [{
       kind: "command",
       name: command.name,
       description: command.description,
       command,
-      input: command.input,
+      input: command.input ?? { kind: "argument" },
     }];
     for (const alias of command.aliases ?? []) {
       commandToken("command alias", alias.name);
@@ -82,7 +55,7 @@ export class CommandRegistry {
         name: alias.name,
         description: alias.description ?? command.description,
         command,
-        input: alias.input ?? command.input,
+        input: alias.input ?? command.input ?? { kind: "argument" },
         ...(alias.boundArgument === undefined
           ? {}
           : { boundArgument: alias.boundArgument }),
