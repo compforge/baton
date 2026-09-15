@@ -13,6 +13,7 @@ import { dshPromptInput } from "./prompt.ts";
 import { DshActivity, type DshTransport } from "./activity.ts";
 
 import { newId } from "../../event/ids.ts";
+import { MessageReplies } from "../message-replies.ts";
 import { planEntriesWithIds } from "../../event/plan.ts";
 import type {
   StopReason,
@@ -64,6 +65,7 @@ export interface DshAdapterOptions extends DshTargetConfig {
 
 interface DshTurnState {
   readonly turnId: string;
+  readonly replies: MessageReplies;
   finalized: boolean;
   cancelRequested: boolean;
   sawAgentOutput: boolean;
@@ -184,6 +186,9 @@ export class DshAdapter implements HarnessAdapter {
         return { accepted: false, effective: "rejected", reason: "DSH turn is ending or does not match" };
       }
       runtime.activity!.submit(input.messageId, blocks, true);
+      // DSH can report a claim before its RPC identity resolves. Do not attribute
+      // new output to the old prompt while that additional input is in flight.
+      active.replies.current = undefined;
       // 原生接受只代表 Baton 承担投递责任；ack 之后是否 applied 由
       // input_delivery_update 决定。Core 只为 Queue 驱动的新 Turn 落 user_message，
       // same-turn steer 必须由 Adapter 补 delivery:"steer" 的用户消息，
@@ -202,6 +207,7 @@ export class DshAdapter implements HarnessAdapter {
     if (runtime.closed) throw new Error("DSH session was closed during admission");
     const turn: DshTurnState = {
       turnId: input.turnId,
+      replies: new MessageReplies([input.messageId]),
       finalized: false,
       cancelRequested: false,
       sawAgentOutput: false,
@@ -215,7 +221,13 @@ export class DshAdapter implements HarnessAdapter {
     const activity = new DshActivity(runtime.client!.client, session.id,
       (notification) => { if (!turn.finalized) this.handleNotification(runtime, turn, notification); },
       (messageId, state, detail, raw) => {
-        this.emit(runtime, turn, { kind: "input_delivery_update", payload: { messageId, state, ...(detail ? { detail } : {}) } }, raw);
+        if (state === "applied") turn.replies.current = undefined;
+        const data = record(record(raw?.params.event)?.data);
+        const key = data?.turn !== undefined && data.step !== undefined ? nativeStepKey(data) : undefined;
+        const beforeMessageId = key === undefined ? undefined : turn.thoughtMessageIds.get(key) ?? turn.assistantMessageIds.get(key);
+        this.emit(runtime, turn, { kind: "input_delivery_update", payload: {
+          messageId, state, ...(detail ? { detail } : {}), ...(beforeMessageId ? { beforeMessageId } : {}),
+        } }, raw);
         if (state === "uncertain") this.emit(runtime, turn, { kind: "_baton_notice", payload: {
           level: "warning", title: "DSH input delivery is uncertain",
           detail: `${messageId}: ${detail}. Confirm its result before sending it again.`,
@@ -619,7 +631,7 @@ export class DshAdapter implements HarnessAdapter {
     raw?: unknown,
   ): void {
     runtime.sink({
-      ...event,
+      ...turn.replies.apply(event),
       harnessSessionId: runtime.sessionId,
       turnId: turn.turnId,
       ...(raw === undefined ? {} : { raw }),

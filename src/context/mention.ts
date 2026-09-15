@@ -113,15 +113,19 @@ export function buildSessionContext(
 }
 
 function turnSummaries(handle: SessionHandle): TurnSummaryRecord[] {
+  const projected = new Map(handle.loadState().turnSummaries.map((summary) => [summary.turnId, summary]));
   return handle.ledger
     .read()
-    .filter((e) => e.kind === "_baton_turn_summary")
-    .map((e) => ({
-      harnessTargetId: e.harnessTargetId!,
-      laneId: e.laneId,
-      seq: e.seq,
-      summary: e.payload as TurnSummary,
-    }));
+    .filter((event) => event.kind === "_baton_turn_summary")
+    .map((event) => {
+      const summary = projected.get(event.payload.turnId);
+      return {
+        harnessTargetId: event.harnessTargetId!, laneId: event.laneId,
+        seq: summary?.updatedSeq ?? event.seq,
+        summary: summary ?? event.payload,
+      };
+    })
+    .sort((a, b) => a.seq - b.seq);
 }
 
 /**

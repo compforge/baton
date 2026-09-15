@@ -36,7 +36,7 @@ delivery attempt 和 Hook payload 只是这两个事实的传输与观察机制�
 `HarnessInput` 是 Core-owned 的持久工作对象，不是 Harness wire DTO。它把一次准备交给 Harness 的
 prompt 工作稳定表达为五个维度：
 
-- identity：`messageId`，以及预留或实际承载它的 `turnId`；
+- identity：稳定的 `messageId`；内部 `turnId` 是预留或定向投递的调度坐标，不证明实际消费；
 - routing：`HarnessTarget` 与 `laneId`；
 - content：闭合的 `PromptBlock[]`；
 - provenance：user/Plugin source，以及可选的 ViewInput、HarnessInvocation、ProposedPlan 因果；
@@ -67,6 +67,12 @@ vocabulary。
 HarnessEvent 按稳定 ID upsert，字段省略表示不变、`null`/空集合表示清除、chunk 表示追加；completed
 全量内容是流式丢包的自愈点。开放 wire enum 在 Adapter 边界保守归一，未知值不进入 Core 封闭状态。
 context window 只有在本次占用与容量能严格配对时才作为完整快照输出，避免跨模型拼接数据。
+
+消息 upsert/chunk 的 `replyToMessageIds` 表达回应零条、一条或多条 Session 消息；省略保留
+未知或已有关系，空数组显式清除特定回复对象。Adapter 根据原生关联或明确的单输入请求提供关系，
+不能把模型上下文或 Turn 消费清单当作回复清单。追加输入不会自动改变正在流式输出的消息归属。
+`input_delivery_update` 独立确认消费；若确认迟到，只有原生证据支持时才提供 `beforeMessageId`
+输出锚点，原生 ID 的解析与映射留在 Adapter。
 
 `tool_call_update` 的 `effect`（`read`/`write`）是 Adapter 对工具调用副作用的声明，与 `kind`
 （动作词汇）正交，是 Harness output 契约的一部分。Adapter 应按自家工具语义明确填写：只读工具直接

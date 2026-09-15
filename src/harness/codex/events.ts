@@ -25,7 +25,7 @@ interface CodexEventHandlerOptions {
   openInteraction: OpenInteraction;
   nativeEvent?: NativeEventSink;
   log?: LogSink;
-  emit(runtime: ThreadRuntime, event: Parameters<HarnessEventSink>[0], raw?: unknown, turn?: CodexTurn): void;
+  emit(runtime: ThreadRuntime, event: Parameters<HarnessEventSink>[0], raw?: unknown, turn?: CodexTurn | null): void;
   finishTurn(runtime: ThreadRuntime, turn: CodexTurn | undefined, turnStatus: string): void;
   publishConfigSnapshot(runtime: ThreadRuntime, options: SessionConfigOption[], raw?: unknown): void;
   flushPendingCancel(runtime: ThreadRuntime): void;
@@ -100,6 +100,7 @@ export class CodexEventHandler {
       case "turn/started": {
         const turn = p.turn as Record<string, unknown> | undefined;
         rt.codexTurnId = turn ? String(turn.id) : undefined;
+        if (rt.codexTurnId && rt.activeTurn) (rt.turnsByNativeId ??= new Map()).set(rt.codexTurnId, rt.activeTurn);
         this.options.flushPendingCancel(rt);
         break;
       }
@@ -148,6 +149,11 @@ export class CodexEventHandler {
         if (itemType === "userMessage" && lifecycle === "completed") {
           const clientId = typeof item.clientId === "string" ? item.clientId : undefined;
           if (clientId && rt.pendingSteerMessageIds?.delete(clientId)) {
+            const nativeTurnId = typeof p.turnId === "string" ? p.turnId : undefined;
+            const consumer = nativeTurnId === undefined ? undefined :
+              rt.turnsByNativeId?.get(nativeTurnId) ?? (nativeTurnId === rt.codexTurnId ? rt.activeTurn : undefined);
+            if (consumer?.replies) consumer.replies.current = undefined;
+            else if (rt.activeTurn?.replies) rt.activeTurn.replies.current = undefined;
             if (rt.inFlightSteerMessageIds?.has(clientId)) {
               (rt.appliedSteerMessageIds ??= new Set()).add(clientId);
             }
@@ -158,6 +164,7 @@ export class CodexEventHandler {
                 payload: { messageId: clientId, state: "applied" },
               },
               params,
+              consumer ?? null,
             );
           }
           break;

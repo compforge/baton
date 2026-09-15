@@ -130,7 +130,7 @@ distinction is the calling context and its authority, not the kind of feature.
 The current Command verbs are:
 
 - `submit({ prompt })` admits a new turn on the effective Target, using its current configuration.
-  The receipt contains `messageId`, `turnId`, and `queued`, not a completion verdict.
+  The receipt contains `messageId` and `queued`, not a consumption or completion verdict. A scheduled Turn identity is internal to the host.
 - `configureModel({ model?, effort? })` changes that Target's defaults. Builtin
   `/model` and `/effort` use this same capability and persist Target preferences.
 

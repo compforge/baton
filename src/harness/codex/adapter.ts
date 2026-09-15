@@ -3,6 +3,7 @@
 // `codex app-server generate-json-schema` 的官方 schema（v0.143.0 验证）。见 docs/harness/codex.md。
 
 import { spawn } from "node:child_process";
+import { MessageReplies } from "../message-replies.ts";
 
 import { FileHookTrustStore, type HookTrustStore } from "../../config/hook.ts";
 import { logError } from "../../logging.ts";
@@ -640,7 +641,7 @@ export class CodexAdapter implements HarnessAdapter {
       return settleAdmission({ accepted: true, effective: "steer" });
     }
 
-    const turn: CodexTurn = { turnId: input.turnId, finalized: false };
+    const turn: CodexTurn = { turnId: input.turnId, finalized: false, replies: new MessageReplies([input.messageId]) };
     rt.turnId = input.turnId;
     rt.activeTurn = turn;
     // user_message / state_update(running) 由 controller 在出队时落盘（用户输入是 BatonSession
@@ -674,6 +675,7 @@ export class CodexAdapter implements HarnessAdapter {
         // 只在自己仍是 active turn 时才写共享的 codexTurnId
         if (started?.id && rt.activeTurn === turn) {
           rt.codexTurnId = String(started.id);
+          (rt.turnsByNativeId ??= new Map()).set(rt.codexTurnId, turn);
           this.flushPendingCancel(rt);
         }
         const status = started?.status;
@@ -740,11 +742,11 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   /** 信封补齐。turn 终态类发射显式传所属 turn：迟到终态不能盖上共享 rt.turnId（已是最新 turn 的 id） */
-  private emit(rt: ThreadRuntime, ev: Parameters<HarnessEventSink>[0], raw?: unknown, turn?: CodexTurn): void {
+  private emit(rt: ThreadRuntime, ev: Parameters<HarnessEventSink>[0], raw?: unknown, turn?: CodexTurn | null): void {
     // 空回合判定的记账点：任何可见产出都经过这里，集中标记比在各通知分支手工标记可靠
-    const owner = turn ?? rt.activeTurn;
+    const owner = turn === null ? undefined : turn ?? rt.activeTurn;
     if (owner && !owner.finalized && OUTPUT_EVENT_KINDS.has(ev.kind)) owner.sawOutput = true;
-    rt.sink({ ...ev, harnessSessionId: rt.threadId, turnId: turn?.turnId ?? rt.turnId, raw });
+    rt.sink({ ...(owner?.replies?.apply(ev) ?? ev), harnessSessionId: rt.threadId, turnId: turn === null ? undefined : turn?.turnId ?? rt.turnId, raw });
   }
 
   /**

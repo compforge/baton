@@ -54,7 +54,8 @@ Review 等领域语义。完整边界见 [View](./view.md)。
 | **HarnessEvent** | Adapter 将 Harness 原生流式观察归一后的输出；Core 补齐可信坐标并提交后才成为 Baton Event |
 | **Queue** | 一条 Lane 的 HarnessInput 背压缓冲；Lane 内按入队顺序串行，决定等待、steer、取消和何时提交给 Harness |
 | **Lane** | BatonSession 内持久的任务线边界；Lane 内串行，不同 Lane 可以并行，可在多个 Harness 之间接力 |
-| **Turn** | Human 与 Harness 的一次交流边界；通常是一问一答，也可以只有 Harness 的回答。Turn 有稳定 `turnId` 和 start/end，但不排队、不调度，也不执行工作 |
+| **Message** | Session 内可独立寻址的发言；回复关系可以关联零条、一条或多条消息，不以执行轮次定义一问一答 |
+| **Turn** | 一段 Harness 执行的归属边界，有稳定 `turnId` 和 start/end；不定义消息回复关系，也不排队、调度或执行工作 |
 | **Event Ledger** | BatonSession 的 append-only WAL 和历史记录；它保存正典 Event 供审计与回放，不负责调度、reduce 或实时分发 |
 | **Interaction** | Harness 或 Plugin 等待 Human 或 policy 给出 typed decision 的持久协作对象；Core 拥有 requested/answered/cancelled 生命周期 |
 | **Resource / reconcile** | Plugin 表达长期期望状态并主动推进领域 loop 的机制；领域事实与完成条件归 Plugin 和外部系统所有 |
@@ -71,18 +72,23 @@ Lane 和 Turn 都提供 identity 与归属感，但不是执行器：
 ```text
 BatonSession
 └── Lane                         持久任务线
-    └── Turn                     一次 Human ↔ Harness 交流
+    └── Turn                     一段 Harness 执行归属
         ├── Event
         ├── Interaction
         └── Delivery Attempt
 ```
 
-Lane 决定工作属于哪条长期任务线；Turn 让本次交流中的 Event、Interaction、Attempt 等对象共享
-`turnId`。Turn 不等于一次 LLM call、一次 tool call 或一个 Queue worker。Harness 在没有新
+Lane 决定工作属于哪条长期任务线；Turn 让本次执行中的 Event、Interaction、Attempt 等对象共享
+`turnId`。它不要求与各家 Harness 的原生模型轮次一一对应，也不是 Queue worker。Harness 在没有新
 ViewInput 时也可以产生答案，此时仍建立普通 Turn，只是没有对应的提问。
 
 `TurnRegistry` 只是可丢弃、可由 Event 重建的运行期索引，不保存 Input、Queue、取消、投递或释放
 状态，也不是第二份 Ledger。
+
+Message 的 `replyToMessageIds` 表达回应关系，不是模型上下文清单或输入消费证明。未知关联与明确
+没有回复对象分别表达；多条输入可以收到同一条回答，一条输入也可以收到多次阶段回应。
+Queue 的预留执行坐标是调度意图，消费回执才确认 steer 的实际归属。Transcript 由这些事实投影，
+不能用提交顺序、回复引用或两个 Turn ID 单独推导全部对话顺序。
 
 ### 2.2 Channel 只拥有活跃生命周期
 

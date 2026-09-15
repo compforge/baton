@@ -39,11 +39,15 @@ import {
   type HarnessInputStatus,
 } from "../harness/input.ts";
 import { harnessTaskKey } from "../harness/task.ts";
+import { applyInputDelivery, applyMessageReplies, placeMessage, refreshConsumedSummary } from "./message-relations.ts";
 
 export interface MessageState {
   messageId: string;
   role: MessageRole;
   content: ContentBlock[];
+  replyToMessageIds?: readonly string[];
+  /** Sequence of the first confirmed input consumption; not submission/admission time. */
+  consumedAt?: number;
   /** agent/thought chunk 仍在流式追加；完整 upsert 后转 completed。 */
   streamStatus?: "in_progress" | "completed";
   turnId?: string;
@@ -130,13 +134,15 @@ export interface HarnessTargetState {
 
 export type LaneTargetState = HarnessTargetState;
 
-/** TUI 时间线条目：message / tool_call / plan / notice / error 按首次出现排序 */
+/** Transcript read-model order: outputs on first observation, pending inputs only at consumption. */
 export interface TimelineItem {
   type: "message" | "tool_call" | "plan" | "proposed_plan" | "task" | "notice" | "approval_review" | "error" | "harness_invocation";
   id: string;
 }
 
 export interface TurnSummaryState extends TurnSummary {
+  /** A late consumption fact can enrich the read model without rewriting the summary Event. */
+  updatedSeq?: number;
   harness?: string;
   harnessTargetId?: string;
   laneId?: string;
@@ -313,6 +319,7 @@ function getOrCreateMessage(
   harnessTargetId?: string,
   laneId?: string,
   source?: EventSource,
+  place = true,
 ): MessageState {
   let msg = state.messages.get(id);
   if (!msg) {
@@ -327,7 +334,7 @@ function getOrCreateMessage(
       ...(source === undefined ? {} : { source: { ...source } }),
     };
     state.messages.set(id, msg);
-    state.timeline.push({ type: "message", id });
+    if (place) placeMessage(state, id);
   } else {
     if (!msg.harness) msg.harness = harness;
     if (!msg.harnessTargetId) msg.harnessTargetId = harnessTargetId;
@@ -373,16 +380,23 @@ function applyMessageUpsert(
   role: MessageRole,
 ): void {
   const p = ev.payload;
+  const pendingSteer = ev.kind === "user_message" &&
+    (ev as EventEnvelope<"user_message">).payload.delivery === "steer" &&
+    (state.harnessInputs.has(p.messageId) || (ev as EventEnvelope<"user_message">).payload.deliveryState !== undefined) &&
+    state.harnessInputs.get(p.messageId)?.deliveryOutcome !== "applied" &&
+    (ev as EventEnvelope<"user_message">).payload.deliveryState !== "applied";
   const msg = getOrCreateMessage(
     state,
     p.messageId,
     role,
-    ev.turnId,
+    pendingSteer ? undefined : ev.turnId,
     ev.harness,
     eventTargetId(ev),
     ev.laneId,
     ev.source,
+    !pendingSteer,
   );
+  applyMessageReplies(state, msg, p.replyToMessageIds);
   // 三态：省略=不变；null/[]=清空；数组=整体替换
   if (p.content !== undefined) {
     msg.content = p.content === null ? [] : [...p.content];
@@ -394,17 +408,16 @@ function applyMessageUpsert(
     if (delivery !== undefined) msg.delivery = delivery;
     if (userMessage.deliveryState !== undefined) {
       msg.deliveryState = userMessage.deliveryState;
-      // 老 ledger 兼容桥:steer 投递进度曾寄生在消息补丁上,还原时同步到 Input 投影。
-      const input = state.harnessInputs.get(msg.messageId);
-      if (input) {
-        if (userMessage.deliveryState === "applied") input.deliveryOutcome = "applied";
-        if (userMessage.deliveryState === "failed") {
-          input.deliveryOutcome = "failed";
-          input.status = "failed";
-        }
+      // Legacy message patches carry the same consumption fact; use the common
+      // projector so body-first and receipt-first replay agree on ownership too.
+      if (userMessage.deliveryState !== "pending") {
+        applyInputDelivery(state, {
+          ...ev, kind: "input_delivery_update",
+          payload: { messageId: msg.messageId, state: userMessage.deliveryState },
+        });
       }
     }
-    if (delivery === "follow_up") {
+    if (delivery === "follow_up" && msg.turnId !== ev.turnId) {
       // Esc may reclaim an unapplied native steer without changing messageId.
       // Its eventual prompt belongs to the new Turn and should appear after the
       // interrupted Turn, not at the hidden pending steer's original position.
@@ -420,6 +433,8 @@ function applyMessageUpsert(
         if (item) state.timeline.push(item);
       }
     }
+    if (!pendingSteer) placeMessage(state, msg.messageId);
+    if (msg.consumedAt !== undefined) refreshConsumedSummary(state, msg.turnId, ev.seq);
   }
   if (role !== "user") msg.streamStatus = "completed";
 }
@@ -430,18 +445,24 @@ function applyMessageChunk(
   role: MessageRole,
 ): void {
   const p = ev.payload;
+  const input = role === "user" ? state.harnessInputs.get(p.messageId) : undefined;
+  const pendingSteer = input?.delivery === "steer" && input.deliveryOutcome !== "applied";
   const msg = getOrCreateMessage(
     state,
     p.messageId,
     role,
-    ev.turnId,
+    pendingSteer ? undefined : ev.turnId,
     ev.harness,
     eventTargetId(ev),
     ev.laneId,
     ev.source,
+    !pendingSteer,
   );
+  if (pendingSteer) msg.delivery = "steer";
   msg.content.push(p.content);
+  applyMessageReplies(state, msg, p.replyToMessageIds);
   if (role !== "user") msg.streamStatus = "in_progress";
+  else if (msg.consumedAt !== undefined) refreshConsumedSummary(state, msg.turnId, ev.seq);
 }
 
 function applyHarnessInputUpdate(
@@ -458,6 +479,7 @@ function applyHarnessInputUpdate(
     if (p.blocks.length > 0) existing.blocks = [...p.blocks];
     return;
   }
+  const deliveryState = state.messages.get(p.messageId)?.deliveryState;
   state.harnessInputs.set(p.messageId, {
     messageId: p.messageId,
     turnId: p.turnId,
@@ -468,27 +490,13 @@ function applyHarnessInputUpdate(
     delivery: p.delivery,
     blocks: [...p.blocks],
     source: p.source,
+    ...(deliveryState !== undefined && deliveryState !== "pending"
+      ? { deliveryOutcome: deliveryState }
+      : {}),
     ...(p.harnessInvocationId === undefined
       ? {}
       : { harnessInvocationId: p.harnessInvocationId }),
   });
-}
-
-function applyInputDeliveryUpdate(
-  state: SessionState,
-  ev: EventEnvelope<"input_delivery_update">,
-): void {
-  const input = state.harnessInputs.get(ev.payload.messageId);
-  // 迟到 applied(turn 已收口)是合法事实，只补 outcome 不回迁 status。
-  if (input) {
-    input.deliveryOutcome = ev.payload.state;
-    if (ev.payload.state === "failed") input.status = "failed";
-    return;
-  }
-  // 指向无 input 记录的老消息（老 ledger 没有 harness_input.updated）：镜像到
-  // legacy deliveryState，消费侧的回落路径才能看到回执。
-  const message = state.messages.get(ev.payload.messageId);
-  if (message) message.deliveryState = ev.payload.state;
 }
 
 function applyToolCallUpdate(state: SessionState, ev: EventEnvelope<"tool_call_update">): void {
@@ -612,7 +620,7 @@ export function applyEvent(state: SessionState, ev: AnyEventEnvelope): SessionSt
       // the Controller's ordered snapshots rather than duplicating that index.
       break;
     case "input_delivery_update":
-      applyInputDeliveryUpdate(state, ev);
+      applyInputDelivery(state, ev);
       break;
     case "tool_call_content_chunk": {
       const p = ev.payload;

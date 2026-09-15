@@ -139,8 +139,8 @@ HarnessInvocation lifecycle 定向取消，不进入普通用户 recall。
 ### 2.2 Turn 开界
 
 Human Command 先经过 inline 输入 Hook，再通过统一 Command 执行层获得有效 Target。
-`CommandVerbs.submit` 以原 command Input 为因果父节点，创建带 messageId/turnId 的
-HarnessInput；回执只确认准入，不证明 Harness 完成。内置与 Plugin 共用此路径。
+`CommandVerbs.submit` 以原 command Input 为因果父节点创建 HarnessInput，返回 messageId 与
+queued；内部预留的 Turn ID 不进入提交回执，准入不证明实际消费或 Harness 完成。内置与 Plugin 共用此路径。
 `configureModel` 通过配置 Input 应用并保存 Target 偏好。`/easy`、`/hard` 是持久修改
 model + effort 的快捷方式；带任务文本时先配置成功，再 submit 新 Turn，不 steer 到旧 Turn。
 
@@ -304,7 +304,7 @@ Queue item 需要释放。Turn 本身不携带发起方向或角色分类。
 
 1. Controller 先创建稳定 Input/message identity 并入队；若它位于队头、目标支持且当前 turn
    identity 匹配，再 claim 为 `dispatching` 并尝试 `sendTurn`；
-2. Adapter 原生接受后，输入进入 `steering`，并以 `delivery:"steer"` 绑定当前 Turn。
+2. Adapter 原生接受后，输入进入 `steering`，以 `delivery:"steer"` 记录投递方式；目标 Turn 仍是调度坐标。
    若接受只代表进入 Harness 原生队列，投递结果留待回执（`deliveryOutcome` 未填写）；
 3. Harness 确认该用户输入已写入模型上下文后，Adapter 发 `input_delivery_update(applied)`；
    若 Harness 明确取消或丢弃该输入，则发 `failed` 并产生可见诊断；断线等情况下无法确认消费结果，
@@ -320,6 +320,17 @@ Turn，因此 Turn 收口不能把
 未决 steer 自动当成 applied，也不强迁它的 status：它留在 Queue（`steering` 且无 outcome），
 直到 Harness 报告应用或失败。queued follow-up 与未决 steer 共用 Queue surface，但前者等待
 Controller 开启新 Turn，后者等待 Harness 原生投递边界，两者不能互相冒充。
+
+未应用的 steer 不预占 Transcript 位置。首次 applied 将正文归属到回执确认的执行范围，并进入
+归一事件流的观察位置；迟到回执有明确输出锚点时，Adapter 用 `beforeMessageId` 指定其之前的位置。
+没有原生证据时只保留观察顺序，不猜消费时间。重复回执不再次移动消息，applied 不被迟到失败覆盖。
+完整 Session 投影先还原正文与消费关联，再按实际 Turn 归属汇总；不能先过滤旧 Turn 的事件而漏掉正文。
+回执晚于已保存的摘要时，保留摘要事件原样，在读模型中补齐输入并推进该摘要的 Context 更新水位，
+使已经同步过旧摘要的消费者也能收到补充事实。
+
+输出的 `replyToMessageIds` 由 Adapter 根据请求关联或明确的原生回执填写，不从最近输入反推。
+未提供表示未知，空数组表示无特定对象，非空数组引用本 Session 已存在的消息并去重。
+流式消息保留首个归属快照，只有明确关联才能补充或修正；消费多条输入本身不意味着每条输出都回应它们。
 支持 `inputs.cancel` 的 Adapter 允许 `/queue` 对单条未决 steer 发起取消。该动作按 Input 的
 `messageId` 与 `Lane × HarnessTarget` live binding 定向，不能退化成 Turn interrupt；Harness 返回
 false 时说明输入已离开原生队列，Baton 保留它并继续等待真实 applied/failed 回执。

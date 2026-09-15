@@ -11,6 +11,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { newId } from "../../event/ids.ts";
+import { MessageReplies } from "../message-replies.ts";
 import type { LogSink } from "../../logging.ts";
 import { logError } from "../../logging.ts";
 import { readClaudeSettings } from "./settings.ts";
@@ -399,6 +400,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       // lifecycle 才决定它何时离开 Composer Queue。投递回执走 input_delivery_update，
       // 不再寄生 user_message.deliveryState。
       const pendingOffers = (rt.pendingOfferUuids ??= new Map());
+      (rt.inputMessageIdsByUuid ??= new Map()).set(message.uuid as string, input.messageId);
       pendingOffers.set(message.uuid as string, {
         turnId: active.turnId,
         messageId: input.messageId,
@@ -427,7 +429,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     }
     if (rt.queryOptionsDirty) this.closeStreamingQuery(rt);
 
-    const turn: ClaudeTurn = { turnId: input.turnId, finalized: false, cancelRequested: false };
+    const turn: ClaudeTurn = { turnId: input.turnId, finalized: false, cancelRequested: false, replies: new MessageReplies([input.messageId]) };
     rt.activeTurn = turn;
     rt.currentTurn = turn;
     // user_message / state_update(running) 由 controller 在出队时落盘（用户输入是 BatonSession
@@ -436,6 +438,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     try {
       const message = await claudeUserMessage(input.blocks);
       this.ensureStreamingQuery(rt);
+      (rt.inputMessageIdsByUuid ??= new Map()).set(message.uuid as string, input.messageId);
       if (!rt.promptChannel?.offer(message)) {
         throw new Error("Claude streaming input closed before prompt was accepted");
       }
@@ -657,9 +660,9 @@ export class ClaudeAdapter implements HarnessAdapter {
   }
 
   /** 信封补齐：open 绑定的 sink + 所属 turnId。turn 内发射必须显式传 turn；跨 turn 的事件不带 turnId */
-  private emit(rt: ClaudeRuntime, ev: Parameters<HarnessEventSink>[0], turn?: Pick<ClaudeTurn, "turnId">): void {
+  private emit(rt: ClaudeRuntime, ev: Parameters<HarnessEventSink>[0], turn?: Pick<ClaudeTurn, "turnId" | "replies">): void {
     rt.sink({
-      ...ev,
+      ...((turn ?? rt.activeTurn)?.replies?.apply(ev) ?? ev),
       harnessSessionId: rt.claudeSessionId,
       turnId: (turn ?? rt.activeTurn)?.turnId,
     });

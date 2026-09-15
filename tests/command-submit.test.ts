@@ -36,7 +36,9 @@ describe("Command verbs", () => {
       internal.plugins.executeCommand = async (_name: string, input: CommandInput, context: CommandContext): Promise<CommandResult | void> => {
         expect(context.target).toEqual({ id: "codex2", harness: "codex" });
         await context.verbs.configureModel({ model: "fast", effort: "medium" });
-        await context.verbs.submit({ prompt: input.argument });
+        const receipt = await context.verbs.submit({ prompt: input.argument });
+        expect(receipt).toEqual({ messageId: expect.any(String), queued: false });
+        expect(receipt).not.toHaveProperty("turnId");
       };
       internal.controller.setModelConfiguration = async (target, selection) => {
         calls.push(`configure:${target}`);

@@ -28,7 +28,6 @@ export interface CommandSubmitInput {
 /** A durable Queue admission, not evidence that the Harness completed the turn. */
 export interface CommandSubmitReceipt {
   readonly messageId: string;
-  readonly turnId: string;
   readonly queued: boolean;
 }
 
