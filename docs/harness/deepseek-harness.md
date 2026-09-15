@@ -6,8 +6,10 @@
 
 ## 1. 接入与配置
 
-Baton 直接使用官方 `@deepseek-ai/dsh-sdk-client` 0.1.5-rc.2 的 `DeepSeekHarness`，由 SDK
-解析并启动同版本 `@deepseek-ai/dsh` 的 `sdk` profile，无需另装自维护 Agent SDK 或配置启动命令。
+Baton 使用 `@qiankun01/dsh-sdk-client` 0.1.6-alpha.1 的 `DeepSeekHarness`，通过 npm alias
+保留 `@deepseek-ai/dsh-sdk-client` 导入名。这是 [DSH fork](https://github.com/qiankunli/deepseek-harness/tree/14bb7e949a92f4e48000ca5be99fad24bea701d6)
+的非官方分发，包含原生 Session 恢复修复；SDK 与 DSH runtime 来自同一 commit，随包提供。
+SDK 解析并启动其内置 runtime 的 `sdk` profile，无需另装 CLI 或配置启动命令。
 在 DSH 中完成 provider 凭证配置后，可直接选择 `/dsh`：
 
 ```yaml
@@ -22,7 +24,7 @@ targets:
     # patches: [/absolute/path/to/automation.cordis.patch.yml]
 ```
 
-默认 provider 由官方 SDK 选择。`reasoningEffort`、`maxTokens` 直接交给 SDK；未设置时保留
+默认 provider 由 SDK 选择。`reasoningEffort`、`maxTokens` 直接交给 SDK；未设置时保留
 模型原生默认值。图片需要所选 provider/model 支持视觉输入。子进程继承 Baton 环境与 workspace
 cwd，Target 的 `env` 可覆盖环境；Baton 不读取或保存 provider 凭证。
 
@@ -31,12 +33,14 @@ cwd，Target 的 `env` 可覆盖环境；Baton 不读取或保存 provider 凭�
 上述原生选项。旧默认 `model: prod` 也需要改为 `model: deepseek-flash`，或实际配置的模型 ID。
 SDK 拥有进程启动、初始化、请求超时和退出清理，Baton 不再维护另一层启动协议。
 
-启动顺序为 `DeepSeekHarness.start()` → `session(id?)` → 发布 HarnessSessionBinding。
+启动先完成 `DeepSeekHarness.start()`。新会话创建本地 `session()` 句柄；恢复会话必须先取得
+`session/open { sessionId, mode: "resume" }` 的服务端回执，再创建句柄、发布 HarnessSessionBinding。
 
 ## 2. Session 与恢复
 
 DSH SDK session ID 是稳定 HarnessSession identity，也是 v1 resume state 的内容。新会话在
-`open()` 时由 SDK 铸造 ID 并立即发布 Binding；已有 resume state 时使用原 ID 建立 session。
+`open()` 时由 SDK 铸造 ID 并发布 Binding，原生 Agent 在首次 prompt 时创建；已有 resume state
+时使用原 ID 请求服务端恢复，只有返回相同身份且状态为 `resumed` 或 `active` 才接受。
 取消会关闭当前 runtime，下一轮重新初始化 runtime 后仍以该 ID 继续，因此 BatonSession 内的
 恢复路径不依赖进程存活。DSH 只在路由或容量变化时记录 `request/context`；Adapter 将最近一次
 effective model 与 context window 一并保存在 DSH 自己的 resume state 中，保证进程重建后仍能
@@ -44,7 +48,9 @@ effective model 与 context window 一并保存在 DSH 自己的 resume state �
 
 当前 DSH SDK 协议不提供只读历史查询或 session catalog，所以 DSH 不注册外部 Session
 Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实现 Inspector 的 Harness。
-已经进入 BatonSession 的 DSH binding 可以正常随 BatonSession resume。
+恢复需要 runtime 原生提供 `session/open`，默认 fork 分发已包含该协议；覆盖 `dshBin` 时也必须
+选择支持该协议的 runtime。方法不支持、Session
+缺失、工作目录或 preset 不兼容、日志损坏及锁冲突均直接失败，不替换为新会话，也不宣称恢复成功。
 
 ## 3. 当前 Capability
 
@@ -55,7 +61,7 @@ Inspector：`baton resume <native-id>` 的自动纳管仍只适用于已经实�
 | context window | `request/context` 的有效路由 + `assistant/message.usage` 的当次输入占用快照 |
 | subagent lifecycle | `subagent.started` / `subagent.finished` → `task_update` |
 | same-turn steer | 原生 `session/prompt` 入队，inbox pure-deletion 与 `user/message` 确认进入模型 step |
-| session resume | SDK session ID + Baton v1 resume state |
+| session resume | SDK session ID + Baton v1 resume state + 原生 `session/open` 确认（需要含修复的 runtime） |
 
 当前不声明 audio/resource prompt、compact、Session config、Interaction、
 reconcile、approval routing 或 textgen。unsupported prompt block 在 admission 前明确报错；model、
@@ -63,8 +69,8 @@ provider 是 runtime 启动配置，不伪装成可热切换的 `/model` 能力�
 
 ## 4. Input、取消与终态
 
-空闲时 `sendTurn` 将文本与图片转换为 SDK content blocks，通过官方 `HarnessClient.prompt`
-提交，使用官方 `subscribeSessionTree` 接收通知。图片的格式校验与持久附件由 DSH 承担。
+空闲时 `sendTurn` 将文本与图片转换为 SDK content blocks，通过 `HarnessClient.prompt`
+提交，使用 `subscribeSessionTree` 接收通知。图片的格式校验与持久附件由 DSH 承担。
 `DeepSeekHarness` 继续拥有启动与 session identity；单 prompt 的 `session.run()` 不适用于 Baton
 一个 Turn 承载多条输入的投递追踪，因此 Adapter 用 SDK 的底层公开接口关联 Input 与原生消息 ID，
 不复制 stdio、JSON-RPC 或进程清理实现。
@@ -92,6 +98,11 @@ DSH 声明 explicit delivery tracking，并由 Adapter 保留取消时的投递�
 
 ## 5. 事件归一
 
+原生 `tool/result.error.reason` 与 PTC 子调用的拒绝原因进入工具详情；明确的
+`AUTO_REVIEW_DENIED` 映射为 `declined`，普通错误仍为 `failed`。PTC 的开始、结果使用同一个
+`subCallId` 归一为工具更新，不把策略拒绝伪装成成功。`image/offload` 仅发布 context 卸载提示，
+不删除 Baton Message 中的原图，也不伪造 assistant 消息。
+
 - `assistant/chunk` 的 text/reasoning delta → agent message/thought chunk；
 - `assistant/message` → 对应完整 message/thought upsert，并在缺少 usage chunk 时补 usage；
 - `request/context` 缓存 effective model 与 context window，但不单独发不完整快照；
@@ -113,7 +124,7 @@ SDK 会同时转发已发现子 agent 的 `session.event`。Adapter 不把子 ag
 - `src/harness/dsh/adapter.ts` — SDK lifecycle、session resume、事件分发与 coarse cancel
 - `src/harness/dsh/mapping.ts` — DSH wire 值、usage、工具 effect 与 resume state 映射
 - `src/harness/dsh/activity.ts` — 原生 inbox 消息、消费回执与单 Turn 活动边界
-- `tests/dsh-queue.test.ts` — 官方 SDK + 子进程的追加、取消、重连和 Controller Queue 集成
+- `tests/dsh-queue.test.ts` — SDK + 子进程的追加、取消、重连和 Controller Queue 集成
 - `src/harness/dsh/config.ts`、`prompt.ts` — 原生启动选项与文本/图片输入
 - `src/harness/registry.ts` — `dsh` / `deepseek` identity 和 Adapter factory
 - `tests/dsh-adapter.test.ts` — binding、mapping、admission、终态与 cancel/reconnect

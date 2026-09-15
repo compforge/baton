@@ -7,6 +7,8 @@ for await (const line of lines) {
   const { id, method, params } = JSON.parse(line);
   if (method === "initialize") {
     send({ id, result: { serverInfo: { name: "baton-test", version: "1" } } });
+  } else if (method === "session/open") {
+    send({ id, result: { sessionId: params.sessionId, status: "resumed" } });
   } else if (method === "session/prompt") {
     const sessionId = params.sessionId;
     send({ id, result: { messageId: "input-1", accepted: true } });

@@ -9,6 +9,7 @@ const status = (state) => send({ method: "session.status", params: { sessionId, 
 for await (const line of lines) {
   const { id, method, params } = JSON.parse(line);
   if (method === "initialize") send({ id, result: { serverInfo: { name: "dsh-queue-test", version: "1" } } });
+  if (method === "session/open") send({ id, result: { sessionId: params.sessionId, status: "resumed" } });
   if (method === "session/prompt") {
     sessionId = params.sessionId;
     const text = params.contentBlocks.filter((b) => b.type === "text").at(-1)?.text;

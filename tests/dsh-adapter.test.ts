@@ -137,6 +137,9 @@ class FakeClient implements DshClientLike {
   subscription?: FakeSubscription;
   private serial = 0;
   readonly client = {
+    request: async (_method: string, params?: Record<string, unknown>): Promise<unknown> => ({
+      sessionId: params?.sessionId, status: "resumed",
+    }),
     subscribeSessionTree: (_id: string): NotificationSubscription => this.subscription = new FakeSubscription(),
     prompt: async (sessionId: string, input: DshInput): Promise<string> => {
       const nativeId = `native-${++this.serial}`;
@@ -274,6 +277,49 @@ describe("DshAdapter", () => {
       content: [{ type: "text", text: "done" }],
     });
     await adapter.close(ref);
+  });
+
+  test("does not publish a resumed binding until the server acknowledges the exact identity", async () => {
+    const client = new FakeClient("stored", []);
+    let confirm!: (receipt: unknown) => void;
+    let onRequest!: () => void;
+    const requested = new Promise<void>(resolve => { onRequest = resolve; });
+    client.client.request = async () => new Promise(resolve => { confirm = resolve; onRequest(); });
+    const bindings: unknown[] = [];
+    const adapter = new DshAdapter({ clientFactory: () => client });
+    const opening = adapter.open({ cwd: "/repo", resumeSessionId: "stored" }, () => {}, binding => bindings.push(binding));
+    await requested;
+    expect(bindings).toHaveLength(0);
+    confirm({ sessionId: "stored", status: "resumed" });
+    const ref = await opening;
+    expect(ref.resumed).toBe(true);
+    expect(bindings).toHaveLength(1);
+    await adapter.close(ref);
+  });
+
+  test.each([
+    { sessionId: "stored", status: "created" },
+    { sessionId: "wrong", status: "resumed" },
+    { sessionId: "stored", status: "unknown" },
+  ])("rejects an invalid resume receipt without publishing a binding: %j", async receipt => {
+    const client = new FakeClient("stored", []);
+    client.client.request = async () => receipt;
+    const bindings: unknown[] = [];
+    const adapter = new DshAdapter({ clientFactory: () => client });
+    await expect(adapter.open({ cwd: "/repo", resumeSessionId: "stored" }, () => {}, binding => bindings.push(binding)))
+      .rejects.toThrow("did not confirm");
+    expect(bindings).toHaveLength(0);
+  });
+
+  test("fails closed when the runtime cannot resume, without submitting a prompt", async () => {
+    const client = new FakeClient("missing", []);
+    client.client.request = async () => { throw new Error("session does not exist"); };
+    const bindings: unknown[] = [];
+    const adapter = new DshAdapter({ clientFactory: () => client });
+    await expect(adapter.open({ cwd: "/repo", resumeSessionId: "missing" }, () => {}, binding => bindings.push(binding)))
+      .rejects.toThrow("session does not exist");
+    expect(bindings).toHaveLength(0);
+    expect(client.createdSessions).toHaveLength(0);
   });
 
   test("maps streaming messages, tools, usage, todo, subagents, and one terminal event", async () => {
@@ -433,6 +479,49 @@ describe("DshAdapter", () => {
     ]);
     expect(native).toHaveLength(notifications.length + 4);
     await adapter.close(ref);
+  });
+
+  test("shows native and PTC review denial reasons and keeps image offload a notice", async () => {
+    const sessionId = "dsh-denials";
+    const reason = "Blocked: would overwrite an uncommitted file";
+    const notifications = [
+      sessionEvent(sessionId, "tool/call", { callId: "direct", name: "bash", arguments: { command: "write" } }),
+      sessionEvent(sessionId, "tool/result", {
+        message: { content: [{ type: "tool-result", toolCallId: "direct", isError: true,
+          content: [{ type: "text", text: "Blocked by policy" }] }] },
+        error: { name: "AutoReviewDeniedError", code: "AUTO_REVIEW_DENIED", reason },
+      }),
+      sessionEvent(sessionId, "tool/ptc-dispatch-start", {
+        rootCallId: "root", parentCallId: "root", subCallId: "nested", name: "bash", arguments: { command: "write" },
+      }),
+      sessionEvent(sessionId, "tool/ptc-dispatch", {
+        rootCallId: "root", parentCallId: "root", subCallId: "nested", name: "bash", arguments: { command: "write" },
+        isError: true, content: [{ type: "text", text: reason }], error: { code: "AUTO_REVIEW_DENIED", reason },
+      }),
+      sessionEvent(sessionId, "image/offload", { targets: [{ seq: 1, imageIndexes: [0] }] }),
+    ];
+    const client = new FakeClient(sessionId, [new StaticTurn(notifications, result(sessionId, "done"))]);
+    const events: AnyEventDraft[] = [];
+    const adapter = new DshAdapter({ clientFactory: () => client });
+    const ref = await adapter.open({ cwd: "/repo" }, event => events.push(event));
+    try {
+      await adapter.sendTurn(ref, { turnId: "denied", messageId: "input", blocks: [{ type: "text", text: "check" }] });
+      await waitForIdle(events, "denied");
+      const tools = events.filter(event => event.kind === "tool_call_update");
+      expect(tools).toHaveLength(4);
+      expect(tools[1]?.payload).toMatchObject({ status: "declined", content: [
+        { type: "text", text: "Blocked by policy" }, { type: "text", text: reason },
+      ] });
+      expect(tools[3]?.payload).toMatchObject({ status: "declined", content: [{ type: "text", text: reason }] });
+      expect(tools[2]?.payload.toolCallId).toBe(tools[3]?.payload.toolCallId);
+      expect(tools[0]?.payload.toolCallId).not.toBe(tools[2]?.payload.toolCallId);
+      expect(events.filter(event => event.kind === "_baton_notice")).toMatchObject([
+        { payload: { level: "info", title: "DSH unloaded older images from model context" } },
+      ]);
+      expect(events.filter(event => event.kind === "agent_message")).toHaveLength(1);
+    } finally {
+      await adapter.close(ref);
+    }
   });
 
   test("restores the last request context when DSH deduplicates it after resume", async () => {

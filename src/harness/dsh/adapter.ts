@@ -6,6 +6,7 @@ import {
   DeepSeekHarness,
   type DeepSeekHarnessOptions,
   type HarnessNotification,
+  type HarnessClient,
 } from "@deepseek-ai/dsh-sdk-client";
 
 import type { DshTargetConfig } from "./config.ts";
@@ -46,7 +47,7 @@ export interface DshSessionLike {
 }
 
 export interface DshClientLike {
-  readonly client: DshTransport;
+  readonly client: DshTransport & Pick<HarnessClient, "request">;
   start(): Promise<void>;
   session(sessionId?: string): DshSessionLike;
   close(): Promise<void>;
@@ -59,7 +60,7 @@ export interface DshAdapterOptions extends DshTargetConfig {
   nativeEvent?: NativeEventSink;
   /** HarnessTarget 固定环境；同名项覆盖每次 open 传入的动态环境。 */
   env?: Readonly<Record<string, string>>;
-  /** 测试注入点；生产直接使用官方 DeepSeekHarness。 */
+  /** 测试注入点；生产直接使用 SDK 的 DeepSeekHarness。 */
   clientFactory?: DshClientFactory;
 }
 
@@ -296,6 +297,17 @@ export class DshAdapter implements HarnessAdapter {
     runtime.client = client;
     try {
       await client.start();
+      if (runtime.sessionId) {
+        // A local session(id) handle proves no history was restored. Require
+        // the native owner to acknowledge before publishing a resumed binding
+        // or admitting another input after reconnect; never replay input here.
+        const opened = record(await client.client.request("session/open", {
+          sessionId: runtime.sessionId, mode: "resume",
+        }));
+        if (opened?.sessionId !== runtime.sessionId || (opened.status !== "resumed" && opened.status !== "active")) {
+          throw new Error("DSH did not confirm the requested Session resume");
+        }
+      }
       const session = client.session(runtime.sessionId);
       runtime.session = session;
       runtime.sessionId = session.id;
@@ -556,14 +568,62 @@ export class DshAdapter implements HarnessAdapter {
       const nativeId = text(resultBlock?.toolCallId);
       if (!nativeId) return;
       const content = textBlocks(resultBlock?.content);
+      const error = record(data.error);
+      const reason = text(error?.reason);
+      if (reason?.trim() && !content.some((block) => block.type === "text" && block.text === reason)) {
+        content.push({ type: "text", text: reason });
+      }
       const failed = resultBlock?.isError === true || data.error !== undefined;
       this.emit(runtime, turn, {
         kind: "tool_call_update",
         payload: {
           toolCallId: mappedId(turn.toolCallIds, nativeId, "tc"),
-          status: failed ? "failed" : "completed",
+          status: error?.code === "AUTO_REVIEW_DENIED" ? "declined" : failed ? "failed" : "completed",
           ...(content.length ? { content } : {}),
           rawOutput: resultBlock?.content,
+        },
+      }, raw);
+      return;
+    }
+
+    if (eventType === "tool/ptc-dispatch-start" || eventType === "tool/ptc-dispatch") {
+      const nativeId = text(data.subCallId);
+      const name = text(data.name);
+      if (!nativeId || !name) return;
+      const input = toolInput(data.arguments);
+      const error = record(data.error);
+      const content = textBlocks(data.content);
+      const reason = text(error?.reason);
+      if (reason?.trim() && !content.some((block) => block.type === "text" && block.text === reason)) {
+        content.push({ type: "text", text: reason });
+      }
+      this.emit(runtime, turn, {
+        kind: "tool_call_update",
+        payload: {
+          toolCallId: mappedId(turn.toolCallIds, nativeId, "tc"),
+          title: name,
+          kind: toolKind(name),
+          effect: toolEffect(name, input),
+          status: eventType === "tool/ptc-dispatch-start" ? "in_progress"
+            : error?.code === "AUTO_REVIEW_DENIED" ? "declined"
+            : data.isError === true || error !== undefined ? "failed" : "completed",
+          rawInput: input,
+          ...(content.length ? { content } : {}),
+          ...(eventType === "tool/ptc-dispatch" ? { rawOutput: data.content } : {}),
+        },
+      }, raw);
+      return;
+    }
+
+    if (eventType === "image/offload") {
+      // Offload changes the model's retained context, not the user's original
+      // Message or attachment. Keep originals intact and surface a notice only.
+      this.emit(runtime, turn, {
+        kind: "_baton_notice",
+        payload: {
+          level: "info",
+          title: "DSH unloaded older images from model context",
+          detail: "The original images remain in the conversation. Send an image again if the model needs to inspect it.",
         },
       }, raw);
       return;
